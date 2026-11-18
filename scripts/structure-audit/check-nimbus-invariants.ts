@@ -3802,6 +3802,73 @@ export function checkWorkflowImportConfinement(files: readonly FileEntry[]): Vio
   return out;
 }
 
+// ---- D26(d) (the model's computer-use binding, I35, owner rulings OR-MCU-1/2) ----------------------
+// Rule `computer-use-binding-confined`, each identifier matched as a word after comments and string
+// literals are stripped:
+// (a) `buildComputerUseTools` only by `computer-use/cu-tools.ts` (its definition) and `engine/agent.ts`
+//     (the one caller, per request, from the turn's binding);
+// (b) the request slot `computerUse` only by `engine/agent-request-context.ts` (its declaration) and
+//     `engine/run-ask.ts` (the one setter, on the owner's non-demo `cli` turn), and its reader
+//     `getAgentRequestComputerUse` only by the context module and `engine/agent.ts`;
+// (c) `liveSessionLane` only by `computer-use/cu-gate.ts` and `platform/assemble.ts` (the resolver);
+// (d) `COMPUTER_USE_OFFER_BY_KIND` only by `ipc/server/inline-handlers.ts`, so no other entry decides
+//     which callers may bind a session;
+// (e) `requestFor` (the unicast prompt) only by `computer-use/cu-unicast-broker.ts` and
+//     `platform/assemble.ts`, so no other module raises a computer-use prompt to a connection.
+// Test files are not scanned. Stated bounds: a text scan, so a dynamically composed name evades it, and
+// a second use inside an allow-listed file is exempt whole-file; the behavioural tests (I35) are
+// authoritative. Tied to I35.
+const D26D_SRC = "packages/gateway/src/";
+const D26D_RULES: readonly { readonly re: RegExp; readonly allowed: readonly string[] }[] = [
+  {
+    re: /\bbuildComputerUseTools\b/g,
+    allowed: [`${D26D_SRC}computer-use/cu-tools.ts`, `${D26D_SRC}engine/agent.ts`],
+  },
+  {
+    re: /\bcomputerUse\b/g,
+    allowed: [`${D26D_SRC}engine/agent-request-context.ts`, `${D26D_SRC}engine/run-ask.ts`],
+  },
+  {
+    re: /\bgetAgentRequestComputerUse\b/g,
+    allowed: [`${D26D_SRC}engine/agent-request-context.ts`, `${D26D_SRC}engine/agent.ts`],
+  },
+  {
+    re: /\bliveSessionLane\b/g,
+    allowed: [`${D26D_SRC}computer-use/cu-gate.ts`, `${D26D_SRC}platform/assemble.ts`],
+  },
+  {
+    re: /\bCOMPUTER_USE_OFFER_BY_KIND\b/g,
+    allowed: [`${D26D_SRC}ipc/server/inline-handlers.ts`],
+  },
+  {
+    re: /\brequestFor\b/g,
+    allowed: [`${D26D_SRC}computer-use/cu-unicast-broker.ts`, `${D26D_SRC}platform/assemble.ts`],
+  },
+];
+
+export function checkComputerUseBindingConfinement(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (!f.relPath.startsWith(D26D_SRC)) continue;
+    if (f.relPath.endsWith(".test.ts") || f.relPath.endsWith(".test-helpers.ts")) continue;
+    const code = stripStringLiterals(stripComments(f.contents));
+    const original = f.contents.split("\n");
+    for (const r of D26D_RULES) {
+      if (r.allowed.includes(f.relPath)) continue;
+      for (const m of code.matchAll(r.re)) {
+        const line = code.slice(0, m.index).split("\n").length;
+        out.push({
+          rule: "computer-use-binding-confined",
+          file: f.relPath,
+          line,
+          snippet: (original[line - 1] ?? "").trim(),
+        });
+      }
+    }
+  }
+  return out;
+}
+
 // ---- D51 (model access to saved generated tools, I60) --------------------------------------------
 // Rule `toolgen-model-door-confined`, each identifier matched as a word after comments and string
 // literals are stripped (so an aliased import is caught):
@@ -6710,6 +6777,13 @@ async function run(): Promise<void> {
       );
     }
     if (toolgenModelDoorViolations.length > 0) exit = 1;
+    const computerUseBindingViolations = checkComputerUseBindingConfinement(files);
+    for (const e of computerUseBindingViolations) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D26(d) the model's computer-use binding left its confinement (rule ${e.rule}) - buildComputerUseTools only from engine/agent.ts, the computerUse slot set only by runAsk, liveSessionLane only in the gate and the resolver, the kind map only at the IPC entry, and the unicast prompt raised only from assemble: ${e.snippet}`,
+      );
+    }
+    if (computerUseBindingViolations.length > 0) exit = 1;
     const doorApprovalViolations = checkDoorApprovalConfinement(files);
     for (const e of doorApprovalViolations) {
       console.error(

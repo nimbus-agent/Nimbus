@@ -24,6 +24,7 @@ import {
   checkChatopsWatcherNoticeCaller,
   checkChatopsWatcherPinned,
   checkChatReadMarkerConfinement,
+  checkComputerUseBindingConfinement,
   checkConfigReaderConfinement,
   checkConfirmComparison,
   checkConnectorSpawnIsHidden,
@@ -8296,5 +8297,52 @@ describe("D51 - the model's door to saved generated tools stays confined (I60)",
       rules([...GOOD, file(`${SRC}ipc/x.ts`, "// invokeSavedTool() is not called here")]),
     ).toEqual([]);
     expect(rules([...GOOD, file(`${SRC}ipc/x.test.ts`, "invokeSavedTool();")])).toEqual([]);
+  });
+});
+
+describe("D26(d) - the model's computer-use binding stays confined (I35, OR-MCU-1/2)", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const SRC = "packages/gateway/src/";
+  const GOOD: FileEntry[] = [
+    file(`${SRC}computer-use/cu-tools.ts`, "export function buildComputerUseTools() {}"),
+    file(`${SRC}engine/agent.ts`, "buildComputerUseTools(); getAgentRequestComputerUse();"),
+    file(
+      `${SRC}engine/agent-request-context.ts`,
+      "computerUse?: X; export function getAgentRequestComputerUse() {}",
+    ),
+    file(`${SRC}engine/run-ask.ts`, "store.computerUse = binding;"),
+    file(`${SRC}computer-use/cu-gate.ts`, "export function liveSessionLane() {}"),
+    file(`${SRC}platform/assemble.ts`, "liveSessionLane(); cuActionConsent.requestFor();"),
+    file(`${SRC}ipc/server/inline-handlers.ts`, "export const COMPUTER_USE_OFFER_BY_KIND = {};"),
+    file(`${SRC}computer-use/cu-unicast-broker.ts`, "requestFor() {}"),
+  ];
+  const rules = (files: FileEntry[]): string[] =>
+    checkComputerUseBindingConfinement(files).map((v) => v.rule);
+
+  test("the sanctioned layout is clean", () => {
+    expect(checkComputerUseBindingConfinement(GOOD)).toEqual([]);
+  });
+
+  test.each([
+    "buildComputerUseTools();",
+    "store.computerUse = x;",
+    "getAgentRequestComputerUse();",
+    "liveSessionLane();",
+    "COMPUTER_USE_OFFER_BY_KIND.cli;",
+    "broker.requestFor();",
+  ])("%s is refused outside its sites", (body) => {
+    expect(rules([...GOOD, file(`${SRC}ipc/other.ts`, body)])).toContain(
+      "computer-use-binding-confined",
+    );
+  });
+
+  test("a comment, a string and a test file are not uses", () => {
+    expect(
+      rules([
+        ...GOOD,
+        file(`${SRC}ipc/x.ts`, '// liveSessionLane() is read elsewhere\nconst m = "requestFor";'),
+        file(`${SRC}ipc/x.test.ts`, "liveSessionLane();"),
+      ]),
+    ).toEqual([]);
   });
 });

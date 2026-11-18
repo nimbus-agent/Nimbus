@@ -7343,6 +7343,97 @@ describe("I35 — computer-use actuation only inside an approved envelope", () =
       expect(src).not.toMatch(pattern);
     }
   });
+
+  test("I35 (OR-MCU-2): the computer-use brokers are unicast and human-only, and have no broadcast arm", async () => {
+    const { cuEnvelopeConsent, cuActionConsent } = await import(
+      "./computer-use/cu-consent-broker.ts"
+    );
+    const { ConsentBroker } = await import("./util/consent-broker.ts");
+    for (const b of [cuEnvelopeConsent, cuActionConsent]) {
+      expect(b instanceof ConsentBroker).toBe(false);
+      expect("setBroadcast" in b).toBe(false);
+      expect("request" in b).toBe(false);
+    }
+    const { CuUnicastConsentBroker } = await import("./computer-use/cu-unicast-broker.ts");
+    const b = new CuUnicastConsentBroker<object>("computer.actionRequest");
+    const sentTo: string[] = [];
+    b.setUnicast((clientId) => {
+      sentTo.push(clientId);
+      return true;
+    });
+    const p = b.requestFor("opener", {}, 60_000);
+    const id = b.pendingIds()[0] ?? "";
+    expect(sentTo).toEqual(["opener"]);
+    // Another connection cannot answer; the opener's scripted answer is a denial.
+    expect(b.respondFrom(id, true, { clientId: "other", answerSource: "human" })).toBe(false);
+    expect(b.respondFrom(id, true, { clientId: "opener", answerSource: "script" })).toBe(true);
+    expect(await p).toBe(false);
+    b.clear();
+  });
+
+  test("I35 (OR-MCU-2) wiring: action prompts use the opener's channel; the transport passes the server's connection id; assemble unicasts and settles on disconnect", async () => {
+    const gate = stripComments(await read("packages/gateway/src/computer-use/cu-gate.ts"));
+    const approve = gate.slice(gate.indexOf("async function approveThisAction("));
+    const body = approve.slice(0, approve.indexOf("\n}\n"));
+    expect(body).toContain("await ctx.openDeps.requestApproval(");
+    expect(body).not.toContain("ctx.deps.requestApproval");
+
+    const rpc = stripComments(await read("packages/gateway/src/ipc/computer-rpc.ts"));
+    expect(rpc).toContain("respondFrom(requestId, approved, from)");
+    expect(rpc).toContain(
+      "const from = { clientId: ctx.clientId, answerSource: answerSourceOf(params) }",
+    );
+    expect(rpc).not.toMatch(/\.respond\(/);
+    const dispatchers = stripComments(await read("packages/gateway/src/ipc/server/dispatchers.ts"));
+    expect(dispatchers).toContain("dispatchComputerRpc(method, params, rpc, clientId)");
+
+    const assemble = stripComments(await read("packages/gateway/src/platform/assemble.ts"));
+    expect(assemble).toContain("cuEnvelopeConsent.requestFor(clientId, input, ttlMs)");
+    expect(assemble).toContain("cuActionConsent.requestFor(clientId, input, ttlMs)");
+    expect(assemble).toContain("cuEnvelopeConsent.setUnicast(");
+    expect(assemble).toContain("cuActionConsent.setUnicast(");
+    expect(assemble).not.toMatch(/cu(?:Envelope|Action)Consent\.setBroadcast\(/);
+    expect(assemble).toContain("cuEnvelopeConsent.onClientDisconnect(clientId)");
+    expect(assemble).toContain("cuActionConsent.onClientDisconnect(clientId)");
+  });
+
+  test("I35 (OR-MCU-1): only a cli caller may bind a session; runAsk binds only on a non-demo turn the platform resolves; the agent offers it per request", async () => {
+    const { COMPUTER_USE_OFFER_BY_KIND } = await import("./ipc/server/inline-handlers.ts");
+    expect({ ...COMPUTER_USE_OFFER_BY_KIND }).toEqual({
+      cli: true,
+      ui: false,
+      unknown: false,
+      mcp: false,
+      http: false,
+      chatops: false,
+      fleet: false,
+      push: false,
+    });
+    const runAsk = stripComments(await read("packages/gateway/src/engine/run-ask.ts"));
+    const at = runAsk.indexOf("function bindComputerUseIfOwner(");
+    const bind = runAsk.slice(at, runAsk.indexOf("\n}\n", at));
+    // A turn that NAMED a session drives it or fails explicitly (never a silent answer without it).
+    expect(bind).toContain("delete store.computerUse");
+    expect(bind).toContain("if (p.offerComputerUse !== true) {");
+    expect(bind).toContain("if (isDemo(p)) throw new ComputerUseTurnError(");
+    expect(bind).toContain("COMPUTER_USE_TURN_REFUSALS.notOpen");
+    expect(bind).toContain("COMPUTER_USE_TURN_REFUSALS.noAgent");
+    expect(runAsk).toContain(
+      'if (p.computerSessionId !== undefined) return "a computer-use turn bypasses the classifier";',
+    );
+    const withdraw = runAsk.slice(runAsk.indexOf("function withdrawOfferedExecutors("));
+    expect(withdraw.slice(0, withdraw.indexOf("\n}\n"))).toContain("delete store.computerUse");
+    const agent = stripComments(await read("packages/gateway/src/engine/agent.ts"));
+    expect(agent).toContain("const cu = getAgentRequestComputerUse();");
+    expect(agent).not.toMatch(/deps\.computerUse/);
+    const assemble = stripComments(await read("packages/gateway/src/platform/assemble.ts"));
+    const resolver = assemble.slice(assemble.indexOf("const computerUseFor = ("));
+    const r = resolver.slice(0, resolver.indexOf("\n  };\n"));
+    expect(r).toContain("if (!cuConfig.enabled) return undefined;");
+    expect(r).toContain("liveSessionLane(sessionId)");
+    expect(r).toContain("const runDeps: CuRunDeps");
+    expect(r).not.toContain("lanes");
+  });
 });
 
 describe("I36 — a browser-reachable file question never reaches the federation", () => {

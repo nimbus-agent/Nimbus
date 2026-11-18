@@ -300,6 +300,11 @@ export async function main(): Promise<void> {
       // The connector-write door: decided at the IPC entry (`CONNECTOR_WRITE_OFFER_BY_KIND`,
       // `cli`/`ui` only); `runAsk` also refuses it on a demo-rooted gateway.
       offerConnectorWriteTools: ctx.offerConnectorWriteTools === true,
+      // I35 (OR-MCU-1): a `cli` turn that named an open session may drive it; resolved by the
+      // platform so the binding's approvals go to this connection alone (OR-MCU-2).
+      offerComputerUse: ctx.offerComputerUse === true,
+      ...(ctx.computerSessionId === undefined ? {} : { computerSessionId: ctx.computerSessionId }),
+      computerUseFor: platform.computerUseFor,
       // B3 (R11): the door's KB-child guards read the same live accessor as the model-write source.
       getTribalKbConfig: () => platform.tribalKbConfig(),
     }),
@@ -347,6 +352,8 @@ export async function main(): Promise<void> {
       offerUserMcpTools: false,
       // Never on a ChatOps turn: a shared room is not the local owner.
       offerConnectorWriteTools: false,
+      // Never on a ChatOps turn: a shared room is not the local owner.
+      offerComputerUse: false,
       // Inert here (no model writes on ChatOps), but required so no construction site forgets it.
       getTribalKbConfig: () => platform.tribalKbConfig(),
     })),

@@ -156,6 +156,24 @@ async function rejectionOf(pending: Promise<unknown>): Promise<unknown> {
 }
 
 /** The single requestId a broker broadcast, captured through its own broadcast seam. */
+/** The same capture for a UNICAST (computer-use) broker; `clients` records who each prompt went to. */
+function captureUnicastIds(broker: {
+  setUnicast(fn: (c: string, m: string, p: unknown) => boolean): void;
+}): { readonly ids: string[]; readonly methods: string[]; readonly clients: string[] } {
+  const ids: string[] = [];
+  const methods: string[] = [];
+  const clients: string[] = [];
+  broker.setUnicast((clientId, method, params) => {
+    clients.push(clientId);
+    methods.push(method);
+    const id = (params as Record<string, unknown>)["requestId"];
+    if (typeof id !== "string") throw new Error("broker unicast without a requestId");
+    ids.push(id);
+    return true;
+  });
+  return { ids, methods, clients };
+}
+
 function captureRequestIds(broker: { setBroadcast(fn: (m: string, p: unknown) => void): void }): {
   readonly ids: string[];
   readonly methods: string[];
@@ -597,7 +615,7 @@ describe("computer.* — reached through the chain, answered on either broker", 
     actionConsent: CuActionConsentBroker,
   ): ComputerRpcCtx {
     return {
-      gateDeps: {} as ComputerRpcCtx["gateDeps"],
+      gateDepsFor: () => ({}) as ReturnType<ComputerRpcCtx["gateDepsFor"]>,
       envelopeConsent,
       actionConsent,
     };
@@ -606,9 +624,10 @@ describe("computer.* — reached through the chain, answered on either broker", 
   test("a per-ACTION approval is matched after the envelope broker declines it", async () => {
     const envelope = new CuEnvelopeConsentBroker();
     const action = new CuActionConsentBroker();
-    captureRequestIds(envelope);
-    const captured = captureRequestIds(action);
-    const decision = action.request(
+    captureUnicastIds(envelope);
+    const captured = captureUnicastIds(action);
+    const decision = action.requestFor(
+      "c1",
       {
         promptKind: "action",
         sessionId: "s1",
@@ -620,7 +639,7 @@ describe("computer.* — reached through the chain, answered on either broker", 
         actionsUsed: 0,
         maxActions: 5,
         modelDescription: null,
-      } as unknown as Parameters<CuActionConsentBroker["request"]>[0],
+      } as unknown as Parameters<CuActionConsentBroker["requestFor"]>[1],
       60_000,
     );
     expect(captured.methods).toEqual(["computer.actionRequest"]);
@@ -630,7 +649,7 @@ describe("computer.* — reached through the chain, answered on either broker", 
       await tryDispatchPhase4Rpc(
         ctx,
         "computer.approvalRespond",
-        { requestId: captured.ids[0], approved: true },
+        { requestId: captured.ids[0], approved: true, answerSource: "human" },
         "c1",
       ),
     ).toEqual({ matched: true });
@@ -647,7 +666,7 @@ describe("computer.* — reached through the chain, answered on either broker", 
 
     const boom = new Error("envelope broker exploded");
     class ThrowingEnvelope extends CuEnvelopeConsentBroker {
-      override respond(): boolean {
+      override respondFrom(): boolean {
         throw boom;
       }
     }
@@ -656,7 +675,7 @@ describe("computer.* — reached through the chain, answered on either broker", 
     });
     expect(
       await rejectionOf(
-        tryDispatchComputerRpc(throwing, "computer.approvalRespond", { requestId: "r" }),
+        tryDispatchComputerRpc(throwing, "computer.approvalRespond", { requestId: "r" }, "c1"),
       ),
     ).toBe(boom);
   });
@@ -665,9 +684,9 @@ describe("computer.* — reached through the chain, answered on either broker", 
     const { ctx } = harness({
       computerRpcCtx: computerCtx(new CuEnvelopeConsentBroker(), new CuActionConsentBroker()),
     });
-    expect(await tryDispatchComputerRpc(ctx, "computer.notAVerb", {})).toBe(phase4RpcSkipped);
+    expect(await tryDispatchComputerRpc(ctx, "computer.notAVerb", {}, "c1")).toBe(phase4RpcSkipped);
     const { ctx: unwired } = harness();
-    expect(await tryDispatchComputerRpc(unwired, "computer.sessionStatus", {})).toBe(
+    expect(await tryDispatchComputerRpc(unwired, "computer.sessionStatus", {}, "c1")).toBe(
       phase4RpcSkipped,
     );
   });

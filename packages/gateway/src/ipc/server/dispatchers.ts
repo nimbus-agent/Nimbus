@@ -1492,12 +1492,14 @@ export async function tryDispatchComputerRpc(
   ctx: ServerCtx,
   method: string,
   params: unknown,
+  clientId: string,
 ): Promise<unknown> {
   if (!method.startsWith("computer.")) return phase4RpcSkipped;
   const rpc = ctx.options.computerRpcCtx;
   if (rpc === undefined) return phase4RpcSkipped;
   try {
-    const out = await dispatchComputerRpc(method, params, rpc);
+    // The calling connection: its prompts go to it alone, and only its answer counts (I35, OR-MCU-2).
+    const out = await dispatchComputerRpc(method, params, rpc, clientId);
     if (out.kind === "hit") return out.value;
   } catch (e) {
     if (e instanceof ComputerRpcError) throw new RpcMethodError(e.rpcCode, e.message);

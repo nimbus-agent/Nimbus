@@ -8,6 +8,7 @@ import {
   type CuEnvelopeApprovalInput,
   CuEnvelopeConsentBroker,
 } from "../computer-use/cu-consent-broker.ts";
+import type { CuGateDeps } from "../computer-use/cu-gate.ts";
 import { DEFAULT_NIMBUS_COMPUTER_USE_TOML } from "../config/nimbus-toml.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { type ComputerRpcCtx, dispatchComputerRpc } from "./computer-rpc.ts";
@@ -27,12 +28,36 @@ afterEach(() => {
   for (const db of dbs.splice(0)) db.close();
 });
 
+/**
+ * The fixture a test builds: one connection's gate deps plus the two brokers. `dispatch` serves it
+ * as the per-connection ctx the transport now takes (I35, OR-MCU-2), calling as connection `c1`.
+ */
+interface FixtureCtx {
+  readonly gateDeps: CuGateDeps;
+  readonly envelopeConsent: CuEnvelopeConsentBroker;
+  readonly actionConsent: CuActionConsentBroker;
+}
+
+const CLIENT = "c1";
+
+function rpcCtxOf(fx: FixtureCtx): ComputerRpcCtx {
+  return {
+    envelopeConsent: fx.envelopeConsent,
+    actionConsent: fx.actionConsent,
+    gateDepsFor: () => fx.gateDeps,
+  };
+}
+
+function dispatch(method: string, params: unknown, fx: FixtureCtx, clientId = CLIENT) {
+  return dispatchComputerRpc(method, params, rpcCtxOf(fx), clientId);
+}
+
 type Seen = {
   readonly prompts: Array<CuEnvelopeApprovalInput | CuActionApprovalInput>;
   readonly shellIds: string[];
 };
 
-function makeTerminalCtx(): { ctx: ComputerRpcCtx; seen: Seen; db: Database } {
+function makeTerminalCtx(): { ctx: FixtureCtx; seen: Seen; db: Database } {
   const db = new Database(":memory:");
   dbs.push(db);
   runIndexedSchemaMigrations(db, 57);
@@ -40,7 +65,7 @@ function makeTerminalCtx(): { ctx: ComputerRpcCtx; seen: Seen; db: Database } {
   const actionConsent = new CuActionConsentBroker();
   brokers.push(envelopeConsent, actionConsent);
   const seen: Seen = { prompts: [], shellIds: [] };
-  const ctx: ComputerRpcCtx = {
+  const ctx: FixtureCtx = {
     envelopeConsent,
     actionConsent,
     gateDeps: {
@@ -90,8 +115,8 @@ function makeTerminalCtx(): { ctx: ComputerRpcCtx; seen: Seen; db: Database } {
   return { ctx, seen, db };
 }
 
-async function hit(method: string, params: unknown, ctx: ComputerRpcCtx): Promise<unknown> {
-  const out = await dispatchComputerRpc(method, params, ctx);
+async function hit(method: string, params: unknown, ctx: FixtureCtx): Promise<unknown> {
+  const out = await dispatch(method, params, ctx);
   if (out.kind !== "hit") throw new Error(`${method} missed`);
   return out.value;
 }

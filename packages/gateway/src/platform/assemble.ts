@@ -42,6 +42,7 @@ import type { ChatMessage, ReplyTarget } from "../chatops/types.ts";
 import { PairingWindowController } from "../clips/pairing-window.ts";
 import { reconcileOrphanedSessions } from "../computer-use/cu-boot-reconcile.ts";
 import { cuActionConsent, cuEnvelopeConsent } from "../computer-use/cu-consent-broker.ts";
+import { type CuGateDeps, type CuRunDeps, liveSessionLane } from "../computer-use/cu-gate.ts";
 import { openBrowserLane } from "../computer-use/cu-lanes/browser.ts";
 import {
   assertBrowserLaunchPolicy,
@@ -206,6 +207,7 @@ import {
 } from "../embedding/embedding-readiness.ts";
 import type { EmbeddingRuntime as ConcreteEmbeddingRuntime } from "../embedding/embedding-runtime.ts";
 import { readAgentLimitEnv, resolveAgentLimits, setAgentLimits } from "../engine/agent-limits.ts";
+import type { ComputerUseBinding } from "../engine/agent-request-context.ts";
 import { AskExplainRecorder } from "../engine/ask-explain-recorder.ts";
 import { delegatedApprovalBroker } from "../engine/delegated-approval-broker.ts";
 import { buildDelegatedRequestRemote } from "../engine/delegated-request-remote.ts";
@@ -4811,81 +4813,110 @@ export async function assemblePlatformServices(
   // gateway startup, and staying silent about it is what would make it a bug rather than an event.
   reconcileOrphanedCuSessionsOrWarn(db, syncLogger);
 
+  // I35 (OR-MCU-2): the gate deps are built PER CONNECTION, so the envelope prompt goes to the
+  // connection that OPENS a session, and every action prompt of that session to the same connection
+  // (the gate reads it from the session's open-time deps), and to no other. A fresh object per call
+  // keeps the `enforced` getter live (a spread would snapshot it).
+  const cuGateDepsFor = (clientId: string): CuGateDeps => ({
+    config: cuConfig,
+    get enforced() {
+      return policyGate.enforced();
+    },
+    db,
+    now: () => Date.now(),
+    newId: () => randomUUID(),
+    lanes: {
+      browser: {
+        resolveBrowserPath: resolveChromiumPath,
+        buildLaunchPolicy: buildChromiumLaunchPolicy,
+        assertLaunchable: assertBrowserLaunchPolicy,
+        openLane: (opts) => openBrowserLane(opts),
+      },
+      // THE ONLY PRODUCTION SITE that may name `openTerminalLane` (static rule D26(c)). Injecting
+      // it rather than importing the driver into `cu-gate.ts` is what keeps the gate testable with
+      // no shell present and clear of the driver-capability confinement.
+      terminal: {
+        defaultShellId: DEFAULT_SHELL_ID,
+        resolveShellPath: (shellId) => {
+          let shell: CuShell;
+          try {
+            shell = resolveShellById(shellId);
+          } catch {
+            // `CuShellError("ERR_CU_UNKNOWN_SHELL")`, converted to a STATUS rather than allowed
+            // to propagate: this seam's contract is to report what it found, and a throw crossing
+            // into the gate would be flattened to `ERR_CU_FAILED` by its outer catch.
+            return { status: "unknown_shell" };
+          }
+          const shellPath = shell.detect();
+          return shellPath === null
+            ? { status: "not_installed" }
+            : { status: "ok", shellPath, argv: shell.argv(), envOverlay: shell.envOverlay() };
+        },
+        buildLaunchPolicy: ({ sessionId, shellId, shellPath, cwd }) =>
+          buildTerminalLaunchPolicy({
+            sessionId,
+            shell: resolveShellById(shellId),
+            shellPath,
+            cwd,
+          }),
+        // Reuses the runner constructed at the top of this function rather than probing again:
+        // `createSandboxRunner` synchronously spawns the Windows helper with `--check-caps`
+        // (creating and deleting a throwaway AppContainer profile), and a second call pays that
+        // cost for an answer that cannot differ within one process.
+        assertLaunchable: assertTerminalLaunchable(sandboxRunner),
+        openLane: (opts) => openTerminalLane(opts),
+      },
+    },
+    // `CuGateDeps.requestApproval` takes the UNION of the two approval-input shapes; routed on
+    // the `promptKind` DISCRIMINANT. This used to probe `"seq" in input` — a structural property
+    // standing in for a tagged union, sound only because `seq` happened to exist on one shape and
+    // not the other. Adding a `seq` to the envelope input would have silently routed every
+    // session-open prompt to the ACTION broker, whose renderer draws a different prompt entirely:
+    // the owner would be asked to approve "a browser action" while the origin lists and budgets
+    // they were actually granting went unshown. `switch` on a literal makes a third prompt kind a
+    // compile error here instead.
+    requestApproval: (input) => {
+      const ttlMs = (ipcOpts.federationConsentTimeoutSeconds ?? 30) * 1000 + 5000;
+      switch (input.promptKind) {
+        case "envelope":
+          return cuEnvelopeConsent.requestFor(clientId, input, ttlMs);
+        case "action":
+          return cuActionConsent.requestFor(clientId, input, ttlMs);
+        default: {
+          const exhaustive: never = input;
+          throw new Error(`unrecognised computer-use approval kind: ${String(exhaustive)}`);
+        }
+      }
+    },
+  });
   ipcOpts.computerRpcCtx = {
     envelopeConsent: cuEnvelopeConsent,
     actionConsent: cuActionConsent,
-    gateDeps: {
+    gateDepsFor: cuGateDepsFor,
+  };
+  // A connection that goes away settles its own computer-use prompts as denials at once (OR-MCU-2).
+  ipcOpts.onClientDisconnected = (clientId) => {
+    cuEnvelopeConsent.onClientDisconnect(clientId);
+    cuActionConsent.onClientDisconnect(clientId);
+  };
+  // I35 (OR-MCU-1): the model may drive only a session the owner opened and THIS process holds
+  // open. Its RUN deps carry no lane spawner (the tool layer never gets `CuGateDeps`), and every
+  // action prompt still goes to the connection that opened the session (OR-MCU-2), never to the
+  // ask turn; the turn's own channel answers nothing.
+  const computerUseFor = (sessionId: string): ComputerUseBinding | undefined => {
+    if (!cuConfig.enabled) return undefined;
+    const lane = liveSessionLane(sessionId);
+    if (lane === undefined) return undefined;
+    const runDeps: CuRunDeps = {
       config: cuConfig,
       get enforced() {
         return policyGate.enforced();
       },
       db,
-      now: () => Date.now(),
-      newId: () => randomUUID(),
-      lanes: {
-        browser: {
-          resolveBrowserPath: resolveChromiumPath,
-          buildLaunchPolicy: buildChromiumLaunchPolicy,
-          assertLaunchable: assertBrowserLaunchPolicy,
-          openLane: (opts) => openBrowserLane(opts),
-        },
-        // THE ONLY PRODUCTION SITE that may name `openTerminalLane` (static rule D26(c)). Injecting
-        // it rather than importing the driver into `cu-gate.ts` is what keeps the gate testable with
-        // no shell present and clear of the driver-capability confinement.
-        terminal: {
-          defaultShellId: DEFAULT_SHELL_ID,
-          resolveShellPath: (shellId) => {
-            let shell: CuShell;
-            try {
-              shell = resolveShellById(shellId);
-            } catch {
-              // `CuShellError("ERR_CU_UNKNOWN_SHELL")`, converted to a STATUS rather than allowed
-              // to propagate: this seam's contract is to report what it found, and a throw crossing
-              // into the gate would be flattened to `ERR_CU_FAILED` by its outer catch.
-              return { status: "unknown_shell" };
-            }
-            const shellPath = shell.detect();
-            return shellPath === null
-              ? { status: "not_installed" }
-              : { status: "ok", shellPath, argv: shell.argv(), envOverlay: shell.envOverlay() };
-          },
-          buildLaunchPolicy: ({ sessionId, shellId, shellPath, cwd }) =>
-            buildTerminalLaunchPolicy({
-              sessionId,
-              shell: resolveShellById(shellId),
-              shellPath,
-              cwd,
-            }),
-          // Reuses the runner constructed at the top of this function rather than probing again:
-          // `createSandboxRunner` synchronously spawns the Windows helper with `--check-caps`
-          // (creating and deleting a throwaway AppContainer profile), and a second call pays that
-          // cost for an answer that cannot differ within one process.
-          assertLaunchable: assertTerminalLaunchable(sandboxRunner),
-          openLane: (opts) => openTerminalLane(opts),
-        },
-      },
-      // `CuGateDeps.requestApproval` takes the UNION of the two approval-input shapes; routed on
-      // the `promptKind` DISCRIMINANT. This used to probe `"seq" in input` — a structural property
-      // standing in for a tagged union, sound only because `seq` happened to exist on one shape and
-      // not the other. Adding a `seq` to the envelope input would have silently routed every
-      // session-open prompt to the ACTION broker, whose renderer draws a different prompt entirely:
-      // the owner would be asked to approve "a browser action" while the origin lists and budgets
-      // they were actually granting went unshown. `switch` on a literal makes a third prompt kind a
-      // compile error here instead.
-      requestApproval: (input) => {
-        const ttlMs = (ipcOpts.federationConsentTimeoutSeconds ?? 30) * 1000 + 5000;
-        switch (input.promptKind) {
-          case "envelope":
-            return cuEnvelopeConsent.request(input, ttlMs);
-          case "action":
-            return cuActionConsent.request(input, ttlMs);
-          default: {
-            const exhaustive: never = input;
-            throw new Error(`unrecognised computer-use approval kind: ${String(exhaustive)}`);
-          }
-        }
-      },
-    },
+      // Never asked: `runAction` prompts through the session's open-time channel.
+      requestApproval: async () => false,
+    };
+    return { session: { sessionId, lane }, gateDeps: runDeps };
   };
 
   // Multimodal I/O (S2). Only the org-policy accessor: the local `[multimodal] enabled` switch and
@@ -5481,11 +5512,12 @@ export async function assemblePlatformServices(
   // I35 (S2 slice 2): the computer-use approval prompts (session-open envelope + per-action) reach
   // the local owner via the same broadcast channel; they answer through computer.approvalRespond.
   // UNCONDITIONAL for the same reason as share/exec above.
-  cuEnvelopeConsent.setBroadcast((method, params) =>
-    ipc.broadcast(method, asBroadcastParams(params)),
+  // OR-MCU-2: UNICAST to the asking connection only, never a broadcast.
+  cuEnvelopeConsent.setUnicast((clientId, method, params) =>
+    ipc.notify(clientId, method, asBroadcastParams(params)),
   );
-  cuActionConsent.setBroadcast((method, params) =>
-    ipc.broadcast(method, asBroadcastParams(params)),
+  cuActionConsent.setUnicast((clientId, method, params) =>
+    ipc.notify(clientId, method, asBroadcastParams(params)),
   );
 
   bindFederationBroadcasts(ipc, federationBooted);
@@ -5530,6 +5562,7 @@ export async function assemblePlatformServices(
     hostActivity,
     toolgenRegistry,
     toolgenModelDoor,
+    computerUseFor,
     llmRegistry,
     connectorWriteDeps,
     embeddingReadiness,

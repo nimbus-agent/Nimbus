@@ -1208,16 +1208,15 @@ describe("runAction — the lane is re-checked after every await (TOCTOU)", () =
     const spy: Spy = { approvals: 0, actuations: 0, closes: 0 };
     let alive = true;
     const { deps: d } = deps({ openLane: async () => laneStub(spy, { alive: () => alive }) }, spy);
-    const sessionId = await openDefault(d);
+    // The action prompt goes through the channel the session was OPENED with (I35, OR-MCU-2).
+    let answer: CuGateDeps["requestApproval"] = d.requestApproval;
+    const sessionId = await openDefault({ ...d, requestApproval: (i) => answer(i) });
     // Dies while the owner is looking at the prompt.
-    const d2: CuGateDeps = {
-      ...d,
-      requestApproval: async () => {
-        alive = false;
-        return true;
-      },
+    answer = async () => {
+      alive = false;
+      return true;
     };
-    const out = await runAction({ sessionId, kind: "click", selector: "#go" }, d2);
+    const out = await runAction({ sessionId, kind: "click", selector: "#go" }, d);
     expect(out.outcome).toBe("terminated_target_lost");
     expect(spy.actuations).toBe(0);
     // TERMINATED, not merely refused: the session is evicted, so a follow-up finds no session at
@@ -1233,15 +1232,15 @@ describe("runAction — the lane is re-checked after every await (TOCTOU)", () =
       { openLane: async () => laneStub(spy, { alive: () => alive }) },
       spy,
     );
-    const sessionId = await openDefault(d);
-    const d2: CuGateDeps = {
-      ...d,
-      requestApproval: async () => {
-        alive = false;
-        return true;
-      },
+    // The action prompt goes through the channel the session was OPENED with (I35, OR-MCU-2).
+    let answer: CuGateDeps["requestApproval"] = d.requestApproval;
+    const sessionId = await openDefault({ ...d, requestApproval: (i) => answer(i) });
+    // Dies while the owner is looking at the prompt.
+    answer = async () => {
+      alive = false;
+      return true;
     };
-    await runAction({ sessionId, kind: "click", selector: "#go" }, d2);
+    await runAction({ sessionId, kind: "click", selector: "#go" }, d);
     const row = db
       .query<{ action_json: string; hitl_status: string }, []>(
         `SELECT action_json, hitl_status FROM audit_log WHERE action_type = 'computer.action' ORDER BY id DESC LIMIT 1`,
@@ -1481,8 +1480,8 @@ describe("terminal lane — the gate", () => {
 
   test("a denied ACTION approval writes nothing", async () => {
     const { deps: d, lane, prompts } = terminalDeps();
-    const sessionId = await openTerminal(d);
     // Deny only the per-action prompt, so the session is genuinely live when the write is refused.
+    // The opener's channel answers it (I35, OR-MCU-2).
     const denying: CuGateDeps = {
       ...d,
       requestApproval: async (input) => {
@@ -1490,8 +1489,38 @@ describe("terminal lane — the gate", () => {
         return input.promptKind !== "action";
       },
     };
-    const out = await runAction({ sessionId, kind: "terminal_write", text: "rm -rf /\n" }, denying);
+    const sessionId = await openTerminal(denying);
+    const out = await runAction({ sessionId, kind: "terminal_write", text: "rm -rf /\n" }, d);
     expect(out.outcome).toBe("denied_by_owner");
+    expect(lane.writes).toEqual([]);
+  });
+
+  test("an action prompt goes to the OPENER's channel, never to the caller's (I35, OR-MCU-2)", async () => {
+    const { deps: d, lane } = terminalDeps();
+    const toOpener: string[] = [];
+    const toCaller: string[] = [];
+    const sessionId = await openTerminal({
+      ...d,
+      requestApproval: async (input) => {
+        toOpener.push(input.promptKind);
+        return input.promptKind !== "action";
+      },
+    });
+    // A caller that could reach `computer.act` (or a model turn bound to the session) brings its own
+    // channel that would approve: it is never asked, and the opener's decline stands.
+    const out = await runAction(
+      { sessionId, kind: "terminal_write", text: "rm -rf /\n" },
+      {
+        ...d,
+        requestApproval: async (input) => {
+          toCaller.push(input.promptKind);
+          return true;
+        },
+      },
+    );
+    expect(out.outcome).toBe("denied_by_owner");
+    expect(toCaller).toEqual([]);
+    expect(toOpener).toEqual(["envelope", "action"]);
     expect(lane.writes).toEqual([]);
   });
 
