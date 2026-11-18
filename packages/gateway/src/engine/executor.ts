@@ -288,6 +288,10 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   // into the saved-workflow store. Gate site: ipc/workflow-import-rpc.ts through
   // `engine/owner-only-approval.ts` (no delegation, a human answer only). Never delegable (I20).
   "workflow.import",
+  // Model access to a saved generated tool (S4, I60): one model-initiated call, approved by a person
+  // over the verbatim input. Gate site: toolgen/toolgen-model-door.ts through
+  // `engine/owner-only-approval.ts` (no delegation, a human answer only). Never delegable (I20).
+  "tool.model.invoke",
   "connector.addMcp",
   "data.export",
   "connector.reindex",
@@ -723,12 +727,18 @@ function promptTextOf(action: PlannedAction): string | undefined {
  * fields). One predicate for the three sites (`otherDisplayPayload`, `auditedBody`, `promptTextOf`).
  */
 export function usesPromptText(type: string): boolean {
-  return type === "pack.install" || isStandingRuleActionType(type) || type === "workflow.import";
+  return (
+    type === "pack.install" ||
+    isStandingRuleActionType(type) ||
+    type === "workflow.import" ||
+    type === "tool.model.invoke"
+  );
 }
 
 /**
  * The types only the LOCAL owner may approve, whatever delegate is active (I20): a trust root, local
- * code, a pack install, a connector write opt-in, a standing rule, a workflow import.
+ * code, a pack install, a connector write opt-in, a standing rule, a workflow import, a model call of
+ * a saved generated tool.
  */
 export function isOwnerOnlyActionType(type: string): boolean {
   return (
@@ -736,6 +746,7 @@ export function isOwnerOnlyActionType(type: string): boolean {
     type === "pack.install" ||
     type === "connector.writes.enable" ||
     type === "workflow.import" ||
+    type === "tool.model.invoke" ||
     isStandingRuleActionType(type) ||
     type.startsWith("extension.")
   );

@@ -3,6 +3,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { redactAuditPayload } from "../audit/format-audit-payload.ts";
 import { MAX_PARAMS_JSON_BYTES } from "../db/tool-call-log.ts";
 import type { PointInTimeFacts } from "../index/item-history-at.ts";
+import type { ToolgenModelAsk } from "../toolgen/toolgen-model-door.ts";
 import type { CollectedToolCall } from "./ask-explain-types.ts";
 import type { ToolExecutor } from "./executor.ts";
 
@@ -42,6 +43,13 @@ export type AgentRequestContext = {
    */
   connectorWriteExecutor?: ToolExecutor;
   /**
+   * The owner-only, human-only approval a model call of a saved generated tool runs behind (S4, I60,
+   * `toolgen/toolgen-model-door.ts`). Present ONLY on the local owner's non-demo `cli`/`ui` turn,
+   * set by `runAsk` from the same decision as `connectorWriteExecutor`. Absent, no generated tool is
+   * listed and a stale call is refused.
+   */
+  toolgenModelAsk?: ToolgenModelAsk;
+  /**
    * The instant a point-in-time turn (`nimbus ask --at`, Phase 10 IC1) answers for. Present ONLY on such
    * a turn: `toolsFor` then offers the three time-aware tools and nothing else, and the index tools pass
    * the instant to the index. Set by the IPC entry and again by `runAsk`, so the store always agrees with
@@ -69,6 +77,11 @@ export function getAgentRequestUserMcpExecutor(): ToolExecutor | undefined {
 /** This turn's connector-write door executor, or `undefined` outside an owner `cli`/`ui` turn. */
 export function getAgentRequestConnectorWriteExecutor(): ToolExecutor | undefined {
   return agentRequestContext.getStore()?.connectorWriteExecutor;
+}
+
+/** This turn's generated-tool approval, or `undefined` outside an owner `cli`/`ui` turn (I60). */
+export function getAgentRequestToolgenModelAsk(): ToolgenModelAsk | undefined {
+  return agentRequestContext.getStore()?.toolgenModelAsk;
 }
 
 /** This turn's point-in-time instant, or `undefined` outside a turn / for an ordinary turn. */

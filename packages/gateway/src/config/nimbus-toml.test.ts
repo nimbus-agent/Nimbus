@@ -1981,7 +1981,22 @@ describe("[tool_generation]", () => {
       maxToolsPerSession: 3,
       maxRequestsPerTool: 50,
       requestTimeoutMs: 10_000,
+      modelTools: [],
     });
+  });
+
+  test("model_tools keeps exact ids in order, de-duplicated, and drops anything that is not an id", () => {
+    const cfg = parseNimbusToolGenerationToml(
+      ["[tool_generation]", 'model_tools = ["tg_a", "tg-b", "tg_a", "tg_*", "", "a b"]'].join("\n"),
+    );
+    expect(cfg.modelTools).toEqual(["tg_a", "tg-b"]);
+  });
+
+  test("a model_tools value that does not parse offers nothing", () => {
+    const cfg = parseNimbusToolGenerationToml(
+      ["[tool_generation]", 'model_tools = "tg_a"'].join("\n"),
+    );
+    expect(cfg.modelTools).toEqual([]);
   });
 
   test("an absent section yields the defaults", () => {
@@ -2004,6 +2019,7 @@ describe("[tool_generation]", () => {
       maxToolsPerSession: 7,
       maxRequestsPerTool: 9,
       requestTimeoutMs: 250,
+      modelTools: [],
     });
   });
 
@@ -2024,6 +2040,7 @@ describe("[tool_generation]", () => {
       "enabled",
       "maxRequestsPerTool",
       "maxToolsPerSession",
+      "modelTools",
       "requestTimeoutMs",
     ]);
   });

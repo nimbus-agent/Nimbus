@@ -2909,10 +2909,27 @@ together. Design:
 a SAVED tool through the new `toolgen.invoke` IPC method — CLI-only and LAN-forbidden like every
 other `toolgen.*` method, and absent from the Tauri allowlist. It runs the saved artifact's real,
 signature-verified body in a fresh confined spawn and returns the result. See below for its full
-contract. **What has not moved:** the engine's `deps.toolgen` is still deliberately left unwired in
-`gateway-main.ts`, so the model itself still cannot call a generated tool — `nimbus tool run` is
-CLI/owner-only, the same scope bound `nimbus exec` holds under I33. An ephemeral (created-but-not-
-saved) tool is still not invocable at all.
+contract. An ephemeral (created-but-not-saved) tool is not invocable at all.
+
+**The model can call a saved tool you list (S4, I60).** Add the tool's id to
+`[tool_generation] model_tools` and the conversational model is offered it on your own `nimbus ask`
+(or desktop) turn, never on a ChatOps, HTTP, MCP-agent, fleet, demo or `--at` turn:
+
+```toml
+[tool_generation]
+enabled     = true
+model_tools = ["tg_weather_lookup"]   # exact saved tool ids; DEFAULT [] (none offered)
+```
+
+Every call the model makes asks you first, at the terminal (or desktop window) that asked the
+question: the prompt names the tool, the saved artifact's digest, its description, every host it
+may send to and every host that receives a credential, and the exact input with every control,
+bidi and zero-width character shown escaped (nothing redacted). Only a person's answer counts:
+`--yes`, a script and an old client decline, and no delegate is ever asked. A tool re-saved while
+the prompt is open does not run. Your org policy can switch it off with
+`[policy.capabilities.ai_v2] toolgen_model_access = false`. Bounds: you approve the input, not the
+tool's behaviour; what the host returns goes to the model (and to its remote vendor) enveloped,
+without being shown to you first; one prompt per call.
 
 **Not shipped:** agent-initiated tool proposal (`allow_agent_initiated` + `allowed_hosts`).
 

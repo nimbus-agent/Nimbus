@@ -296,6 +296,27 @@ describe("serialise cleanup", () => {
 });
 
 describe("invokeSavedTool audit", () => {
+  test("a model call's row names the owner approval it ran under, on success and on refusal (I60)", async () => {
+    const rows: AppendAuditEntryFields[] = [];
+    const audit = (row: AppendAuditEntryFields): void => {
+      rows.push(row);
+    };
+    const ok = deps({
+      audit,
+      spawn: async () => ({
+        call: async () => "r",
+        close: async () => {},
+        describe: async () => ({ name: "", description: "", inputSchema: {} }),
+      }),
+    });
+    expect(
+      (await invokeSavedTool({ toolId: "t1", input: { q: "x" }, approvalAuditId: 42 }, ok)).status,
+    ).toBe("executed");
+    await invokeSavedTool({ toolId: "t1", input: {}, approvalAuditId: 43 }, deps({ audit }));
+    await invokeSavedTool({ toolId: "t1", input: { q: "x" } }, ok);
+    expect(rows.map((r) => JSON.parse(r.actionJson)["approvedBy"])).toEqual([42, 43, undefined]);
+  });
+
   test("exactly one row per outcome, and neither input nor output appears in it", async () => {
     const rows: AppendAuditEntryFields[] = [];
     const d = deps({

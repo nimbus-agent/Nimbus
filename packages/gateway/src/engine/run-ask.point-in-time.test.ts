@@ -345,6 +345,7 @@ describe("runAsk with pointInTimeMs", () => {
     const store: AgentRequestContext = {
       userMcpExecutor: {} as never,
       connectorWriteExecutor: {} as never,
+      toolgenModelAsk: (async () => ({ approved: true, auditId: 1 })) as never,
     };
     await agentRequestContext.run(store, async () => {
       await runAsk(
@@ -358,6 +359,7 @@ describe("runAsk with pointInTimeMs", () => {
     });
     expect(store.userMcpExecutor).toBeUndefined();
     expect(store.connectorWriteExecutor).toBeUndefined();
+    expect(store.toolgenModelAsk).toBeUndefined();
     expect(store.pointInTimeMs).toBe(AT);
     // The next, ordinary turn on the same store clears the mark.
     await agentRequestContext.run(store, async () => {
@@ -365,6 +367,38 @@ describe("runAsk with pointInTimeMs", () => {
     });
     expect(store.pointInTimeMs).toBeUndefined();
     idx.close();
+  });
+});
+
+describe("runAsk and the generated-tool approval slot (I60)", () => {
+  async function slotAfter(over: Record<string, unknown>): Promise<AgentRequestContext> {
+    const idx = seed();
+    const store: AgentRequestContext = {
+      toolgenModelAsk: (async () => ({ approved: true, auditId: 1 })) as never,
+    };
+    await agentRequestContext.run(store, async () => {
+      await runAsk(params(idx, { llmRouter: fakeRouter([]), ...over }));
+    });
+    idx.close();
+    return store;
+  }
+
+  test("the local owner's non-demo cli/ui turn carries the owner-only approval", async () => {
+    const store = await slotAfter({ offerConnectorWriteTools: true });
+    expect(typeof store.toolgenModelAsk).toBe("function");
+  });
+
+  test("any other turn clears a reused store's approval", async () => {
+    expect((await slotAfter({ offerConnectorWriteTools: false })).toolgenModelAsk).toBeUndefined();
+    expect((await slotAfter({})).toolgenModelAsk).toBeUndefined();
+  });
+
+  test("a demo-rooted gateway never carries it, even on an owner turn", async () => {
+    const store = await slotAfter({
+      offerConnectorWriteTools: true,
+      paths: { ...paths, demo: true },
+    });
+    expect(store.toolgenModelAsk).toBeUndefined();
   });
 });
 
