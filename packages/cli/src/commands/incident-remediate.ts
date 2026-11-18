@@ -290,6 +290,8 @@ export function reportRemediateOutcome(out: RemediateReply, sink: Sink): number 
     sink.out(
       `Done. Action ${clean(out.actionId)}.${out.undoable ? ` Undo with: nimbus incident undo ${clean(out.actionId)}` : ""}\n`,
     );
+    // The gateway ran it but could not record it (its proposal row changed meanwhile): say so, still exit 0.
+    if (out.reason !== undefined) sink.err(`Note: ${clean(out.reason)}\n`);
     return 0;
   }
   const why = out.nonHuman ? NON_HUMAN_NOTE : clean(out.reason ?? "no reason given");

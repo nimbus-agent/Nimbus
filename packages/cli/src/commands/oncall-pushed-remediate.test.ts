@@ -154,6 +154,24 @@ describe("run", () => {
     expect(s.err).toContain(`nimbus incident remediate ${PROPOSAL.recordId}`);
   });
 
+  test("a run the gateway could not record says so and still exits 0", async () => {
+    const c = fake({
+      "oncall.pushedGet": brief(PROPOSAL),
+      "incident.remediate": {
+        proposalId: "x",
+        actionId: "act_0000000000000002",
+        status: "executed",
+        reason: "the action ran, but it cannot be undone with nimbus incident undo",
+        nonHuman: false,
+        undoable: false,
+      },
+    });
+    const { s, sink: k } = sink();
+    expect(await runOncallPushedWith(c, ARGS, k, false, TTY)).toBe(0);
+    expect(s.out).not.toContain("Undo with");
+    expect(s.err).toContain("Note: the action ran");
+  });
+
   test("a decline that did not come from a person says so", async () => {
     const c = fake({
       "oncall.pushedGet": brief(PROPOSAL),

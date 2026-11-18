@@ -74,7 +74,9 @@ type Harness = {
   makeCalls(): number;
 };
 
-function harness(opts: { deployment?: boolean } = {}): Harness {
+function harness(
+  opts: { deployment?: boolean; now?: () => number; onPrompt?: () => void } = {},
+): Harness {
   const prompts: string[] = [];
   const confirms: string[] = [];
   const dispatched: PlannedAction[] = [];
@@ -84,11 +86,13 @@ function harness(opts: { deployment?: boolean } = {}): Harness {
   const coordinator: ConsentCoordinator = {
     requestConsent: async (_c, p) => {
       prompts.push(p.prompt);
+      opts.onPrompt?.();
       return { approved: answer.approved, answerSource: answer.source as "human" };
     },
     requestConfirmedConsent: async (_c, p) => {
       prompts.push(p.prompt);
       confirms.push(p.confirmText);
+      opts.onPrompt?.();
       return {
         approved: answer.approved,
         typed: p.confirmText,
@@ -162,7 +166,7 @@ function harness(opts: { deployment?: boolean } = {}): Harness {
     makeExecutor,
     bindingsFor: () => ({ argocdApps: ["pay-app"], deployEnvironments: ["prod"] }),
     dependsOn: () => new Map([["checkout", ["payments"]]]),
-    now: () => NOW,
+    now: opts.now ?? (() => NOW),
     newActionId: (() => {
       let n = 0;
       return () => `act_${String(++n).padStart(16, "0")}`;
@@ -774,5 +778,55 @@ describe("the proposal a push carries (IC5b)", () => {
     expect(out.status).toBe("executed");
     expect(h.prompts.length).toBe(1);
     expect(h.prompts[0]).toContain("Proposed by: the incident engine");
+  });
+});
+
+describe("a remediation waiting for the owner is never swept as stale (IC5b review)", () => {
+  const LATER = NOW + 31 * 60 * 1000;
+
+  test("a push and a listing past the 30-minute bound, while the prompt is open, leave it executing; it records and can be undone", async () => {
+    let t = NOW;
+    let sawDuringPrompt: string | undefined;
+    let id = "";
+    const h = harness({
+      now: () => t,
+      onPrompt: () => {
+        t = LATER;
+        h.svc.topProposal(h.recordId);
+        h.svc.proposals(h.recordId);
+        sawDuringPrompt = getProposal(db, id)?.status;
+      },
+    });
+    id = pick(h, "rollback_deploy");
+    const out = await h.svc.remediate({ ref: h.recordId, proposalId: id, clientId: "c" });
+    expect(sawDuringPrompt).toBe("executing");
+    expect(out).toMatchObject({ status: "executed", undoable: true });
+    expect(out.reason).toBeUndefined();
+    expect(getProposal(db, id)?.status).toBe("executed");
+  });
+
+  test("a row left executing by an earlier process (not in flight here) is still failed by the sweep", () => {
+    const h = harness({ now: () => LATER });
+    const id = pick(h, "acknowledge");
+    db.run("UPDATE incident_proposal SET status = 'executing', updated_at_ms = ? WHERE id = ?", [
+      NOW - 1,
+      id,
+    ]);
+    h.svc.proposals(h.recordId);
+    expect(getProposal(db, id)?.status).not.toBe("executing");
+  });
+
+  test("a write that ran but could not be recorded is reported as executed, not undoable, with the reason", async () => {
+    let id = "";
+    const h = harness({
+      onPrompt: () => {
+        db.run("UPDATE incident_proposal SET status = 'failed' WHERE id = ?", [id]);
+      },
+    });
+    id = pick(h, "rollback_deploy");
+    const out = await h.svc.remediate({ ref: h.recordId, proposalId: id, clientId: "c" });
+    expect(out.status).toBe("executed");
+    expect(out.undoable).toBe(false);
+    expect(out.reason).toContain("cannot be undone");
   });
 });

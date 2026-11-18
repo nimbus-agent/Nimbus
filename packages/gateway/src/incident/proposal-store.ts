@@ -75,7 +75,9 @@ export type SyncOutcome = {
  * executing rows older than the stale bound fail; due `proposed` rows expire; `proposed` rows no longer derived
  * are superseded; each draft is inserted or refreshed (a `proposed` row keeps its original expiry; a refreshed
  * row records the record version it was derived from). With `revive`, a derived `expired`, `superseded`,
- * `denied` or `failed` row becomes `proposed` again with a fresh TTL.
+ * `denied` or `failed` row becomes `proposed` again with a fresh TTL. The stale sweeps exist for a gateway that
+ * crashed mid-run, so a row in `live` (a proposal THIS process is still running or undoing, however long the
+ * owner takes to answer) is never failed or released by them.
  */
 export function syncProposals(
   db: Database,
@@ -85,21 +87,25 @@ export function syncProposals(
     readonly drafts: readonly ProposalDraft[];
     readonly nowMs: number;
     readonly revive: boolean;
+    /** Proposal ids this process is running or undoing now: never swept as stale. */
+    readonly live?: readonly string[];
   },
 ): SyncOutcome {
   const { recordId, version, drafts, nowMs, revive } = input;
+  const live = input.live ?? [];
+  const notLive = live.length === 0 ? "" : ` AND id NOT IN (${live.map(() => "?").join(",")})`;
   const tx = db.transaction((): SyncOutcome => {
     const staleExecuting = dbRun(
       db,
       `UPDATE incident_proposal SET status = 'failed', updated_at_ms = ?
-        WHERE status = 'executing' AND updated_at_ms < ?`,
-      [nowMs, nowMs - STALE_EXECUTING_MS],
+        WHERE status = 'executing' AND updated_at_ms < ?${notLive}`,
+      [nowMs, nowMs - STALE_EXECUTING_MS, ...live],
     ).changes;
     const staleUndoing = dbRun(
       db,
       `UPDATE incident_proposal SET undo_status = NULL, updated_at_ms = ?
-        WHERE undo_status = 'undoing' AND updated_at_ms < ?`,
-      [nowMs, nowMs - STALE_EXECUTING_MS],
+        WHERE undo_status = 'undoing' AND updated_at_ms < ?${notLive}`,
+      [nowMs, nowMs - STALE_EXECUTING_MS, ...live],
     ).changes;
     const expired = dbRun(
       db,

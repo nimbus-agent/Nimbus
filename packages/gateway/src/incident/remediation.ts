@@ -175,6 +175,9 @@ export function createRemediation(deps: RemediationDeps) {
   const mintActionId = deps.newActionId ?? (() => `act_${randomBytes(8).toString("hex")}`);
   const rowOf = (toolId: string): ConnectorWriteRow | undefined =>
     rows.find((r) => r.toolId === toolId);
+  // Proposals this process is running or undoing right now. The store's stale sweeps are for a CRASHED gateway, so
+  // these are excluded however long the owner takes to answer the prompt (a push or a listing runs the sweep too).
+  const inFlight = new Set<string>();
 
   function requireReady(): void {
     if (deps.ready !== undefined && !deps.ready()) {
@@ -271,6 +274,7 @@ export function createRemediation(deps: RemediationDeps) {
       drafts: derived.drafts,
       nowMs: now(),
       revive,
+      live: [...inFlight],
     });
     return {
       recordId: rec.recordId,
@@ -353,6 +357,7 @@ export function createRemediation(deps: RemediationDeps) {
       drafts: derived.drafts,
       nowMs: now(),
       revive: false,
+      live: [...inFlight],
     });
     const draft = derived.drafts.find((d) => d.id === p.proposalId);
     const stored = getProposal(db, p.proposalId);
@@ -387,6 +392,7 @@ export function createRemediation(deps: RemediationDeps) {
     // 4. From the stored row, never from the caller: the tool, its input and its label.
     let captured: Readonly<Record<string, string>> | undefined;
     let nonHuman = false;
+    inFlight.add(stored.id);
     try {
       const row = rowOf(stored.tool_id);
       if (row === undefined) throw new Error("the write row for this proposal no longer exists");
@@ -407,8 +413,21 @@ export function createRemediation(deps: RemediationDeps) {
       });
       const result = await executor.execute(action);
       if (result.status === "ok") {
-        finishProposal(db, stored.id, "executed", now(), captured);
+        const recorded = finishProposal(db, stored.id, "executed", now(), captured);
         const decl = row.reversibility;
+        if (!recorded) {
+          // The write WAS dispatched, so it is reported as executed (never as failed, which would invite a second
+          // run), but the stored row no longer says so: nothing was captured, so it cannot be undone from here.
+          return {
+            proposalId: stored.id,
+            actionId,
+            status: "executed",
+            reason:
+              "the action ran, but its proposal record had changed meanwhile, so it was not recorded and cannot be undone with nimbus incident undo",
+            nonHuman,
+            undoable: false,
+          };
+        }
         return {
           proposalId: stored.id,
           actionId,
@@ -436,6 +455,8 @@ export function createRemediation(deps: RemediationDeps) {
         nonHuman,
         undoable: false,
       };
+    } finally {
+      inFlight.delete(stored.id);
     }
   }
 
@@ -491,6 +512,7 @@ export function createRemediation(deps: RemediationDeps) {
       throw new RemediationError("ERR_PROPOSAL_BUSY", "an undo of that action is already running");
     }
     let nonHuman = false;
+    inFlight.add(stored.id);
     try {
       const inverseId = proposalIdFor(stored.record_id, "undo", inverseRow.toolId, inverseInput);
       const action = buildRemediationAction(stored.record_id, inverseId, inverseRow, inverseInput);
@@ -516,6 +538,8 @@ export function createRemediation(deps: RemediationDeps) {
     } catch (err) {
       finishUndo(db, p.actionId, "retry", now());
       return { actionId: p.actionId, status: "failed", reason: failText(err), nonHuman };
+    } finally {
+      inFlight.delete(stored.id);
     }
   }
 
