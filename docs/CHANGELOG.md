@@ -18,6 +18,14 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-11-18: incident runbooks (Phase 10 IC6; schema V104; invariant I57 (c); static D46(g)).**
+  What you can do now: write runbooks as TOML files in `<configDir>/runbooks/`; `nimbus incident runbook <id> [--runbook <name>] [--step N | --done N]` lists the ones that match an incident and runs one step at a time behind your own prompt (`Proposed by: runbook <name>, step N`; a typed confirmation for a Wave 4 row; no delegation or standing rule). Parameters are filled from the record's typed fields only, never from alert text; a title match is a plain substring, never a regular expression. This completes the incident engine (IC1 to IC10).
+  Stated bounds: parameters are checked for shape, not against the connector's input schema; `nimbus incident undo` does not reverse a runbook step; Bun's TOML reader needs dates and times quoted; the Phase 16 skill-pack runbooks are not built.
+
+- **2026-11-18: desktop incident proposals and findings (Phase 10 IC10b; no migration or new invariant; Tauri allowlist 135 → 137).**
+  What you can do now: the desktop Incidents page shows a record's remediation proposals with their evidence and the exact `nimbus incident remediate <record> --pick <proposal>` command to copy, and the open findings. `incident.proposals` and `incident.findings` are renderer-callable; the desktop never runs, undoes or switches advisory mode, and a desktop listing never revives a refused or expired proposal.
+  Stated bounds: the findings list shows the first 50 open findings.
+
 - **2026-11-18: approve a pushed brief's remediation from the terminal (Phase 10 IC5b; no migration, invariant, static rule, HITL type or allowlist change; I57 (b) text extended).**
   What you can do now: a pushed incident brief ends with a `## Proposed remediation` block when its record has an open proposal, and `nimbus oncall pushed <id> --remediate` runs it through the same owner prompt as `nimbus incident remediate --pick` (typed confirmation for a Wave 4 row). The push itself approves nothing; a stale or expired (2 h) proposal is refused.
   Not built: the ChatOps Remediate action (an open owner question: the ChatOps approve flow is the I20 delegation path, which I57 (b) forbids) and a desktop view of the proposal.
