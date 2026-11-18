@@ -1298,6 +1298,8 @@ nimbus incident update inc_0123456789abcdef               # a stakeholder update
 nimbus incident update inc_0123456789abcdef --audience engineers --out update.txt
 nimbus incident update inc_0123456789abcdef --send slack:C0123ABC --from update.txt  # you approve at the prompt
 nimbus incident update --queued                           # drafts the scribe queued
+nimbus incident runbook inc_0123456789abcdef              # your runbooks that match the record
+nimbus incident runbook inc_0123456789abcdef --runbook pay-rollback --step 3  # you approve at the prompt
 ```
 
 | Form | What it does |
@@ -1315,6 +1317,38 @@ nimbus incident update --queued                           # drafts the scribe qu
 | `update <id> --send slack:<channel-id>\|teams:<team-id>/<19:...channel-id> [--from <file>]` | Posts the draft (or the file, at most 12,000 characters) as ONE channel message through the Slack or Teams post write, as your own action linked to the record: refused before any prompt for a channel ChatOps listens on, a broadcast mention or remote content (and whenever the ChatOps bindings cannot be read); otherwise the typed preview appears in this terminal and only a person's answer counts (no `--yes`). A Slack destination must be a channel (`C...`) or private channel (`G...`) id; a DM or user id is a usage error. Exits `0` when sent, `1` when refused or declined (nothing posted), and `1` with "Delivery is uncertain" when the call failed after it was sent (a timeout, an oversized reply): the message may have been posted, so check the channel before sending it again. |
 | `update --queued [--json]` | The drafts the scribe queued (`[incident.scribe] enabled = true`, default off: one per new record version, newest 200, never posted by itself), each with the command that renders it. A queued entry holds only the record id, the version and the time; an erased record's entry disappears. |
 | `show <id> [--json]` | The record's Markdown (the live `## Cascade` block follows it when the record is one of two or more open records inside a 30-minute window; it is never stored in the record) (the summary, the service, the change candidate with its pull request and CI run, chat, earlier incidents, who is on call, concurrent records, history, then `## Gaps` and `## Data freshness`) and a footer `Record <id> v<N>, assembled <UTC> (<age> ago), last checked <UTC>`. An id that is a trigger item with no record (it was below the automatic severity rule, or not yet assembled) is assembled on demand and the output says so. `--json` prints the `incident.get` result. |
+| `runbook <id> [--runbook <name>] [--json]` | Phase 10 IC6: your runbooks (`<configDir>/runbooks/*.toml`) that match the record, each step with its kind, tool, parameters (as written, placeholders and all), declared reversibility and wave for an action, and its state on this record (`done`, `ok`, `denied`, `failed`, `running`). `--runbook` shows that one runbook even when it does not match (marked so). Files the gateway refused are listed by name with the reason. Reads only; no terminal needed. |
+| `runbook <id> --runbook <name> --step <n>` | Runs read or action step `n` on this connection. The gateway fills the parameters from the record's typed fields only (`{service}`, `{trigger.source}`, `{trigger.provider_id}`, `{opened_at}`, `{opened_at_ms}`, `{deploy.sha}`, `{binding.argocd_app}`, `{binding.deploy_environment}`; a title or any other provider text can never be a parameter, and a value with characters outside `A-Z a-z 0-9 . _ : / @ + -` refuses the step) and runs ONE action through the normal gate, so the prompt (`Proposed by: runbook <name>, step <n>`, the typed preview, the target's current state, the reversibility and, for a Wave 4 write, the typed confirmation) appears in this terminal. A read step prints the connector's reply (at most 16 KiB; it is not stored). Needs a terminal; `--yes`, `-y` and `--script-consent-source` are usage errors, and the gateway declines any answer that did not come from a person. An action step is refused with `ERR_ADVISORY_MODE` in advisory mode. Exits `0` when done, `1` when declined, refused or failed, `2` without a terminal. |
+| `runbook <id> --runbook <name> --done <n>` | Marks check step `n` done on this record. A read or action step cannot be marked done (`ERR_RUNBOOK_STEP_KIND`). |
+
+A runbook file:
+
+```toml
+name = "pay-rollback"
+description = "Roll the payments app back"
+
+[match]
+services = ["payments"]        # bound service ids; empty means any
+sources = ["pagerduty"]        # trigger sources; empty means any
+title = "latency|errors"       # a regular expression over the trigger title
+
+[[steps]]
+kind = "check"
+text = "Open the payments dashboard"
+
+[[steps]]
+kind = "read"
+service = "argocd"
+tool = "argocd_get"
+params = { name = "{binding.argocd_app}" }
+
+[[steps]]
+kind = "action"
+tool = "argocd_app_rollback"
+params = { name = "{binding.argocd_app}", id = 6 }
+```
+
+A runbook cannot set approval behaviour (`approve`, `auto`, `yes`, `standing`, `confirm`, `delegate` and the like refuse the file), name a bound write (the commits, the infrastructure applies, the Kubernetes apply) or a write refused on every door, or read with a write tool. An edited runbook starts with no step state. Write a date or a time as a quoted string: the file is refused otherwise.
 
 | `postmortem <id> [--out <file>] [--force] [--template <file>] [--synthesize] [--json]` | A post-mortem draft for a resolved incident (Phase 10 IC7a), written to `--out` (default `<dataDir>/postmortems/<record id>.md`, directory `0700`, file `0600`; it refuses to replace a file unless `--force`, so your edits are not overwritten). Sections: Summary, Impact window, Timeline, Candidate causes (candidates only, never a stated cause), Contributing factors, What we did, Action items, Decision log (every Nimbus action linked to the record, with the decision, who answered and the prompt as the audit row kept it), `## Gaps`, `## Data freshness`. Deterministic and byte-identical for one record version; no model unless `--synthesize` (the gateway's `[agents].synthesis` decides local or remote; Timeline, Decision log and the disclosures are kept verbatim and any failure gives the deterministic draft; the outcome is printed on stderr). A record whose trigger is not closed exits `1` with `ERR_POSTMORTEM_NOT_RESOLVED`. `--template <file>`: Markdown with `{{summary}}`, `{{impact_window}}`, `{{timeline}}`, `{{candidate_causes}}`, `{{contributing_factors}}`, `{{what_we_did}}`, `{{action_items}}`, `{{decision_log}}` (each at most once; anything else in braces, a control or bidi character or a file over 64 KiB is refused); `## Gaps` and `## Data freshness` are always appended. `--json` prints the reply instead of writing. |
 | `postmortem <id> --push notion --parent <page-id>`<br>`postmortem <id> --push confluence --space <key> [--parent <id>]`<br>`[--file <file>] [--title <t>]` | Pushes your edited draft (default: the draft path above) to a new page through the existing page-create write rows, as YOUR action: the typed preview of the create appears here as an ordinary approval (this command has no `--yes`), the tribal-KB and remote-content refusals apply first, and a denial writes nothing and exits `1`. The first line `# title` is the page title (or `--title`). Notion creates a page with its title and then appends the body as a second approval; if you decline the second, or it fails, the page exists WITHOUT its body, the command prints its id and exits `1`. A Markdown image is refused; raw HTML is escaped; only http and https links keep their target; Notion takes at most 100 blocks. Both actions carry the incident link, so they appear in `nimbus incident timeline` and `nimbus audit replay`. |

@@ -927,12 +927,7 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     "incident findings and the anomaly baseline (Phase 10 IC8)",
     INCIDENT_PREDICT_V103_SQL,
   ),
-  simpleStep(
-    103,
-    104,
-    "incident runbook step state (Phase 10 IC6)",
-    INCIDENT_RUNBOOK_V104_SQL,
-  ),
+  simpleStep(103, 104, "incident runbook step state (Phase 10 IC6)", INCIDENT_RUNBOOK_V104_SQL),
 ];
 
 /**

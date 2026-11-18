@@ -142,7 +142,11 @@ function harness(
       prompts.push(p.prompt);
       confirms.push(p.confirmText);
       await opts.onPrompt?.();
-      return { approved: answer.approved, typed: p.confirmText, answerSource: answer.source as "human" };
+      return {
+        approved: answer.approved,
+        typed: p.confirmText,
+        answerSource: answer.source as "human",
+      };
     },
     rejectAllPending(): void {},
     pendingCount: () => 0,
@@ -189,8 +193,16 @@ function harness(
   };
   const base = buildRecord({ boundService: "payments", openedAtMs: NOW - 60_000 });
   const record =
-    opts.deployment === true ? { ...base, change: { ...base.change, deployment: DEPLOYMENT } } : base;
-  const up = upsertIncidentRecord(db, { record, markdown: "m", recordSha256: "h", citedServices: [], nowMs: 1 });
+    opts.deployment === true
+      ? { ...base, change: { ...base.change, deployment: DEPLOYMENT } }
+      : base;
+  const up = upsertIncidentRecord(db, {
+    record,
+    markdown: "m",
+    recordSha256: "h",
+    citedServices: [],
+    nowMs: 1,
+  });
   let n = 0;
   const svc = createRunbooks({
     db,
@@ -234,7 +246,13 @@ describe("listing", () => {
     expect(out.advisory).toBe(false);
     const steps = out.runbooks[0]?.steps ?? [];
     expect(steps[0]).toEqual({ n: 1, kind: "check", text: "Open the dashboard", status: null });
-    expect(steps[1]).toMatchObject({ n: 2, kind: "read", service: "argocd", tool: "argocd_get", status: null });
+    expect(steps[1]).toMatchObject({
+      n: 2,
+      kind: "read",
+      service: "argocd",
+      tool: "argocd_get",
+      status: null,
+    });
     expect(steps[2]).toMatchObject({
       n: 3,
       kind: "action",
@@ -254,8 +272,12 @@ describe("listing", () => {
   test("no config directory means no runbooks; an unknown record or runbook is refused", async () => {
     const h = harness({ configDir: undefined });
     expect(h.svc.list(h.recordId).runbooks).toEqual([]);
-    expect((await rejection(() => h.svc.list("inc_ffffffffffffffff"))).code).toBe("ERR_INCIDENT_NOT_FOUND");
-    expect((await rejection(() => harness().svc.list(h.recordId, "nope"))).code).toBe("ERR_RUNBOOK_NOT_FOUND");
+    expect((await rejection(() => h.svc.list("inc_ffffffffffffffff"))).code).toBe(
+      "ERR_INCIDENT_NOT_FOUND",
+    );
+    expect((await rejection(() => harness().svc.list(h.recordId, "nope"))).code).toBe(
+      "ERR_RUNBOOK_NOT_FOUND",
+    );
     expect((await rejection(() => harness().svc.list(h.recordId, "Bad Name"))).code).toBe(
       "ERR_RUNBOOK_NOT_FOUND",
     );
@@ -265,7 +287,12 @@ describe("listing", () => {
 describe("an action step, end to end through the real gate", () => {
   test("interpolates typed values, shows the runbook proposer line, types the confirm text and dispatches once", async () => {
     const h = harness();
-    const out = await h.svc.run({ ref: h.recordId, runbook: "pay-rollback", step: 3, clientId: "cli-1" });
+    const out = await h.svc.run({
+      ref: h.recordId,
+      runbook: "pay-rollback",
+      step: 3,
+      clientId: "cli-1",
+    });
     expect(out).toEqual({
       runbook: "pay-rollback",
       step: 3,
@@ -296,24 +323,41 @@ describe("an action step, end to end through the real gate", () => {
     expect(row.action_json).not.toContain('"origin"');
     expect(h.egress.length).toBeGreaterThanOrEqual(2);
     const state = listRunbookSteps(db, h.recordId, "pay-rollback", storedSha());
-    expect(state.map((s) => [s.step, s.status, s.action_id])).toEqual([[3, "ok", "act_0000000000000001"]]);
+    expect(state.map((s) => [s.step, s.status, s.action_id])).toEqual([
+      [3, "ok", "act_0000000000000001"],
+    ]);
   });
 
   test("a denial is recorded denied; an approval that did not come from a person is flagged", async () => {
     const h = harness();
     h.setAnswer({ approved: false });
-    const denied = await h.svc.run({ ref: h.recordId, runbook: "pay-rollback", step: 3, clientId: "cli-1" });
+    const denied = await h.svc.run({
+      ref: h.recordId,
+      runbook: "pay-rollback",
+      step: 3,
+      clientId: "cli-1",
+    });
     expect(denied.status).toBe("denied");
     expect(h.dispatched.map((a) => a.type)).toEqual(["argocd.before.read"]);
     h.setAnswer({ approved: true, source: "auto" });
-    const auto = await h.svc.run({ ref: h.recordId, runbook: "pay-rollback", step: 3, clientId: "cli-1" });
+    const auto = await h.svc.run({
+      ref: h.recordId,
+      runbook: "pay-rollback",
+      step: 3,
+      clientId: "cli-1",
+    });
     expect(auto).toMatchObject({ status: "denied", nonHuman: true });
     expect(h.svc.list(h.recordId).runbooks[0]?.steps[2]?.status).toBe("denied");
   });
 
   test("a connector failure is recorded failed with its text flattened", async () => {
     const h = harness({ throwOn: "argocd.app.rollback" });
-    const out = await h.svc.run({ ref: h.recordId, runbook: "pay-rollback", step: 3, clientId: "cli-1" });
+    const out = await h.svc.run({
+      ref: h.recordId,
+      runbook: "pay-rollback",
+      step: 3,
+      clientId: "cli-1",
+    });
     expect(out.status).toBe("failed");
     expect(out.reason).not.toContain("\u0007");
     expect(h.svc.list(h.recordId).runbooks[0]?.steps[2]?.status).toBe("failed");
@@ -321,7 +365,9 @@ describe("an action step, end to end through the real gate", () => {
 
   test("a parameter with no typed value refuses before any executor is built", async () => {
     const h = harness();
-    const e = await rejection(h.svc.run({ ref: h.recordId, runbook: "pay-rollback", step: 4, clientId: "c" }));
+    const e = await rejection(
+      h.svc.run({ ref: h.recordId, runbook: "pay-rollback", step: 4, clientId: "c" }),
+    );
     expect(e.code).toBe("ERR_RUNBOOK_PARAM_REFUSED");
     expect(e.message).toBe("{deploy.sha}: the incident has no correlated deployment");
     expect(h.makes()).toBe(0);
@@ -329,7 +375,12 @@ describe("an action step, end to end through the real gate", () => {
 
   test("the same step runs once the record has the typed value", async () => {
     const ok = harness({ deployment: true });
-    const out = await ok.svc.run({ ref: ok.recordId, runbook: "pay-rollback", step: 4, clientId: "c" });
+    const out = await ok.svc.run({
+      ref: ok.recordId,
+      runbook: "pay-rollback",
+      step: 4,
+      clientId: "c",
+    });
     expect(out.status).toBe("ok");
     expect(ok.dispatched[1]?.payload).toMatchObject({ input: { sha: SHA } });
   });
@@ -337,12 +388,19 @@ describe("an action step, end to end through the real gate", () => {
   test("advisory mode refuses an action step before anything; a read still runs", async () => {
     const h = harness();
     setAdvisory(db, true, NOW);
-    const e = await rejection(h.svc.run({ ref: h.recordId, runbook: "pay-rollback", step: 3, clientId: "c" }));
+    const e = await rejection(
+      h.svc.run({ ref: h.recordId, runbook: "pay-rollback", step: 3, clientId: "c" }),
+    );
     expect(e.code).toBe("ERR_ADVISORY_MODE");
     expect(h.makes()).toBe(0);
     expect(h.dispatched).toEqual([]);
     expect(h.svc.list(h.recordId).advisory).toBe(true);
-    const read = await h.svc.run({ ref: h.recordId, runbook: "pay-rollback", step: 2, clientId: "c" });
+    const read = await h.svc.run({
+      ref: h.recordId,
+      runbook: "pay-rollback",
+      step: 2,
+      clientId: "c",
+    });
     expect(read.status).toBe("ok");
   });
 
@@ -354,17 +412,26 @@ describe("an action step, end to end through the real gate", () => {
     const h = harness({ onPrompt: () => gate });
     const first = h.svc.run({ ref: h.recordId, runbook: "pay-rollback", step: 3, clientId: "c" });
     await new Promise((r) => setTimeout(r, 10));
-    const e = await rejection(h.svc.run({ ref: h.recordId, runbook: "pay-rollback", step: 3, clientId: "c" }));
+    const e = await rejection(
+      h.svc.run({ ref: h.recordId, runbook: "pay-rollback", step: 3, clientId: "c" }),
+    );
     expect(e.code).toBe("ERR_RUNBOOK_STEP_BUSY");
     release();
     expect((await first).status).toBe("ok");
-    const again = await h.svc.run({ ref: h.recordId, runbook: "pay-rollback", step: 3, clientId: "c" });
+    const again = await h.svc.run({
+      ref: h.recordId,
+      runbook: "pay-rollback",
+      step: 3,
+      clientId: "c",
+    });
     expect(again.status).toBe("ok");
   });
 
   test("a gateway that cannot build an executor refuses", async () => {
     const h = harness({ ready: () => false });
-    const e = await rejection(h.svc.run({ ref: h.recordId, runbook: "pay-rollback", step: 2, clientId: "c" }));
+    const e = await rejection(
+      h.svc.run({ ref: h.recordId, runbook: "pay-rollback", step: 2, clientId: "c" }),
+    );
     expect(e.code).toBe("ERR_RUNBOOK_UNAVAILABLE");
   });
 });
@@ -372,7 +439,12 @@ describe("an action step, end to end through the real gate", () => {
 describe("a read step", () => {
   test("is a <service>.runbook.read of the named tool, with no prompt, and its result is returned once", async () => {
     const h = harness();
-    const out = await h.svc.run({ ref: h.recordId, runbook: "pay-rollback", step: 2, clientId: "c" });
+    const out = await h.svc.run({
+      ref: h.recordId,
+      runbook: "pay-rollback",
+      step: 2,
+      clientId: "c",
+    });
     expect(out).toMatchObject({ kind: "read", status: "ok", result: ARGO_REPLY });
     expect(h.prompts).toEqual([]);
     expect(h.dispatched).toHaveLength(1);
@@ -389,7 +461,12 @@ describe("a read step", () => {
 
   test("a result over the cap is withheld from the reply", async () => {
     const h = harness({ readReply: { blob: "x".repeat(RUNBOOK_READ_RESULT_MAX + 1) } });
-    const out = await h.svc.run({ ref: h.recordId, runbook: "pay-rollback", step: 2, clientId: "c" });
+    const out = await h.svc.run({
+      ref: h.recordId,
+      runbook: "pay-rollback",
+      step: 2,
+      clientId: "c",
+    });
     expect(out).toMatchObject({ status: "ok", resultWithheld: true });
     expect(out.result).toBeUndefined();
   });
@@ -404,30 +481,44 @@ describe("check steps, step numbers and matching", () => {
       status: "done",
     });
     expect(h.svc.list(h.recordId).runbooks[0]?.steps[0]?.status).toBe("done");
-    expect((await rejection(h.svc.run({ ref: h.recordId, runbook: "pay-rollback", step: 1, clientId: "c" }))).code).toBe(
-      "ERR_RUNBOOK_STEP_KIND",
-    );
-    expect((await rejection(() => h.svc.done({ ref: h.recordId, runbook: "pay-rollback", step: 3 }))).code).toBe(
-      "ERR_RUNBOOK_STEP_KIND",
-    );
+    expect(
+      (
+        await rejection(
+          h.svc.run({ ref: h.recordId, runbook: "pay-rollback", step: 1, clientId: "c" }),
+        )
+      ).code,
+    ).toBe("ERR_RUNBOOK_STEP_KIND");
+    expect(
+      (await rejection(() => h.svc.done({ ref: h.recordId, runbook: "pay-rollback", step: 3 })))
+        .code,
+    ).toBe("ERR_RUNBOOK_STEP_KIND");
   });
 
   test("a step outside the runbook and a runbook that does not match are refused", async () => {
     const h = harness();
     for (const step of [0, 5, 1.5]) {
-      expect((await rejection(() => h.svc.done({ ref: h.recordId, runbook: "pay-rollback", step }))).code).toBe(
-        "ERR_RUNBOOK_STEP_NOT_FOUND",
-      );
+      expect(
+        (await rejection(() => h.svc.done({ ref: h.recordId, runbook: "pay-rollback", step })))
+          .code,
+      ).toBe("ERR_RUNBOOK_STEP_NOT_FOUND");
     }
-    expect((await rejection(() => h.svc.done({ ref: h.recordId, runbook: "checkout-only", step: 1 }))).code).toBe(
-      "ERR_RUNBOOK_NOT_MATCHED",
-    );
+    expect(
+      (await rejection(() => h.svc.done({ ref: h.recordId, runbook: "checkout-only", step: 1 })))
+        .code,
+    ).toBe("ERR_RUNBOOK_NOT_MATCHED");
     writeFileSync(
       join(dir, "runbooks", "other.toml"),
-      OTHER.replace('services = ["checkout"]', 'sources = ["jira"]').replace('kind = "check"\ntext = "x"', 'kind = "read"\nservice = "argocd"\ntool = "argocd_get"'),
+      OTHER.replace('services = ["checkout"]', 'sources = ["jira"]').replace(
+        'kind = "check"\ntext = "x"',
+        'kind = "read"\nservice = "argocd"\ntool = "argocd_get"',
+      ),
     );
     expect(
-      (await rejection(h.svc.run({ ref: h.recordId, runbook: "checkout-only", step: 1, clientId: "c" }))).code,
+      (
+        await rejection(
+          h.svc.run({ ref: h.recordId, runbook: "checkout-only", step: 1, clientId: "c" }),
+        )
+      ).code,
     ).toBe("ERR_RUNBOOK_NOT_MATCHED");
   });
 

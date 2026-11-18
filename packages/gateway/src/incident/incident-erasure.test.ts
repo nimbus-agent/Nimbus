@@ -13,6 +13,7 @@ import {
   pruneIncidentRecordsWithBriefs,
 } from "./incident-erasure.ts";
 import { upsertIncidentRecord } from "./incident-store.ts";
+import { markRunbookStepDone } from "./runbook-step-store.ts";
 
 const dbs: Database[] = [];
 afterEach(() => {
@@ -66,7 +67,12 @@ describe("eraseIncidentDataForService", () => {
     expect(preview).toEqual({ recordsDeleted: 1, pushedBriefsDeleted: 1 });
     expect(briefIds(d)).toHaveLength(3); // the preview deletes nothing
     const r = eraseIncidentDataForService(d, "slack");
-    expect(r).toEqual({ recordsDeleted: 1, pushedBriefsDeleted: 1, proposalsDeleted: 0 });
+    expect(r).toEqual({
+      recordsDeleted: 1,
+      pushedBriefsDeleted: 1,
+      proposalsDeleted: 0,
+      runbookStepsDeleted: 0,
+    });
     expect(briefIds(d)).toEqual(["jira:J1", "pagerduty:P2"]);
     expect(d.query("SELECT count(*) AS n FROM incident_record").get()).toEqual({ n: 2 });
     expect(d.query("SELECT count(*) AS n FROM incident_record_version").get()).toEqual({ n: 2 });
@@ -83,6 +89,7 @@ describe("eraseIncidentDataForService", () => {
       recordsDeleted: 1,
       pushedBriefsDeleted: 2,
       proposalsDeleted: 0,
+      runbookStepsDeleted: 0,
     });
     expect(briefIds(d)).toEqual(["jira:J1"]);
   });
@@ -128,6 +135,7 @@ describe("pruneIncidentRecordsWithBriefs", () => {
       recordsDeleted: 0,
       pushedBriefsDeleted: 0,
       proposalsDeleted: 0,
+      runbookStepsDeleted: 0,
     });
     expect(
       d.query("SELECT count(*) AS n FROM pushed_brief WHERE brief_markdown LIKE '%Slack%'").get(),
@@ -214,5 +222,24 @@ describe("IC5a: proposals follow an OWNER erasure, not retention", () => {
     pruneIncidentRecordsWithBriefs(d, 9_999_999_999_999);
     expect((d.query("SELECT count(*) AS n FROM incident_record").get() as { n: number }).n).toBe(0);
     expect(proposals(d)).toBe(1);
+  });
+
+  test("IC6: an owner erasure deletes the erased records' runbook step state; retention keeps it", () => {
+    const d = db();
+    const id = seed(d, "pagerduty:P1", 1);
+    const key = { recordId: id, runbook: "pay", sha256: "a".repeat(64), step: 1 };
+    markRunbookStepDone(d, key, 1);
+    markRunbookStepDone(d, { ...key, step: 2 }, 1);
+    const steps = (): number =>
+      (d.query("SELECT count(*) AS n FROM incident_runbook_step").get() as { n: number }).n;
+    pruneIncidentRecordsWithBriefs(d, 9_999_999_999_999);
+    expect(steps()).toBe(2);
+    const e = db();
+    const id2 = seed(e, "pagerduty:P1", 1);
+    markRunbookStepDone(e, { ...key, recordId: id2 }, 1);
+    expect(eraseIncidentDataForService(e, "slack")).toMatchObject({ runbookStepsDeleted: 1 });
+    expect(
+      (e.query("SELECT count(*) AS n FROM incident_runbook_step").get() as { n: number }).n,
+    ).toBe(0);
   });
 });

@@ -100,14 +100,18 @@ export function placeholderValue(
       return record.trigger.providerId;
     case "opened_at": {
       const ms = record.trigger.opened.ms;
-      return ms === null ? { refused: "the incident has no open time" } : new Date(ms).toISOString();
+      return ms === null
+        ? { refused: "the incident has no open time" }
+        : new Date(ms).toISOString();
     }
     case "opened_at_ms": {
       const ms = record.trigger.opened.ms;
       return ms === null ? { refused: "the incident has no open time" } : String(ms);
     }
     case "deploy.sha":
-      return record.change.deployment?.sha ?? { refused: "the incident has no correlated deployment" };
+      return (
+        record.change.deployment?.sha ?? { refused: "the incident has no correlated deployment" }
+      );
     case "binding.argocd_app":
       return bindings === undefined
         ? { refused: "the service has no configuration" }

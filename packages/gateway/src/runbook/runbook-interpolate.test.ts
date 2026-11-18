@@ -46,7 +46,9 @@ describe("untypedPlaceholder (load time)", () => {
   });
 
   test("a provider free-text field, an unknown name and a stray brace are refused", () => {
-    expect(untypedPlaceholder({ t: "{trigger.title}" })).toContain("{trigger.title} is not a typed");
+    expect(untypedPlaceholder({ t: "{trigger.title}" })).toContain(
+      "{trigger.title} is not a typed",
+    );
     expect(untypedPlaceholder({ t: ["ok", { x: "{chat}" }] })).toContain("{chat}");
     expect(untypedPlaceholder({ t: "a { b" })).toBe("a parameter has an unmatched brace");
     expect(untypedPlaceholder({ t: "a } b" })).toBe("a parameter has an unmatched brace");
@@ -72,7 +74,9 @@ describe("placeholderValue", () => {
     expect(placeholderValue("service", r, BINDINGS)).toEqual({
       refused: "the incident is not bound to a service",
     });
-    expect(placeholderValue("opened_at", r, BINDINGS)).toEqual({ refused: "the incident has no open time" });
+    expect(placeholderValue("opened_at", r, BINDINGS)).toEqual({
+      refused: "the incident has no open time",
+    });
     expect(placeholderValue("opened_at_ms", r, BINDINGS)).toEqual({
       refused: "the incident has no open time",
     });
@@ -85,7 +89,9 @@ describe("placeholderValue", () => {
     expect(placeholderValue("binding.deploy_environment", r, undefined)).toEqual({
       refused: "the service has no configuration",
     });
-    expect(placeholderValue("binding.argocd_app", r, { argocdApps: [], deployEnvironments: [] })).toEqual({
+    expect(
+      placeholderValue("binding.argocd_app", r, { argocdApps: [], deployEnvironments: [] }),
+    ).toEqual({
       refused: "the service declares no Argo CD application",
     });
     expect(
@@ -93,14 +99,22 @@ describe("placeholderValue", () => {
         argocdApps: [],
         deployEnvironments: ["a", "b"],
       }),
-    ).toEqual({ refused: "the service declares 2 deploy environments, so {binding.*} is ambiguous" });
+    ).toEqual({
+      refused: "the service declares 2 deploy environments, so {binding.*} is ambiguous",
+    });
   });
 });
 
 describe("interpolateParams (run time)", () => {
   test("substitutes inside text, keeps numbers and booleans, and walks lists and tables", () => {
     const out = interpolateParams(
-      { name: "{binding.argocd_app}", id: 6, dry: false, tags: ["svc:{service}"], nested: { sha: "{deploy.sha}" } },
+      {
+        name: "{binding.argocd_app}",
+        id: 6,
+        dry: false,
+        tags: ["svc:{service}"],
+        nested: { sha: "{deploy.sha}" },
+      },
       record({ deploy: true }),
       BINDINGS,
     );

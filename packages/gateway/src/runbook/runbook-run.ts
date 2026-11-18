@@ -82,7 +82,12 @@ export type RunbooksDeps = {
 };
 
 export type StepView =
-  | { readonly n: number; readonly kind: "check"; readonly text: string; readonly status: string | null }
+  | {
+      readonly n: number;
+      readonly kind: "check";
+      readonly text: string;
+      readonly status: string | null;
+    }
   | {
       readonly n: number;
       readonly kind: "read";
@@ -220,7 +225,15 @@ export function createRunbooks(deps: RunbooksDeps) {
     if (s.kind === "check") return { n, kind: "check", text: s.text, status };
     const actionId = st?.action_id ?? null;
     if (s.kind === "read") {
-      return { n, kind: "read", service: s.service, tool: s.tool, params: s.params, status, actionId };
+      return {
+        n,
+        kind: "read",
+        service: s.service,
+        tool: s.tool,
+        params: s.params,
+        status,
+        actionId,
+      };
     }
     const row = rowOf(s.tool);
     return {
@@ -279,7 +292,10 @@ export function createRunbooks(deps: RunbooksDeps) {
     }
     const rec = requireRecord(p.ref);
     if (!runbookMatches(rb, rec.record)) {
-      throw new RunbookError("ERR_RUNBOOK_NOT_MATCHED", `runbook ${rb.name} does not match this incident`);
+      throw new RunbookError(
+        "ERR_RUNBOOK_NOT_MATCHED",
+        `runbook ${rb.name} does not match this incident`,
+      );
     }
     markRunbookStepDone(
       db,
@@ -356,9 +372,16 @@ export function createRunbooks(deps: RunbooksDeps) {
     }
     const rec = requireRecord(p.ref);
     if (!runbookMatches(rb, rec.record)) {
-      throw new RunbookError("ERR_RUNBOOK_NOT_MATCHED", `runbook ${rb.name} does not match this incident`);
+      throw new RunbookError(
+        "ERR_RUNBOOK_NOT_MATCHED",
+        `runbook ${rb.name} does not match this incident`,
+      );
     }
-    const interpolated = interpolateParams(step.params, rec.record, deps.bindingsFor(rec.record.binding.service));
+    const interpolated = interpolateParams(
+      step.params,
+      rec.record,
+      deps.bindingsFor(rec.record.binding.service),
+    );
     if (!interpolated.ok) {
       throw new RunbookError("ERR_RUNBOOK_PARAM_REFUSED", interpolated.reason);
     }

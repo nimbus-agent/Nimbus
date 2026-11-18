@@ -85,7 +85,9 @@ function stringField(where: string, v: unknown, max: number): string {
   if (typeof v !== "string" || v.length === 0 || v.length > max) {
     refuse(`${where} must be a non-empty string of at most ${String(max)} characters`);
   }
-  if (/[\u0000-\u001f\u007f]/u.test(v)) refuse(`${where} may not hold control characters`);
+  if (Array.from(v).some((c) => c < " " || c === "\u007f")) {
+    refuse(`${where} may not hold control characters`);
+  }
   return v;
 }
 
@@ -93,7 +95,8 @@ function stringList(where: string, v: unknown, re: RegExp): string[] {
   if (v === undefined) return [];
   if (!Array.isArray(v) || v.length > 50) refuse(`${where} must be a list of at most 50 strings`);
   return v.map((x: unknown) => {
-    if (typeof x !== "string" || !re.test(x)) refuse(`${where}: ${JSON.stringify(x)} is not allowed`);
+    if (typeof x !== "string" || !re.test(x))
+      refuse(`${where}: ${JSON.stringify(x)} is not allowed`);
     return x;
   });
 }
@@ -121,8 +124,10 @@ function parseMatch(v: unknown): RunbookMatch {
 
 function plainParam(where: string, v: unknown, depth: number): RunbookParam {
   if (typeof v === "string" || typeof v === "boolean" || typeof v === "number") return v;
-  if (depth >= PARAMS_MAX_DEPTH) refuse(`${where}: nested more than ${String(PARAMS_MAX_DEPTH)} deep`);
-  if (Array.isArray(v)) return v.map((x: unknown, i) => plainParam(`${where}[${String(i)}]`, x, depth + 1));
+  if (depth >= PARAMS_MAX_DEPTH)
+    refuse(`${where}: nested more than ${String(PARAMS_MAX_DEPTH)} deep`);
+  if (Array.isArray(v))
+    return v.map((x: unknown, i) => plainParam(`${where}[${String(i)}]`, x, depth + 1));
   if (isTable(v)) {
     const out: Record<string, RunbookParam> = {};
     for (const [k, x] of Object.entries(v)) {
@@ -224,7 +229,9 @@ export function parseRunbookText(
   const stem = file.replace(/\.toml$/u, "");
   const name = raw["name"] === undefined ? stem : raw["name"];
   if (typeof name !== "string" || !RUNBOOK_NAME_RE.test(name)) {
-    refuse("name must be 1-64 lower-case letters, digits and hyphens, starting with a letter or digit");
+    refuse(
+      "name must be 1-64 lower-case letters, digits and hyphens, starting with a letter or digit",
+    );
   }
   const description =
     raw["description"] === undefined
@@ -290,7 +297,10 @@ export function loadRunbooks(
       seen.add(rb.name);
       runbooks.push(rb);
     } catch (e) {
-      errors.push({ file, reason: e instanceof RunbookRefusal ? e.message : "the file could not be read" });
+      errors.push({
+        file,
+        reason: e instanceof RunbookRefusal ? e.message : "the file could not be read",
+      });
     }
   }
   return { runbooks, errors };
