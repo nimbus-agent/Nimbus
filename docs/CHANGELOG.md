@@ -18,6 +18,55 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
 
 ## Post-Phase-6 deliveries
 
+- **2026-11-18: approve a pushed brief's remediation from the terminal (Phase 10 IC5b; no migration, invariant, static rule, HITL type or allowlist change; I57 (b) text extended).**
+  What you can do now: a pushed incident brief ends with a `## Proposed remediation` block when its record has an open proposal, and `nimbus oncall pushed <id> --remediate` runs it through the same owner prompt as `nimbus incident remediate --pick` (typed confirmation for a Wave 4 row). The push itself approves nothing; a stale or expired (2 h) proposal is refused.
+  Not built: the ChatOps Remediate action (an open owner question: the ChatOps approve flow is the I20 delegation path, which I57 (b) forbids) and a desktop view of the proposal.
+
+- **2026-11-18: incident status updates and the scribe (Phase 10 IC9b; no migration, allowlist change or new invariant).**
+  What you can do now: `nimbus incident update <id>` drafts a stakeholder or engineer update from an incident record with no model; `--send slack:<channel>|teams:<team>/<channel>` posts it, or an edited file, as your own channel message behind the typed preview, linked to the record in the audit and egress ledgers. `[incident.scribe] enabled = true` (default off) queues a draft for every new record version with a counts-only notification and never posts (`nimbus incident update --queued`).
+  Stated bounds: a Slack destination must be a channel id (DMs and users are refused); a send that fails after dispatch reports delivery as uncertain; no model draft; the scribe drafts the stakeholder audience only.
+
+- **2026-11-17: incident predictions (Phase 10 IC8; schema V103; static D46(f); I57 (a) text extended).**
+  What you can do now: `nimbus incident findings` lists what the expectation radar (`[[incident.expect]]`) and the hourly anomaly baseline (new error issues, alerts and failed CI runs per service, `[incident] anomaly_z`) noticed. Findings never act; you get a counts-only notification for an overdue expectation and, when you are on call for the service, for an anomaly. The sync anomaly detector now survives a restart, and deploy risk counts open Sentry, Monte Carlo and Bigeye records.
+  Stated bounds: no seasonality; a new service has no baseline at first.
+
+- **2026-11-17: post-mortem drafts (Phase 10 IC7a; no migration or new invariant; static D39(e) and D46(e) lists extended).**
+  What you can do now: `nimbus incident postmortem <id>` drafts a post-mortem for a resolved incident record from the local index (no model unless `--synthesize`), and `--push confluence|notion` publishes your edited file behind the usual approval.
+  Stated bounds: a Notion push is two approvals and is refused over 100 blocks; Bigeye has no closed state, so no Bigeye post-mortem.
+
+- **2026-11-17: remediation proposals, remediate, undo and advisory mode (Phase 10 IC5a; schema V102; invariant I57 (b); static D46(c)).**
+  What you can do now: `nimbus incident remediate <id>` lists proposals for an incident record (roll back the correlated Argo CD deploy, repeat what worked last time on the service, acknowledge or close the alert), each with evidence, a blast radius, a confidence and its reversibility first; `--pick n` runs one behind the owner's prompt; `nimbus incident undo <act_id>` runs a reversible action's declared inverse; `nimbus incident advisory on|off|status` refuses every remediation while on.
+  Stated bounds: reversible means the inverse can be run, not that the world is as before; confidence is not a probability; no dry run is available.
+
+- **2026-11-17: technical debt from incident evidence (Phase 10 IC7b).**
+  What you can do now: `nimbus incident debt` lists code that at least two incidents pointed at through their change-lane pull requests and that nobody has committed to for the untouched period, read from the local git history of your configured roots.
+
+- **2026-11-17: incident sections in the handoff, and `nimbus incident investigate` (Phase 10 IC9a).**
+  What you can do now: `nimbus oncall handoff` lists the incident records opened, resolved, still open and smouldering during the shift, and `nimbus incident investigate <id>` reads Sentry issues, other open records, linked actions and leads from the local index, with no model and no live call.
+
+- **2026-11-17: the desktop Incidents page (Phase 10 IC10a; Tauri allowlist 132 -> 135).**
+  What you can do now: a read-only `/incidents` page lists incident records and shows a record's brief, cascade, versions and timeline. Proposals and findings are not shown yet (IC10b).
+
+- **2026-11-17: signed workflow import and export (Team-owned workflow pipelines, Reading A; schema V101; invariant I59; static D50).**
+  What you can do now: `nimbus workflow export` signs a saved workflow; `nimbus workflow import` verifies the signature and the canonical deterministic steps, shows the exact steps, and writes only after your own answer at the prompt (never `--yes`, a script or a delegate). Replace needs `--replace`, a changed signer `--accept-signer-change`, an older bundle is refused by a per-signer floor, and an import never creates a schedule or a standing rule.
+
+- **2026-11-17: the incident timeline, cascade ranking and `nimbus audit replay` (Phase 10 IC4; static D46(e)).**
+  What you can do now: `nimbus incident timeline <id>`, `nimbus incident list --cascade` and a cascade block in `incident show` and the pushed brief rank one root candidate among open alerts; incident-linked actions carry the link and their approval prompt in the audit chain, and `nimbus audit replay <incident-id>` rebuilds what Nimbus did for an incident with both hash chains verified.
+
+- **2026-11-17 (v11.0.0, breaking): the agent door enforces (Phase 28 AD3b; I28 and I58 amended; static D49(a) extended, D49(f) retired).**
+  Read this first: an outside MCP agent now proposes only connector writes you approved for agents by name (`nimbus connector writes enable <service> --door agent --approve <tool-id>`). The 47 types the earlier act door accepted with no approval (AD3a first shipped the warning in v10.59.0) and unapproved `--model` user-MCP tools are refused; mail sends cannot be approved. An unreadable config layer now refuses every knowledge-base page write.
+
+- **2026-11-16: the Developer role pack is bundled (Phase 28 AD8).**
+  What you can do now: `nimbus pack install developer` installs the bundled `developer` 1.0.0 pack under the usual approval; it only sets which briefs are visible and grants no write, credential or approval.
+
+- **2026-11-16: `nimbus pre-mortem` for Linear projects (Phase 10 PM2).**
+  What you can do now: `nimbus pre-mortem linear:<project>` (slug id, URL, UUID or exact name) builds a risk brief compared only with closed Linear projects; the Linear sync indexes projects every 30 minutes as `linear:project` items, best effort (a capped or failed listing deletes nothing), embedded on the local model only.
+  Stated bounds: PR-to-issue links need the identifier in the PR title or opening text; the 30-day issue window; one global theme watermark.
+
+- **2026-11-16: watcher notices to ChatOps (a carried-in item; I23 amendment; static D17(c) and (d)).**
+  What you can do now: with `[watcher.chatops]` on (off by default), a fired watcher posts one fixed-template, counts-only notice to the signed org policy's notify channels for your namespace, or to one Slack channel you pin when there is no org policy. A signed policy wins and only tightens.
+  Also fixed: the audit append returns its row id, so a standing approval records its own audit row (no `SELECT MAX(id)`).
+
 - **2026-11-16: incident records are assembled from the local index (Phase 10 IC3, the third slice of the incident engine; schema V100; invariant I57 (a); static rules D46(a) and D46(d); no new HITL type, egress class or Tauri allowlist entry).**
   What you can do now: `nimbus incident list` and `nimbus incident show <id>` print the record the gateway assembled for a PagerDuty incident, a Jira Service Management alert, a Sentry issue or a Monte Carlo or Bigeye test: the changes before it, the chat around it, earlier and concurrent incidents of the service, data lineage, who is on call and the item's history, each entry with the rule that put it there. The footer reads `Record <id> v<N>, assembled <UTC> (<age> ago), last checked <UTC>`. Assembly reads the local index only: no model, no network.
   The pushed on-call brief is now built from records. A record from a source other than PagerDuty is pushed only when its severity is in `[oncall.push]`, its service is bound, and you are on call for that exact PagerDuty service on shift data under 60 minutes old. Turning `[incident] enabled` off never drops a page. Erasing a connector or pruning a record deletes the pushed briefs built from it in the same transaction.
