@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795006991596,
+  "lastUpdate": 1795012547885,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "450b8a19fb398ace72225620bfa886e59c08a4ff",
-          "message": "chore: maintenance sweep — deps, dead code, doc-citation rot, comment-strip safety, phase3 split (#1432)\n\nMaintenance sweep across deps, dead code, docs, comments, duplication,\nfile\nsplits and coverage. Seven commits, each green on `preflight:fast` at\n33/33, and\ncoverage verified on a Docker/Linux run rather than the host.\n\nNo user-facing behaviour changes. Nothing here requires an existing user\nto do\nanything, so the title is `chore` and no version signal is spent.\n\n## What landed\n\n| Commit | Category |\n| --- | --- |\n| `build(deps)` | astro, zod, biome, jscpd, knip, js-yaml + a zod\n`overrides` pin |\n| `fix(cleanup)` | strip-comments no longer edits program data |\n| `test(structure-audit)` | dead D19/D20 allow-list entries retired; D19\nred-proved |\n| `chore(deps)` | 13 unused dependencies removed; knip config repaired |\n| `docs(http)` | `READ_ONLY_HTTP_ROUTES` alias retired; citations\ncorrected |\n| `feat(cleanup)` | comment stripping refuses attested files and\nrequires opt-in |\n| `refactor(lazy-mesh)` | `phase3-config.ts` split into per-domain spawn\nmodules |\n\n## The findings worth reviewing\n\n**The zod bump broke typecheck, and the call site was not at fault.**\n`@modelcontextprotocol/sdk`\nkept resolving `zod@4.4.3` while the workspace moved to `4.5.4`; two\ncopies means two\nstructurally distinct `$ZodType`, so nothing crossing that seam could\ntype. Fixed with a root\n`overrides` pin and zero source changes. Worth knowing: a plain `bun\ninstall` does NOT apply a\nnewly added override when the lock is already satisfied - it reports \"no\nchanges\" - so this\nneeded `bun install --force`.\n\n**D17 was cleaned during the v3.0.0 connector extraction; its two\nsiblings were not.** D19 and\nD20 still exempted eleven `packages/mcp-connectors/*/src/server.ts`\npaths that `git ls-files` no\nlonger returns. Harmless for security - an allow-list entry for a file\nthat does not exist only\ntightens confinement - but auditing them surfaced the real gap: D20\nships seven test cases and\nD19 had none, so nothing proved `checkTribalKbWriteInvariant` could fail\nat all. Six added,\nred-proved by neutering the regex.\n\n**`audit:doc-refs` validates that a cited line EXISTS, never what is on\nit.** So `file:line`\nattestations in `docs/SECURITY-INVARIANTS.md` rot invisibly. Two\ninstances found:\n`http-routes.ts:5,13` described \"the comment at\" lines in a file that\nhad no comments at all,\nand nine `phase3-config.ts` rows of which SEVEN already pointed at\nnon-comment lines - `:424`\nread `sandboxCwd: string,` while claiming to attest the Azure spawn\nsite, which was at `:209`.\nOnly splitting the file, pushing the numbers past EOF, made the gate\nfail. The nine collapse\ninto one row citing D10, the rule that actually enforces the property\nper site, following the\nprecedent already set for the 27 per-connector I2 rows.\n\n**The comment sweep did not run.** Dry-running `strip-comments.ts`\nshowed it would rewrite 1830\nof 2943 files and delete 3.8MB, about 18% of source bytes - including\n152 attested comments and\n1303 the repo's own surveyor classifies as load-bearing. It now refuses\nthose, fails closed if\nthe invariant doc cannot be parsed, and a bare invocation rewrites\nnothing. The guard is a\nmarker heuristic and this repo outruns it: `agents/negotiate.ts` alone\nwould have lost 25KB\nexplaining why a `graph-only` subject is structurally zero for every\nlane except ownership.\n\n**I15 shaped the file split.** D10 accepts a file-local `wrap` alias\nonly in a file that also\ndeclares it delegating to `wrapServerSpec`, so each group module copies\nthe delegation rather\nthan importing one; an imported alias would leave all 63 spawn sites\nunrecognised. Verified by\nbreaking it: neutering one module's delegation makes the auditor fire on\nevery site in that\nfile.\n\n## Verification\n\n- `preflight:fast` green at 33/33 on every commit.\n- 260 existing `phase3-config` tests pass unedited; no consumer moved.\n- Coverage from `scripts/coverage-floor/reseed-docker.sh`, which matches\nthe CI job's\nlibsecret/dbus setup: `coverage-floor: ok`, 1156 files scanned, 0\nviolations. All seven new\nmodules are present in the lcov at 100% line and 94-100% branch, so this\nis a real pass and\n  not an absent-file one.\n\n## Deliberately not done\n\nThe 142 unused exports and 254 unused exported types knip reports are\nleft reported and\nuntouched - mostly exports used only within their own file, and churning\n~400 call sites is not\nthis PR's business.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01GZCGCkVMD9JaKuiKvqRdAb\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added support for connecting to numerous cloud, data, delivery,\nobservability, security, workplace, and business services.\n* Connectors now use saved credentials, validate required settings, and\napply appropriate sandbox and network permissions.\n\n* **Bug Fixes**\n* Improved comment cleanup to preserve important tooling directives,\ncode literals, and protected invariant files.\n* Added safer controls for scoped cleanup operations and clearer refusal\nreporting.\n\n* **Documentation**\n* Updated HTTP route and security invariant guidance to reflect the\ncurrent route registry and connector structure.\n\n* **Tests**\n* Expanded coverage for protected comments, cleanup behavior, and\nsecurity invariant enforcement.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-03T20:57:04+03:00",
-          "tree_id": "0a9f44801f0ce016192fc7062c6408d2b2622db3",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/450b8a19fb398ace72225620bfa886e59c08a4ff"
-        },
-        "date": 1788459001282,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 335.323094749996,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 338.42215339999746,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 177.57610630000053,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a6f3a5e2d038be9b9ca9b29f815f8f8a47b840af",
+          "message": "feat(gateway): the model can call a saved generated tool the owner lists, each call approved over its input (I60, D51) (#2067)\n\nThe first half of the S4 carried-in row *Model access to generated tools\nand to computer-use*: the conversational model can call a **saved**\ngenerated tool the owner lists, and every call asks a person first.\n\n## What changes\n\n- `[tool_generation] model_tools = [\"<tool-id>\", ...]` (default empty):\nexact saved tool ids offered to the model.\n- Offered only on the local owner's non-demo `cli`/`ui` turn (the same\nowner-turn decision as the connector-write door), never on ChatOps,\nHTTP, MCP-agent, fleet, demo or `--at` turns; `gateway-main.ts` omits\nthe door on a demo root.\n- Every call is a `tool.model.invoke` action (the 187th HITL type,\nowner-only) gated through `createOwnerOnlyAsk`: a `human` answer only,\nno delegate, audited approved or rejected. The prompt shows the tool,\nthe saved artifact's digest, the owner's description, the hosts it may\nsend to and the hosts that receive a credential, and the input rendered\nby the workflow-import renderer (bidi, control and zero-width characters\nescaped; nothing redacted; refused past 8,000 characters).\n- After the answer the offer, switches and digest are re-derived; the\nspawn is pinned (`pinReadVerified`) to the approved digest; the call\nsends the plain copy the owner read; the `tool.invoke` row carries\n`approvedBy`.\n- New org-policy lock-off `[policy.capabilities.ai_v2]\ntoolgen_model_access` (fail-closed when the policy cannot be read).\n- New invariant **I60** and static rule **D51** (identifier confinement\nfor the door, the builder, `invokeSavedTool`, the pin, the request slot\nand the action-type literal).\n- No migration, no IPC method, no Tauri allowlist change.\n\n## Stated bounds\n\nThe approval covers the input, not the tool's behaviour; a result\nreaches the model (and its remote vendor) enveloped but unshown; input\nchecks before the spawn are presence-only; one prompt per call.\n\n## Not in this PR\n\nThe computer-use half is designed (spec reviewed by Antigravity) but not\nbuilt: it waits on two owner decisions, recorded in the roadmap row: a\nCLI-only first version (`nimbus ask --computer <session>`) in place of\nthe desktop consent UX, since I7 keeps `computer.approvalRespond` off\nthe renderer allowlist; and human-only, unicast I35 prompts.\n\n## Review\n\nSpec reviewed by Antigravity in two rounds: round 1 requested changes\n(the digest pin, input escaping and no redaction, description and\nparameter escaping, the policy capability, D51 reframed as confinement,\ndemo omission; two findings refuted against the code), round 2 approved;\nits P2/P3 items are applied (the plain-copy input, the warning once per\nlisting, `approvedBy` and pin pass-through tests). Red-proved: removing\nthe type from the HITL set fails 13 tests; removing the slot clear fails\nthe slot tests.\n\n## Docs\n\nUpdated here: SECURITY-INVARIANTS (I60, ceilings), architecture, roadmap\n(progress note; row stays open), cli-reference, the I60 bullet and the\nI1–I60 / D10–D51 ceilings that `audit:status-drift` requires. The status\nparagraph, the top of the CHANGELOG and docs/README prose are batched\ninto the last PR of this parallel batch (owner rule).\n\n## Verification\n\n`bun run preflight:fast` passed after merging main; 2,214 tests in the\ntouched suites pass. One pre-existing combined-run failure\n(`toolgen-boot-reconcile.test.ts` \"spawns nothing\", a global `Bun.spawn`\nspy) reproduces identically on `origin/main` and passes in isolation.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCk6NpLauKU2yYCwva\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n- **New Features**\n- On eligible local CLI and desktop turns, the model can use saved\ngenerated tools explicitly enabled in settings. Each call requires human\napproval, and access is rechecked before the tool runs.\n- Added a policy control to disable model access to saved generated\ntools.\n- **Documentation**\n- Updated security and configuration guidance to describe the new access\ncontrols and approval requirements.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-18T14:23:04Z",
+          "tree_id": "60144a2adfbb8354dab26a9bc521378e8833bef1",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/a6f3a5e2d038be9b9ca9b29f815f8f8a47b840af"
+        },
+        "date": 1795012544318,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 179.08086394999881,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 179.2430392499984,
             "unit": "ms"
           }
         ]
