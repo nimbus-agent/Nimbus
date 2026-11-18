@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795012547885,
+  "lastUpdate": 1795023334030,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "64d50af67ddf196c742da5492e6005a7b745b9e0",
-          "message": "fix(sonar): clear 23 findings, and document five that should not be applied (#1434)\n\nClears 23 of the 75 open SonarCloud issues on this repo. Every finding\nwas read\nagainst the code before being applied — which mattered, because five of\nthe ones\nI looked at should NOT be applied, and two of those would have\nintroduced bugs.\n\n## The two that would have broken things\n\nS7747 flags `for (const x of [...collection])` as an unnecessary array\nconversion. In both places the spread is load-bearing:\n\n- `llm/route-availability.ts` iterates `[...this.cache.keys()]` and\ncalls\n`this.cache.delete()` inside the loop. Dropping the spread mutates a Map\n  during its own iteration.\n- `computer-use/cu-lanes/cdp-session.ts` copies `#listeners` before\ninvoking\n  them, so a listener that unsubscribes itself cannot corrupt the walk.\n\n## The three others left alone\n\n- S6353 wants `[A-Za-z0-9_]` written as `\\w` in `index/item-store.ts`.\nEquivalent\nin JavaScript, but that regex is an injection guard on a value heading\nfor SQL\nidentifier handling, and `\\w` reads as unicode-aware to plenty of people\nwhen\n  it is not. Explicit wins in a security check.\n- The fourth S7786, at `cu-lanes/browser.ts:413`, throws \"no element\nmatched\nselector\". That is a not-found condition; the `typeof` guard on the box\n  coordinates is incidental, and `TypeError` would misdescribe it.\n- S6564 on `ProviderId = string`. Its doc comment says it names \"a place\ndata can\ngo\" and that it reaches the egress ledger as `destination`. Deleting a\ndomain\n  alias to satisfy a rule erases meaning from an egress-relevant type.\n\n## What actually changed\n\nFour of these are more than tidying — in each case a type or a\nhuman-facing string was saying less than the code meant:\n\n- `agent-commands/parse-agent-command.ts` — `coerce` returned\n`unknown | { error: string }`, which collapses to plain `unknown`. The\nerror\n  arm told the type system nothing, so the single caller narrowed with a\nhand-written `\"error\" in v` guard, which also could not tell a failure\nfrom a\nsuccessfully coerced value carrying an `error` key. No current `kind`\nreturns\nan object, so it never misfired — a fact about the arms, not a\nguarantee. Now\n  a discriminated result; the guard is deleted.\n- `cli/src/commands/llm.ts` — `RouteReason`'s `| string` arm swallowed\nits four\nliterals, so the known reasons stopped being suggested and a typo in one\nstopped being visible. `(string & {})` keeps the openness the comment\nasks for\n  while keeping the members.\n- `cu-lanes/cdp-session.ts` — `CdpError` built its message with\n`String(err[\"message\"] ?? …)`, which yields \"[object Object]\" for a\nstructured\n  CDP error: a diagnostic naming no cause, from the layer whose job is\n  explaining why the browser refused.\n- `connectors/connector-sync-test-helpers.ts` — a Set instead of an\narray, which\nalso removed the `as LocalOnlySyncServiceId` cast its `includes` call\nneeded —\n  a cast asserting the very thing the check was testing.\n\nThe rest are mechanical: `replaceAll` over `split().join()`, a genuinely\ndead\n`modifiedAt = now` initialiser (the catch below it `continue`s, so\nnothing could\nread it), an anchored `/^- \\*\\*/` regex expressed as `startsWith`, two\noptional\nchains, three `TypeError`s where the guard really is a type check, and a\npure\nre-export tidied to `export type … from`.\n\n## Verification\n\n`preflight:fast` 33/33. 1006 tests pass across the touched areas.\n\nOne correction I made to myself along the way: the first `RouteReason`\nversion\ncarried a `biome-ignore` for `noBannedTypes`, a rule that does not fire\nthere.\n`--error-on-warnings` rejected the unused suppression, correctly.\n\nRemaining after this: 52. The largest groups are 19 S5906\nassertion-strictness\nfindings in tests, 12 CRITICAL cognitive-complexity refactors, and 9\n`String.raw`\nfindings in escape-handling code. The 12 are worth doing one at a time\nrather\nthan as a batch — restructuring complex functions is where a sweep can\ndo real\ndamage.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01GZCGCkVMD9JaKuiKvqRdAb\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* Improved error reporting for LLM and computer-use operations,\nincluding clearer messages for structured, empty, or unexpected errors.\n* Strengthened command parsing so successful and failed results are\nhandled consistently.\n* Improved path traversal detection across Windows and Unix-style paths.\n* Prevented stale timestamps from being used when files disappear or\ncannot be inspected.\n* Preserved glossary and reserved-section detection behavior while\nimproving reliability.\n* **Refactor**\n* Improved internal handling of local-only service checks and shared\ntype exports without changing user-facing behavior.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-03T21:21:05+03:00",
-          "tree_id": "becaa1c88cc3da019fee9d8130ed51819bf06d8c",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/64d50af67ddf196c742da5492e6005a7b745b9e0"
-        },
-        "date": 1788460541313,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 333.77921275000335,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 331.8031883499945,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 179.2430392499984,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6b76bfbb8e0713aefb9d2f943dabb01736efcbf4",
+          "message": "chore: release main (#2061)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>11.8.0</summary>\n\n##\n[11.8.0](https://github.com/nimbus-agent/Nimbus/compare/v11.7.0...v11.8.0)\n(2026-11-18)\n\n\n### Features\n\n* **docs:** a static catalog of the official registry at /extensions,\nwritten from a verified snapshot (S4 marketplace tile B3)\n([#2065](https://github.com/nimbus-agent/Nimbus/issues/2065))\n([4618aba](https://github.com/nimbus-agent/Nimbus/commit/4618aba1a62dd5e73feebee42654086157f9e60a))\n* **gateway:** incident engine IC6, owner-authored runbooks run one\napproved step at a time with typed-only parameters (I57 (c), D46(g),\nV104) ([#2060](https://github.com/nimbus-agent/Nimbus/issues/2060))\n([3974b4a](https://github.com/nimbus-agent/Nimbus/commit/3974b4aa316bd9468958068981a3fc95979445d2))\n* **gateway:** re-verify a registry version's build provenance offline\nagainst Sigstore roots baked into the release\n([#2066](https://github.com/nimbus-agent/Nimbus/issues/2066))\n([b0fb4fb](https://github.com/nimbus-agent/Nimbus/commit/b0fb4fbdbe8f00cd6e10b4c45d58ebc3437fa3d0))\n* **gateway:** the model can call a saved generated tool the owner\nlists, each call approved over its input (I60, D51)\n([#2067](https://github.com/nimbus-agent/Nimbus/issues/2067))\n([a6f3a5e](https://github.com/nimbus-agent/Nimbus/commit/a6f3a5e2d038be9b9ca9b29f815f8f8a47b840af))\n* **gateway:** the Terraform apply preview shows drift outside Terraform\n(IaC drift D1)\n([#2063](https://github.com/nimbus-agent/Nimbus/issues/2063))\n([5a35d29](https://github.com/nimbus-agent/Nimbus/commit/5a35d295edfd2081d6aa63361100a487a3b352f8))\n* **ui:** the desktop Marketplace page searches registries and shows an\nextension's signed evidence (S4 marketplace tile B1)\n([#2064](https://github.com/nimbus-agent/Nimbus/issues/2064))\n([a9a491d](https://github.com/nimbus-agent/Nimbus/commit/a9a491da1d5058336688d0fcf938b8e7c5b4d7b9))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-18T19:28:51+02:00",
+          "tree_id": "3cdc341c7135a5dc652d72593a6b7c8c65009ac6",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/6b76bfbb8e0713aefb9d2f943dabb01736efcbf4"
+        },
+        "date": 1795023330363,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 177.4123204000054,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 173.71255944999902,
             "unit": "ms"
           }
         ]
