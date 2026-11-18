@@ -139,7 +139,7 @@ describe("interpolateParams (run time)", () => {
   });
 
   test("a typed value holding a space, a control or a bidirectional character is refused (I57 (c))", () => {
-    for (const providerId of ["PD 1", "PD\u0007", "PD‮1", ""]) {
+    for (const providerId of ["PD 1", "PD\u0007", `PD${String.fromCodePoint(0x202e)}1`, ""]) {
       const base = record();
       const r: IncidentRecordV1 = { ...base, trigger: { ...base.trigger, providerId } };
       expect(interpolateParams({ id: "{trigger.provider_id}" }, r, BINDINGS)).toEqual({

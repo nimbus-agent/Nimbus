@@ -8034,6 +8034,21 @@ describe("D46(g) - a runbook step is built in one module (Phase 10 IC6, I57 (c))
     expect(rules([file(`${SRC}ipc/x.ts`, 'const a = { "runbookStep": x };')])).toEqual([
       "runbook-step-key-confined",
     ]);
+    // An assignment and a shorthand key set it too; a comparison and a read do not.
+    expect(rules([file(`${SRC}ipc/x.ts`, "action.runbookStep = step;")])).toEqual([
+      "runbook-step-key-confined",
+    ]);
+    expect(rules([file(`${SRC}ipc/x.ts`, "const a = { type, runbookStep };")])).toEqual([
+      "runbook-step-key-confined",
+    ]);
+    expect(
+      rules([
+        file(
+          `${SRC}ipc/x.ts`,
+          "if (a.runbookStep !== undefined && a.runbookStep == b) f(a.runbookStep);",
+        ),
+      ]),
+    ).toEqual([]);
     expect(
       rules([file(`${SRC}ipc/x.ts`, "db.run('UPDATE incident_runbook_step SET status = 1');")]),
     ).toEqual(["incident-runbook-table-confined"]);

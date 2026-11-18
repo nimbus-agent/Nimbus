@@ -150,8 +150,27 @@ export function runbookMatches(rb: Runbook, record: IncidentRecordV1): boolean {
   const service = record.binding.service;
   if (m.services.length > 0 && (service === null || !m.services.includes(service))) return false;
   if (m.sources.length > 0 && !m.sources.includes(record.trigger.service)) return false;
-  if (m.title !== null && !new RegExp(m.title, "u").test(record.trigger.title)) return false;
+  if (m.title !== null && !record.trigger.title.toLowerCase().includes(m.title.toLowerCase())) {
+    return false;
+  }
   return true;
+}
+
+function requireStep(rb: Runbook, n: number): RunbookStep {
+  const step = Number.isInteger(n) ? rb.steps[n - 1] : undefined;
+  if (step === undefined) {
+    throw new RunbookError(
+      "ERR_RUNBOOK_STEP_NOT_FOUND",
+      `runbook ${rb.name} has steps 1 to ${String(rb.steps.length)}`,
+    );
+  }
+  return step;
+}
+
+function readResult(kind: "read" | "action", result: unknown): Partial<RunOutcome> {
+  if (kind !== "read") return {};
+  const text = JSON.stringify(result) ?? "null";
+  return text.length > RUNBOOK_READ_RESULT_MAX ? { resultWithheld: true } : { result };
 }
 
 export function createRunbooks(deps: RunbooksDeps) {
@@ -202,17 +221,6 @@ export function createRunbooks(deps: RunbooksDeps) {
       );
     }
     return rb;
-  }
-
-  function requireStep(rb: Runbook, n: number): RunbookStep {
-    const step = Number.isInteger(n) ? rb.steps[n - 1] : undefined;
-    if (step === undefined) {
-      throw new RunbookError(
-        "ERR_RUNBOOK_STEP_NOT_FOUND",
-        `runbook ${rb.name} has steps 1 to ${String(rb.steps.length)}`,
-      );
-    }
-    return step;
   }
 
   function stepView(
@@ -335,12 +343,6 @@ export function createRunbooks(deps: RunbooksDeps) {
         reversibility: reversibilityClassOf(row),
       },
     };
-  }
-
-  function readResult(kind: "read" | "action", result: unknown): Partial<RunOutcome> {
-    if (kind !== "read") return {};
-    const text = JSON.stringify(result) ?? "null";
-    return text.length > RUNBOOK_READ_RESULT_MAX ? { resultWithheld: true } : { result };
   }
 
   async function run(p: {

@@ -43,35 +43,33 @@ function placeholdersOf(text: string): { names: string[]; stray: boolean } {
   return { names, stray: rest.includes("{") || rest.includes("}") };
 }
 
+/** Every string in a parameter value, depth first (keys are not values and are not interpolated). */
+function stringsIn(v: RunbookParam): string[] {
+  if (typeof v === "string") return [v];
+  if (Array.isArray(v)) return (v as readonly RunbookParam[]).flatMap(stringsIn);
+  if (typeof v === "object" && v !== null) {
+    return Object.values(v as Record<string, RunbookParam>).flatMap(stringsIn);
+  }
+  return [];
+}
+
+/** The problem with one string's placeholders, or null. */
+function untypedIn(text: string): string | null {
+  const { names, stray } = placeholdersOf(text);
+  if (stray) return "a parameter has an unmatched brace";
+  const bad = names.find((n) => !PLACEHOLDER_SET.has(n));
+  return bad === undefined
+    ? null
+    : `{${bad}} is not a typed record field (allowed: ${RUNBOOK_PLACEHOLDERS.join(", ")})`;
+}
+
 /** Load-time check: every placeholder in every string of `params` is a typed one. Returns the first problem. */
 export function untypedPlaceholder(params: RunbookParams): string | null {
-  const visit = (v: RunbookParam): string | null => {
-    if (typeof v === "string") {
-      const { names, stray } = placeholdersOf(v);
-      if (stray) return "a parameter has an unmatched brace";
-      for (const n of names) {
-        if (!PLACEHOLDER_SET.has(n)) {
-          return `{${n}} is not a typed record field (allowed: ${RUNBOOK_PLACEHOLDERS.join(", ")})`;
-        }
-      }
-      return null;
-    }
-    if (Array.isArray(v)) {
-      for (const x of v as readonly RunbookParam[]) {
-        const p = visit(x);
-        if (p !== null) return p;
-      }
-      return null;
-    }
-    if (typeof v === "object" && v !== null) {
-      for (const x of Object.values(v as Record<string, RunbookParam>)) {
-        const p = visit(x);
-        if (p !== null) return p;
-      }
-    }
-    return null;
-  };
-  return visit(params);
+  for (const text of stringsIn(params)) {
+    const problem = untypedIn(text);
+    if (problem !== null) return problem;
+  }
+  return null;
 }
 
 /** The one value a binding list gives, or a reason: exactly one must be configured. */

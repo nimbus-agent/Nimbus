@@ -17,7 +17,7 @@ description = "Roll back the payments app"
 [match]
 services = ["payments"]
 sources = ["pagerduty"]
-title = "latency|errors"
+title = "latency"
 
 [[steps]]
 kind = "check"
@@ -55,7 +55,7 @@ describe("parseRunbookText", () => {
     expect(rb.match).toEqual({
       services: ["payments"],
       sources: ["pagerduty"],
-      title: "latency|errors",
+      title: "latency",
     });
     expect(rb.steps.map((s) => s.kind)).toEqual(["check", "read", "action"]);
     expect(rb.steps[2]).toEqual({
@@ -116,7 +116,7 @@ describe("parseRunbookText", () => {
     );
   });
 
-  test("match is validated: lists, trigger sources and the title regex", () => {
+  test("match is validated: lists, trigger sources and the title text", () => {
     const m = (body: string): string => refusalOf(`${body}\n${step(`kind = "check"\ntext = "x"`)}`);
     expect(m(`match = 3`)).toBe("match must be a table");
     expect(m(`[match]\nowner = "x"`)).toBe('match: unknown key "owner"');
@@ -125,7 +125,53 @@ describe("parseRunbookText", () => {
     expect(m(`[match]\nsources = ["slack"]`)).toBe(
       'match.sources: "slack" is not a trigger source',
     );
-    expect(m(`[match]\ntitle = "("`)).toBe("match.title is not a valid regular expression");
+    // The title is literal text, never a pattern: what would be a catastrophic regex is just text here.
+    const literal = parseRunbookText(
+      "r.toml",
+      `[match]\ntitle = "(a+)+$"\n${step(`kind = "check"\ntext = "x"`)}`,
+    );
+    expect(literal.match.title).toBe("(a+)+$");
+  });
+
+  test("the syntax scan skips quoted text and comments; a date-shaped key is refused like a value", () => {
+    const ok = parseRunbookText(
+      "r.toml",
+      `# an example delimiter: """
+${step(`kind = "check"
+text = "a ''' b \\"quoted\\" 2026-11-18"`)}`,
+    );
+    expect(ok.steps).toHaveLength(1);
+    // Bun's reader would split this key into `2026` and `18`, so it is refused, not mis-read.
+    expect(
+      refusalOf(
+        step(`kind = "action"
+tool = "slack_message_post"
+params = { 2026-11-18 = "x" }`),
+      ),
+    ).toContain("an unquoted date or time (a value or a key)");
+    const quoted = parseRunbookText(
+      "r.toml",
+      step(`kind = "action"
+tool = "slack_message_post"
+params = { "2026-11-18" = "x" }`),
+    );
+    expect(quoted.steps[0]).toMatchObject({ params: { "2026-11-18": "x" } });
+    expect(
+      refusalOf(
+        step(`kind = "check"
+text = '''x'''`),
+      ),
+    ).toBe("multi-line strings are not supported");
+  });
+
+  test("the parameter limit counts UTF-8 bytes", () => {
+    expect(
+      refusalOf(
+        step(
+          `kind = "action"\ntool = "slack_message_post"\nparams = { t = "${"界".repeat(1500)}" }`,
+        ),
+      ),
+    ).toBe("steps[1].params is longer than 4096 bytes");
   });
 
   test("an action must name a connector write row that is neither bound nor refused", () => {
@@ -160,7 +206,7 @@ describe("parseRunbookText", () => {
     expect(a(`3`)).toBe("steps[1].params must be a table");
     // Bun's TOML reader mis-reads an unquoted date, so it is refused before parsing; a quoted one is a string.
     expect(a(`{ at = 1979-05-27T07:32:00Z }`)).toBe(
-      "an unquoted date or time is not supported; write it as a quoted string",
+      "an unquoted date or time (a value or a key) is not supported; write it as a quoted string",
     );
     expect(a(`{ at = 07:32:00 }`)).toContain("unquoted date or time");
     expect(
@@ -171,7 +217,7 @@ ${step(`kind = "check"
 text = "x"`)}`),
     ).toBe("multi-line strings are not supported");
     expect(a(`{ a = { b = { c = { d = { e = 1 } } } } }`)).toContain("nested more than 4 deep");
-    expect(a(`{ text = "${"x".repeat(5000)}" }`)).toContain("is longer than 4096 characters");
+    expect(a(`{ text = "${"x".repeat(5000)}" }`)).toContain("is longer than 4096 bytes");
     expect(a(`{ text = "{trigger.title}" }`)).toContain(
       "{trigger.title} is not a typed record field",
     );

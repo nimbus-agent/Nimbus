@@ -1408,6 +1408,9 @@ const D46G_DDL = `${D46G_SRC}index/incident-runbook-v104-sql.ts`;
 const D46G_READ_TYPE = `${D46G_SRC}engine/runbook-read.ts`;
 const D46G_LOADER_ALLOWED: readonly string[] = [`${D46G_SRC}runbook/runbook-loader.ts`, D46G_RUN];
 const D46G_KEY_RE = /\brunbookStep\s*\??\s*:|["']runbookStep["']\s*:/g;
+// An assignment (`x.runbookStep = v`) and a shorthand key (`{ runbookStep }`) set it too. Matched on code with its
+// strings stripped, so a bracketed quoted assignment (`x["runbookStep"] = v`) is the stated bound of the text scan.
+const D46G_SET_RE = /\.\s*runbookStep\s*=(?![=>])|[{,]\s*runbookStep\s*[,}]/g;
 const D46G_TABLE_WRITE_RE = d46dWriteRe("incident_runbook_step");
 const D46G_TYPE_RE = /\brunbookReadActionType\b/g;
 const D46G_SUFFIX_RE = /\.runbook\.read\b/g;
@@ -1432,6 +1435,8 @@ export function checkRunbookConfinement(files: readonly FileEntry[]): Violation[
     if (!D46G_KEY_ALLOWED.includes(f.relPath)) {
       for (const m of commentFree.matchAll(D46G_KEY_RE))
         add("runbook-step-key-confined", f, commentFree, m.index);
+      for (const m of code.matchAll(D46G_SET_RE))
+        add("runbook-step-key-confined", f, code, m.index);
     }
     if (f.relPath !== D46G_STORE && f.relPath !== D46G_DDL) {
       for (const m of commentFree.matchAll(D46G_TABLE_WRITE_RE)) {

@@ -685,7 +685,7 @@ export async function dispatchIncidentRpc(
       const id = parseId("incident.runbooks", p);
       const only =
         p["runbook"] === undefined ? undefined : parseRunbookName("incident.runbooks", p);
-      return runbookCall(() => runbooksOf(ctx).list(id, only));
+      return await runbookCall(() => runbooksOf(ctx).list(id, only));
     },
     "incident.runbookRun": async (raw) => {
       requireOwnerKind(caller.kind);
@@ -694,7 +694,7 @@ export async function dispatchIncidentRpc(
       const runbook = parseRunbookName("incident.runbookRun", p);
       const step = parseStep("incident.runbookRun", p);
       const clientId = callerClient("incident.runbookRun", caller);
-      return runbookCall(() => runbooksOf(ctx).run({ ref: id, runbook, step, clientId }));
+      return await runbookCall(() => runbooksOf(ctx).run({ ref: id, runbook, step, clientId }));
     },
     "incident.runbookDone": async (raw) => {
       requireOwnerKind(caller.kind);
@@ -702,7 +702,7 @@ export async function dispatchIncidentRpc(
       const id = parseId("incident.runbookDone", p);
       const runbook = parseRunbookName("incident.runbookDone", p);
       const step = parseStep("incident.runbookDone", p);
-      return runbookCall(() => runbooksOf(ctx).done({ ref: id, runbook, step }));
+      return await runbookCall(() => runbooksOf(ctx).done({ ref: id, runbook, step }));
     },
     "incident.advisory": async (raw) => {
       requireOwnerKind(caller.kind);

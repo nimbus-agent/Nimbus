@@ -6,7 +6,7 @@ import {
   lstatSync,
   openSync,
   readdirSync,
-  readFileSync,
+  readSync,
 } from "node:fs";
 import { join } from "node:path";
 
@@ -48,7 +48,7 @@ export const RUNBOOK_DIR = "runbooks";
 export const RUNBOOK_MAX_FILES = 100;
 export const RUNBOOK_MAX_FILE_BYTES = 64 * 1024;
 export const RUNBOOK_TEXT_MAX = 500;
-export const RUNBOOK_TITLE_RE_MAX = 200;
+export const RUNBOOK_TITLE_MAX = 200;
 export const RUNBOOK_PARAMS_MAX_BYTES = 4096;
 const PARAMS_MAX_DEPTH = 4;
 const SERVICE_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
@@ -118,20 +118,17 @@ function parseMatch(v: unknown): RunbookMatch {
   for (const s of sources) {
     if (!isTriggerService(s)) refuse(`match.sources: ${JSON.stringify(s)} is not a trigger source`);
   }
-  let title: string | null = null;
-  if (v["title"] !== undefined) {
-    title = stringField("match.title", v["title"], RUNBOOK_TITLE_RE_MAX);
-    try {
-      new RegExp(title, "u");
-    } catch {
-      refuse("match.title is not a valid regular expression");
-    }
-  }
+  // A plain case-insensitive substring, never a regular expression: matching it is linear in the title.
+  const title =
+    v["title"] === undefined ? null : stringField("match.title", v["title"], RUNBOOK_TITLE_MAX);
   return { services, sources, title };
 }
 
 function plainParam(where: string, v: unknown, depth: number): RunbookParam {
-  if (typeof v === "string" || typeof v === "boolean" || typeof v === "number") return v;
+  if (typeof v === "string" || typeof v === "boolean") return v;
+  // Bun's TOML reader returns `nan` and `inf` as strings today; a non-finite number is refused if one ever arrives.
+  if (typeof v === "number")
+    return Number.isFinite(v) ? v : refuse(`${where}: a number must be finite`);
   if (depth >= PARAMS_MAX_DEPTH)
     refuse(`${where}: nested more than ${String(PARAMS_MAX_DEPTH)} deep`);
   if (Array.isArray(v))
@@ -154,8 +151,8 @@ function parseParams(where: string, v: unknown): RunbookParams {
   if (v === undefined) return {};
   if (!isTable(v)) refuse(`${where} must be a table`);
   const params = plainParam(where, v, 0) as RunbookParams;
-  if (JSON.stringify(params).length > RUNBOOK_PARAMS_MAX_BYTES) {
-    refuse(`${where} is longer than ${String(RUNBOOK_PARAMS_MAX_BYTES)} characters`);
+  if (Buffer.byteLength(JSON.stringify(params), "utf8") > RUNBOOK_PARAMS_MAX_BYTES) {
+    refuse(`${where} is longer than ${String(RUNBOOK_PARAMS_MAX_BYTES)} bytes`);
   }
   const untyped = untypedPlaceholder(params);
   if (untyped !== null) refuse(`${where}: ${untyped}`);
@@ -204,15 +201,47 @@ function parseStep(i: number, v: unknown, rows: readonly ConnectorWriteRow[]): R
 }
 
 /**
+ * One line with its quoted text emptied (`"..."` and `'...'` become `""`) and its comment removed, in one linear
+ * pass. `multiline` is set when a `"""` or `'''` opens outside a string and outside a comment.
+ */
+export function bareLine(line: string): { readonly text: string; readonly multiline: boolean } {
+  let out = "";
+  let i = 0;
+  while (i < line.length) {
+    const c = line.charAt(i);
+    if (c === "#") break;
+    if (c === '"' || c === "'") {
+      if (line.startsWith(c.repeat(3), i)) return { text: out, multiline: true };
+      let j = i + 1;
+      while (j < line.length && line.charAt(j) !== c)
+        j += c === '"' && line.charAt(j) === "\\" ? 2 : 1;
+      out += '""';
+      i = j + 1;
+      continue;
+    }
+    out += c;
+    i += 1;
+  }
+  return { text: out, multiline: false };
+}
+
+/**
+ * Unquoted text shaped like a TOML date or time, anywhere outside a string or a comment. Keys too: Bun's reader
+ * splits a bare `2026-11-18` key into `2026` and `18`, so a date-shaped key is refused like a value (quote it).
+ */
+const BARE_DATE = /\d{4}-\d{2}-\d{2}|\d{2}:\d{2}/u;
+
+/**
  * Bun's TOML reader mis-reads an unquoted date or time (`at = 1979-05-27` becomes two numbers) instead of failing,
- * so such a value is refused before parsing, as are multi-line strings. Quoted text is ignored by the scan.
+ * so unquoted date-shaped text is refused before parsing, as is a multi-line string. Quoted text and comments are
+ * not scanned.
  */
 function unsupportedSyntax(text: string): string | null {
-  if (text.includes('"""') || text.includes("'''")) return "multi-line strings are not supported";
   for (const line of text.split("\n")) {
-    const bare = line.replace(/"(?:[^"\\]|\\.)*"|'[^']*'/g, '""').replace(/#.*$/u, "");
-    if (/\d{4}-\d{2}-\d{2}|\d{2}:\d{2}/u.test(bare)) {
-      return "an unquoted date or time is not supported; write it as a quoted string";
+    const bare = bareLine(line);
+    if (bare.multiline) return "multi-line strings are not supported";
+    if (BARE_DATE.test(bare.text)) {
+      return "an unquoted date or time (a value or a key) is not supported; write it as a quoted string";
     }
   }
   return null;
@@ -273,7 +302,11 @@ function errCode(e: unknown): string | undefined {
 function readRunbookFile(path: string): string {
   let fd: number;
   try {
-    fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    // O_NONBLOCK: a named pipe with no writer must not block the gateway (a regular file is unaffected).
+    fd = openSync(
+      path,
+      constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0),
+    );
   } catch (e) {
     const code = errCode(e);
     if (code === "ELOOP" || code === "EISDIR") refuse(NOT_A_FILE);
@@ -286,7 +319,17 @@ function readRunbookFile(path: string): string {
     if (st.size > RUNBOOK_MAX_FILE_BYTES) {
       refuse(`larger than ${String(RUNBOOK_MAX_FILE_BYTES)} bytes`);
     }
-    text = readFileSync(fd, "utf8");
+    // Read at most one byte past the cap through the same handle, so a file that grows after the stat is refused too.
+    const buf = Buffer.alloc(RUNBOOK_MAX_FILE_BYTES + 1);
+    let got = 0;
+    for (;;) {
+      const n = readSync(fd, buf, got, buf.length - got, null);
+      if (n === 0) break;
+      got += n;
+      if (got > RUNBOOK_MAX_FILE_BYTES)
+        refuse(`larger than ${String(RUNBOOK_MAX_FILE_BYTES)} bytes`);
+    }
+    text = buf.subarray(0, got).toString("utf8");
   } finally {
     closeSync(fd);
   }
@@ -303,7 +346,7 @@ function byCodeUnit(a: string, b: string): number {
 /**
  * Every runbook under `<configDir>/runbooks/`, read fresh per call. Only regular `*.toml` files are read (a link,
  * a directory and anything else are skipped and reported); a later file whose name repeats an earlier one is
- * refused. An absent directory is no runbooks and no errors.
+ * refused. An absent directory is no runbooks and no errors; one that cannot be read is reported.
  */
 export function loadRunbooks(
   configDir: string,
@@ -313,8 +356,12 @@ export function loadRunbooks(
   let names: string[];
   try {
     names = readdirSync(dir).filter((n) => n.endsWith(".toml"));
-  } catch {
-    return { runbooks: [], errors: [] };
+  } catch (e) {
+    if (errCode(e) === "ENOENT") return { runbooks: [], errors: [] };
+    return {
+      runbooks: [],
+      errors: [{ file: RUNBOOK_DIR, reason: "the runbooks folder could not be read" }],
+    };
   }
   names.sort(byCodeUnit);
   const runbooks: Runbook[] = [];

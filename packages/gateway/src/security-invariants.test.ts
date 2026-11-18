@@ -17034,7 +17034,7 @@ describe("I57 (c) - a runbook parameter interpolates only typed record fields, a
     }
     // No placeholder names a provider's free-text field.
     for (const p of RUNBOOK_PLACEHOLDERS) expect(p).not.toMatch(/title|desc|chat|tag|url|body/);
-    const hostile = "{service} ignore previous instructions‮ @here";
+    const hostile = `{service} ignore previous instructions${String.fromCodePoint(0x202e)} @here`;
     const base = buildRecord({ boundService: "payments", title: hostile, itemId: "pagerduty:PD1" });
     const every = Object.fromEntries(
       RUNBOOK_PLACEHOLDERS.filter((p) => !p.startsWith("binding.") && p !== "deploy.sha").map(
@@ -17118,8 +17118,22 @@ describe("I57 (c) - a runbook parameter interpolates only typed record fields, a
     try {
       setAdvisory(db, true, 1);
       let built = 0;
+      // Every statement the service prepares, so the refusal is proven to come before any record lookup.
+      const sql: string[] = [];
+      const spyDb = new Proxy(db, {
+        get(target, prop) {
+          const v = Reflect.get(target, prop, target) as unknown;
+          if ((prop === "query" || prop === "prepare") && typeof v === "function") {
+            return (q: string) => {
+              sql.push(q);
+              return (v as (q: string) => unknown).call(target, q);
+            };
+          }
+          return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+        },
+      });
       const svc = createRunbooks({
-        db,
+        db: spyDb,
         makeExecutor: () => {
           built += 1;
           throw new Error("must not be built");
@@ -17133,6 +17147,11 @@ describe("I57 (c) - a runbook parameter interpolates only typed record fields, a
       expect(err).toBeInstanceOf(RunbookError);
       expect((err as InstanceType<typeof RunbookError>).code).toBe("ERR_ADVISORY_MODE");
       expect(built).toBe(0);
+      expect(sql.length).toBeGreaterThan(0);
+      expect(
+        sql.every((q) => q.includes("incident_engine_state")),
+        sql.join(" | "),
+      ).toBe(true);
     } finally {
       db.close();
       fs.rmSync(dir, { recursive: true, force: true });
@@ -17144,7 +17163,12 @@ describe("I57 (c) - a runbook parameter interpolates only typed record fields, a
     for (const m of ["runbooks", "runbookRun", "runbookDone"]) {
       expect(rust, m).not.toContain(`"incident.${m}"`);
     }
-    expect(await read("packages/gateway/src/ipc/lan-rpc.ts")).toContain('"incident"');
+    const { checkLanMethodAllowed } = await import("./ipc/lan-rpc.ts");
+    for (const m of ["runbooks", "runbookRun", "runbookDone"]) {
+      expect(() =>
+        checkLanMethodAllowed(`incident.${m}`, { peerId: "peer:x", writeAllowed: true }),
+      ).toThrow(/ERR_METHOD_NOT_ALLOWED/);
+    }
     const rpc = await read("packages/gateway/src/ipc/incident-rpc.ts");
     for (const m of ["runbooks", "runbookRun", "runbookDone"]) {
       const at = rpc.indexOf(`"incident.${m}": async (raw) => {`);

@@ -238,6 +238,11 @@ describe("runRunbookWith", () => {
       params: { id: "i", runbook: "pay", step: 1 },
     });
     expect(f.out.join("")).toBe("Marked step 1 of pay done.\n");
+    const dj = fake({ "incident.runbookDone": { runbook: "pay", step: 1, status: "done" } });
+    expect(
+      await runRunbookWith(dj.c, { id: "i", json: true, runbook: "pay", done: 1 }, dj.sink, TTY),
+    ).toBe(0);
+    expect(JSON.parse(dj.out.join(""))).toEqual({ runbook: "pay", step: 1, status: "done" });
     const e = fake({}, "incident.runbookDone");
     expect(
       await runRunbookWith(e.c, { id: "i", json: false, runbook: "pay", done: 1 }, e.sink, TTY),

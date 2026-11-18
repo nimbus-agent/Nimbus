@@ -36,7 +36,7 @@ export type RunbookMatch = {
   readonly services: readonly string[];
   /** Trigger sources (`pagerduty`, `jira`, `sentry`, ...); empty means any. */
   readonly sources: readonly string[];
-  /** An owner regex over the record's capped trigger title; null means any. */
+  /** A case-insensitive substring of the record's capped trigger title (never a regular expression); null means any. */
   readonly title: string | null;
 };
 

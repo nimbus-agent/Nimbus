@@ -39,44 +39,45 @@ function isConsentShortcut(a: string): boolean {
   return a === "--yes" || a === "-y" || a.startsWith("--script-consent-source");
 }
 
+type ParseState = { id?: string; json: boolean; runbook?: string; step?: number; done?: number };
+
+/**
+ * One argument (and its value, when it takes one). Returns how many arguments it used, or 0 for a malformed one.
+ */
+function takeArg(out: ParseState, a: string, v: string | undefined): 0 | 1 | 2 {
+  if (a === "--json") {
+    if (out.json) return 0;
+    out.json = true;
+    return 1;
+  }
+  if (a === "--runbook") {
+    if (out.runbook !== undefined || v === undefined || !NAME_RE.test(v)) return 0;
+    out.runbook = v;
+    return 2;
+  }
+  if (a === "--step" || a === "--done") {
+    const n = stepNumber(v);
+    if (out.step !== undefined || out.done !== undefined || n === undefined) return 0;
+    if (a === "--step") out.step = n;
+    else out.done = n;
+    return 2;
+  }
+  if (out.id !== undefined || a.startsWith("-") || a === "" || a.length > 256) return 0;
+  out.id = a;
+  return 1;
+}
+
 /** Strict: every flag at most once, `--step` and `--done` exclusive, `--step` has no `--json` form. */
 export function parseRunbookArgs(argv: readonly string[]): RunbookArgs | undefined {
   if (argv.some(isConsentShortcut)) return undefined;
-  const out: { id?: string; json: boolean; runbook?: string; step?: number; done?: number } = {
-    json: false,
-  };
-  for (let i = 0; i < argv.length; i += 1) {
-    const a = argv[i] as string;
-    const v = argv[i + 1];
-    if (a === "--json" && !out.json) {
-      out.json = true;
-    } else if (
-      a === "--runbook" &&
-      out.runbook === undefined &&
-      v !== undefined &&
-      NAME_RE.test(v)
-    ) {
-      out.runbook = v;
-      i += 1;
-    } else if (
-      (a === "--step" || a === "--done") &&
-      out.step === undefined &&
-      out.done === undefined
-    ) {
-      const n = stepNumber(v);
-      if (n === undefined) return undefined;
-      if (a === "--step") out.step = n;
-      else out.done = n;
-      i += 1;
-    } else if (out.id === undefined && !a.startsWith("-") && a !== "" && a.length <= 256) {
-      out.id = a;
-    } else {
-      return undefined;
-    }
+  const out: ParseState = { json: false };
+  for (let i = 0; i < argv.length; ) {
+    const used = takeArg(out, argv[i] as string, argv[i + 1]);
+    if (used === 0) return undefined;
+    i += used;
   }
-  if (out.id === undefined) return undefined;
-  if ((out.step !== undefined || out.done !== undefined) && out.runbook === undefined)
-    return undefined;
+  const acts = out.step !== undefined || out.done !== undefined;
+  if (out.id === undefined || (acts && out.runbook === undefined)) return undefined;
   if (out.step !== undefined && out.json) return undefined;
   return {
     id: out.id,
@@ -142,20 +143,19 @@ function paramsText(p: unknown): string {
     .join(" ");
 }
 
+function reversibilityLabel(r: string): string {
+  if (r === "irreversible") return "IRREVERSIBLE";
+  return r === "reversible" ? "reversible" : "reversibility unknown";
+}
+
 function stepLine(s: StepLike): string {
   const state = s.status === null ? "" : ` [${clean(s.status)}]`;
   if (s.kind === "check") return `${String(s.n)}. check: ${clean(s.text)}${state}`;
   if (s.kind === "read") {
     return `${String(s.n)}. read ${clean(s.service)} ${clean(s.tool)} ${paramsText(s.params)}${state}`;
   }
-  const label =
-    s.reversibility === "irreversible"
-      ? "IRREVERSIBLE"
-      : s.reversibility === "reversible"
-        ? "reversible"
-        : "reversibility unknown";
   const wave = s.wave === null ? "" : `, wave ${String(s.wave)}`;
-  return `${String(s.n)}. action [${label}${wave}] ${clean(s.tool)} ${paramsText(s.params)}${state}`;
+  return `${String(s.n)}. action [${reversibilityLabel(s.reversibility)}${wave}] ${clean(s.tool)} ${paramsText(s.params)}${state}`;
 }
 
 /** The runbooks of one record as the owner reads them. Every text the gateway returns is stripped. */
@@ -227,8 +227,16 @@ export async function runRunbookWith(
       return reportRun(out, sink);
     }
     if (a.runbook !== undefined && a.done !== undefined) {
-      await c.call("incident.runbookDone", { id: a.id, runbook: a.runbook, step: a.done });
-      sink.out(`Marked step ${String(a.done)} of ${clean(a.runbook)} done.\n`);
+      const done = await c.call("incident.runbookDone", {
+        id: a.id,
+        runbook: a.runbook,
+        step: a.done,
+      });
+      sink.out(
+        a.json
+          ? `${JSON.stringify(done)}\n`
+          : `Marked step ${String(a.done)} of ${clean(a.runbook)} done.\n`,
+      );
       return 0;
     }
     const r = await c.call<RunbooksReplyLike>("incident.runbooks", {
