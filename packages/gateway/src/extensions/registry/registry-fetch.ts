@@ -57,6 +57,7 @@ export type RegistryFetchMeta = {
     | "registry.manifest"
     | "registry.package"
     | "registry.liveness"
+    | "registry.provenance"
     | "trust.feed";
   extensionId?: string;
   version?: string;

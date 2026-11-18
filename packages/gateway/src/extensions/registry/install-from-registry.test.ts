@@ -185,6 +185,82 @@ describe("installFromRegistry", () => {
     expect(asked[0]?.provenanceNote).toBeUndefined();
   });
 
+  test("a published Sigstore bundle is re-checked offline; every outcome is one line, never a refusal", async () => {
+    // The real cli/cli bundle: it verifies against the baked roots, but names cli/cli's tarball,
+    // not this test package, so the most it can reach here is `subject_mismatch` (on a runtime
+    // whose EC verify works; `signature_unverified` on Bun before 1.4). The verified outcome over
+    // the matching tarball is proved in provenance-verify.test.ts.
+    const bundleText = readFileSync(
+      join(import.meta.dir, "__fixtures__", "provenance", "cli-cli-2.105.0-slsa.json"),
+      "utf8",
+    );
+    const provenance = {
+      sourceRepository: "cli/cli",
+      commit: "e1219499a578b69e3437adaa31cd60614e23c802",
+      workflow: ".github/workflows/deployment.yml@refs/heads/trunk",
+      runner: "github-hosted" as const,
+      verifiedAt: "2026-11-18T00:30:00Z",
+    };
+    const bundlePath = `extensions/${ID}/1.0.0/provenance.json`;
+    const publish = (opts: { file?: string; sha256?: string; ref?: boolean }): void => {
+      const path = join(regDir, "index.json");
+      const index = JSON.parse(readFileSync(path, "utf8")) as {
+        extensions: Record<string, { versions: Record<string, Record<string, unknown>> }>;
+      };
+      const v = index.extensions[ID]?.versions["1.0.0"] as Record<string, unknown>;
+      const fileText = opts.file ?? bundleText;
+      v["provenance"] =
+        opts.ref === false
+          ? provenance
+          : {
+              ...provenance,
+              bundle: bundlePath,
+              bundleSha256: opts.sha256 ?? createHash("sha256").update(fileText).digest("hex"),
+            };
+      if (opts.file !== "") writeFileSync(join(regDir, bundlePath), fileText);
+      resignIndex(path, index as unknown as Record<string, unknown>);
+    };
+    const run = async (opts: Parameters<typeof publish>[0]) => {
+      resetInstalled();
+      rmSync(regDir, { recursive: true, force: true });
+      db.run("DELETE FROM extension_registry");
+      asked = [];
+      await setup([{ version: "1.0.0" }], { manifestExtra: { repository: "cli/cli" } });
+      publish(opts);
+      const out = await installFromRegistry(deps(), { id: ID });
+      expect(out.id).toBe(ID);
+      return asked[0];
+    };
+    const base =
+      "Provenance verified by main: built from cli/cli at e1219499a578 by .github/workflows/deployment.yml@refs/heads/trunk";
+
+    const fetched = await run({});
+    expect(["subject_mismatch", "signature_unverified"]).toContain(
+      fetched?.provenanceRecheck?.status === "unverified" ? fetched.provenanceRecheck.reason : "",
+    );
+    expect(fetched?.provenanceNote?.startsWith(`${base}; not re-verified offline: `)).toBe(true);
+
+    const tampered = await run({ sha256: "0".repeat(64) });
+    expect(tampered?.provenanceRecheck).toEqual({
+      status: "unverified",
+      reason: "bundle_hash_mismatch",
+    });
+    expect(tampered?.provenanceNote).toBe(
+      `${base}; not re-verified offline: the attestation does not match the signed index`,
+    );
+
+    const missing = await run({ file: "", sha256: "a".repeat(64) });
+    expect(missing?.provenanceRecheck).toEqual({
+      status: "unverified",
+      reason: "bundle_unavailable",
+    });
+
+    // No bundle reference: the line reads exactly as before, and no re-check is carried.
+    const none = await run({ ref: false });
+    expect(none?.provenanceNote).toBe(base);
+    expect(none?.provenanceRecheck).toBeUndefined();
+  });
+
   test("the approval states the evidence for the package, and it survives the consent redaction", async () => {
     await setup([{ version: "1.0.0" }]);
     await installFromRegistry(deps(), { id: ID });
