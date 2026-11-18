@@ -2,6 +2,18 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [11.9.0](https://github.com/nimbus-agent/Nimbus/compare/v11.8.0...v11.9.0) (2026-11-18)
+
+
+### Features
+
+* **gateway:** the model drives a computer-use session the owner opened; computer-use prompts go only to that connection and count only a human answer (I35, D26(d)) ([#2069](https://github.com/nimbus-agent/Nimbus/issues/2069)) ([e3ac7a8](https://github.com/nimbus-agent/Nimbus/commit/e3ac7a87d70a08ee97a4a80f14ec6c68b85eb37d))
+
+
+### Bug Fixes
+
+* **deps:** delete the stale picomatch GHSA-fc5q-39xc-vjpf accepted-advisory row (bun audit no longer reports it) ([#2071](https://github.com/nimbus-agent/Nimbus/issues/2071)) ([7901023](https://github.com/nimbus-agent/Nimbus/commit/7901023f8f98210df404ab33773304e73783e2fb))
+
 ## [11.8.0](https://github.com/nimbus-agent/Nimbus/compare/v11.7.0...v11.8.0) (2026-11-18)
 
 
