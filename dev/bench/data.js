@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794996345162,
+  "lastUpdate": 1795005770855,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "044c9c04e4c10619c4af89d73a9ae0d4fa5b7b22",
-          "message": "chore: release main (#1430)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.7.0</summary>\n\n##\n[7.7.0](https://github.com/nimbus-agent/Nimbus/compare/v7.6.0...v7.7.0)\n(2026-09-03)\n\n\n### Features\n\n* **agents:** publish the gateway version on the roster response\n([#1428](https://github.com/nimbus-agent/Nimbus/issues/1428))\n([d3ba71d](https://github.com/nimbus-agent/Nimbus/commit/d3ba71dd3d3513e828da301bd59472fdb2dfc456))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-09-03T04:40:25Z",
-          "tree_id": "3d78846c5dd9c63cd793bba404437d30a266ef18",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/044c9c04e4c10619c4af89d73a9ae0d4fa5b7b22"
-        },
-        "date": 1788411244810,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 325.7947999999975,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 328.1524619,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 177.69172169999948,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a9a491da1d5058336688d0fcf938b8e7c5b4d7b9",
+          "message": "feat(ui): the desktop Marketplace page searches registries and shows an extension's signed evidence (S4 marketplace tile B1) (#2064)\n\nS4 carried-in row **Marketplace page and desktop tile**, slice B1: the\ndesktop tile.\n\n## What changes\n- **Desktop Marketplace page** gains *Browse registries*. A search box\ncalls `registry.search` with `includeBuiltin: true` on submit, and a\nresult opens a tile from `registry.info`. The tile shows:\n- the score, and the `Baseline`, `Tested`, `History` and `Checked` lines\nverbatim;\n  - the declared permissions and what the sandbox here will allow;\n- provenance, license, the verified publisher, blocked versions and\nfunding links;\n- `nimbus extension install <id> --registry <name>` and `nimbus\nextension sponsor …` to **copy**, built only from an id and a registry\nname the CLI accepts.\n- **The desktop installs nothing, adds no registry and opens no link**\n(B1 chain C1: a compromised renderer also draws the consent popup). The\nold \"Install from directory\" button, which the bridge always refused\n(`extension.install` is not allowlisted), is now a line of text.\n- **I7: the allowlist goes from 137 to 140.** `registry.list`,\n`registry.search` and `registry.info` are added by name.\n`registry.add|remove|refresh|install|cloneSource` are pinned absent:\nRust `allowlist_registry_reads_only` plus a by-name pin in\n`security-invariants.test.ts`.\n- **Gateway:**\n- `registry.search { includeBuiltin?: boolean }` searches what a bare\ninstall resolves: the owner's registries plus the built-in one, unless\nair gap skips it, with `builtinSkippedForAirGap` in the reply. Without\nthe flag, the CLI's `nimbus extension search` behaves exactly as before.\n- `registry.info` marks each version `blocked`, using the same I48\n`blocksFor` check that search runs.\n- **Egress:** none new. Search and info reach only the owner's\nregistries and the baked official one, through the existing I44 chain\nand the I29 ledger, as `extension.checkForUpdates` already does from the\nrenderer. The page calls them on submit and select only, never on a\ntimer.\n\n## Not built\n- **Install, add a registry, open a funding link in the browser:** these\nstay terminal or copy-only until the owner decides (questions in the\nsession report).\n- **B3,** the static `nimbus-agent.dev/extensions` catalog, ships in a\nlater PR.\n\n## No migration, invariant, static rule, HITL type or egress class\n\n## Review\n- **Spec reviewed by Antigravity:** round 1 asked for changes (the\nbuilt-in registry wasn't searched, info carried no block state, B3\nscope); round 2 approved.\n- **Batched docs:** the shared status docs (CLAUDE.md/GEMINI.md status\nparagraph, top of CHANGELOG, docs/README.md) are batched into the last\nPR of this batch. Proposed text:\n`handoff-1118/hotdocs-marketplace-b1.md`.\n\n## Verification\n- **preflight:fast:** passed.\n- **Gateway:** registry suites, 414 tests passing;\n`security-invariants.test.ts`, 653 passing.\n- **UI:** vitest, 1,411 tests passing.\n- **Rust:** `cargo test --lib allowlist`, 44 passing.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCk6NpLauKU2yYCwva\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-18T12:31:38Z",
+          "tree_id": "5fda5df258136d256b1ab6f929dd9e06e1be1e00",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/a9a491da1d5058336688d0fcf938b8e7c5b4d7b9"
+        },
+        "date": 1795005767744,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 174.13735355000009,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 175.67796435000182,
             "unit": "ms"
           }
         ]
