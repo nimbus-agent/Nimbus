@@ -480,6 +480,14 @@ Phase 28 AD6c shipped 2026-11-16: a first-party connector started on its own (`n
 
 Workflow conditionals shipped 2026-11-16: a `run` or `write` step of a saved workflow may carry a `when` guard over the count of an earlier query step, and a step whose guard is false is skipped without asking you. A standing rule covers such a write only when the guard needs matches to hold, so an empty or stale index cannot trigger an unattended write.
 
+Phase 10's incident engine gained its remaining 2026-11-17 slices: `nimbus incident timeline` and `incident list --cascade` (the ranked root candidate among open alerts) and `nimbus audit replay <incident-id>` (IC4); `nimbus incident remediate`, `undo` and `advisory` (IC5a: proposals with evidence and a reversibility label, which you run and can undo when the row is reversible), and `nimbus oncall pushed <id> --remediate` from a pushed brief (IC5b); `nimbus incident postmortem` with an approved push to Confluence or Notion (IC7a); `nimbus incident debt` (IC7b); `nimbus incident findings` from an expectation radar and an hourly anomaly baseline, which never act (IC8); incident sections in `nimbus oncall handoff` and `nimbus incident investigate` (IC9a); `nimbus incident update`, which drafts a status update and, with your approval, posts it to one Slack or Teams channel, and an optional scribe that queues drafts and never posts (IC9b); and a read-only desktop Incidents page (IC10a).
+
+`nimbus workflow export | import` (2026-11-17, invariant `I59`): signed workflow bundles. An import shows the exact steps and writes only after your own answer; it never creates a schedule or a standing rule.
+
+Phase 28 AD3b (v11.0.0, 2026-11-17): the agent door enforces. An outside agent proposes only the connector writes you approved for agents by name; the 47 types it could propose before with no approval are refused. AD8 (2026-11-16) bundles a Developer role pack (`nimbus pack install developer`).
+
+`nimbus pre-mortem linear:<project>` (2026-11-16) builds the risk brief for a Linear project, compared with closed Linear projects. `[watcher.chatops]` (off by default) posts a counts-only notice to your namespace's Slack channel when a watcher fires.
+
 Phase 10 IC3 shipped 2026-11-16: `nimbus incident list` and `nimbus incident show` print what Nimbus knows about an open incident from your local index: the changes before it, the chat around it, the earlier incidents of the service and who is on call, with no model and no network. The pushed on-call brief is built from the same records.
 
 Phase 28 AD7b (the agent kits) shipped 2026-11-15: `nimbus agent install <claude-code|codex|cursor|vscode>` writes the Nimbus MCP server entry and steering into that agent's own configuration, after showing you every change and taking a typed `yes`, and `nimbus agent status` tells you whether those entries are still as written. Steering is guidance in the agent's own harness, not a security boundary: Claude Code gets a hook and deny rules, Codex gets rules, Cursor and VS Code get instructions. None of the four kits has been verified against the real agent yet; that run is manual and is described in [`agent-kits-verification.md`](./agent-kits-verification.md).
@@ -646,7 +654,7 @@ nimbus catchup --since 7d                 # personalized retrospective digest
 nimbus owners src/billing/                # ownership graph
 nimbus glossary                           # mined domain terminology
 nimbus decisions                          # implicit ADRs
-nimbus pre-mortem                         # comparable-history risk brief
+nimbus pre-mortem                         # comparable-history risk brief (Jira epic or linear:<project>)
 nimbus negotiate --person <id> --since 90d  # cited contribution brief
 ```
 
