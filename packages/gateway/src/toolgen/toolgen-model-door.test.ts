@@ -223,10 +223,10 @@ describe("invokeForModel", () => {
     const h = harness();
     const o = ownerAsk("human");
     await invokeForModel(h.source, () => o.ask, "weather", {
-      city: "a‮b\u001B[2Kc\rd",
+      city: "a\u202Eb\u001B[2Kc\rd",
     });
     const prompt = o.prompts[0] ?? "";
-    expect(prompt).not.toContain("‮");
+    expect(prompt).not.toContain("\u202E");
     expect(prompt).not.toContain("\u001B");
     expect(prompt).not.toContain("\r");
     expect(prompt).toContain(String.raw`\u{202E}`);

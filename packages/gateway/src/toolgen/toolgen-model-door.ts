@@ -168,7 +168,9 @@ export function renderModelInput(
 ): { readonly text: string; readonly plain: Record<string, unknown> } | undefined {
   let plain: unknown;
   try {
-    plain = JSON.parse(JSON.stringify(input));
+    // NOSONAR typescript:S7784: a JSON round-trip on purpose, not a deep clone: it reduces the input to
+    // plain JSON (getters read once, functions and undefined dropped), which is what the owner is shown.
+    plain = JSON.parse(JSON.stringify(input)); // NOSONAR typescript:S7784
   } catch {
     return undefined;
   }
