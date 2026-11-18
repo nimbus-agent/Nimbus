@@ -15,6 +15,7 @@ import {
   agentRequestContext,
   recordPointInTimeFacts,
 } from "./agent-request-context.ts";
+import { COMPUTER_USE_TURN_REFUSALS } from "./computer-use-turn-error.ts";
 import { GatewayAgentUnavailableError } from "./gateway-agent-error.ts";
 import { buildLocalIndexedContextForTest, runAsk } from "./run-ask.ts";
 import type { ConnectorDispatcher } from "./types.ts";
@@ -413,62 +414,105 @@ describe("runAsk and the computer-use binding (I35, OR-MCU-1)", () => {
     session: { sessionId: "cu-1", lane: "browser" as const },
     gateDeps: {} as never,
   };
-  async function boundAfter(over: Record<string, unknown>): Promise<AgentRequestContext> {
+  const resolver = (id: string) => (id === "cu-1" ? BINDING : undefined);
+  /** A remote-agent turn: the agent is there and the router does not prefer local. */
+  function agentTurn(seen: { bound?: unknown }) {
+    return {
+      llmRouter: { ...fakeRouter([]), prefersLocal: () => false, enforcesAirGap: () => false },
+      conversationalAgent: {
+        generate: async () => {
+          seen.bound = agentRequestContext.getStore()?.computerUse;
+          return { text: "done" };
+        },
+      } as never,
+    };
+  }
+  async function turn(over: Record<string, unknown>): Promise<{ store: AgentRequestContext }> {
     const idx = seed();
     const store: AgentRequestContext = { computerUse: BINDING };
-    await agentRequestContext.run(store, async () => {
-      await runAsk(params(idx, { llmRouter: fakeRouter([]), ...over }));
-    });
-    idx.close();
-    return store;
+    try {
+      await agentRequestContext.run(store, async () => {
+        await runAsk(params(idx, over));
+      });
+    } finally {
+      idx.close();
+    }
+    return { store };
   }
-  const resolver = (id: string) => (id === "cu-1" ? BINDING : undefined);
 
-  test("the owner's cli turn that names an open session is bound to it", async () => {
-    const asked: string[] = [];
-    const store = await boundAfter({
+  test("the owner's cli turn that names an open session reaches the agent with it bound", async () => {
+    const seen: { bound?: unknown } = {};
+    await turn({
+      ...agentTurn(seen),
       offerComputerUse: true,
       computerSessionId: "cu-1",
-      computerUseFor: (id: string) => {
-        asked.push(id);
-        return resolver(id);
-      },
-    });
-    expect(store.computerUse).toBe(BINDING);
-    expect(asked).toEqual(["cu-1"]);
-  });
-
-  test("a session the platform does not hold open is not bound, and a reused store is cleared", async () => {
-    const store = await boundAfter({
-      offerComputerUse: true,
-      computerSessionId: "gone",
       computerUseFor: resolver,
     });
-    expect(store.computerUse).toBeUndefined();
+    expect(seen.bound).toBe(BINDING);
   });
 
-  test("no offer (not a cli caller), no session named, or a demo root: never bound", async () => {
-    for (const over of [
-      { offerComputerUse: false, computerSessionId: "cu-1", computerUseFor: resolver },
-      { offerComputerUse: true, computerUseFor: resolver },
-      {
-        offerComputerUse: true,
-        computerSessionId: "cu-1",
-        computerUseFor: resolver,
-        paths: { ...paths, demo: true },
-      },
+  test("an action-looking task still reaches the agent, never plan dispatch", async () => {
+    const seen: { bound?: unknown } = {};
+    await turn({
+      ...agentTurn(seen),
+      input: "move the deploy file",
+      // A confident action intent: without the forced route this turn would plan-dispatch.
+      classify: async () => ({
+        intent: "file_organize",
+        entities: {},
+        requiresHITL: true,
+        confidence: 1,
+      }),
+      offerComputerUse: true,
+      computerSessionId: "cu-1",
+      computerUseFor: resolver,
+    });
+    expect(seen.bound).toBe(BINDING);
+  });
+
+  test.each([
+    [
+      "a session this gateway does not hold open",
+      { offerComputerUse: true, computerSessionId: "gone" },
+      COMPUTER_USE_TURN_REFUSALS.notOpen,
+    ],
+    [
+      "a caller that is not the terminal",
+      { offerComputerUse: false, computerSessionId: "cu-1" },
+      COMPUTER_USE_TURN_REFUSALS.notTerminal,
+    ],
+    [
+      "a demo root",
+      { offerComputerUse: true, computerSessionId: "cu-1", paths: { ...paths, demo: true } },
+      COMPUTER_USE_TURN_REFUSALS.demo,
+    ],
+  ])("%s fails explicitly, and nothing is bound", async (_label, over, message) => {
+    const seen: { bound?: unknown } = {};
+    await expect(turn({ ...agentTurn(seen), computerUseFor: resolver, ...over })).rejects.toThrow(
+      message,
+    );
+    expect(seen.bound).toBeUndefined();
+  });
+
+  test("a turn the local model would answer (no tools) fails explicitly instead of answering without the session", async () => {
+    for (const router of [
+      { ...fakeRouter([]), prefersLocal: () => true, enforcesAirGap: () => false },
+      { ...fakeRouter([]), prefersLocal: () => false, enforcesAirGap: () => true },
     ]) {
-      expect((await boundAfter(over)).computerUse).toBeUndefined();
+      await expect(
+        turn({
+          llmRouter: router,
+          conversationalAgent: { generate: async () => ({ text: "x" }) } as never,
+          offerComputerUse: true,
+          computerSessionId: "cu-1",
+          computerUseFor: resolver,
+        }),
+      ).rejects.toThrow(COMPUTER_USE_TURN_REFUSALS.noAgent);
     }
   });
 
-  test("a point-in-time turn withdraws a binding", async () => {
-    const store = await boundAfter({
-      offerComputerUse: true,
-      computerSessionId: "cu-1",
-      computerUseFor: resolver,
-      pointInTimeMs: AT,
-    });
+  test("a turn that names no session clears a reused store's binding", async () => {
+    const { store } = await turn({ llmRouter: fakeRouter([]) });
     expect(store.computerUse).toBeUndefined();
   });
 });

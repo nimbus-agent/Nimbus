@@ -87,9 +87,12 @@ export class CuUnicastConsentBroker<TInput extends object> {
     return [...this.pending.keys()];
   }
 
-  /** Cancel and drop every pending request (shutdown, test `afterEach`). */
+  /** Cancel every pending request as a denial and drop it (shutdown, test `afterEach`). */
   clear(): void {
-    for (const { timer } of this.pending.values()) clearTimeout(timer);
+    for (const entry of this.pending.values()) {
+      clearTimeout(entry.timer);
+      entry.resolve(false);
+    }
     this.pending.clear();
   }
 }

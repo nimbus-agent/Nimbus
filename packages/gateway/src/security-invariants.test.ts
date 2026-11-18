@@ -7412,9 +7412,15 @@ describe("I35 — computer-use actuation only inside an approved envelope", () =
     const runAsk = stripComments(await read("packages/gateway/src/engine/run-ask.ts"));
     const at = runAsk.indexOf("function bindComputerUseIfOwner(");
     const bind = runAsk.slice(at, runAsk.indexOf("\n}\n", at));
-    expect(bind).toContain("p.offerComputerUse === true");
-    expect(bind).toContain("!isDemo(p)");
+    // A turn that NAMED a session drives it or fails explicitly (never a silent answer without it).
     expect(bind).toContain("delete store.computerUse");
+    expect(bind).toContain("if (p.offerComputerUse !== true) {");
+    expect(bind).toContain("if (isDemo(p)) throw new ComputerUseTurnError(");
+    expect(bind).toContain("COMPUTER_USE_TURN_REFUSALS.notOpen");
+    expect(bind).toContain("COMPUTER_USE_TURN_REFUSALS.noAgent");
+    expect(runAsk).toContain(
+      'if (p.computerSessionId !== undefined) return "a computer-use turn bypasses the classifier";',
+    );
     const withdraw = runAsk.slice(runAsk.indexOf("function withdrawOfferedExecutors("));
     expect(withdraw.slice(0, withdraw.indexOf("\n}\n"))).toContain("delete store.computerUse");
     const agent = stripComments(await read("packages/gateway/src/engine/agent.ts"));

@@ -44,6 +44,7 @@ import type {
   PrimaryRetrieval,
 } from "./ask-explain-types.ts";
 import { createBeforeStateRunner } from "./before-state.ts";
+import { COMPUTER_USE_TURN_REFUSALS, ComputerUseTurnError } from "./computer-use-turn-error.ts";
 import { capPerService, stripInternalRankField } from "./context-fairness.ts";
 import type { ContextTruncation } from "./context-truncation-disclosure.ts";
 import {
@@ -448,18 +449,24 @@ function offerConnectorWriteExecutorIfOwner(p: RunAskParams): void {
 function bindComputerUseIfOwner(p: RunAskParams): void {
   const store = agentRequestContext.getStore();
   if (store === undefined) return;
-  const binding =
-    p.offerComputerUse === true &&
-    !isDemo(p) &&
-    p.computerSessionId !== undefined &&
-    p.computerUseFor !== undefined
-      ? p.computerUseFor(p.computerSessionId)
-      : undefined;
-  if (binding === undefined) {
-    delete store.computerUse;
-  } else {
-    store.computerUse = binding;
+  delete store.computerUse;
+  if (p.computerSessionId === undefined) return;
+  // A turn that NAMED a session drives it or fails explicitly: never a silent answer without it.
+  if (p.offerComputerUse !== true) {
+    throw new ComputerUseTurnError(COMPUTER_USE_TURN_REFUSALS.notTerminal);
   }
+  if (isDemo(p)) throw new ComputerUseTurnError(COMPUTER_USE_TURN_REFUSALS.demo);
+  const binding = p.computerUseFor?.(p.computerSessionId);
+  if (binding === undefined) throw new ComputerUseTurnError(COMPUTER_USE_TURN_REFUSALS.notOpen);
+  // The local router answers with no tools at all, so a bound session would silently do nothing.
+  if (
+    p.conversationalAgent === undefined ||
+    p.llmRouter?.prefersLocal() === true ||
+    p.llmRouter?.enforcesAirGap() === true
+  ) {
+    throw new ComputerUseTurnError(COMPUTER_USE_TURN_REFUSALS.noAgent);
+  }
+  store.computerUse = binding;
 }
 
 /**
@@ -1648,6 +1655,8 @@ function buildExplainRecord(
 function forcedConversationalReason(p: RunAskParams): string | undefined {
   if (p.devil === true) return "devil mode bypasses the classifier";
   if (p.pointInTimeMs !== undefined) return "point-in-time mode bypasses the classifier";
+  // A turn that named a computer-use session must reach the agent that drives it, never a plan.
+  if (p.computerSessionId !== undefined) return "a computer-use turn bypasses the classifier";
   return undefined;
 }
 

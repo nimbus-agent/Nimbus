@@ -2067,8 +2067,9 @@ answer on their behalf.
 arm): `computer-rpc.ts` builds the gate deps per connection, the envelope prompt goes to the opener, and
 every action prompt goes through the session's open-time channel, never the caller's, so whoever calls
 `computer.act` (or a model turn bound to the session) cannot receive or answer its own prompt. An answer
-counts only from that connection and only with `answerSource: "human"`; a connection that goes away
-settles its prompts as denials.
+counts only from that connection and only with `answerSource: "human"` (a client's claim, not proof a
+person answered; a non-human or missing source is denied); a connection that goes away settles its
+prompts as denials.
 
 **The model drives a session the owner opened, from the terminal only (OR-MCU-1).** `nimbus ask
 --computer <session-id>` binds one OPEN session to that turn: a `cli` caller only

@@ -109,6 +109,14 @@ describe("CuUnicastConsentBroker", () => {
     expect(await theirs).toBe(true);
   });
 
+  test("clear() settles every pending prompt as a denial", async () => {
+    const { b } = make();
+    const p = b.requestFor("owner", { what: "click" }, 60_000);
+    b.clear();
+    expect(await p).toBe(false);
+    expect(b.pendingIds()).toEqual([]);
+  });
+
   test("the class has no broadcast arm", () => {
     const b = new CuUnicastConsentBroker<object>("computer.envelopeRequest");
     brokers.push(b);

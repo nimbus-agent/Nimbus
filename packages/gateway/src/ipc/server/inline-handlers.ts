@@ -18,6 +18,7 @@ import {
   type AgentRequestContext,
   agentRequestContext,
 } from "../../engine/agent-request-context.ts";
+import { ComputerUseTurnError } from "../../engine/computer-use-turn-error.ts";
 import { GatewayAgentUnavailableError } from "../../engine/gateway-agent-error.ts";
 import { GAS_LIMIT_REACHED_NOTIFICATION, type GasLimitEvent } from "../../engine/step-budget.ts";
 import { driftHintsFromIndex } from "../../index/drift-hints.ts";
@@ -242,6 +243,9 @@ export async function dispatchAgentInvoke(
     });
   } catch (e) {
     if (e instanceof GatewayAgentUnavailableError) {
+      throw new RpcMethodError(-32000, e.message);
+    }
+    if (e instanceof ComputerUseTurnError) {
       throw new RpcMethodError(-32000, e.message);
     }
     throw e;
