@@ -68,6 +68,7 @@ import {
   checkSqliteRuntimeInit,
   checkStandingApprovals,
   checkSyncContextNoRawHandles,
+  checkToolgenModelDoorConfinement,
   checkToolgenVaultKeyConfinement,
   checkTribalKbWriteInvariant,
   checkTrustTableConfinement,
@@ -8119,5 +8120,68 @@ describe("D46(f) - the IC8 finding and baseline tables are written only by their
 
   test("files outside the gateway source are not scanned", () => {
     expect(rules([file("packages/cli/src/x.ts", "DELETE FROM incident_finding")])).toEqual([]);
+  });
+});
+
+describe("D51 - the model's door to saved generated tools stays confined (I60)", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const SRC = "packages/gateway/src/";
+  const DOOR = `${SRC}toolgen/toolgen-model-door.ts`;
+  const GOOD: FileEntry[] = [
+    file(
+      DOOR,
+      'export function buildModelGeneratedTools() { buildGeneratedTools(); getAgentRequestToolgenModelAsk(); } export function pinReadVerified() {} const T = "tool.model.invoke";',
+    ),
+    file(`${SRC}toolgen/toolgen-agent-tools.ts`, "export function buildGeneratedTools() {}"),
+    file(`${SRC}toolgen/toolgen-invoke-gate.ts`, "export function invokeSavedTool() {}"),
+    file(`${SRC}ipc/toolgen-rpc.ts`, "invokeSavedTool();"),
+    file(`${SRC}platform/assemble.ts`, "invokeSavedTool(); pinReadVerified();"),
+    file(`${SRC}engine/agent.ts`, "buildModelGeneratedTools(); getAgentRequestToolgenModelAsk();"),
+    file(
+      `${SRC}engine/agent-request-context.ts`,
+      "toolgenModelAsk?: X; export function getAgentRequestToolgenModelAsk() {}",
+    ),
+    file(`${SRC}engine/run-ask.ts`, "store.toolgenModelAsk = x;"),
+    file(`${SRC}engine/executor.ts`, 'const s = new Set(["tool.model.invoke"]);'),
+  ];
+  const rules = (files: FileEntry[]): string[] =>
+    checkToolgenModelDoorConfinement(files).map((v) => v.rule);
+
+  test("the sanctioned layout is clean", () => {
+    expect(checkToolgenModelDoorConfinement(GOOD)).toEqual([]);
+  });
+
+  test.each([
+    ["buildModelGeneratedTools();", "(a) a second surface offering generated tools"],
+    ["buildGeneratedTools();", "(b) a tool built from an unfiltered list"],
+    ["invokeSavedTool();", "(c) a spawn outside the CLI path and the door's binding"],
+    ["pinReadVerified();", "(d) the pin outside its two sites"],
+    ["store.toolgenModelAsk = () => ok;", "(e) a second setter of the owner-only slot"],
+    ["getAgentRequestToolgenModelAsk();", "(e) a reader outside the agent and the door"],
+    ['const t = "tool.model.invoke";', "(f) the action type spelled elsewhere"],
+  ])("%s is refused outside its sites: %s", (body) => {
+    expect(rules([...GOOD, file(`${SRC}ipc/other.ts`, body)])).toContain(
+      "toolgen-model-door-confined",
+    );
+  });
+
+  test("the type inside a longer string (a diagnostic) is not the type", () => {
+    const msg = file(
+      `${SRC}ipc/x.ts`,
+      "const m = 'The \"tool.model.invoke\" action needs consent';",
+    );
+    expect(rules([...GOOD, msg])).toEqual([]);
+    const bare = file(`${SRC}ipc/x.ts`, "const t = `tool.model.invoke`;");
+    expect(rules([...GOOD, bare])).toContain("toolgen-model-door-confined");
+  });
+
+  test("an aliased import is still caught; a comment or a test file is not", () => {
+    expect(
+      rules([...GOOD, file(`${SRC}ipc/x.ts`, 'import { invokeSavedTool as run } from "./y.ts";')]),
+    ).toContain("toolgen-model-door-confined");
+    expect(
+      rules([...GOOD, file(`${SRC}ipc/x.ts`, "// invokeSavedTool() is not called here")]),
+    ).toEqual([]);
+    expect(rules([...GOOD, file(`${SRC}ipc/x.test.ts`, "invokeSavedTool();")])).toEqual([]);
   });
 });

@@ -20,12 +20,16 @@ import type { OncallServiceBinding } from "../index/oncall-now-query.ts";
 import { retrievalNoteFor } from "../index/search-retrieval.ts";
 import type { SessionMemoryStore } from "../memory/session-memory-store.ts";
 import { searchPersons } from "../people/person-store.ts";
-import { buildGeneratedTools } from "../toolgen/toolgen-agent-tools.ts";
-import type { ToolgenRegistry } from "../toolgen/toolgen-registry.ts";
+import {
+  buildModelGeneratedTools,
+  isModelCallNotOk,
+  type ToolgenModelDoorSource,
+} from "../toolgen/toolgen-model-door.ts";
 import {
   getAgentRequestConnectorWriteExecutor,
   getAgentRequestPointInTimeMs,
   getAgentRequestSessionId,
+  getAgentRequestToolgenModelAsk,
   getAgentRequestUserMcpExecutor,
   recordExplainToolCall,
   recordPointInTimeFacts,
@@ -86,6 +90,12 @@ function wrapToolForLlm<T>(
   tool: string,
   toolDef: T,
   auditDb: Database | undefined,
+  /**
+   * Optional: whether a RETURNED result is a failure (a refusal or an error object the tool returns
+   * instead of throwing), so the tool-call log and `nimbus explain last` record it as `error`. The
+   * result still reaches the model through the envelope either way.
+   */
+  isNotOk?: (raw: unknown) => boolean,
 ): T {
   const td = toolDef as unknown as {
     execute?: (input: unknown, ctx?: unknown) => Promise<unknown>;
@@ -103,6 +113,7 @@ function wrapToolForLlm<T>(
       try {
         raw = await original(input, ctx);
         envelope = wrapToolOutput({ service, tool }, raw);
+        if (isNotOk?.(raw) === true) status = "error";
       } catch (err) {
         status = "error";
         envelope = wrapToolOutput({ service, tool }, { error: String(err) });
@@ -225,14 +236,12 @@ export type NimbusEngineAgentDeps = {
     gateDeps: CuRunDeps;
   };
   /**
-   * Session-scoped runtime-generated tools (PR 1's toolgen slice). Omitted in every caller today
-   * exactly like `computerUse` above: absent, `toolsFor` below contributes nothing rather than a
-   * disabled tool that errors when called.
+   * The owner's SAVED generated tools (S4, I60): the door's source (`toolgen/toolgen-model-door.ts`).
+   * Offered PER REQUEST, and only when the turn carries the owner-only approval
+   * (`getAgentRequestToolgenModelAsk`), which `runAsk` sets only on the local owner's non-demo
+   * `cli`/`ui` turn. Every call asks a person over its verbatim input before anything spawns.
    */
-  toolgen?: {
-    registry: ToolgenRegistry;
-    invoke: (toolId: string, args: Record<string, unknown>) => Promise<unknown>;
-  };
+  toolgen?: ToolgenModelDoorSource;
   /**
    * Owner-registered user MCP servers opted into model access (`connector add --mcp --model`).
    * Offered PER REQUEST, and only when the turn carries a user-MCP executor in its request context
@@ -654,15 +663,14 @@ export function createNimbusEngineAgent(deps: NimbusEngineAgentDeps): {
   // Async is part of that contract (`Promise<T> | T`, @mastra/core/dist/types/dynamic-argument.d.ts).
   const otherToolsFor = async (): Promise<ToolsInput> => ({
     ...baseTools,
-    ...(deps.toolgen === undefined
+    // I60: the approval's PRESENCE is the offer decision (the local owner's non-demo `cli`/`ui`
+    // turn); the door re-derives what is offerable at listing and again at every call.
+    ...(deps.toolgen === undefined || getAgentRequestToolgenModelAsk() === undefined
       ? {}
-      : buildGeneratedTools(
-          getAgentRequestSessionId(),
-          deps.toolgen.registry,
-          deps.toolgen.invoke,
+      : buildModelGeneratedTools(deps.toolgen, (service, tool, def) =>
           // I11. `wrapToolForLlm` is module-private here, which is why it is passed rather than
-          // imported by the toolgen module.
-          (service, tool, def) => wrapToolForLlm(service, tool, def, deps.auditDb),
+          // imported by the toolgen module. A refused or failed call is logged as an error.
+          wrapToolForLlm(service, tool, def, deps.auditDb, isModelCallNotOk),
         )),
     // The executor's PRESENCE is the offer decision: absent (not the local owner, or outside a
     // turn), nothing is listed, so no user server is spawned for this request.

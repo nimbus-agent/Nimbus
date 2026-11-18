@@ -3802,6 +3802,84 @@ export function checkWorkflowImportConfinement(files: readonly FileEntry[]): Vio
   return out;
 }
 
+// ---- D51 (model access to saved generated tools, I60) --------------------------------------------
+// Rule `toolgen-model-door-confined`, each identifier matched as a word after comments and string
+// literals are stripped (so an aliased import is caught):
+// (a) `buildModelGeneratedTools` is named only by `toolgen/toolgen-model-door.ts` (its definition) and
+//     `engine/agent.ts` (the one caller), so no other surface offers the model a generated tool;
+// (b) `buildGeneratedTools` only by `toolgen/toolgen-agent-tools.ts` and the door, so a tool built
+//     from an unfiltered list cannot reach the model past the door's offer and call checks;
+// (c) `invokeSavedTool` only by `toolgen/toolgen-invoke-gate.ts`, `ipc/toolgen-rpc.ts` (the owner's
+//     `nimbus tool run`) and `platform/assemble.ts` (the door's pinned binding);
+// (d) `pinReadVerified` only by the door and `platform/assemble.ts`;
+// (e) the request slot `toolgenModelAsk` only by `engine/agent-request-context.ts` (its declaration)
+//     and `engine/run-ask.ts` (the one setter, on the owner's non-demo `cli`/`ui` turn), and its
+//     reader `getAgentRequestToolgenModelAsk` only by the context module, `engine/agent.ts` and the door;
+// (f) the literal "tool.model.invoke" only by the door and `engine/executor.ts` (the I2 frozen set).
+// Test files are not scanned. Stated bounds: a text scan, so a dynamically composed name evades it, and
+// a second use inside an allow-listed file is exempt whole-file; the behavioural tests in
+// `security-invariants.test.ts` (I60) are authoritative. Tied to I60.
+const D51_SRC = "packages/gateway/src/";
+const D51_DOOR = `${D51_SRC}toolgen/toolgen-model-door.ts`;
+const D51_ASSEMBLE = `${D51_SRC}platform/assemble.ts`;
+const D51_CONTEXT = `${D51_SRC}engine/agent-request-context.ts`;
+const D51_RULES: readonly { readonly re: RegExp; readonly allowed: readonly string[] }[] = [
+  { re: /\bbuildModelGeneratedTools\b/g, allowed: [D51_DOOR, `${D51_SRC}engine/agent.ts`] },
+  {
+    re: /\bbuildGeneratedTools\b/g,
+    allowed: [`${D51_SRC}toolgen/toolgen-agent-tools.ts`, D51_DOOR],
+  },
+  {
+    re: /\binvokeSavedTool\b/g,
+    allowed: [
+      `${D51_SRC}toolgen/toolgen-invoke-gate.ts`,
+      `${D51_SRC}ipc/toolgen-rpc.ts`,
+      D51_ASSEMBLE,
+    ],
+  },
+  { re: /\bpinReadVerified\b/g, allowed: [D51_DOOR, D51_ASSEMBLE] },
+  { re: /\btoolgenModelAsk\b/g, allowed: [D51_CONTEXT, `${D51_SRC}engine/run-ask.ts`] },
+  {
+    re: /\bgetAgentRequestToolgenModelAsk\b/g,
+    allowed: [D51_CONTEXT, `${D51_SRC}engine/agent.ts`, D51_DOOR],
+  },
+];
+const D51_STRING_LITERAL_RE = /(["'`])((?:\\[\s\S]|(?!\1)[^\\\n])*)\1/g;
+const D51_TYPE_VALUE = "tool.model.invoke";
+const D51_LITERAL_ALLOWED: readonly string[] = [D51_DOOR, `${D51_SRC}engine/executor.ts`];
+
+export function checkToolgenModelDoorConfinement(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (!f.relPath.startsWith(D51_SRC)) continue;
+    if (f.relPath.endsWith(".test.ts") || f.relPath.endsWith(".test-helpers.ts")) continue;
+    const withStrings = stripComments(f.contents);
+    const code = stripStringLiterals(withStrings);
+    const original = f.contents.split("\n");
+    const push = (text: string, index: number | undefined): void => {
+      const line = text.slice(0, index).split("\n").length;
+      out.push({
+        rule: "toolgen-model-door-confined",
+        file: f.relPath,
+        line,
+        snippet: (original[line - 1] ?? "").trim(),
+      });
+    };
+    for (const r of D51_RULES) {
+      if (r.allowed.includes(f.relPath)) continue;
+      for (const m of code.matchAll(r.re)) push(code, m.index);
+    }
+    if (!D51_LITERAL_ALLOWED.includes(f.relPath)) {
+      // Every string literal, scanned left to right, so a quoted word inside a longer string is part
+      // of that string's value and never matches on its own.
+      for (const m of withStrings.matchAll(D51_STRING_LITERAL_RE)) {
+        if (m[2] === D51_TYPE_VALUE) push(withStrings, m.index);
+      }
+    }
+  }
+  return out;
+}
+
 // ---- D47 (the v1 static-box LAN path, I56) -------------------------------------------------------
 // Rule id `lan-box-path-confined`. The LAN's v1 wire seals every frame under the STATIC `nacl.box`
 // secret of the two identity keys, which has no forward secrecy. Since LAN FS1 that path is reachable
@@ -6083,6 +6161,7 @@ export const RULE_ANCHORS: readonly string[] = [
   "packages/gateway/src/incident-update/update-send.ts", // D46(e) -- the owner's incident update post, a linked owner action (IC9b)
   "packages/gateway/src/finops/cost-series.ts", // D48 — FinOps cost code is inert
   "packages/gateway/src/automation/workflow-import.ts", // D50 - the only way a workflow enters from outside
+  "packages/gateway/src/toolgen/toolgen-model-door.ts", // D51 - the model's only door to a saved generated tool
   "packages/gateway/src/ipc/lan-legacy.ts", // D47 — the only home of the v1 static-box LAN path
   "packages/gateway/src/platform/sandbox/write-grant-check.ts", // D10 user-write — a file the rule reads and then permits
   "packages/gateway/src/engine/executor.ts", // D22 — connectors.dispatch chokepoint
@@ -6536,6 +6615,13 @@ async function run(): Promise<void> {
       );
     }
     if (workflowImportViolations.length > 0) exit = 1;
+    const toolgenModelDoorViolations = checkToolgenModelDoorConfinement(files);
+    for (const e of toolgenModelDoorViolations) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D51 the model's door to saved generated tools left its confinement (rule ${e.rule}) - buildModelGeneratedTools only from engine/agent.ts, buildGeneratedTools only from the door, invokeSavedTool only from the CLI path and the door's binding, the owner-only approval slot set only by runAsk, and "tool.model.invoke" only in the door and the executor: ${e.snippet}`,
+      );
+    }
+    if (toolgenModelDoorViolations.length > 0) exit = 1;
     const doorApprovalViolations = checkDoorApprovalConfinement(files);
     for (const e of doorApprovalViolations) {
       console.error(

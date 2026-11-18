@@ -1,18 +1,22 @@
 import type { ToolsInput } from "@mastra/core/agent";
 import { createTool } from "@mastra/core/tools";
-import type { ToolgenRegistry } from "./toolgen-registry.ts";
+import type { SavedToolEnvelope } from "./toolgen-registry.ts";
 import { zodSchemaFromInputSchema } from "./toolgen-schema.ts";
 
 /**
- * The model-facing surface for generated tools.
+ * The model-facing surface for generated tools (S4, I60, static D51).
  *
- * Returns `{}` -- NO tool at all, not a disabled tool that errors when called -- when the session
- * holds none, mirroring `buildComputerUseTools`. An undefined session (a caller outside the
- * request context) likewise gets nothing rather than another session's tools.
+ * Takes the tools to offer as a LIST the caller already filtered (`listModelOfferableTools` in
+ * `toolgen/toolgen-model-door.ts`: saved, opted in by id, every switch allowing), never a registry:
+ * this function decides nothing about WHICH tools reach the model. An empty list contributes `{}`
+ * -- NO tool at all, not a disabled tool that errors when called -- mirroring
+ * `buildComputerUseTools`.
+ *
+ * `invoke` is the door's own call path (the owner's per-call approval, then `invokeSavedTool`); the
+ * tool built here never spawns anything itself.
  */
 export function buildGeneratedTools(
-  sessionId: string | undefined,
-  registry: ToolgenRegistry,
+  offered: readonly SavedToolEnvelope[],
   invoke: (toolId: string, args: Record<string, unknown>) => Promise<unknown>,
   /**
    * The I11 envelope wrapper, INJECTED because `agent.ts`'s `wrapToolForLlm` is module-private.
@@ -22,17 +26,18 @@ export function buildGeneratedTools(
    * error rather than a review comment.
    */
   wrap: <T>(service: string, tool: string, def: T) => T,
+  /** The description the model reads (the door's closer-escaped form of the owner's text). */
+  describe: (envelope: SavedToolEnvelope) => string,
 ): ToolsInput {
-  if (sessionId === undefined) return {};
   const out: ToolsInput = {};
-  for (const envelope of registry.forSession(sessionId)) {
-    const { toolId, description, inputSchema } = envelope.artifact;
+  for (const envelope of offered) {
+    const { toolId, inputSchema } = envelope.artifact;
     out[toolId] = wrap(
       "toolgen",
       toolId,
       createTool({
         id: toolId,
-        description: `${description} (runtime-generated, approved this session)`,
+        description: describe(envelope),
         inputSchema: zodSchemaFromInputSchema(inputSchema),
         execute: async (input: unknown) => await invoke(toolId, input as Record<string, unknown>),
       }),
