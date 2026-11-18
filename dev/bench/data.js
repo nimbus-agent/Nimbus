@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795006289802,
+  "lastUpdate": 1795006991596,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "45082d3772b57da336be21a01fe9d946dd8d60f5",
-          "message": "chore: release main (#1431)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.8.0</summary>\n\n##\n[7.8.0](https://github.com/nimbus-agent/Nimbus/compare/v7.7.0...v7.8.0)\n(2026-09-03)\n\n\n### Features\n\n* **multimodal:** local audio/video understanding, indexed and\nsearchable (S2 PR 1 of 4)\n([#1429](https://github.com/nimbus-agent/Nimbus/issues/1429))\n([b995a96](https://github.com/nimbus-agent/Nimbus/commit/b995a96b2c135fa19614123df49c82033254065e))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-09-03T19:40:17+03:00",
-          "tree_id": "03b7638b7543df68f38e34ef733decc84febfb73",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/45082d3772b57da336be21a01fe9d946dd8d60f5"
-        },
-        "date": 1788454180141,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 249.72136355000438,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 247.69277930001226,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 202.42695749999876,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b0fb4fbdbe8f00cd6e10b4c45d58ebc3437fa3d0",
+          "message": "feat(gateway): re-verify a registry version's build provenance offline against Sigstore roots baked into the release (#2066)\n\nSlice 1 of the S4 carried-in row **Offline provenance re-verification**\n(owner rulings OR-PROV-1 to OR-PROV-5, 2026-11-18).\n\n## What changes\n\n- **Registry side.** `gh attestation verify --format json` already\nreturns each attestation's full Sigstore bundle under\n`attestation.bundle`. The repo's old fixture had trimmed it out. The\nsign job now publishes the qualifying bundle as\n`extensions/<id>/<version>/provenance.json` on `gh-pages`, as canonical\nJSON capped at 64 KiB. The signed version entry pins it with\n`provenance.bundle` and `provenance.bundleSha256`. `registry-format`\ngains `readProvenanceBundleRef(entry, id, version)` and\n`provenanceBundlePath`. The action dist is rebuilt.\n- **Gateway verifier.** `extensions/registry/provenance-verify.ts` is\nthe only gateway importer of `@sigstore/*`. The pins are exact: verify\n4.1.3, bundle 5.0.1, core 4.0.1, protobuf-specs 0.5.2, all Apache-2.0\nand pure JS. It checks a bundle offline, in this order:\n- **Root, by trial.** It tries each trusted root baked into the release.\nPublic-good needs an SCT, a Rekor entry and a signed time. GitHub's\ninstance needs a timestamp-authority time.\n- **Statement.** The DSSE statement must be SLSA v1 and name the\npackage's sha256.\n- **Identity.** It is read only from the verified leaf's Fulcio\nextensions, never from the builder-written predicate. The issuer must be\nGitHub Actions. The repository, commit, workflow and runner go through\nthe sign job's own `provenanceFromGhVerify` rule and must equal the\nsigned index.\n  - It never throws: every failure is a fixed reason.\n- **Baked roots.** `sigstore-trusted-roots.ts` is generated from `gh\nattestation trusted-root` by `bun run trust:refresh-sigstore-roots`.\n`audit:sigstore-roots` checks it offline, both as a preflight gate and\nin CI. A new daily `sigstore-roots-staleness` job in\n`release-channel-drift.yml` compares it with the live roots and files an\nissue when they differ, following the trust-snapshot pattern. There is\nno TUF client and no runtime root fetch.\n- **Install door only.** `installFromRegistry` gains a\n`withProvenanceRecheck` step after the liveness read. It runs only when\nthere is provenance and a bundle reference. It fetches the bundle\nthrough `fetchRegistryBytes`, using the new `registry.provenance` method\non the existing registry egress class; the transport allowlist admits\n`provenance.json` beside a package. It checks the hash in constant time\nand then verifies the bundle.\n- **What the owner sees.** The `provenanceNote` sentence gains `;\nre-verified offline against the Sigstore roots in this Nimbus release`\nor `; not re-verified offline: <reason>`, and the request carries\n`provenanceRecheck`. The install is unchanged either way: this is\nevidence, never a decision (I51 bound 6, OR-PROV-2).\n`fetchVerifiedRegistryPackage` (the migration engine's fetch) makes no\nprovenance request.\n\n## Verification\n\n- **Real fixtures.** The tests use the two real attestations of\n`cli/cli` v2.105.0's linux tarball, public data downloaded 2026-11-18.\nThe SLSA bundle verifies under public-good. The release bundle verifies\nits signature under GitHub's instance and is refused as not build\nprovenance. Further cases: a tampered statement, another package, each\nidentity field changed, malformed or oversized input, and no or wrong\nroots.\n- **Door test.** A fetched, a hash-tampered, a missing and an absent\nbundle each install, and differ only in the line.\n- **Source pins** added to the I51 block of\n`security-invariants.test.ts`.\n- **Runtime note.** Bun 1.3.14 (BoringSSL) throws on\n`crypto.verify(null, …)` with an EC key, so every bundle reads \"not\nre-verified\" there. That fails safe. The tests probe for this and assert\nthe fail-safe result rather than skipping. On `oven/bun:1.4`, the CI and\nrelease Bun, the verified path passes; I ran it in Docker.\n- **Local checks.** `preflight:fast` passed. 1,928 tests in the touched\nsuites pass.\n- **Spec review.** Antigravity reviewed the spec in two rounds and\napproved it in round 2 (advisory items only; the replies are recorded in\nthe spec, which stays local).\n\n## Stated bounds\n\n- A root newer than the release reads \"not re-verified\" until a newer\nNimbus ships. The daily job flags the drift.\n- Updates show no provenance line, as before.\n- No public SLSA bundle signed by GitHub's own instance exists to test\nthat path end to end; it is covered up to the signature.\n- A re-verification proves which workflow, at which commit, in which\nrepository built the package, as GitHub's OIDC token claimed. It does\nnot prove what the workflow did.\n\n## Not in this PR\n\n- **Slice 2:** installed copies carry the result (`nimbus extension\ninfo`, `nimbus extension verify-provenance`). It takes the next free\nschema number at its own PR (expected V105).\n- **Hot docs** (the CLAUDE.md/GEMINI.md status paragraph, the top of\nCHANGELOG, docs/README.md) are batched into the batch-final docs PR, per\nthe owner's rule. Their text is held locally. This PR does update the\nI51 invariant bullet in CLAUDE.md and GEMINI.md,\n`docs/SECURITY-INVARIANTS.md`, `docs/architecture.md`, `docs/roadmap.md`\n(progress note) and `docs/registry-hosting.md`.\n\nNo migration, no new invariant, no static rule, no IPC method, no Tauri\nallowlist change, no HITL type.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCk6NpLauKU2yYCwva\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-18T12:46:03Z",
+          "tree_id": "ee5a7f6cbff568157898c8910225c525a8ef94e6",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/b0fb4fbdbe8f00cd6e10b4c45d58ebc3437fa3d0"
+        },
+        "date": 1795006988285,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 177.67713609999956,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 177.57610630000053,
             "unit": "ms"
           }
         ]
