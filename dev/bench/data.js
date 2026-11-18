@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795026893665,
+  "lastUpdate": 1795027600042,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "62a6a20286e3d9a55d9507b4b25e8f36b13f8f8b",
-          "message": "fix(quality): fix all 29 open Sonar findings in code, cut duplication 420 to 400 clones, and correct five stale doc facts (#1439)\n\nA quality sweep across four fronts. No capability changed, no invariant\nmoved, no config key added or removed. One real correctness fix rides\nalong, described below.\n\n---\n\n## 1. Sonar: all 29 open findings fixed in code\n\nNo rule disables, no `NOSONAR` markers, no board suppressions. The\nquality gate was already OK — it measures new code only — so these were\nthe standing `CODE_SMELL` backlog: 11 `S3776`, 4 `S5976`, 4 `S3358`, 2\n`S4624`, 2 `S7747`, 2 `S5906`, and one each of `S4144`, `S7786`,\n`S6353`, `S6564`.\n\n**The three that mattered were the I35 gate functions**: `cu-gate.ts`\n`runAction` at complexity 37, `cu-classify.ts` `classifyBrowserAction`\nat 26, `cu-gate.ts` `openSession` at 21. Their branch count **is** the\nordered security sequence — refuse before consent, assert the exact\nlaunch policy still before consent, classify structurally, single-use\napproval, three post-await liveness re-checks — so a refactor that\nscatters that sequence degrades the invariant to satisfy a metric.\n\nThey were refactored rather than accepted, under one constraint: the\norder stays readable as an ordered list at the call site.\n\n- `openSession` splits by **phase** into named steps invoked in\nsequence: `assertOpenAllowedBeforeConsent`, then `prepareLane`, then\n`resolveSessionBounds`, then `buildEnvelope` and `buildEnvelopePrompt`,\nthen consent, then launch. No check is hidden inside a helper a reviewer\nhas to go and find.\n- Both lane arms became top-level functions sharing **one** mutable\n`ActionAuditState` record. That is what lets the C-1 `finally` — every\nexit owes exactly one audit row — stay a single block. Per-arm closures\nwould have meant per-arm audit machinery, which is how a lane ends up\nowing none.\n- The approve-then-recheck-liveness pair both lanes need became one\n`approveThisAction`. Two copies of that re-check is two places for it to\ngo missing.\n- The classifier's `provenInert` predicate moved out **whole** and\ndeliberately stays a complete restatement of the rules rather than a\nhelper the early returns share — a shared helper would make the two\nagree by construction and destroy the double-entry the check exists to\nprovide.\n\nOther fixes worth naming:\n\n- **`S7786`, and a real defect.** `browser.ts` read the bounding box\nwith a bare `typeof v === \"number\"`, which `NaN` passes. A `NaN`\ncoordinate would have reached `Input.dispatchMouseEvent`. The fields now\ngo through `finiteFieldOf`, which folds `NaN` and infinities in with\nabsent and non-numeric.\n- **`S4144`.** `applyLlmLocalTableLine` and `applyKvLine` in\n`nimbus-toml.ts` were identical. One definition now serves every\nsub-table parser.\n- **`S6564`.** The `ProviderId = string` alias is gone; its rationale\nmoved onto `LlmProvider.providerId`, the canonical declaration site, and\n`llm-rpc.ts`'s no-op `provider as ProviderId` cast went with it.\n- **`S5976` x4.** Parameterized as tables, each row still its own\n`test`, so a regression names the case that broke rather than the\ndescribe block.\n\n## 2. Duplication: 420 to 400 clones\n\njscpd over `packages`: 4,291 to 3,941 duplicated lines, 2.32% to 2.13%.\nFive clusters, one definition each:\n\n- **`util/pass-scheduler.ts`** is now the single debounce,\nsingle-flight, dirty-rerun and shutdown-abort machine behind **all\nfour** post-sync extraction passes: glossary, decisions, ownership,\npre-mortem. The four hand-written copies had already drifted in ways\nnobody decided — `trigger` set the dirty flag directly in one and armed\na redundant timer in the other three, only two carried an\n`AbortController`, and only one `unref`'d its timer. Each subsystem\nkeeps its own error class and `ERR_<X>_*` codes: `refuse` is injected,\nso the scheduler decides *when* to refuse and the caller decides what it\nis called.\n- **`runComputerLaneSession`.** `nimbus computer browser` and `nimbus\ncomputer terminal` were about 95% the same function. What is left per\nlane is the two things that genuinely differ: how the argv parses, and\nwhat `computer.sessionOpen` is handed.\n- **`assembleBrief`.** Eleven renderers each assembled their own header,\nbody, reserved Gaps, latency footer tail. This is I31 machinery rather\nthan formatting sugar: a renderer that assembles its own tail is one\nthat can forget to withhold the reserved section, and the contract guard\nwould then be checking a document the renderer never promised.\n`negotiate` deliberately stays out — its tail is longer than\ngaps-then-footer.\n- **`graph-populator.ts`.** The repo, workspace and person entity\nupserts are one definition each. The co-ownership namespacing —\n`metadata: {}` clears our own `symbols` namespace and leaves `ownership`\nuntouched, which is not a no-op — is the part a copy gets wrong\nsilently. The **relation** stays at each call site, because the verb and\ndirection are what actually differ.\n- **`applyPassSectionToggle`.** The `enabled` prelude the four pass\nsections share, with its ordering requirement stated once instead of\nfour times.\n\n**Deliberately not deduplicated:** `cli/src/lib/nimbus-toml-config.ts`\nagainst `gateway/src/config/toml-section-writer.ts`, 71 lines and the\nlargest remaining cross-file pair. `cli` reaches the gateway over IPC\nonly, with no source imports — that duplication is the architectural\nnon-negotiable working, not debt.\n\n## 3. Coverage: the floor was already met, so the gate was widened\n\n`coverage-baseline.json` carries `\"files\": {}` — no grandfathered debt —\nand all 23 scopes clear their floors by 7 to 20 points. There was no gap\nto close. Raising coverage here means widening what the gate\n**measures**.\n\n**`perf/percentiles.ts` retired from the exclusion list.** It sat at\n94.12 line and 75.00 branch, and the entire shortfall was three guards\n`computePercentiles` structurally cannot reach — it filters to finite\nsamples and sorts before calling. `pickPercentile` is now an `@internal`\ntest seam and those guards are covered directly, including a behavioural\ndistinction nothing had pinned: an out-of-range index returns\n`undefined` on the `lo === hi` arm but interpolates from the `?? 0`\nfallback on the other. My first draft of those tests asserted `0` for\nboth and was wrong; they now record what the code does.\n\n32 new tests total: 20 for `pass-scheduler.ts`, 11 for `percentiles.ts`,\none regression test described next.\n\n**A defect this branch introduced, found by probing rather than by the\nsuite.** Extracting the shared prelude routed `[ownership]` — which has\nno `use_llm` key — through the two-key helper, so\n`parseNimbusOwnershipToml` returned a config carrying `useLlm`: a field\nno type declares and nothing reads. TypeScript allowed it, because the\nparameter was widened to `{ enabled?, useLlm? }`. All 20,635 tests\npassed, because every ownership assertion checked individual **fields**,\nand a field assertion cannot see an extra key. Split into\n`applyEnabledToggle` and `applyPassSectionToggle`, with a regression\ntest asserting the whole object plus the key's absence.\n\n## 4. Docs: five stale facts, each re-derived from code\n\n- `README.md` claimed **thirty-two** live invariants, `I1`-`I27` and\n`I29`-`I33`. There are **thirty-five**: `I1`-`I27` and `I29`-`I36`. Two\nprose sites plus the project-structure tree, which said `I1-I35`.\n- `README.md` described the S2 slot as opened with nothing shipped in\nit. Four things have shipped. The section now names them **with what\neach does not do** — the browser lane's missing screen sibling,\nmultimodal's missing vision model — since a reader deciding whether to\nenable one needs the bound more than the headline.\n- `README.md` said the Slack/Teams bot cannot yet run an agent and\ncalled closing that the next surface direction. It has been able to\nsince 2026-08-30, via `chatops-boot.ts`'s `agentBriefDispatcher` and the\nledgered `chatops.agentBrief` row.\n- `architecture.md` **and** `schema-reference.md` both pinned the schema\nat **V57** against an actual **V58**, and both still described\n`cu_session.lane` as having a driver for `browser` only — the terminal\nlane shipped 2026-09-01. `schema-reference.md` is outside the requested\nset but carried the identical wrong number, and leaving a known-wrong\nfact in the file the other one points at is how a correction fails to\nland.\n- `roadmap.md`'s S2 scope heading still read \"none started\".\n\nAdditions rather than corrections: a `### Local compute` section in\n`README.md`'s Everyday Use, since the three shipped S2 commands were\nreachable only through `cli-reference.md`; and `exec/`, `computer-use/`,\n`multimodal/` in the project-structure tree.\n\n`CLAUDE.md` and `GEMINI.md` gain one workflow rule — the durable lesson\nfrom this sweep's hardest call: a branch-count metric over a **gate**\nmeasures the security surface and reads it as debt. It names the three\nI35 functions and the shape a refactor must take when one of them has to\ncome under the gate.\n\n## Harness\n\n`verify:docker --full` always reports one red test: `exec e2e — CI\nsandbox precondition`. That guard is working as designed and the failure\nis the harness — CI runs `scripts/linux/install-sandbox-deps.sh`, this\ncontainer cannot. Installing `bubblewrap` in the image was tried and\n**reverted**: Docker's default seccomp denies unprivileged user\nnamespaces to the non-root user the container runs as, so `canConfine`\nanswers true, the guard skips, and the three spawn-dependent cases fail\non `exitCode 1 vs 3` instead — a confusing symptom in place of the named\none. The script header now says which single failure to expect and that\nany other is real.\n\n## Verification\n\n- Full suite: **20,663 pass, 0 fail** — up from 20,635.\n- `preflight:fast`: green.\n- `verify:docker --full` on Linux: `coverage-floor: ok`, all 23 scopes\nok, Perf scope 8 files at 97.3% to 9 files at 97.5%.\n- Cognitive complexity re-measured per file with Biome.\n`filesystem-v2-sync.ts` went from three findings to two; no file gained\none.\n\n## Not claimed\n\n**Sonar has not analysed this branch.** Each finding was fixed in code\nand verified locally, but a cleanup pass can *add* findings — the last\none on this repo removed 16 and added 3, one of them self-inflicted by a\nfix. The honest statement today is \"29 addressed\", not \"29 cleared\".\nConfirming it means re-querying after the merge analysis lands, whose\n`revision` must match `main` HEAD, and diffing the rule facets before\nand after.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01DAVe1kyv95YtYyVxBawZjE\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added resumable multimodal media processing support and documented the\nlatest local compute capabilities.\n* Expanded LLM provider identifiers to support arbitrary vendor strings.\n* Improved computer-use safety by rejecting invalid coordinates and\npreserving fail-closed action classification.\n* Added consistent scheduling for glossary, decisions, ownership, and\npre-mortem refreshes, including debouncing and follow-up runs.\n\n* **Documentation**\n* Updated architecture, schema, roadmap, security-invariant, and local\ncompute documentation.\n\n* **Bug Fixes**\n* Improved atomic file replacement recovery and media discovery\nfiltering.\n  * Preserved event handling when listeners change during dispatch.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-04T06:36:44Z",
-          "tree_id": "21ef9ee08b012fcd0663028381e261c3988a48e4",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/62a6a20286e3d9a55d9507b4b25e8f36b13f8f8b"
-        },
-        "date": 1788504569529,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 339.23893460000147,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 340.41412515000485,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 254.48532580000975,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "fdaf3c9aafc9a314433b520de7aeec8195ad4c8a",
+          "message": "chore: release main (#2072)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>11.9.0</summary>\n\n##\n[11.9.0](https://github.com/nimbus-agent/Nimbus/compare/v11.8.0...v11.9.0)\n(2026-11-18)\n\n\n### Features\n\n* **gateway:** the model drives a computer-use session the owner opened;\ncomputer-use prompts go only to that connection and count only a human\nanswer (I35, D26(d))\n([#2069](https://github.com/nimbus-agent/Nimbus/issues/2069))\n([e3ac7a8](https://github.com/nimbus-agent/Nimbus/commit/e3ac7a87d70a08ee97a4a80f14ec6c68b85eb37d))\n\n\n### Bug Fixes\n\n* **deps:** delete the stale picomatch GHSA-fc5q-39xc-vjpf\naccepted-advisory row (bun audit no longer reports it)\n([#2071](https://github.com/nimbus-agent/Nimbus/issues/2071))\n([7901023](https://github.com/nimbus-agent/Nimbus/commit/7901023f8f98210df404ab33773304e73783e2fb))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-18T20:23:51+02:00",
+          "tree_id": "8ddada69c598447f683e77cc8e9f0b61c289b9d3",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/fdaf3c9aafc9a314433b520de7aeec8195ad4c8a"
+        },
+        "date": 1795027596076,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 182.5982371499993,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 178.84496335000057,
             "unit": "ms"
           }
         ]
