@@ -594,13 +594,13 @@ describe("IC5a: remediate, undo, proposals and the advisory switch", () => {
     }
   });
 
-  test("the IC5a surface stays off the renderer (I7); the LAN refusal is pinned per method in lan-rpc.test.ts", async () => {
+  test("the IC5a actions stay off the renderer (I7; proposals is the IC10b read); the LAN refusal is pinned per method in lan-rpc.test.ts", async () => {
     const rust = await Bun.file(
       fileURLToPath(new URL("../../../ui/src-tauri/src/gateway_bridge.rs", import.meta.url)),
     ).text();
-    for (const m of ["proposals", "remediate", "undo", "advisory", "advisorySet"]) {
+    for (const m of ["remediate", "undo", "advisory", "advisorySet"]) {
       expect(rust.split(`"incident.${m}"`).length - 1, m).toBe(1);
-      // Named once, inside IC10a's negative list (each entry asserted `!is_method_allowed`).
+      // Named once, inside the incident negative list (each entry asserted `!is_method_allowed`).
       const pinFn = rust.indexOf("fn allowlist_incident_reads_only()");
       const pinEnd = rust.indexOf("must not be renderer-callable", pinFn);
       const at = rust.indexOf(`"incident.${m}",`);
