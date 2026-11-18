@@ -18,6 +18,32 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-11-18: the model drives a computer-use session you opened (S4; owner rulings OR-MCU-1 and OR-MCU-2; I35 extended; static D26(d)).**
+  What you can do now: `nimbus ask --computer <session-id> "<task>"` lets the model drive a session you opened with `nimbus computer`. Every computer-use prompt, on every path, now goes only to the connection that opened the session, and only a person's answer there counts (`--yes`, scripts, delegates and an older CLI decline).
+  Stated bounds: CLI only; the desktop cannot drive or approve computer-use; two ask turns on one session interleave; a computer-use audit row does not record the answer source.
+
+- **2026-11-18: the model calls saved generated tools you list (S4; invariant I60; static D51; HITL type `tool.model.invoke`).**
+  What you can do now: list a saved tool by exact id in `[tool_generation] model_tools` and the model is offered it on your own terminal or desktop turn; every call asks you first over its exact input and is pinned to the saved artifact you saw. Org policy can switch it off with `[policy.capabilities.ai_v2] toolgen_model_access = false`.
+  Stated bounds: the approval covers the input, not the tool's behaviour; a re-save at the moment of a call can run the newly saved body, as with `nimbus tool run`.
+
+- **2026-11-18: installed extensions keep their build provenance (S4 offline provenance slice 2; schema V105).**
+  What you can do now: `nimbus extension info <id>` prints a `Provenance:` line, and `nimbus extension verify-provenance <id>` re-checks, offline, the attestation a registry install kept for the installed version.
+  Stated bounds: updates record no provenance; a newer Nimbus may verify what an older one could not, and the reverse.
+
+- **2026-11-18: registry installs re-verify build provenance offline (S4 offline provenance slice 1; owner rulings OR-PROV-1 to OR-PROV-5; no migration).**
+  What you can do now: the registry publishes the attestation's Sigstore bundle beside the package, and the install approval checks it with `@sigstore/verify` against the Sigstore roots baked into this release (public-good and GitHub's instance). The result is one clause of the provenance line; it never blocks an install.
+  Stated bounds: a root newer than the release, or Bun before 1.4, reads "not re-verified".
+
+- **2026-11-18: the Marketplace page and the extension catalog (S4; no migration or new invariant; Tauri allowlist 137 → 140).**
+  What you can do now: the desktop Marketplace page searches your registries and the official one and shows each extension's score, evidence lines, permissions, provenance, license and funding links, with the install command to copy; `nimbus-agent.dev/extensions/` lists the official registry's extensions from a snapshot verified like an install.
+  Stated bounds: the desktop installs nothing, adds no registry and opens no link; the docs catalog is a snapshot the owner refreshes.
+
+- **2026-11-18: `nimbus iac drift` and drift in the Terraform apply preview (Phase 10 IaC drift D1 and D2; owner rulings OR-DRIFT-1 to OR-DRIFT-3; no migration; static D42(i)).**
+  What you can do now: the Terraform apply approval lists objects changed or deleted outside Terraform (attribute names only, never values); `nimbus iac drift` checks your approved workdirs read-only with no prompt and no apply, and `[iac.drift] schedule` (off by default) runs it unattended with a count-only local notification.
+  Stated bounds: a normal plan runs (the connector has no `plan -refresh-only` tool); a provider or `local-exec` in an approved workdir runs with the granted credentials; no desktop view; nothing is compared against indexed live state.
+
+- **2026-11-18: the stale picomatch GHSA-fc5q-39xc-vjpf accepted-advisory row is deleted (#2071).** `bun audit` stopped reporting it.
+
 - **2026-11-18: incident runbooks (Phase 10 IC6; schema V104; invariant I57 (c); static D46(g)).**
   What you can do now: write runbooks as TOML files in `<configDir>/runbooks/`; `nimbus incident runbook <id> [--runbook <name>] [--step N | --done N]` lists the ones that match an incident and runs one step at a time behind your own prompt (`Proposed by: runbook <name>, step N`; a typed confirmation for a Wave 4 row; no delegation or standing rule). Parameters are filled from the record's typed fields only, never from alert text; a title match is a plain substring, never a regular expression. This completes the incident engine (IC1 to IC10).
   Stated bounds: parameters are checked for shape, not against the connector's input schema; `nimbus incident undo` does not reverse a runbook step; Bun's TOML reader needs dates and times quoted; the Phase 16 skill-pack runbooks are not built.
