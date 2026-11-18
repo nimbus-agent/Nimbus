@@ -6155,6 +6155,9 @@ async function loadFiles(): Promise<FileEntry[]> {
  */
 export const RULE_ANCHORS: readonly string[] = [
   "packages/gateway/src/briefing/briefing-runner.ts", // D45 — the briefing delivers locally only
+  // D42(i) (the read-only drift check, OR-DRIFT-1): the one caller of the method and the one builder.
+  "packages/gateway/src/iac-drift/drift-runner.ts",
+  "packages/gateway/src/engine/run-ask.ts",
   "packages/gateway/src/agents/_lib/briefing-build.ts", // D45
   // D46(a) (incident-forbidden-import / incident-no-network, Phase 10 IC3) -- anchored on BOTH halves of its
   // scope, as D45 is: the assembler under `incident/` and the render under `agents/_lib/`. Either moving out of

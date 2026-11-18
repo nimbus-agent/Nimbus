@@ -115,6 +115,38 @@ describe("the scheduled drift check (OR-DRIFT-2)", () => {
     expect(g.s.nextFireAt()).toBeUndefined();
   });
 
+  test("retire waits for a check that is still running", async () => {
+    let finish: () => void = () => {};
+    let done = false;
+    let now = T0;
+    const s = new IacDriftScheduler({
+      runner: {
+        check: () =>
+          new Promise((res) => {
+            finish = () => {
+              done = true;
+              res([]);
+            };
+          }),
+        running: () => false,
+      },
+      config: () => daily,
+      now: () => now,
+    });
+    await s.tick();
+    now = SIX;
+    void s.tick();
+    let retired = false;
+    const r = s.retire().then(() => {
+      retired = true;
+    });
+    await Promise.resolve();
+    expect(retired).toBe(false);
+    finish();
+    await r;
+    expect(done && retired).toBe(true);
+  });
+
   test("start ticks every 60 s, once; retire clears the timer and waits", async () => {
     const h = harness(() => daily);
     h.s.start();

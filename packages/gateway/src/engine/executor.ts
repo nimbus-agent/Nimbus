@@ -1998,7 +1998,11 @@ export class ToolExecutor {
     } catch (e) {
       return refuse(e instanceof PrepareRefusedError ? e.reason : PREPARE_REFUSALS.failed);
     } finally {
-      await prepared?.cleanup?.();
+      try {
+        await prepared?.cleanup?.();
+      } catch {
+        // The settle cleanup is best effort and never throws; were it to, the mutex is still released.
+      }
       outcome.release();
     }
   }

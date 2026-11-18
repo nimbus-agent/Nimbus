@@ -252,6 +252,22 @@ describe("checkTerraformDrift: the plan and show reads, never the apply, never a
     expect(h.log.at(-1)).toBe("release");
   });
 
+  test("a cleanup that throws still releases the mutex and keeps the outcome", async () => {
+    const h = harness({
+      settle: async () => ({
+        values: { planFile: "/approved/plan.tfplan", planSha256: "d".repeat(64) },
+        fields: [{ label: "Workdir", value: DIR }],
+        plan: PLAN,
+        cleanup: async () => {
+          throw new Error("rm failed");
+        },
+      }),
+    });
+    const r = await h.exec.checkTerraformDrift(DIR);
+    expect(r.ok).toBe(true);
+    expect(h.log.at(-1)).toBe("release");
+  });
+
   test("a settled write with no plan is unshowable, and is still cleaned up", async () => {
     const h = harness({
       settle: async () => ({
