@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794988222976,
+  "lastUpdate": 1794988905867,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "9ad2be9c1d398c1eb1636115ae495e2869775d00",
-          "message": "feat(computer-use): the terminal lane — a confined shell where nothing runs before the owner approves the whole line (#1426)\n\nSlice 2 of 3 of the S2 computer-use loop, per the design's own\nsequencing in § 14. Ships `nimbus computer terminal` — a sandboxed,\nline-oriented shell in which **no byte reaches the child process before\nthe owner has approved the whole command**. DEFAULT OFF, with\n`allowed_lanes` still empty by default. No new config keys, no\nmigration: V57 is reused as-is.\n\nDesign: `docs/superpowers/specs/2026-08-30-s2-computer-use-design.md` §§\n3.5, 4.3.1, 6.2, 13, 14.\nPlan:\n`docs/superpowers/plans/2026-09-01-computer-use-slice-2-terminal.md`,\nwith its review disposition recorded inline.\n\n## The safety property, and the four things that make it true\n\nOne sentence: bytes accumulate in a gateway-side `TerminalLineBuffer`\nand nothing is written until a submit character arrives, the assembled\nline is shown in full, and the owner approves it. A per-keystroke write\npath violates that **even if every keystroke is individually\nclassified** — that was the design's first shape and a complete bypass\nrather than a rough edge, since inside `vi` or `fzf` a single character\nIS the destructive action, so a model that never sent a newline would\nhave driven the host with every action auto-satisfied.\n\n- **Refusals are wholesale** and leave the buffer untouched, asserted on\nevery branch that can refuse. An earlier draft cleared it on one of\nthem, which made \"a refusal changes nothing\" unassertable as a single\ntest.\n- **Control characters are refused, not buffered.** A lane that cannot\nsafely deliver `y` cannot safely deliver Ctrl-C, and buffering a control\nbyte until a newline that never arrives is a silent hang rather than an\nhonest refusal.\n- **The approved line is read once** and not re-derived at write time —\nthe TOCTOU that would defeat the gate, since here the human IS the\nboundary.\n- **`classifyTerminalAction` takes exactly ONE parameter** and returns\n`actuating` unconditionally, so the model's description cannot be passed\nto it. § 4.3.1's \"no `observing` class at all\" is enforced by arity, not\nconvention.\n\nNo command allow-list, deliberately: an allow-list over shell text is\ndefeated by quoting, substitution, aliasing and encoding, and a defense\nthat can be quoted around is worse than none because it is believed.\n\n## Trojan Source — the buffer also refuses what the shell would ignore\n\n`REFUSED_RANGES` carries two classes for opposite reasons: C0/DEL/C1\nbecause delivering them is the danger, and the bidirectional overrides\nand isolates, zero-width characters, U+2028/U+2029 and the BOM because\nthey are harmless to the shell and dangerous to the human. On this lane\nthe approval prompt is the entire boundary, so a character that changes\nwhat the line RENDERS as attacks the only defense there is. Stated cost:\nan emoji ZWJ sequence cannot appear in a command line. Stated bound:\nthis closes the formatting channel, not the visual one — homoglyphs are\nmatched by no range table.\n\n## Two divergences from the browser lane, both in its favour\n\n**This lane DOES spawn through `SandboxRunner`.** The browser could not,\nbecause no PAL runner can carry a CDP control channel; stdio has no such\nproblem. So `canConfine` is asserted, before consent, over the policy\nthat actually spawns — and `ERR_CU_SANDBOX_DEGRADED` is reachable again,\nhaving been deleted when the browser lane dropped its placeholder\nassertion with a note saying a later PAL-spawning lane should restore\nit.\n\n**It adds NO egress class, structurally.** `permissions.network` is `[]`\nby construction and a requested grant is REJECTED rather than dropped.\nBecause that property holds via three unrelated mechanisms, it is proven\nper platform by a new integration test that runs the same `curl` through\nan unconfined shell FIRST as a positive control — without which \"zero\nserver hits\" would pass for any reason at all, `curl` being absent\nincluded.\n\n## Recorded deviations from the spec\n\n§ 3.5 says \"a PTY\"; this ships a pipe-backed shell. A native PTY module\nwould not survive `bun build --compile`, a defect this repo has shipped\nbefore — and since § 4.3.1 narrows the lane to line-oriented only, the\nPTY buys nothing it would not give back. The absence of a tty is\nstronger than the classifier: `vi`, `less`, `top` and `fzf` refuse to\nstart against a pipe on their own.\n\nCommand completion is detected by quiescence, never an injected\nsentinel: appending an `echo <nonce>` would give exact boundaries at the\ncost of writing bytes the owner never saw. `settled` discloses which\nbound ended collection, and `no_output` never claims a command finished.\n\n## Two defects found while building this, not by review\n\n- **The carried-output notice broke its own cap.** Idle output was\ncapped at `TERMINAL_OUTPUT_MAX_BYTES`, then the disclosure notice was\nprepended on top — so a result could exceed the cap by the notice's\nlength. The notice's bytes are now reserved from the idle budget. Found\nby a coverage-driven test of the idle path.\n- **A shell-path assertion was Windows-only correct.** `isAbsolute` on\n`join` of a Windows root passes on Windows and fails on POSIX. Each\nshell's path is now checked with its own platform's `isAbsolute`, which\nis the more honest property anyway.\n\n## Triple rule\n\nWiring, docs and tests land together. `docs/SECURITY-INVARIANTS.md` §\nI35 gains the terminal clause, the Trojan Source paragraph, the\n`SandboxRunner` divergence, the egress claim and the V57 column-reuse\ndisclosure; its scope bound now names two shipping lanes. D26(c) covers\nboth lane constructors with per-constructor allow-lists, and D26(b)'s\n**lack** of a terminal analogue is recorded rather than papered over\nwith a weak regex — that lane's capability is a plain child process, so\ncapability removal stays the primary defense. `CLAUDE.md` and\n`GEMINI.md` mirrors, `roadmap.md`, `CHANGELOG.md`, `architecture.md` and\n`cli-reference.md` all updated; PowerShell's deferral is recorded with\nits reasons so the next reader does not assume it was forgotten.\n\n## Verification\n\n- `preflight` and `preflight:fast`: PASSED.\n- `verify:docker --full`: `audit:coverage-floor: ok`,\n`audit:coverage-scopes: ok`. The remaining `test:ci` failures are five\nenvironmental ones — four sandbox preconditions that fail because the\nDocker image has no bubblewrap, three of which are pre-existing and fail\nidentically, plus the `secret-tool` vault test. None is in a file this\nbranch touches.\n- Every red-prove the plan demanded was executed: 17 deliberate breaks\nacross the buffer, launch policy, driver, gate and the I35 invariant\ntests, each producing exactly the expected red. Deleting only the Trojan\nSource ranges reds the 10 bidi cases while all 7 control-character cases\nstay green, which is what proves the two classes are independently\ncovered.\n\n## Known bounds, unchanged\n\nLine-oriented only, so full-screen TUIs do not work at all — the\ndeliberate cost of § 4.3.1's buffering. And a single approved line can\nstill do arbitrary damage: the gate proves the owner SAW the command,\nnever that they understood it. The screen lane remains unimplemented and\nis deliberately last.\n\n**Not a breaking change.** Nothing an existing user has configured needs\nto change; the capability stays default-off with an empty\n`allowed_lanes`, and every type touched lives in a `private: true`\npackage.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01A5vrxzdHdnq4UDx38DdEzj\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **New Features**\n* Added an optional terminal computer-use lane alongside the browser\nexperience.\n* Supports sandboxed, non-interactive shell sessions with configurable\nworking directories and shells.\n* Requires approval for each complete command before execution and\ndisplays command output.\n* **Bug Fixes**\n* Rejects unsupported lanes, unsafe control characters, invalid paths,\nunknown shells, and unsandboxed execution.\n* Blocks terminal network access and prevents partial writes after\nrefused input.\n* Prevents browser-reachable forge-file requests from triggering\nfederation.\n* **Documentation**\n* Updated CLI reference, architecture, security guidance, changelog,\nroadmap, and project status.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-09-02T00:03:47Z",
-          "tree_id": "85a96f1b9231fb38d5c8303931b1030f827e54f2",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/9ad2be9c1d398c1eb1636115ae495e2869775d00"
-        },
-        "date": 1788308229767,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 328.4378431499961,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 324.84362849998905,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 176.4912009499989,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4a3a3bd2d225e8a05361918f38d09c07403b2d30",
+          "message": "chore: release main (#2058)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>11.7.0</summary>\n\n##\n[11.7.0](https://github.com/nimbus-agent/Nimbus/compare/v11.6.0...v11.7.0)\n(2026-11-18)\n\n\n### Features\n\n* **ui:** the Incidents page shows a record's remediation proposals and\nthe open findings, read-only (IC10b)\n([#2059](https://github.com/nimbus-agent/Nimbus/issues/2059))\n([decee12](https://github.com/nimbus-agent/Nimbus/commit/decee1250ab1f87e845561d536f97ce11f5ca856))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-18T09:48:19+02:00",
+          "tree_id": "ff7a2af203fc5a5ab5bf3baa9efbf53051a9e190",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/4a3a3bd2d225e8a05361918f38d09c07403b2d30"
+        },
+        "date": 1794988901167,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 258.0926338499994,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 258.0327799500017,
             "unit": "ms"
           }
         ]
