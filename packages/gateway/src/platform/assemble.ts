@@ -5020,7 +5020,7 @@ export async function assemblePlatformServices(
       }
     },
   });
-  // IC6: the owner's runbooks (`<configDir>/runbooks/*.toml`), run one step at a time on the SAME executor
+  // IC6: the owner's runbooks (the TOML files under `<configDir>/runbooks`), run one step at a time on the SAME executor
   // factory as remediation (human-only consent on the asking connection, no delegation, no standing rule).
   const runbooks = createRunbooks({
     db,
