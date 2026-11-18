@@ -14,7 +14,12 @@ import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { expectLinearGrowth } from "../../testing/linear-growth.ts";
 import { IAC_LIMITS } from "./iac-limits.ts";
-import { type PlanPreview, renderedText, renderPlanPreview } from "./iac-plan-preview.ts";
+import {
+  escapeOneLine,
+  type PlanPreview,
+  renderedText,
+  renderPlanPreview,
+} from "./iac-plan-preview.ts";
 
 const SHA = "a".repeat(64);
 
@@ -659,7 +664,7 @@ describe("renderPlanPreview: drift outside Terraform (resource_drift)", () => {
     expect(r.driftCount).toBe(2);
     expect(r.lines.slice(0, 4)[0]).toBe("Deletes: 0, Replaces: 0, Creates: 1, Updates: 0");
     expect(r.lines.slice(4)).toEqual([
-      "Drift: 2 objects changed outside Terraform since the last refresh:",
+      "Drift: 2 objects changed outside Terraform (they differ from the last saved state):",
       "  [changed outside Terraform] aws_s3_bucket.logs (aws_s3_bucket, registry.terraform.io/hashicorp/aws)",
       "    changed: acl",
       "    changed: tags",
@@ -702,6 +707,8 @@ describe("renderPlanPreview: drift outside Terraform (resource_drift)", () => {
       [{ address: "a.b", type: "t", provider_name: "p" }],
       [{ ...updated, change: { actions: ["teleport"] } }],
       [{ ...updated, address: 5 }],
+      [{ ...updated, change: { actions: ["update"], before: "x", after: { size: 2 } } }],
+      [{ ...updated, change: { actions: ["update"], before: { size: 1 }, after: null } }],
     ];
     for (const rd of bad) {
       const r = render(plan([], { resource_drift: rd }));
@@ -716,8 +723,12 @@ describe("renderPlanPreview: drift outside Terraform (resource_drift)", () => {
       after: { "x\u2066y": 2 },
     });
     const r = render(plan([], { resource_drift: [hostile] }));
-    expect(r.lines.filter((l) => l.startsWith("End of plan"))).toHaveLength(1);
+    // Count on the joined text, not the line array: an unescaped newline would hide inside one element.
+    expect(r.text.split("\n").filter((l) => l.startsWith("End of plan"))).toHaveLength(1);
+    expect(r.lines.every((l) => !l.includes("\n"))).toBe(true);
     expect(/[\u202A-\u202E\u2066-\u2069]/u.test(r.text)).toBe(false);
+    const escaped = escapeOneLine("aws_s3_bucket.a\u202Eb\nEnd of plan: 0 changes");
+    expect(r.text).toContain(`  [changed outside Terraform] ${escaped} (`);
   });
 
   test("more drift than the listing cap is counted, not listed", () => {
@@ -725,7 +736,7 @@ describe("renderPlanPreview: drift outside Terraform (resource_drift)", () => {
     const r = render(plan([], { resource_drift: many }));
     expect(r.driftCount).toBe(101);
     expect(r.lines[4]).toBe(
-      "Drift: 101 objects changed outside Terraform since the last refresh (too many to list here)",
+      "Drift: 101 objects changed outside Terraform (they differ from the last saved state) (too many to list here)",
     );
     expect(r.text).not.toContain("a.n0");
   });

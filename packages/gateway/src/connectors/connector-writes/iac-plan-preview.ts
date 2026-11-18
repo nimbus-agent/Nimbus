@@ -376,6 +376,10 @@ function readDrift(plan: Obj): DriftEntry[] | null {
     for (const key of ["address", "type", "provider_name"]) {
       if (typeof own(entry, key) !== "string") return null;
     }
+    // An update compares two whole objects; anything else is not the documented shape.
+    if (label === "update" && !(isObj(own(change, "before")) && isObj(own(change, "after")))) {
+      return null;
+    }
     if (label !== "no-op") out.push({ label, entry, change });
   }
   return out;
@@ -393,7 +397,7 @@ function buildDrift(plan: Obj): DriftBlock {
   if (entries === null) return { lines: [DRIFT_UNREADABLE_LINE], count: null };
   const n = entries.length;
   if (n === 0) return { lines: [DRIFT_NONE_LINE], count: 0 };
-  const summary = `Drift: ${String(n)} objects changed outside Terraform since the last refresh`;
+  const summary = `Drift: ${String(n)} objects changed outside Terraform (they differ from the last saved state)`;
   const tooMany: DriftBlock = { lines: [`${summary} (too many to list here)`], count: n };
   if (n > DRIFT_MAX_LISTED) return tooMany;
   const lines = new Lines(DRIFT_MAX_BYTES);
