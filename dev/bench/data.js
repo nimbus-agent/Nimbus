@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794985407341,
+  "lastUpdate": 1794988222976,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "4770bdffbcff9b7962f209e890d3b96f324dbb9b",
-          "message": "feat(agents): resolve a forge file coordinate to the reader's checkout (#1424)\n\nPR 2 of\n`docs/superpowers/plans/2026-08-31-agents-for-items-and-files.md`. Adds\nno new agent and changes no brief — it makes the five file-shaped agents\nreachable from a browser, and fixes one bug that stands on its own.\n\n## The `impact` bug, shipped first and alone\n\n`resolveStartEntity` looked for a `symbol` whose label **equals** the\ninput, then\none whose label **contains** it. But `syncCodeSymbolGraph` labels\nsymbols\n`\"<name> — <file>\"` — so no symbol's label is ever a bare path. The\nexact arm\ncould never match file input, and the `LIKE` arm answered it with\nwhichever\nsymbol in that file had the **shortest label**.\n\n`nimbus impact src/foo.ts` reported on `x — src/foo.ts`. Confidently,\nwith no gap\nto say the subject had been substituted.\n\n`source_file` entities carry the path itself as their label, written by\nthe same\npopulator. The right node was always there; nothing looked for it.\n\n**The existing fixtures hid it**: they seed `label: 'src/x.ts'`, a bare\npath no\npopulator writes, so the exact arm looked healthy in tests while being\ndead in\nproduction. The new tests use the real label shape, and one pins that a\nfile with\nno `source_file` entity still falls back to the symbol match — the\n`LIKE` arm is\ndemoted, not removed.\n\n## Why a browser cannot name a file\n\n`source_file` external ids are `file:<repoRoot>:<path>`, and `ownership`\nrefuses a\npath \"outside every configured root\". A browser knows\n`github.com/acme/web/blob/main/src/foo.ts` and nothing about the\nreader's\nfilesystem — so it cannot name a file the agents accept, and must not\nguess.\n\nThe bridge already existed and nothing exposed it: `bindRootRemote`\nwrites\n`workspace --tracks_remote--> repo`. `resolveFileByRemote` walks it\nbackwards.\n\n## The input is deliberately unsplit\n\n`refAndPath` is everything after `/blob/`, ref and path still joined.\n**Branch\nnames contain slashes**, so `feat/auth-v2/src/foo.ts` is ambiguous\nwithout the\nrepository's branch list — which a browser could only learn from a forge\nAPI call\nit must never make. This side holds the file list, so it tries the\nsplits,\nshortest ref first.\n\nFour ways to be quietly wrong, each with a test:\n\n- a branch with slashes, a dotted tag, a bare sha\n- **remote casing** — `parseRemoteUrl` lower-cases the host but returns\n`ownerName` verbatim, so a checkout cloned from `github.com/ACME/Web`\nstores a\ndifferently-cased id than the address bar produces. Compared\ncase-insensitively\nrather than by rewriting stored ids, which would need a migration for a\nproblem\n  a comparison solves.\n- **a Windows root meeting a POSIX request**\n- **two worktrees on one remote** — the common case with git worktrees,\nnot the\nedge case. The answer must be the checkout that *has* the file, and must\nnot\n  change between two consecutive calls.\n\n`fileExternalId` is imported from its writer rather than re-derived:\nthat string\nis already built byte-identically in two places on purpose, and a third\ncopy\nwould be a third thing to keep in step.\n\n## Misses are typed, not prose\n\n`remote_not_tracked` (no local checkout at all — permanent, unactionable\nfrom the\npage) and `file_not_indexed` (checkout exists, path is not in it) are\ndifferent\nsentences with different remediations. The reason reaches the caller so\na client\nbranches on a value, not on wording that a later improvement would\nbreak.\n\n## Federation stays off\n\n`namespaces` is read from the original params on both shapes, so the\nforge arm\ncannot silently acquire fan-out the local arm would have had to ask for.\nA test\ndispatches both `ghost` and `conflicts` through the forge arm and\nasserts nothing\ngoes over the wire — a loopback-only browser client turning two local\nreads into\npeer network calls is worth a test rather than a comment.\n\n## Testing\n\n`bun test packages/gateway/src/{agents,ipc,index}/`: **3177 pass, 0\nfail.**\n`typecheck` and `lint` clean.\n\n## Not in this PR\n\n`connections` and `currency` are PR 3.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01UsjPfu2BxDVUC7W8Wz8unL\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n- **New Features**\n- File-based agents now accept Forge repository coordinates, including\nservice, repository, branch, tag, commit, and file path.\n- Forge file references resolve to indexed files across tracked\nworkspaces.\n- Impact analysis prioritizes exact file-path matches before symbol\nmatches.\n\n- **Bug Fixes**\n- Added clearer errors for untracked repositories and files that are not\nindexed.\n- Improved path, branch, tag, remote-casing, and checkout selection\nbehavior.\n  - Prevented ambiguous mixed local and Forge inputs.\n- Rejected federation namespaces on Forge-coordinate agent requests\nwhile preserving local-file behavior.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-01T23:22:57+03:00",
-          "tree_id": "ebfd1cdb289c0d85cfebd954432e4453a802e1d8",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/4770bdffbcff9b7962f209e890d3b96f324dbb9b"
-        },
-        "date": 1788294868139,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 251.8449899999996,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 247.36465834999908,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 162.8016551000015,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "decee1250ab1f87e845561d536f97ce11f5ca856",
+          "message": "feat(ui): the Incidents page shows a record's remediation proposals and the open findings, read-only (IC10b) (#2059)\n\nThe desktop Incidents page gains a record's remediation **proposals**\nand the open **findings**. Phase 10 incident engine, slice IC10b, which\ncompletes IC10 (spec § 5.10).\n\n- **Allowlist 135 → 137, by name:** exactly `incident.findings` and\n`incident.proposals` join `ALLOWED_METHODS`, so the renderer reaches\nfive incident reads (`findings`, `get`, `list`, `proposals`,\n`timeline`). `incident.remediate`, `incident.undo`, `incident.advisory`\nand `incident.advisorySet` stay off: the renderer can already answer a\nconsent prompt, so it must never also start an engine action or flip\nadvisory mode (§ 6, I57 (b)). Pinned by the Rust\n`allowlist_incident_reads_only` (exact `incident.` set) and\n`allowlist_exact_size`, and by the by-name, kind-gate and page-source\ntests in `security-invariants.test.ts`. Neither method is a no-timeout\nmethod.\n- **A desktop read revives nothing.** `incident.proposals` derives and\nstores on every call. From a `ui` connection it now passes `revive:\nfalse` (the same as the push), so only the owner's terminal listing\n(`cli`) returns a denied, expired, superseded or failed proposal to\n`proposed` with a fresh TTL. A renderer read cannot reopen a proposal\nthe owner refused. Tested at the service and at the RPC.\n- **The page runs nothing.** Each proposal shows its kind, tool, status,\nreversibility (the irreversible reason first), confidence and its terms,\nevidence items, blast radius, dry run, input and expiry, plus the\nreasons a rollback or flag revert was not proposed. For an open proposal\noutside advisory mode it shows the exact `nimbus incident remediate\n<record> --pick <proposal>` command with a copy button, built only when\nboth ids match the gateway's own `inc_`/`prp_` shapes, so a pasted\ncommand never carries text the gateway did not mint. A closed proposal\nsays to list again from a terminal. Findings show kind, service, key,\ntimes and the detail as escaped `key: value` text.\n- All gateway text goes through `safeText` (`showInvisible`). The page\nhas no `dangerouslySetInnerHTML`, `innerHTML`, anchor or image.\n`CopyMarkdownButton` gained an optional `label`; `stamp` moved into\n`incidents/safe.ts` so the timeline and the new views share it.\n\nNo migration, invariant, HITL type, egress class or static rule.\n\n**Verification.** `preflight:fast` passes. UI vitest: 121 files, 1,407\ntests. Gateway: `security-invariants.test.ts` 646, `incident-rpc` and\n`remediation` 63, `allowlist-resolves` green. **`cargo test` was not run\nlocally** (as for IC10a, this machine cannot compile the Tauri crate),\nso CI's Rust leg is the first run of the Rust pins; the list was checked\nsorted, unique and 137 long by script, and the TS pins parse the same\nRust source.\n\n**Stated bounds.** Read-only; copying the command is the page's only\naction. The findings list shows the first 50 open findings. `cli`/`ui`\nis client-declared on the local socket. Reply shapes are the gateway's\nown.\n\n**Docs.** `docs/SECURITY-INVARIANTS.md` (I7, 135 → 137 by name),\n`docs/architecture.md`, the roadmap (an IC10b sub-bullet that completes\nIC10), and the IPC and Tauri-allowlist skills. The status paragraph, the\ntop of `docs/CHANGELOG.md` and `docs/README.md` are batched into the\nnext batch docs PR (owner-approved exception); the proposed text is kept\nlocally.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCk6NpLauKU2yYCwva",
+          "timestamp": "2026-11-18T07:41:24Z",
+          "tree_id": "17d72187330bd866c32b933ddd10541020593f5d",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/decee1250ab1f87e845561d536f97ce11f5ca856"
+        },
+        "date": 1794988219297,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 178.75544494999994,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 176.4912009499989,
             "unit": "ms"
           }
         ]
