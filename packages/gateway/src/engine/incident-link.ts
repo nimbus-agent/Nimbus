@@ -11,7 +11,7 @@
  */
 import { createHash } from "node:crypto";
 import { redactSensitiveValueString } from "../audit/format-audit-payload.ts";
-import type { EngineProposal, PlannedAction } from "./types.ts";
+import type { EngineProposal, PlannedAction, RunbookStepRef } from "./types.ts";
 
 export type IncidentLink = {
   readonly id: string;
@@ -90,6 +90,39 @@ export function assertEngineProposal(x: unknown): asserts x is EngineProposal {
   }
 }
 
+/** A runbook name as `runbook/runbook-loader.ts` accepts it (IC6). */
+export const RUNBOOK_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+/** The most steps a runbook may declare (IC6); also the V104 CHECK. */
+export const RUNBOOK_MAX_STEPS = 50;
+
+/**
+ * Throws unless `x` is exactly `{ runbook, step, kind: "read" }` or `{ runbook, step, kind: "action",
+ * reversibility }`, with a well-formed name and a step in 1..{@link RUNBOOK_MAX_STEPS} (IC6).
+ */
+export function assertRunbookStep(x: unknown): asserts x is RunbookStepRef {
+  const keys = isPlainData(x) ? Reflect.ownKeys(x) : [];
+  const base =
+    isPlainData(x) &&
+    typeof x["runbook"] === "string" &&
+    RUNBOOK_NAME_RE.test(x["runbook"]) &&
+    typeof x["step"] === "number" &&
+    Number.isInteger(x["step"]) &&
+    x["step"] >= 1 &&
+    x["step"] <= RUNBOOK_MAX_STEPS;
+  const ok =
+    base &&
+    ((x["kind"] === "read" && keys.length === 3) ||
+      (x["kind"] === "action" &&
+        keys.length === 4 &&
+        REVERSIBILITY_LABELS.has(x["reversibility"])));
+  if (!ok) {
+    throw new IncidentLinkError(
+      "a runbook step must be exactly { runbook, step, kind: read } or { runbook, step, kind: action, reversibility }",
+    );
+  }
+}
+
 /** The most JSON-escaped characters of the shown prompt an audit row keeps (OR-IC4-2). */
 export const PROMPT_ROW_MAX_ESCAPED = 1_600;
 
@@ -135,10 +168,23 @@ export function promptForRow(shown: string): PromptForRow {
  * is the parent's link a sub-step carries. Throws {@link IncidentLinkError}.
  */
 export function assertLinkedActionAllowed(
-  action: Pick<PlannedAction, "incident" | "origin" | "proposer" | "provenance" | "engineProposal">,
+  action: Pick<
+    PlannedAction,
+    "incident" | "origin" | "proposer" | "provenance" | "engineProposal" | "runbookStep"
+  >,
   scopeLink: IncidentLink | undefined,
 ): void {
   const own = Object.hasOwn(action, "incident") ? action.incident : undefined;
+  if (Object.hasOwn(action, "runbookStep")) {
+    // IC6: a runbook step travels only with its incident link, never beside an engine proposal.
+    if (own === undefined) {
+      throw new IncidentLinkError("a runbook step is carried only by an incident-linked action");
+    }
+    if (Object.hasOwn(action, "engineProposal")) {
+      throw new IncidentLinkError("an action is a runbook step or an engine proposal, never both");
+    }
+    assertRunbookStep(action.runbookStep);
+  }
   if (Object.hasOwn(action, "engineProposal")) {
     // IC5a: an engine proposal travels only with its incident link, in exactly its own shape.
     if (own === undefined) {

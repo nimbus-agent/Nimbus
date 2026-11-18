@@ -77,6 +77,7 @@ import { INCIDENT_ALERT_SOURCES_V96_SQL } from "../incident-alert-sources-v96-sq
 import { INCIDENT_PREDICT_V103_SQL } from "../incident-predict-v103-sql.ts";
 import { INCIDENT_PROPOSAL_V102_SQL } from "../incident-proposal-v102-sql.ts";
 import { INCIDENT_RECORD_V100_SQL } from "../incident-record-v100-sql.ts";
+import { INCIDENT_RUNBOOK_V104_SQL } from "../incident-runbook-v104-sql.ts";
 import { ITEM_HISTORY_V94_SQL } from "../item-history-v94-sql.ts";
 import { KNOWN_NAMESPACES_V38_SQL } from "../known-namespaces-v38-sql.ts";
 import { LAN_PEER_PROTO_V95_SQL } from "../lan-peer-proto-v95-sql.ts";
@@ -925,6 +926,12 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     103,
     "incident findings and the anomaly baseline (Phase 10 IC8)",
     INCIDENT_PREDICT_V103_SQL,
+  ),
+  simpleStep(
+    103,
+    104,
+    "incident runbook step state (Phase 10 IC6)",
+    INCIDENT_RUNBOOK_V104_SQL,
   ),
 ];
 

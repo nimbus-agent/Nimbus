@@ -76,6 +76,7 @@ import type {
   ConsentChannel,
   EngineProposal,
   PlannedAction,
+  RunbookStepRef,
   WorkflowProvenance,
 } from "./types.ts";
 import { userMcpCallDetails, userMcpCallLines } from "./user-mcp-call-block.ts";
@@ -587,6 +588,20 @@ function reversibilityPromptLine(p: EngineProposal): string {
     : "Reversibility: unknown - Nimbus does not know whether this can be undone";
 }
 
+function runbookStepPromptLines(r: RunbookStepRef): string[] {
+  const first = `Proposed by: runbook ${r.runbook}, step ${String(r.step)}`;
+  if (r.kind === "read") return [first];
+  if (r.reversibility === "irreversible") {
+    return [first, "Reversibility: IRREVERSIBLE - this cannot be undone through Nimbus"];
+  }
+  return [
+    first,
+    r.reversibility === "reversible"
+      ? "Reversibility: reversible (declared); nimbus incident undo does not reverse a runbook step"
+      : "Reversibility: unknown - Nimbus does not know whether this can be undone",
+  ];
+}
+
 function formatConsentPromptBody(
   action: PlannedAction,
   credentialFor?: PreviewCredentialResolver,
@@ -602,6 +617,9 @@ function formatConsentPromptBody(
   if (action.engineProposal !== undefined) {
     lines.push("Proposed by: the incident engine", reversibilityPromptLine(action.engineProposal));
   }
+  // IC6 (I57 (c)): a step of an owner-authored runbook names the runbook and the step (the name is checked
+  // against `RUNBOOK_NAME_RE` by the gate's link check, so it carries no control text). Gateway-set.
+  if (action.runbookStep !== undefined) lines.push(...runbookStepPromptLines(action.runbookStep));
   const promptText = promptTextOf(action);
   if (promptText !== undefined) {
     // The pack prompt is a purpose-built, escaped rendering; a JSON Details line would only add noise.

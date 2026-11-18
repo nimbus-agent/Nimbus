@@ -11,6 +11,7 @@ import {
   recordsCitingService,
 } from "./incident-store.ts";
 import { deleteProposalsForRecords } from "./proposal-store.ts";
+import { deleteRunbookStepsForRecords } from "./runbook-step-store.ts";
 
 /**
  * The one place that deletes incident records and the pushed briefs built from them (Phase 10 IC3, design I,
@@ -25,6 +26,8 @@ export type IncidentErasure = {
   readonly pushedBriefsDeleted: number;
   /** Remediation proposals of the erased records (IC5a); an OWNER erasure deletes them, retention keeps them. */
   readonly proposalsDeleted?: number;
+  /** Runbook step state of the erased records (IC6); an OWNER erasure deletes it, retention keeps it. */
+  readonly runbookStepsDeleted?: number;
 };
 
 /**
@@ -41,7 +44,13 @@ export function eraseIncidentDataForService(db: Database, service: string): Inci
       service,
     });
     const proposalsDeleted = deleteProposalsForRecords(db, erased.recordIds);
-    return { recordsDeleted: erased.recordIds.length, pushedBriefsDeleted, proposalsDeleted };
+    const runbookStepsDeleted = deleteRunbookStepsForRecords(db, erased.recordIds);
+    return {
+      recordsDeleted: erased.recordIds.length,
+      pushedBriefsDeleted,
+      proposalsDeleted,
+      runbookStepsDeleted,
+    };
   });
   return tx();
 }
