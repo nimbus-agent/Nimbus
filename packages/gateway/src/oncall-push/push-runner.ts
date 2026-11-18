@@ -70,8 +70,25 @@ export interface OncallPushRunnerDeps {
    * fresh on each call. REQUIRED, not optional: an optional dependency would silently drop the cascade (IC4).
    */
   readonly dependsOn: () => ReadonlyMap<string, readonly string[]>;
+  /**
+   * The record's top remediation proposal (Phase 10 IC5b, approve-from-push), from the incident engine's own
+   * listing. The push stores its id and approves nothing; only `incident.remediate` can act on it. Absent, null
+   * or throwing: the brief carries no proposal and the push is unaffected.
+   */
+  readonly topProposal?: (recordId: string) => PushedProposal | null;
   readonly now?: () => number;
 }
+
+/** What a pushed brief carries of its record's top proposal: ids and gateway-set labels, never the input. */
+export type PushedProposal = {
+  readonly recordId: string;
+  readonly id: string;
+  readonly kind: string;
+  readonly toolId: string;
+  readonly reversibility: string;
+  readonly confidence: number | null;
+  readonly expiresAtMs: number;
+};
 
 export interface OncallPushRunner {
   run(serviceId: string): Promise<PushRunSummary>;
@@ -95,6 +112,7 @@ function compatibilityJson(
   id: string,
   version: number,
   cascade: PushedCascade | null,
+  proposal: PushedProposal | null,
 ): string {
   let deployment: { title: string; startedAtMs: number; finishedAtMs: number | null } | null = null;
   try {
@@ -125,6 +143,7 @@ function compatibilityJson(
     recordId: id,
     version,
     cascade,
+    proposal,
   });
 }
 
@@ -157,6 +176,33 @@ function cascadePart(deps: OncallPushRunnerDeps, recordId: string): CascadePart 
   }
 }
 
+/** The record's top proposal, or null: a failed listing never fails a push. */
+function proposalPart(deps: OncallPushRunnerDeps, recordId: string): PushedProposal | null {
+  if (deps.topProposal === undefined) return null;
+  try {
+    return deps.topProposal(recordId);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The block appended to the PUSHED copy of a brief when the record has an open proposal (IC5b). Every value is
+ * gateway-set (the proposal kind, the row's tool id and reversibility label, the confidence, the expiry, the
+ * trigger item id the owner already reads in the brief); the proposal's input is never shown here.
+ */
+export function proposalSection(incidentId: string, p: PushedProposal): string {
+  const label = p.reversibility === "irreversible" ? "IRREVERSIBLE" : p.reversibility;
+  const confidence = p.confidence === null ? "" : `, confidence ${String(p.confidence)}`;
+  return [
+    "## Proposed remediation",
+    "",
+    `[${label}] ${p.kind}: \`${p.toolId}\`${confidence} (proposal ${p.id}, open until ${new Date(p.expiresAtMs).toISOString()})`,
+    "",
+    `Run it: \`nimbus oncall pushed ${incidentId} --remediate\`. You approve the exact action at your terminal; this push approves nothing.`,
+  ].join("\n");
+}
+
 /**
  * The brief of one trigger item: the record the engine assembled (on demand when there is none), its Markdown as
  * the stored brief and a small compatibility JSON the headline parses. Never throws: any failure is a `failed`
@@ -172,17 +218,20 @@ async function briefFromRecord(deps: OncallPushRunnerDeps, itemId: string): Prom
     // nothing about them and is never pushed again when a later record becomes its root (one page per outage;
     // `nimbus incident show` is the live view). The stored `incident_record.markdown` is not touched.
     const cascade = cascadePart(deps, row.id);
+    const proposal = proposalPart(deps, row.id);
+    const parts = [row.markdown, cascade.markdown];
+    if (proposal !== null) parts.push(proposalSection(itemId, proposal));
     return {
       status: "ok",
       sessionId: `incident:${row.id}:v${String(row.version)}`,
-      briefMarkdown:
-        cascade.markdown === "" ? row.markdown : `${row.markdown}\n\n${cascade.markdown}`,
+      briefMarkdown: parts.filter((x) => x !== "").join("\n\n"),
       briefJson: compatibilityJson(
         row.service,
         row.record_json,
         row.id,
         row.version,
         cascade.summary,
+        proposal,
       ),
     };
   } catch (e) {

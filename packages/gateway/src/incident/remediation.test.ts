@@ -74,7 +74,9 @@ type Harness = {
   makeCalls(): number;
 };
 
-function harness(opts: { deployment?: boolean } = {}): Harness {
+function harness(
+  opts: { deployment?: boolean; now?: () => number; onPrompt?: () => void } = {},
+): Harness {
   const prompts: string[] = [];
   const confirms: string[] = [];
   const dispatched: PlannedAction[] = [];
@@ -84,11 +86,13 @@ function harness(opts: { deployment?: boolean } = {}): Harness {
   const coordinator: ConsentCoordinator = {
     requestConsent: async (_c, p) => {
       prompts.push(p.prompt);
+      opts.onPrompt?.();
       return { approved: answer.approved, answerSource: answer.source as "human" };
     },
     requestConfirmedConsent: async (_c, p) => {
       prompts.push(p.prompt);
       confirms.push(p.confirmText);
+      opts.onPrompt?.();
       return {
         approved: answer.approved,
         typed: p.confirmText,
@@ -162,7 +166,7 @@ function harness(opts: { deployment?: boolean } = {}): Harness {
     makeExecutor,
     bindingsFor: () => ({ argocdApps: ["pay-app"], deployEnvironments: ["prod"] }),
     dependsOn: () => new Map([["checkout", ["payments"]]]),
-    now: () => NOW,
+    now: opts.now ?? (() => NOW),
     newActionId: (() => {
       let n = 0;
       return () => `act_${String(++n).padStart(16, "0")}`;
@@ -707,5 +711,122 @@ describe("the action is built from the stored row, never from the caller", () =>
     const w = h.dispatched.find((a) => a.type === "pagerduty.incident.resolve");
     expect((must(w).payload as { input: unknown }).input).toEqual({ incidentId: "PD1" });
     expect(w).not.toHaveProperty("origin");
+  });
+});
+
+describe("the proposal a push carries (IC5b)", () => {
+  test("topProposal is the open proposal with the highest confidence, labels and ids only", () => {
+    const h = harness();
+    const top = h.svc.topProposal(h.recordId);
+    expect(top).toMatchObject({
+      recordId: h.recordId,
+      kind: "rollback_deploy",
+      toolId: "argocd_app_rollback",
+      reversibility: "reversible",
+      confidence: 75,
+    });
+    expect(top?.id).toMatch(/^prp_[0-9a-f]{16}$/);
+    expect(Object.keys(top ?? {})).not.toContain("input");
+    // Naming the top proposal runs nothing: no executor, no prompt, the proposal stays open.
+    expect(h.makeCalls()).toBe(0);
+    expect(h.prompts).toEqual([]);
+    expect(getProposal(db, top?.id ?? "")?.status).toBe("proposed");
+  });
+
+  test("a proposal that is no longer open is skipped; none open is null", async () => {
+    const h = harness();
+    const first = h.svc.topProposal(h.recordId);
+    db.run("UPDATE incident_proposal SET status = 'executed' WHERE id = ?", [first?.id ?? ""]);
+    const second = h.svc.topProposal(h.recordId);
+    expect(second?.id).not.toBe(first?.id);
+    db.run("UPDATE incident_proposal SET status = 'executed' WHERE record_id = ?", [h.recordId]);
+    expect(h.svc.topProposal(h.recordId)).toBeNull();
+  });
+
+  test("a push never revives: a denied or expired proposal stays refused until the owner lists again", async () => {
+    const h = harness();
+    const ackId = pick(h, "acknowledge");
+    const rbId = pick(h, "rollback_deploy");
+    db.run("UPDATE incident_proposal SET status = 'denied' WHERE id = ?", [rbId]);
+    db.run("UPDATE incident_proposal SET expires_at_ms = ? WHERE id = ?", [NOW - 1, ackId]);
+    const top = h.svc.topProposal(h.recordId);
+    // The denied rollback and the expired acknowledge are not revived by the push-time derivation.
+    expect(getProposal(db, rbId)?.status).toBe("denied");
+    expect(getProposal(db, ackId)?.status).toBe("expired");
+    expect([rbId, ackId]).not.toContain(top?.id);
+    await expect(
+      h.svc.remediate({ ref: h.recordId, proposalId: rbId, clientId: "a" }),
+    ).rejects.toBeInstanceOf(RemediationError);
+    await expect(
+      h.svc.remediate({ ref: h.recordId, proposalId: ackId, clientId: "a" }),
+    ).rejects.toMatchObject({ code: "ERR_PROPOSAL_EXPIRED" });
+    expect(h.prompts).toEqual([]);
+    // Only the owner's explicit listing revives them.
+    h.svc.proposals(h.recordId);
+    expect(getProposal(db, rbId)?.status).toBe("proposed");
+    expect(getProposal(db, ackId)?.status).toBe("proposed");
+  });
+
+  test("the pushed id goes through the same remediate path: claim, prompt, dispatch", async () => {
+    const h = harness();
+    const top = h.svc.topProposal(h.recordId);
+    const out = await h.svc.remediate({
+      ref: top?.recordId ?? "",
+      proposalId: top?.id ?? "",
+      clientId: "cli-1",
+    });
+    expect(out.status).toBe("executed");
+    expect(h.prompts.length).toBe(1);
+    expect(h.prompts[0]).toContain("Proposed by: the incident engine");
+  });
+});
+
+describe("a remediation waiting for the owner is never swept as stale (IC5b review)", () => {
+  const LATER = NOW + 31 * 60 * 1000;
+
+  test("a push and a listing past the 30-minute bound, while the prompt is open, leave it executing; it records and can be undone", async () => {
+    let t = NOW;
+    let sawDuringPrompt: string | undefined;
+    let id = "";
+    const h = harness({
+      now: () => t,
+      onPrompt: () => {
+        t = LATER;
+        h.svc.topProposal(h.recordId);
+        h.svc.proposals(h.recordId);
+        sawDuringPrompt = getProposal(db, id)?.status;
+      },
+    });
+    id = pick(h, "rollback_deploy");
+    const out = await h.svc.remediate({ ref: h.recordId, proposalId: id, clientId: "c" });
+    expect(sawDuringPrompt).toBe("executing");
+    expect(out).toMatchObject({ status: "executed", undoable: true });
+    expect(out.reason).toBeUndefined();
+    expect(getProposal(db, id)?.status).toBe("executed");
+  });
+
+  test("a row left executing by an earlier process (not in flight here) is still failed by the sweep", () => {
+    const h = harness({ now: () => LATER });
+    const id = pick(h, "acknowledge");
+    db.run("UPDATE incident_proposal SET status = 'executing', updated_at_ms = ? WHERE id = ?", [
+      NOW - 1,
+      id,
+    ]);
+    h.svc.proposals(h.recordId);
+    expect(getProposal(db, id)?.status).not.toBe("executing");
+  });
+
+  test("a write that ran but could not be recorded is reported as executed, not undoable, with the reason", async () => {
+    let id = "";
+    const h = harness({
+      onPrompt: () => {
+        db.run("UPDATE incident_proposal SET status = 'failed' WHERE id = ?", [id]);
+      },
+    });
+    id = pick(h, "rollback_deploy");
+    const out = await h.svc.remediate({ ref: h.recordId, proposalId: id, clientId: "c" });
+    expect(out.status).toBe("executed");
+    expect(out.undoable).toBe(false);
+    expect(out.reason).toContain("cannot be undone");
   });
 });

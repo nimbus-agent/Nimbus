@@ -16723,6 +16723,40 @@ describe("I57 (b) - an engine-proposed action reaches dispatch only as the local
     expect(rem.slice(build, build + 700)).toContain("type: row.actionType");
     expect(rem.slice(build, build + 700)).toContain("engineProposal: {");
   });
+
+  test("8 (IC5b): approve-from-push - the push carries a proposal id and approves nothing; the only door is incident.remediate", async () => {
+    // The push side reaches the engine only through the read-only `topProposal` listing: no remediate, no
+    // executor, no action builder, no consent anywhere in the push module.
+    const push = stripComments(await readDirConcat("packages/gateway/src/oncall-push"));
+    for (const forbidden of [
+      "remediate(",
+      "makeExecutor",
+      "buildRemediation",
+      "engineProposal",
+      "incident.remediate",
+      "requestConsent",
+      "remediation.ts",
+    ]) {
+      expect(push, forbidden).not.toContain(forbidden);
+    }
+    // The one wiring site hands the push the listing and nothing else.
+    const asm = await read("packages/gateway/src/platform/assemble.ts");
+    expect(asm).toContain(
+      "oncallPush.bindTopProposal((recordId) => remediation.topProposal(recordId));",
+    );
+    // `topProposal` lists (derive, store, revive) and picks; it builds no action and builds no executor.
+    const rem = await read("packages/gateway/src/incident/remediation.ts");
+    const start = rem.indexOf("function topProposal(");
+    const body = rem.slice(start, rem.indexOf("\n  }\n", start));
+    expect(body).toContain("listAndStore(ref, false)");
+    expect(body).not.toContain("makeExecutor");
+    expect(body).not.toContain("buildRemediationAction");
+    expect(body).not.toContain("claimProposal");
+    // The CLI door adds no gateway method: it calls the same `incident.remediate` as `incident remediate --pick`.
+    const cli = await read("packages/cli/src/commands/oncall-pushed.ts");
+    expect(cli).toContain('c.call("incident.remediate", {');
+    expect(cli).toContain('consent: { kind: "human" }');
+  });
 });
 
 describe("I59 - a workflow from outside this install enters only through importWorkflowBundle, over the owner's human approval of the verbatim steps", () => {

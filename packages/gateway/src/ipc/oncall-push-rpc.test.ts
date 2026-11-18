@@ -33,6 +33,7 @@ const runtime = (over: Partial<OncallPushRuntime> = {}): OncallPushRuntime => ({
   identityResolved: async () => true,
   settleChatopsPoster: () => {},
   chatopsSinkState: () => "none",
+  bindTopProposal: () => {},
   ...over,
 });
 beforeEach(() => {
@@ -155,6 +156,7 @@ test("pushedRetry retries the trimmed id and returns the row in full", async () 
       briefMarkdown: "# A",
       failureCode: null,
       delivery: {},
+      proposal: null,
     },
   });
   expect(asked).toEqual(["pagerduty:A"]);

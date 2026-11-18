@@ -475,3 +475,56 @@ test("the cascade's depends_on provider THROWS on a malformed block (never an em
     expect(clause).not.toContain("loadServiceConfigsOrEmpty");
   }
 });
+
+test("IC5b: a bound top-proposal listing reaches the pushed brief; unbound, none; it binds once", async () => {
+  const meId = seedP1("PTP");
+  writeFileSync(
+    join(configDir, "nimbus.toml"),
+    `[user]\nme_person_id = "${meId}"\n\n[oncall.push]\nenabled = true\n`,
+  );
+  const rt = assembleOncallPushRuntime({
+    settleImmediately: true,
+    db,
+    configDir,
+    notifications: { show: () => {} },
+    logger: { error: () => {} },
+    now: () => T0 - 1000,
+  });
+  const asked: string[] = [];
+  rt.bindTopProposal((recordId) => {
+    asked.push(recordId);
+    return {
+      recordId,
+      id: "prp_0123456789abcdef",
+      kind: "acknowledge",
+      toolId: "pd_incident_acknowledge",
+      reversibility: "irreversible",
+      confidence: null,
+      expiresAtMs: T0 + DAY,
+    };
+  });
+  expect(() => rt.bindTopProposal(() => null)).toThrow("already bound");
+  await rt.run("pagerduty");
+  expect(asked).toHaveLength(1);
+  expect(rt.store.get("pagerduty:PTP")?.briefMarkdown).toContain(
+    "nimbus oncall pushed pagerduty:PTP --remediate",
+  );
+});
+
+test("IC5b: with no listing bound, a push carries no proposal", async () => {
+  const meId = seedP1("PNB");
+  writeFileSync(
+    join(configDir, "nimbus.toml"),
+    `[user]\nme_person_id = "${meId}"\n\n[oncall.push]\nenabled = true\n`,
+  );
+  const rt = assembleOncallPushRuntime({
+    settleImmediately: true,
+    db,
+    configDir,
+    notifications: { show: () => {} },
+    logger: { error: () => {} },
+    now: () => T0 - 1000,
+  });
+  await rt.run("pagerduty");
+  expect(rt.store.get("pagerduty:PNB")?.briefMarkdown).not.toContain("## Proposed remediation");
+});

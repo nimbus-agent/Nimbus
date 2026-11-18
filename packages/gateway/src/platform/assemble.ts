@@ -5019,6 +5019,8 @@ export async function assemblePlatformServices(
       }
     },
   });
+  // IC5b (approve-from-push): the push carries its record's top proposal, read through the owner listing only.
+  oncallPush.bindTopProposal((recordId) => remediation.topProposal(recordId));
   ipcOpts.incidentRpcCtx = {
     db,
     engine: incidentEngine,

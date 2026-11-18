@@ -127,6 +127,17 @@ export type ProposalsResult = {
   readonly unavailable: readonly Unavailable[];
 };
 
+/** What a push carries of its record's top proposal (IC5b): labels and ids only, never the input. */
+export type TopProposal = {
+  readonly recordId: string;
+  readonly id: string;
+  readonly kind: string;
+  readonly toolId: string;
+  readonly reversibility: string;
+  readonly confidence: number | null;
+  readonly expiresAtMs: number;
+};
+
 export type RemediateOutcome = {
   readonly proposalId: string;
   readonly actionId: string;
@@ -164,6 +175,9 @@ export function createRemediation(deps: RemediationDeps) {
   const mintActionId = deps.newActionId ?? (() => `act_${randomBytes(8).toString("hex")}`);
   const rowOf = (toolId: string): ConnectorWriteRow | undefined =>
     rows.find((r) => r.toolId === toolId);
+  // Proposals this process is running or undoing right now. The store's stale sweeps are for a CRASHED gateway, so
+  // these are excluded however long the owner takes to answer the prompt (a push or a listing runs the sweep too).
+  const inFlight = new Set<string>();
 
   function requireReady(): void {
     if (deps.ready !== undefined && !deps.ready()) {
@@ -243,6 +257,15 @@ export function createRemediation(deps: RemediationDeps) {
 
   /** Derive, store (an explicit listing revives), and return every stored proposal of the record. */
   function proposals(ref: string): ProposalsResult {
+    return listAndStore(ref, true);
+  }
+
+  /**
+   * Derive and store. `revive` is true ONLY for the owner's explicit listing (`proposals`): it returns a derived
+   * `expired`, `superseded`, `denied` or `failed` proposal to `proposed` with a fresh TTL. Every other caller
+   * (the push, IC5b) stores new and open proposals and leaves the owner's earlier outcome as it is.
+   */
+  function listAndStore(ref: string, revive: boolean): ProposalsResult {
     const rec = requireRecord(ref);
     const derived = deriveFor(rec);
     syncProposals(db, {
@@ -250,7 +273,8 @@ export function createRemediation(deps: RemediationDeps) {
       version: rec.version,
       drafts: derived.drafts,
       nowMs: now(),
-      revive: true,
+      revive,
+      live: [...inFlight],
     });
     return {
       recordId: rec.recordId,
@@ -258,6 +282,31 @@ export function createRemediation(deps: RemediationDeps) {
       advisory: isAdvisory(db),
       proposals: listProposals(db, rec.recordId).map(view),
       unavailable: derived.unavailable,
+    };
+  }
+
+  /**
+   * The proposal a push carries (IC5b, approve-from-push): derive and store WITHOUT reviving (a push is not the
+   * owner's explicit listing, so a proposal the owner denied or let expire stays so), then the OPEN proposal with
+   * the highest confidence (no confidence ranks lowest; a tie keeps list order), or null. Builds no action and
+   * runs nothing: the push stores the id, and only `remediate` can act on it.
+   */
+  function topProposal(ref: string): TopProposal | null {
+    const listed = listAndStore(ref, false);
+    let best: ProposalView | undefined;
+    for (const p of listed.proposals) {
+      if (p.status !== "proposed") continue;
+      if (best === undefined || (p.confidence ?? -1) > (best.confidence ?? -1)) best = p;
+    }
+    if (best === undefined) return null;
+    return {
+      recordId: listed.recordId,
+      id: best.id,
+      kind: best.kind,
+      toolId: best.toolId,
+      reversibility: best.reversibility,
+      confidence: best.confidence,
+      expiresAtMs: best.expiresAtMs,
     };
   }
 
@@ -308,6 +357,7 @@ export function createRemediation(deps: RemediationDeps) {
       drafts: derived.drafts,
       nowMs: now(),
       revive: false,
+      live: [...inFlight],
     });
     const draft = derived.drafts.find((d) => d.id === p.proposalId);
     const stored = getProposal(db, p.proposalId);
@@ -342,6 +392,7 @@ export function createRemediation(deps: RemediationDeps) {
     // 4. From the stored row, never from the caller: the tool, its input and its label.
     let captured: Readonly<Record<string, string>> | undefined;
     let nonHuman = false;
+    inFlight.add(stored.id);
     try {
       const row = rowOf(stored.tool_id);
       if (row === undefined) throw new Error("the write row for this proposal no longer exists");
@@ -362,8 +413,21 @@ export function createRemediation(deps: RemediationDeps) {
       });
       const result = await executor.execute(action);
       if (result.status === "ok") {
-        finishProposal(db, stored.id, "executed", now(), captured);
+        const recorded = finishProposal(db, stored.id, "executed", now(), captured);
         const decl = row.reversibility;
+        if (!recorded) {
+          // The write WAS dispatched, so it is reported as executed (never as failed, which would invite a second
+          // run), but the stored row no longer says so: nothing was captured, so it cannot be undone from here.
+          return {
+            proposalId: stored.id,
+            actionId,
+            status: "executed",
+            reason:
+              "the action ran, but its proposal record had changed meanwhile, so it was not recorded and cannot be undone with nimbus incident undo",
+            nonHuman,
+            undoable: false,
+          };
+        }
         return {
           proposalId: stored.id,
           actionId,
@@ -391,6 +455,8 @@ export function createRemediation(deps: RemediationDeps) {
         nonHuman,
         undoable: false,
       };
+    } finally {
+      inFlight.delete(stored.id);
     }
   }
 
@@ -446,6 +512,7 @@ export function createRemediation(deps: RemediationDeps) {
       throw new RemediationError("ERR_PROPOSAL_BUSY", "an undo of that action is already running");
     }
     let nonHuman = false;
+    inFlight.add(stored.id);
     try {
       const inverseId = proposalIdFor(stored.record_id, "undo", inverseRow.toolId, inverseInput);
       const action = buildRemediationAction(stored.record_id, inverseId, inverseRow, inverseInput);
@@ -471,11 +538,14 @@ export function createRemediation(deps: RemediationDeps) {
     } catch (err) {
       finishUndo(db, p.actionId, "retry", now());
       return { actionId: p.actionId, status: "failed", reason: failText(err), nonHuman };
+    } finally {
+      inFlight.delete(stored.id);
     }
   }
 
   return {
     proposals,
+    topProposal,
     remediate,
     undo,
     advisory: (): boolean => isAdvisory(db),

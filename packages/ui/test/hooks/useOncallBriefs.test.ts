@@ -85,6 +85,7 @@ describe("the gateway-validated fixture binds the UI's field names", () => {
     "delivery",
     "failureCode",
     "incidentId",
+    "proposal",
     "retriedAt",
     "service",
     "status",
