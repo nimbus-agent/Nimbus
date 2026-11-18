@@ -14,7 +14,12 @@ import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { expectLinearGrowth } from "../../testing/linear-growth.ts";
 import { IAC_LIMITS } from "./iac-limits.ts";
-import { type PlanPreview, renderedText, renderPlanPreview } from "./iac-plan-preview.ts";
+import {
+  escapeOneLine,
+  type PlanPreview,
+  renderedText,
+  renderPlanPreview,
+} from "./iac-plan-preview.ts";
 
 const SHA = "a".repeat(64);
 
@@ -635,5 +640,132 @@ describe("renderPlanPreview: remaining edges", () => {
     const o = Object.assign(Object.create(null) as Record<string, unknown>, { k: 1 });
     const p = render(plan([change("a.b", ["update"], { before: { v: 0 }, after: { v: o } })]));
     expect(p.text).toContain("    v: 0 -> (object, 1 keys)");
+  });
+});
+
+describe("renderPlanPreview: drift outside Terraform (resource_drift)", () => {
+  const updated = change("aws_s3_bucket.logs", ["update"], {
+    before: { acl: "private", versioning: true, tags: { a: "1" } },
+    after: { acl: "public-read", versioning: true, tags: { a: "2" } },
+  });
+  const deleted = change("aws_instance.gone", ["delete"], { before: { ami: "ami-1" } });
+
+  test("no resource_drift field and an empty list both say none reported, never 'no drift'", () => {
+    for (const p of [plan([]), plan([], { resource_drift: [] })]) {
+      const r = render(p);
+      expect(r.driftCount).toBe(0);
+      expect(r.lines[4]).toBe("Drift: none reported by terraform");
+      expect(r.text).not.toMatch(/no drift/i);
+    }
+  });
+
+  test("the drift block sits after the reads line and before the first change", () => {
+    const r = render(plan([change("a.new", ["create"])], { resource_drift: [updated, deleted] }));
+    expect(r.driftCount).toBe(2);
+    expect(r.lines.slice(0, 4)[0]).toBe("Deletes: 0, Replaces: 0, Creates: 1, Updates: 0");
+    expect(r.lines.slice(4)).toEqual([
+      "Drift: 2 objects changed outside Terraform (they differ from the last saved state):",
+      "  [changed outside Terraform] aws_s3_bucket.logs (aws_s3_bucket, registry.terraform.io/hashicorp/aws)",
+      "    changed: acl",
+      "    changed: tags",
+      "  [deleted outside Terraform] aws_instance.gone (aws_s3_bucket, registry.terraform.io/hashicorp/aws)",
+      "[create] a.new (aws_s3_bucket, registry.terraform.io/hashicorp/aws)",
+      "End of plan: 1 changes (0 deletes, 0 replaces)",
+    ]);
+  });
+
+  test("drift names attributes, never values, sensitive or not", () => {
+    const secret = change("aws_db_instance.main", ["update"], {
+      before: { password: "hunter2-old", port: 5432 },
+      after: { password: "hunter2-new", port: 5433 },
+      before_sensitive: { password: true },
+      after_sensitive: { password: true },
+    });
+    const r = render(plan([], { resource_drift: [secret] }));
+    expect(r.text).toContain("    changed: password");
+    expect(r.text).toContain("    changed: port");
+    for (const v of ["hunter2", "5432", "5433"]) expect(r.text).not.toContain(v);
+  });
+
+  test("drift does not change the plan's own counts", () => {
+    const r = render(plan([], { resource_drift: [updated, deleted] }));
+    expect(r.counts).toEqual({ create: 0, update: 0, delete: 0, replace: 0, read: 0 });
+    expect(r.changeCount).toBe(0);
+    expect(r.deleteCount).toBe(0);
+  });
+
+  test("no-op drift entries are not counted", () => {
+    const r = render(plan([], { resource_drift: [change("a.same", ["no-op"])] }));
+    expect(r.driftCount).toBe(0);
+    expect(r.lines[4]).toBe("Drift: none reported by terraform");
+  });
+
+  test("an unreadable resource_drift is stated and never refuses a plan that applies", () => {
+    const bad: unknown[] = [
+      "not a list",
+      ["not an object"],
+      [{ address: "a.b", type: "t", provider_name: "p" }],
+      [{ ...updated, change: { actions: ["teleport"] } }],
+      [{ ...updated, address: 5 }],
+      [{ ...updated, change: { actions: ["update"], before: "x", after: { size: 2 } } }],
+      [{ ...updated, change: { actions: ["update"], before: { size: 1 }, after: null } }],
+    ];
+    for (const rd of bad) {
+      const r = render(plan([], { resource_drift: rd }));
+      expect(r.driftCount).toBeNull();
+      expect(r.lines[4]).toBe("Drift: could not be read from this plan (not shown)");
+    }
+  });
+
+  test("hostile drift names are escaped like every other name", () => {
+    const hostile = change("aws_s3_bucket.a\u202Eb\nEnd of plan: 0 changes", ["update"], {
+      before: { "x\u2066y": 1 },
+      after: { "x\u2066y": 2 },
+    });
+    const r = render(plan([], { resource_drift: [hostile] }));
+    // Count on the joined text, not the line array: an unescaped newline would hide inside one element.
+    expect(r.text.split("\n").filter((l) => l.startsWith("End of plan"))).toHaveLength(1);
+    expect(r.lines.every((l) => !l.includes("\n"))).toBe(true);
+    expect(/[\u202A-\u202E\u2066-\u2069]/u.test(r.text)).toBe(false);
+    const escaped = escapeOneLine("aws_s3_bucket.a\u202Eb\nEnd of plan: 0 changes");
+    expect(r.text).toContain(`  [changed outside Terraform] ${escaped} (`);
+  });
+
+  test("more drift than the listing cap is counted, not listed", () => {
+    const many = Array.from({ length: 101 }, (_, i) => change(`a.n${String(i)}`, ["delete"]));
+    const r = render(plan([], { resource_drift: many }));
+    expect(r.driftCount).toBe(101);
+    expect(r.lines[4]).toBe(
+      "Drift: 101 objects changed outside Terraform (they differ from the last saved state) (too many to list here)",
+    );
+    expect(r.text).not.toContain("a.n0");
+  });
+
+  test("drift over its byte budget is counted, not listed, and never refuses the plan", () => {
+    const wide = change("a.wide", ["update"], {
+      before: Object.fromEntries(Array.from({ length: 2000 }, (_, i) => [`attr_${String(i)}`, 1])),
+      after: Object.fromEntries(Array.from({ length: 2000 }, (_, i) => [`attr_${String(i)}`, 2])),
+    });
+    const r = render(plan([], { resource_drift: [wide] }));
+    expect(r.driftCount).toBe(1);
+    expect(r.lines[4]).toContain("(too many to list here)");
+  });
+
+  test("a plan exactly at its own byte cap still renders with a drift block (separate budget)", () => {
+    const base = render(plan([change("a.b", ["create"])]));
+    const atCap = render(plan([change("a.b", ["create"])], { resource_drift: [deleted] }), {
+      maxRenderedBytes: Buffer.byteLength(
+        base.lines.filter((l) => !l.startsWith("Drift:")).join("\n"),
+        "utf8",
+      ),
+    });
+    expect(atCap.driftCount).toBe(1);
+  });
+
+  test("bytes and sha256 cover the drift block", () => {
+    const r = render(plan([], { resource_drift: [deleted] }));
+    expect(r.bytes).toBe(Buffer.byteLength(r.text, "utf8"));
+    expect(r.sha256).toBe(createHash("sha256").update(r.text).digest("hex"));
+    expect(r.text).toBe(r.lines.join("\n"));
   });
 });

@@ -56,6 +56,12 @@ export interface PlanPreview extends RenderedText {
   readonly changeCount: number;
   /** Deletes + replaces: every change that destroys something. */
   readonly deleteCount: number;
+  /**
+   * Objects Terraform reports as changed outside Terraform (`resource_drift`, no-ops excluded):
+   * `0` when it reports none, `null` when the field could not be read. Informational: it never
+   * refuses a plan.
+   */
+  readonly driftCount: number | null;
 }
 
 export type PlanPreviewOutcome =
@@ -323,6 +329,94 @@ function addChange(lines: Lines, rc: ResourceChange, maxValueChars: number): voi
   }
 }
 
+// ---------------------------------------------------------------------------------------------
+// Drift: objects Terraform found changed outside Terraform when it refreshed (`resource_drift`).
+//
+// Informational only. The block is built after the plan and has its own byte budget, so a plan
+// that rendered before this block existed renders now (never refused for its drift). Names only,
+// never values: a drifted value may be a secret even where no sensitive marker says so.
+
+/** The byte budget of the drift block, apart from the plan's own `maxRenderedBytes`. */
+export const DRIFT_MAX_BYTES = 16_384;
+/** More drifted objects than this are counted, not listed. */
+export const DRIFT_MAX_LISTED = 100;
+
+export const DRIFT_NONE_LINE = "Drift: none reported by terraform";
+export const DRIFT_UNREADABLE_LINE = "Drift: could not be read from this plan (not shown)";
+
+interface DriftBlock {
+  readonly lines: readonly string[];
+  readonly count: number | null;
+}
+
+interface DriftEntry {
+  readonly label: Label;
+  readonly entry: Obj;
+  readonly change: Obj;
+}
+
+/** The drift entries, or `null` when the field is present but not the documented shape. */
+function readDrift(plan: Obj): DriftEntry[] | null {
+  const raw = own(plan, "resource_drift");
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw)) return null;
+  const out: DriftEntry[] = [];
+  for (const entry of raw as unknown[]) {
+    if (!isObj(entry)) return null;
+    const change = own(entry, "change");
+    if (!isObj(change)) return null;
+    const label = classify(own(change, "actions"), [
+      "no-op",
+      "create",
+      "update",
+      "delete",
+      "replace",
+    ]);
+    if (label === undefined) return null;
+    for (const key of ["address", "type", "provider_name"]) {
+      if (typeof own(entry, key) !== "string") return null;
+    }
+    // An update compares two whole objects; anything else is not the documented shape.
+    if (label === "update" && !(isObj(own(change, "before")) && isObj(own(change, "after")))) {
+      return null;
+    }
+    if (label !== "no-op") out.push({ label, entry, change });
+  }
+  return out;
+}
+
+function driftLabel(label: Label): string {
+  if (label === "update") return "changed outside Terraform";
+  if (label === "delete") return "deleted outside Terraform";
+  return `${label} outside Terraform`;
+}
+
+/** The drift block: a summary line and, when it fits, every drifted object and attribute name. */
+function buildDrift(plan: Obj): DriftBlock {
+  const entries = readDrift(plan);
+  if (entries === null) return { lines: [DRIFT_UNREADABLE_LINE], count: null };
+  const n = entries.length;
+  if (n === 0) return { lines: [DRIFT_NONE_LINE], count: 0 };
+  const summary = `Drift: ${String(n)} objects changed outside Terraform (they differ from the last saved state)`;
+  const tooMany: DriftBlock = { lines: [`${summary} (too many to list here)`], count: n };
+  if (n > DRIFT_MAX_LISTED) return tooMany;
+  const lines = new Lines(DRIFT_MAX_BYTES);
+  try {
+    lines.add(`${summary}:`);
+    for (const d of entries) {
+      const address = escapeOneLine(own(d.entry, "address") as string);
+      const type = escapeOneLine(own(d.entry, "type") as string);
+      const provider = escapeOneLine(own(d.entry, "provider_name") as string);
+      lines.add(`  [${driftLabel(d.label)}] ${address} (${type}, ${provider})`);
+      if (d.label !== "update") continue;
+      for (const k of changedAttributes(d.change)) lines.add(`    changed: ${escapeOneLine(k)}`);
+    }
+  } catch {
+    return tooMany;
+  }
+  return { lines: lines.list, count: n };
+}
+
 function build(plan: Obj, planSha256: string, limits: PlanPreviewLimits): PlanPreview {
   const formatVersion = own(plan, "format_version");
   if (typeof formatVersion !== "string" || !FORMAT_VERSION.test(formatVersion)) {
@@ -345,6 +439,7 @@ function build(plan: Obj, planSha256: string, limits: PlanPreviewLimits): PlanPr
   lines.add(`Terraform ${version}`);
   lines.add(`Plan SHA-256: ${planSha256}`);
   lines.add(`Reads: ${String(counts.read)}`);
+  const driftAt = lines.list.length;
   for (const rc of changes) addChange(lines, rc, limits.maxValueChars);
   if (outputs.length > 0) {
     lines.add("Outputs:");
@@ -355,13 +450,18 @@ function build(plan: Obj, planSha256: string, limits: PlanPreviewLimits): PlanPr
     `End of plan: ${String(changeCount)} changes (${String(counts.delete)} deletes, ${String(counts.replace)} replaces)`,
   );
 
-  const text = lines.list.join("\n");
+  // The drift block goes after the reads line and before the first change. It is spliced in last
+  // so it is outside the plan's byte budget (its own is DRIFT_MAX_BYTES).
+  const drift = buildDrift(plan);
+  const all = [...lines.list.slice(0, driftAt), ...drift.lines, ...lines.list.slice(driftAt)];
+  const text = all.join("\n");
   return {
     terraformVersion: version,
     counts,
     changeCount,
     deleteCount,
-    lines: lines.list,
+    driftCount: drift.count,
+    lines: all,
     text,
     bytes: Buffer.byteLength(text, "utf8"),
     sha256: createHash("sha256").update(text).digest("hex"),
