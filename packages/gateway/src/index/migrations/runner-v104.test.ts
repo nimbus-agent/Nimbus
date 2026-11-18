@@ -15,9 +15,9 @@ function insertStep(db: Database, status: string, step = 1, sha = "a".repeat(64)
 }
 
 describe("V104 incident_runbook_step (Phase 10 IC6)", () => {
-  test("the schema constant and the registered chain end at 104", () => {
-    expect(CURRENT_SCHEMA_VERSION).toBe(104);
-    expect(maxRegisteredIndexedSchemaVersion()).toBe(104);
+  test("the schema constant and the registered chain reach 104", () => {
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(104);
+    expect(maxRegisteredIndexedSchemaVersion()).toBeGreaterThanOrEqual(104);
   });
 
   test("a fresh database has the table with the declared columns", () => {

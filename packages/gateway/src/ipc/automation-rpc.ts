@@ -111,6 +111,11 @@ import {
 import { deleteObservationFilesFor } from "../extensions/observation/observation-ingest.ts";
 import { orphanedDependencies, unneededDependencies } from "../extensions/orphaned-dependencies.ts";
 import {
+  type InstalledProvenanceView,
+  readInstalledProvenance,
+  reverifyInstalledProvenance,
+} from "../extensions/registry/installed-provenance.ts";
+import {
   evidenceApprovalFields,
   localInstallEvidence,
   type VersionEvidence,
@@ -463,6 +468,8 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
   "extension.info": (rec, ctx) => handleExtensionInfo(rec, ctx),
 
   "extension.audit": (rec, ctx) => handleExtensionAudit(rec, ctx),
+
+  "extension.verifyProvenance": (rec, ctx) => handleExtensionVerifyProvenance(rec, ctx),
 
   "extension.eval": (rec, ctx) => handleExtensionEval(rec, ctx),
 
@@ -937,6 +944,39 @@ function installedEvidence(
     : { evidenceIn: oneLine(row.source_registry) };
 }
 
+/**
+ * What a registry install kept of the installed version's build provenance (offline provenance
+ * re-verification, slice 2), or nothing. Evidence shown to the owner, never a decision (I51).
+ */
+function installedProvenanceField(
+  row: ExtensionRow,
+  ctx: AutomationCtx,
+): { installedProvenance?: InstalledProvenanceView } {
+  const view = readInstalledProvenance(ctx.db, row.id, row.version);
+  return view === undefined ? {} : { installedProvenance: view };
+}
+
+/**
+ * Re-checks the installed version's stored Sigstore bundle offline against the roots of the running
+ * release. No network, no write: CLI-only (never LAN, never Tauri).
+ */
+function handleExtensionVerifyProvenance(
+  rec: Record<string, unknown> | undefined,
+  ctx: AutomationCtx,
+): Hit {
+  const id = requireString(rec, "id");
+  const row = listExtensions(ctx.db).find((r) => r.id === id);
+  if (row === undefined) throw new AutomationRpcError(-32602, "Extension not found");
+  return {
+    kind: "hit",
+    value: {
+      id: row.id,
+      version: row.version,
+      ...reverifyInstalledProvenance(ctx.db, row.id, row.version),
+    },
+  };
+}
+
 /** What the installed extension did on this machine; local evidence only (never LAN, never Tauri). */
 function handleExtensionAudit(rec: Record<string, unknown> | undefined, ctx: AutomationCtx): Hit {
   // An absent id lists every extension; one that is present must be a real id.
@@ -973,6 +1013,7 @@ async function handleExtensionInfo(
     ...installedAccess(row, ctx),
     ...installedEvidence(row),
     ...installedAuthorMetadata(row),
+    ...installedProvenanceField(row, ctx),
   };
   const preT2 = new Set(preT2DisabledIds());
   if (preT2.has(row.id)) {
