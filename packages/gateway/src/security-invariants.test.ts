@@ -3653,9 +3653,6 @@ code_execution=true
     expect(captureCtx).toContain(
       "previewCredentialFor: previewCredentialResolver(connectorWriteDeps, connectorMesh),",
     );
-    // A refused, failed or unrecorded call is logged as an error, never as ok.
-    expect(agent).toContain("wrapToolForLlm(service, tool, def, deps.auditDb, isModelCallNotOk)");
-
     const main = stripComments(await read("packages/gateway/src/gateway-main.ts"));
     expect(main).toMatch(
       /createConnectorWriteDispatcher\(\s*createConnectorDispatcher\(dispatcherClient\),\s*platform\.connectorWriteDeps,?\s*\)/,
@@ -17480,6 +17477,8 @@ describe("I60 - a saved generated tool reaches the model only on the owner's tur
     expect(agent).toMatch(
       /deps\.toolgen === undefined \|\| getAgentRequestToolgenModelAsk\(\) === undefined\s*\?\s*\{\}\s*:\s*buildModelGeneratedTools\(/,
     );
+    // A refused, failed or unrecorded call is logged as an error, never as ok.
+    expect(agent).toContain("wrapToolForLlm(service, tool, def, deps.auditDb, isModelCallNotOk)");
 
     const main = stripComments(await read("packages/gateway/src/gateway-main.ts"));
     expect(main).toContain(
