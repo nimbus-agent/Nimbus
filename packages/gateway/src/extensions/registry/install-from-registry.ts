@@ -80,6 +80,7 @@ import {
 } from "../trust/trust-blocks.ts";
 import { decodeBase64 } from "../verify-signature.ts";
 import { currentSourceRegistry, sourceRegistryOf } from "./builtin-registry.ts";
+import { recordInstalledProvenance } from "./installed-provenance.ts";
 import { readProvenanceRecheck, recheckedProvenanceNote } from "./provenance-recheck.ts";
 import type { ProvenanceRecheck } from "./provenance-verify.ts";
 import { createRegistryDependencyResolver } from "./registry-dependency-fetcher.ts";
@@ -214,6 +215,10 @@ export interface VerifiedRegistryPackage {
    * provenance line, never a decision (OR-PROV-2).
    */
   readonly provenanceRecheck?: ProvenanceRecheck;
+  /** The bundle the re-check read, when it was fetched and matched the signed index (slice 2). */
+  readonly provenanceBundle?: string;
+  /** When the install door ran that re-check (ms since epoch); set with `provenanceRecheck`. */
+  readonly provenanceCheckedAt?: number;
   /**
    * What the registry's signed entry says about this version (tested, history, checks), shown in
    * the install approval. Optional as `index` is: a package built elsewhere (a test fake, a
@@ -546,6 +551,11 @@ export async function installVerifiedRegistryPackage(
     throw new RegistryError("ERR_REGISTRY_ALREADY_INSTALLED", `${id} is already installed`);
   }
   setExtensionSource(deps.db, installed.id, { registry: reg.name, rootFingerprint, channel });
+  try {
+    keepInstalledProvenance(deps, pkg);
+  } catch {
+    // Evidence only (I51): a failure to record it never fails an install that has committed.
+  }
   return {
     ...installed,
     sourceRegistry: reg.name,
@@ -624,6 +634,33 @@ async function withLivenessEvidence(
 }
 
 /**
+ * Records what the install showed of the package's provenance on its `extension` row (slice 2),
+ * only when it showed provenance and the signed entry names the package hash. Evidence only.
+ */
+function keepInstalledProvenance(
+  deps: InstallFromRegistryDeps,
+  pkg: VerifiedRegistryPackage,
+): void {
+  if (pkg.provenance === null) return;
+  const entry = pkg.index?.extensions[pkg.id]?.versions[pkg.version];
+  if (entry === undefined) return;
+  recordInstalledProvenance(
+    deps.db,
+    pkg.id,
+    {
+      v: 1,
+      version: pkg.version,
+      registry: pkg.reg.name,
+      packageSha256: entry.packageSha256,
+      provenance: pkg.provenance,
+      ...(pkg.provenanceRecheck === undefined ? {} : { recheck: pkg.provenanceRecheck }),
+      checkedAt: pkg.provenanceCheckedAt ?? deps.fetch.now(),
+    },
+    pkg.provenanceBundle ?? null,
+  );
+}
+
+/**
  * The package with the offline re-check of its provenance bundle (install door only, after the
  * liveness read): unchanged when there is no provenance, no index or no bundle reference.
  */
@@ -631,7 +668,7 @@ async function withProvenanceRecheck(
   deps: InstallFromRegistryDeps,
   pkg: VerifiedRegistryPackage,
 ): Promise<VerifiedRegistryPackage> {
-  const recheck = await readProvenanceRecheck(
+  const out = await readProvenanceRecheck(
     { ...deps.fetch, db: deps.db },
     {
       id: pkg.id,
@@ -641,7 +678,14 @@ async function withProvenanceRecheck(
       versionEntry: pkg.index?.extensions[pkg.id]?.versions[pkg.version],
     },
   );
-  return recheck === undefined ? pkg : { ...pkg, provenanceRecheck: recheck };
+  if (out === undefined) return pkg;
+  return {
+    ...pkg,
+    provenanceRecheck: out.recheck,
+    // When the re-check ran, not when the install later committed (the owner may take a while).
+    provenanceCheckedAt: deps.fetch.now(),
+    ...(out.bundle === undefined ? {} : { provenanceBundle: out.bundle }),
+  };
 }
 
 export async function installFromRegistry(

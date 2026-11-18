@@ -38,13 +38,14 @@ const isObject = (v: unknown): v is Record<string, unknown> =>
   v !== null && typeof v === "object" && !Array.isArray(v);
 
 /**
- * The re-check result, or `undefined` when there is nothing to re-check (no provenance, or a signed
- * entry that names no bundle: the approval then reads exactly as before).
+ * The re-check result, and the bundle text when it was fetched and matched the signed index (so the
+ * installed copy can keep it), or `undefined` when there is nothing to re-check (no provenance, or a
+ * signed entry that names no bundle: the approval then reads exactly as before).
  */
 export async function readProvenanceRecheck(
   deps: RegistryFetchDeps,
   subject: RecheckSubject,
-): Promise<ProvenanceRecheck | undefined> {
+): Promise<{ recheck: ProvenanceRecheck; bundle?: string } | undefined> {
   if (subject.provenance === null) return undefined;
   const ref = readProvenanceBundleRef(subject.versionEntry, subject.id, subject.version);
   if (ref === undefined) return undefined;
@@ -60,16 +61,17 @@ export async function readProvenanceRecheck(
       maxBytes: MAX_PROVENANCE_BUNDLE_BYTES,
     });
   } catch {
-    return { status: "unverified", reason: "bundle_unavailable" };
+    return { recheck: { status: "unverified", reason: "bundle_unavailable" } };
   }
   if (!sha256HexEqualConstantTime(sha256Hex(bytes), ref.sha256)) {
-    return { status: "unverified", reason: "bundle_hash_mismatch" };
+    return { recheck: { status: "unverified", reason: "bundle_hash_mismatch" } };
   }
-  return verifyProvenanceBundle({
+  const recheck = verifyProvenanceBundle({
     bundleBytes: bytes,
     packageSha256,
     expected: subject.provenance,
   });
+  return { recheck, bundle: new TextDecoder().decode(bytes) };
 }
 
 /** The approval's provenance sentence: the registry's note, plus what the offline re-check found. */
