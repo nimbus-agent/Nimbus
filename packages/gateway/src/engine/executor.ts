@@ -1326,7 +1326,23 @@ export interface ToolExecutorExtras {
    * prompt: no door can ask about a server while omitting what its code may write.
    */
   readonly userMcpWriteGrants?: ((serviceId: string) => readonly string[] | undefined) | undefined;
+  /**
+   * IaC drift D2 (OR-DRIFT-1, I54, static D42(h)): this executor may run {@link ToolExecutor.checkTerraformDrift}.
+   * Set only by `buildIacDriftExecutor` in `engine/run-ask.ts`, whose consent channel refuses everything.
+   */
+  readonly driftCheck?: boolean | undefined;
 }
+
+/** The Terraform row whose prepare step a drift check runs (its plan and show reads only, never the apply). */
+const DRIFT_ROW_ACTION_TYPE = "iac.terraform.apply";
+
+/** The fixed reason an executor not built for drift checks refuses one. */
+export const DRIFT_CHECK_NOT_BUILT_REASON = "drift: this executor cannot run a drift check";
+
+/** What a drift check returns: the rendered plan (its drift block included), or a fixed reason. */
+export type TerraformDriftOutcome =
+  | { readonly ok: true; readonly workingDirectory: string; readonly plan: PreviewPlan }
+  | { readonly ok: false; readonly reason: string };
 
 export class ToolExecutor {
   constructor(
@@ -1353,7 +1369,11 @@ export class ToolExecutor {
     this.standingRules = extras.standingRules;
     this.unattended = extras.unattended === true;
     this.userMcpWriteGrants = extras.userMcpWriteGrants;
+    this.driftCheck = extras.driftCheck === true;
   }
+
+  /** IaC drift D2: see {@link ToolExecutorExtras.driftCheck}. */
+  private readonly driftCheck: boolean;
 
   /** I15 (AD5b): see {@link ToolExecutorExtras.userMcpWriteGrants}. */
   private readonly userMcpWriteGrants:
@@ -1919,6 +1939,68 @@ export class ToolExecutor {
     if (typeof named !== "string") return false;
     const hit = rowNamedByToolId(named, this.rows());
     return hit !== undefined && hit.actionType !== action.type;
+  }
+
+  /**
+   * IaC drift D2 (OR-DRIFT-1; I54's one other caller of a prepare step, static D42(h)). Runs the Terraform
+   * apply row's PREPARE step for `workingDirectory` and returns the plan the gateway rendered, drift block
+   * included, WITHOUT asking anyone and WITHOUT dispatching the apply. In order: the row's own input shape
+   * check; its capability preflight (an approved canonical workdir, a granted cloud, the per-workdir mutex,
+   * the pinned real path, re-checked by the same shape rule); then the prepare step, whose plan and show
+   * reads are `iac.write.prepare` actions through this executor's gate (audited, I29-ledgered) under the
+   * `plan` and `show` profiles, with a settle that shows a no-change plan; then the cleanup and the mutex
+   * release, always. Every failure is a fixed reason, never error text.
+   */
+  async checkTerraformDrift(workingDirectory: string): Promise<TerraformDriftOutcome> {
+    const refuse = (reason: string): TerraformDriftOutcome => ({ ok: false, reason });
+    if (!this.driftCheck) return refuse(DRIFT_CHECK_NOT_BUILT_REASON);
+    const row = this.rows().find((r) => r.actionType === DRIFT_ROW_ACTION_TYPE);
+    if (row?.bound === undefined) return refuse(PREPARE_REFUSALS.toolNotAllowed);
+    const bound = row.bound;
+    const shape = bound.prepare.inputRefusal?.({ workingDirectory });
+    if (shape !== undefined) return refuse(shape);
+    const capabilities = this.connectors.boundWriteCapabilities;
+    if (capabilities === undefined) return refuse(PREPARE_REFUSALS.capabilityMissing);
+    let outcome: Awaited<ReturnType<BoundWriteCapabilities["preflight"]>>;
+    try {
+      outcome = await capabilities.preflight(row.toolId, { workingDirectory });
+    } catch {
+      return refuse(PREFLIGHT_FAILED_REASON);
+    }
+    if (!outcome.ok) return refuse(outcome.reason);
+    const pinned = outcome.workingDirectory ?? workingDirectory;
+    let prepared: PreparedWrite | undefined;
+    try {
+      const pinnedShape = bound.prepare.inputRefusal?.({ workingDirectory: pinned });
+      if (pinnedShape !== undefined) return refuse(pinnedShape);
+      const service = serviceOf(row.actionType);
+      prepared = await runPrepareStep(
+        {
+          // The drift check's own reads, never a caller's (static D42(h)).
+          gate: (a) => this.gateWithin(a, undefined, { bind: false, prepareStep: true }),
+          dispatch: (a) => this.connectors.dispatch(a),
+          settle: (id: string, ctx: SettleContext) =>
+            capabilities.settle(id, { ...ctx, driftCheck: true }),
+        },
+        row,
+        bound,
+        {
+          type: row.actionType,
+          payload: {
+            mcpToolId: mcpClientToolKey(service, row.toolId),
+            input: { workingDirectory: pinned },
+          },
+        },
+        { prepareToolIds: this.prepareToolIds(), workingDirectory: pinned },
+      );
+      if (prepared.plan === undefined) return refuse(PREPARE_REFUSALS.unshowable);
+      return { ok: true, workingDirectory: pinned, plan: prepared.plan };
+    } catch (e) {
+      return refuse(e instanceof PrepareRefusedError ? e.reason : PREPARE_REFUSALS.failed);
+    } finally {
+      await prepared?.cleanup?.();
+      outcome.release();
+    }
   }
 
   /**

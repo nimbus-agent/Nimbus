@@ -34,6 +34,7 @@ export { runGhostCli } from "./ghost.ts";
 export { runGlossaryCommand } from "./glossary.ts";
 export { printHelp } from "./help.ts";
 export { runHuddleCli } from "./huddle.ts";
+export { runIacCmd } from "./iac.ts";
 export { runIdentity } from "./identity.ts";
 export { runImpactCli } from "./impact.ts";
 export { runIncidentCommand } from "./incident.ts";

@@ -139,6 +139,7 @@ export function buildBoundWriteCapabilities(host: IacHost): BoundWriteCapabiliti
           reply: ctx.reply,
           stagingDir: dirs.stagingDir,
           approvedRoot: dirs.approvedRoot,
+          ...(ctx.driftCheck === true ? { allowNoChanges: true } : {}),
         },
       );
     },

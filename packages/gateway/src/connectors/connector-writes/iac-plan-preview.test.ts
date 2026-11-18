@@ -762,6 +762,17 @@ describe("renderPlanPreview: drift outside Terraform (resource_drift)", () => {
     expect(atCap.driftCount).toBe(1);
   });
 
+  test("driftLines is the spliced drift block and nothing else (no planned change values)", () => {
+    const r = render(
+      plan([change("a.b", ["update"], { before: { x: "old-value" }, after: { x: "new-value" } })], {
+        resource_drift: [deleted],
+      }),
+    );
+    expect(r.driftLines).toEqual(r.lines.slice(4, 4 + r.driftLines.length));
+    expect(r.driftLines.join("\n")).not.toContain("value");
+    expect(render(plan([])).driftLines).toEqual(["Drift: none reported by terraform"]);
+  });
+
   test("bytes and sha256 cover the drift block", () => {
     const r = render(plan([], { resource_drift: [deleted] }));
     expect(r.bytes).toBe(Buffer.byteLength(r.text, "utf8"));

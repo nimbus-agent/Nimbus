@@ -84,6 +84,10 @@ export interface PreviewPlan {
   readonly changeCount?: number;
   /** Deletes + replaces, when the renderer counted them. */
   readonly deleteCount?: number;
+  /** Terraform only: objects changed outside Terraform (`0` none reported, `null` unreadable). */
+  readonly driftCount?: number | null;
+  /** Terraform only: the drift block's escaped lines (names, never values). */
+  readonly driftLines?: readonly string[];
 }
 
 /** Lives in `./sanitise.ts` (the diff renderer needs it without importing this builder). */

@@ -164,6 +164,11 @@ export interface TerraformSettleRequest {
   readonly stagingDir: string;
   /** `<iacRoot>/approved`; the settler makes `<runId>/<planId>` under it. */
   readonly approvedRoot: string;
+  /**
+   * IaC drift D2: a plan with no planned change is shown instead of refused (a read-only drift check,
+   * never an apply). Absent or false: `nothingToApply`, as for every write.
+   */
+  readonly allowNoChanges?: boolean;
 }
 
 export interface TerraformSettleLimits {
@@ -282,7 +287,7 @@ async function settle(
   if (!isPlainFile(await fs.lstat(planFile), maxFile)) throw refuse(PREPARE_REFUSALS.unbound);
 
   // 2. Nothing to apply is not an approval.
-  if (!hasChanges) throw refuse(PREPARE_REFUSALS.nothingToApply);
+  if (!hasChanges && req.allowNoChanges !== true) throw refuse(PREPARE_REFUSALS.nothingToApply);
 
   // 3. Move it where the planning child cannot reach, re-check, read ONCE, hash it ourselves.
   const runDir = join(req.approvedRoot, ops.randomHex(16));

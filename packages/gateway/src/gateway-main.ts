@@ -2,8 +2,10 @@ import type { Agent } from "@mastra/core/agent";
 import pino from "pino";
 import { runWorkflowExecution } from "./automation/workflow-runner.ts";
 import { WorkflowScheduler } from "./automation/workflow-scheduler.ts";
+import { loadNimbusIacDriftFromConfigDir } from "./config/iac-drift-toml.ts";
 import { loadServiceConfigsOrEmpty } from "./config/service-configs.ts";
 import { createConnectorWriteDispatcher } from "./connectors/connector-write-dispatch.ts";
+import { getIacGrants } from "./connectors/connector-writes/iac-grants.ts";
 import { createModelWriteToolSource } from "./connectors/connector-writes/model-write-source.ts";
 import { previewCredentialResolver } from "./connectors/connector-writes/preview-credential.ts";
 import {
@@ -18,12 +20,15 @@ import type { EmbeddingReadiness } from "./embedding/embedding-readiness.ts";
 import { createNimbusEngineAgent } from "./engine/agent.ts";
 import { agentRequestContext } from "./engine/agent-request-context.ts";
 import {
+  buildIacDriftExecutor,
   buildRemediationExecutor,
   buildUnattendedWorkflowWriteExecutor,
   buildWorkflowWriteExecutor,
   type RunAskParams,
   runAsk,
 } from "./engine/run-ask.ts";
+import { createIacDriftRunner } from "./iac-drift/drift-runner.ts";
+import { IacDriftScheduler } from "./iac-drift/drift-scheduler.ts";
 import { humanOnlyConsent } from "./ipc/consent.ts";
 import { armGatewayLifecycleDiagnostics } from "./platform/exit-diagnostics.ts";
 import { removeGatewayStateFile, writeGatewayStateFile } from "./platform/gateway-state-file.ts";
@@ -429,6 +434,42 @@ export async function main(): Promise<void> {
     );
   }
 
+  // Phase 10 IaC drift D2 (OR-DRIFT-1, OR-DRIFT-2): the read-only Terraform drift check, run by the owner's CLI
+  // (`iac.driftCheck`) and, opt-in, on the `[iac.drift] schedule`. Its executor (`buildIacDriftExecutor`, static
+  // D42(h)) asks nobody and never dispatches an apply; every plan and show read is audited and I29-ledgered. A
+  // scheduled run notifies through `showIgnoringFailure` with a count and the workdir only. A demo-rooted gateway
+  // builds neither (I41).
+  const iacDriftScheduler =
+    platform.paths.demo === true
+      ? undefined
+      : (() => {
+          const runner = createIacDriftRunner({
+            makeExecutor: () =>
+              buildIacDriftExecutor({
+                localIndex: platform.localIndex,
+                dispatcher,
+                egressSink: askEgressSink,
+                policyHitl: platform.policyHitl,
+              }),
+            approvedWorkdirs: () => getIacGrants(platform.localIndex.getDatabase()).workdirs,
+            dataDir: platform.paths.dataDir,
+            now: Date.now,
+            notify: (title, body) => showIgnoringFailure(platform.notifications, title, body),
+            notifyEnabled: () => loadNimbusIacDriftFromConfigDir(platform.paths.configDir).notify,
+          });
+          platform.bindIacDriftRunner(runner);
+          return new IacDriftScheduler({
+            runner,
+            config: () => loadNimbusIacDriftFromConfigDir(platform.paths.configDir),
+            now: Date.now,
+            onError: (err) =>
+              process.stderr.write(
+                `[gateway] scheduled IaC drift check failed: ${err instanceof Error ? err.message : String(err)}
+`,
+              ),
+          });
+        })();
+
   // SA4: scheduled workflows. A demo-rooted gateway never schedules (I41). The scheduler is handed a
   // FACTORY for an unattended write executor and a notifier; it holds no client and no consent
   // coordinator, so nothing it runs can ask a person anything (static D44(d)).
@@ -466,7 +507,10 @@ export async function main(): Promise<void> {
     // drain is bounded (`BRIEFING_RETIRE_DRAIN_MS`).
     const briefingRetired = platform.briefing.scheduler?.retire().catch(() => {});
     const workflowsRetired = workflowScheduler?.retire().catch(() => {});
+    // IaC drift D2: started with the two above (its timer clears synchronously), awaited after them.
+    const driftRetired = iacDriftScheduler?.retire().catch(() => {});
     await Promise.all([briefingRetired, workflowsRetired]);
+    await driftRetired;
     try {
       platform.disposeSidecars?.();
     } catch {
@@ -514,6 +558,8 @@ export async function main(): Promise<void> {
   // The index is ready and the socket is serving: scheduled workflows may now fire (one catch-up of
   // a miss within the last hour, then every minute's tick).
   workflowScheduler?.start();
+  // IaC drift D2: off unless `[iac.drift] schedule` is set (re-read every tick); `undefined` on the demo root (I41).
+  iacDriftScheduler?.start();
   // The morning briefing and the deadline notices (Phase 10 MB5); `undefined` on the demo root (I41).
   platform.briefing.scheduler?.start();
   writeGatewayStateFile(platform.paths, {
