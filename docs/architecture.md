@@ -2936,8 +2936,20 @@ or `ERR_EXTENSION_TAKEN_DOWN`:
 showed in `extension_run_grant.trust_ack_json`. A block whose id is not there refuses the spawn, so a later takedown blocks
 again. The no-change short-circuit compares the acknowledgement too. A block that lands while the prompt is open refuses
 `ERR_EXTENSION_RUN_CHANGED`, and a prompt-less migration of a blocked extension is refused. `extension list|info` report
-`runState: "blocked"` with `blockedBy` (the unacknowledged blocks), `registry.search` marks `blocked`, and `nimbus doctor`
-names each blocked extension.
+`runState: "blocked"` with `blockedBy` (the unacknowledged blocks), `registry.search` marks `blocked`, `registry.info` marks
+each version `blocked` (the same `blocksFor` check, per version), and `nimbus doctor` names each blocked extension.
+
+**Desktop marketplace tile (S4, 2026-11-18).** The Marketplace page browses registries through three renderer-callable reads
+(I7, 137 -> 140): `registry.list`, `registry.search` and `registry.info`. `registry.search` takes an optional
+`includeBuiltin: true` (the desktop always sends it): it then searches exactly the targets a bare `install <id>` resolves
+(`registry-resolve.ts` `bareTargets`: the owner's registries plus the built-in official one unless air gap skips it, and the
+reply carries `builtinSkippedForAirGap`); without it the owner's added registries only, as `nimbus extension search` has
+always worked. The tile (`packages/ui/src/components/registry/`) shows the score, the `Baseline`, `Tested`, `History` and
+`Checked` lines verbatim, the declared permissions and the predicted reach and file access, provenance, license, the verified
+publisher, blocked versions and the funding links, and offers `nimbus extension install <id> --registry <name>` and
+`nimbus extension sponsor <id> --registry <name>` to copy, built only from values the CLI accepts. It installs, adds and
+opens nothing; `search` and `info` run on submit and select only, never on a timer. Not built: install or registry add from
+the desktop, and opening a funding link in the browser (both copy-only; see `docs/roadmap.md`).
 
 **Rotation (PR 3a).** The Vault keeps one key per (publisher, fingerprint) beside the legacy one-per-publisher key, and every
 reader verifies with the key the extension row recorded. `extensions/trust/trust-keys.ts` answers whether a publisher may move

@@ -986,6 +986,17 @@ describe("registry.search and registry.info", () => {
       1,
     );
     expect(await search()).toBe(false);
+    const infoBlocked = async () =>
+      (
+        (await call("registry.info", { id: "acme.tool", liveness: false })) as {
+          value: { versions: Array<{ version: string; blocked: boolean }> };
+        }
+      ).value.versions.map((v) => [v.version, v.blocked]);
+    // `info` carries the same verdict per version, so the desktop tile can show it.
+    expect(await infoBlocked()).toEqual([
+      ["1.1.0", false],
+      ["1.0.0", true],
+    ]);
     recordTrustStatements(
       db,
       [await takedown(["1.1.0"])],
@@ -993,6 +1004,10 @@ describe("registry.search and registry.info", () => {
       1,
     );
     expect(await search()).toBe(true);
+    expect(await infoBlocked()).toEqual([
+      ["1.1.0", true],
+      ["1.0.0", true],
+    ]);
   });
 
   test("search reports an unreachable registry and still returns others", async () => {
@@ -1083,6 +1098,7 @@ describe("registry.search and registry.info", () => {
           channel: "beta",
           publishedAt: "2026-10-01T00:00:00Z",
           packageSizeBytes: 1234,
+          blocked: false,
           quality: null,
           permissions: { network: ["api.example.com"], filesystem: { read: [], write: [] } },
           access: {
@@ -1098,6 +1114,7 @@ describe("registry.search and registry.info", () => {
           channel: "stable",
           publishedAt: "2026-10-01T00:00:00Z",
           packageSizeBytes: 1234,
+          blocked: false,
           quality: null,
         },
       ],
@@ -1753,6 +1770,42 @@ describe("the reserved built-in registry name", () => {
       value: { name: "official", rootFingerprint: FINGERPRINT },
     });
     expect(g.asked).toHaveLength(1);
+  });
+
+  test("search reads only the owner's registries unless includeBuiltin is set; then also the built-in one, never when air-gapped", async () => {
+    makeRegistry(tmp, {
+      "nimbus.reader": {
+        publisherId: "nimbus",
+        versions: [{ version: "1.0.0", channel: "stable", name: "Reader" }],
+      },
+    });
+    const plain = (await call("registry.search", { query: "reader" }, { fetch: builtinBag() })) as {
+      value: { results: Array<{ registry: string; id: string }> };
+    };
+    // Today's CLI behaviour, unchanged: the built-in registry is not one the owner added.
+    expect(plain.value.results).toEqual([]);
+    expect(plain.value).not.toHaveProperty("builtinSkippedForAirGap");
+    const withBuiltin = (await call(
+      "registry.search",
+      { query: "reader", includeBuiltin: true },
+      { fetch: builtinBag() },
+    )) as {
+      value: { results: Array<{ registry: string; id: string }>; builtinSkippedForAirGap: boolean };
+    };
+    expect(withBuiltin.value.results.map((r) => [r.registry, r.id])).toEqual([
+      ["nimbus-official", "nimbus.reader"],
+    ]);
+    expect(withBuiltin.value.builtinSkippedForAirGap).toBe(false);
+    const airGapped = (await call(
+      "registry.search",
+      { query: "reader", includeBuiltin: true },
+      { fetch: fetchBag({ builtin: { url: tmp, rootKey: ROOT_KEY }, enforceAirGap: () => true }) },
+    )) as { value: { results: unknown[]; builtinSkippedForAirGap: boolean } };
+    expect(airGapped.value.results).toEqual([]);
+    expect(airGapped.value.builtinSkippedForAirGap).toBe(true);
+    await expect(
+      call("registry.search", { query: "reader", includeBuiltin: "yes" }, { fetch: builtinBag() }),
+    ).rejects.toThrow("ERR_INVALID_PARAMS");
   });
 
   test("info on a built-in extension falls back to the baked report URL; never for another registry", async () => {

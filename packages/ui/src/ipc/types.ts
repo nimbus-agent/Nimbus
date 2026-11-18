@@ -793,3 +793,97 @@ export interface IncidentFinding {
 export interface IncidentFindingsResult {
   readonly findings: readonly IncidentFinding[];
 }
+
+/** S4 marketplace tile: `registry.list` (the owner's added registries; the database only). */
+export interface RegistryListEntry {
+  readonly name: string;
+  readonly url: string;
+  readonly rootFingerprint: string;
+  readonly stale?: boolean;
+}
+
+export interface RegistryListResult {
+  readonly registries: ReadonlyArray<RegistryListEntry>;
+}
+
+export interface RegistryQuality {
+  readonly score: number;
+  readonly cases: number;
+  readonly passed: number;
+}
+
+export interface RegistryVerifiedPublisher {
+  readonly github: string;
+  readonly verifiedAt: string;
+}
+
+/** One `registry.search` hit (the offered version: newest stable, else beta, else newest). */
+export interface RegistrySearchHit {
+  readonly registry: string;
+  readonly id: string;
+  readonly name: string;
+  readonly publisherId: string;
+  readonly latestStable: string | null;
+  readonly latestBeta: string | null;
+  readonly blocked: boolean;
+  readonly verifiedPublisher: RegistryVerifiedPublisher | null;
+  readonly quality: RegistryQuality | null;
+}
+
+export interface RegistrySearchResult {
+  readonly results: ReadonlyArray<RegistrySearchHit>;
+  readonly errors: ReadonlyArray<{ readonly registry: string; readonly error: string }>;
+  /** Present only with `includeBuiltin`: air gap kept the built-in official registry out. */
+  readonly builtinSkippedForAirGap?: boolean;
+}
+
+/** Each evidence line carries its rendered `text`; the page shows it verbatim. */
+export interface RegistryEvidenceLine {
+  readonly text: string;
+}
+
+export interface RegistryAccess {
+  readonly networkReach: string;
+  readonly fileAccess: string;
+  readonly canRunHere: boolean | null;
+}
+
+export interface RegistryInfoVersion {
+  readonly version: string;
+  readonly channel: string;
+  readonly publishedAt: string;
+  readonly packageSizeBytes: number;
+  readonly blocked: boolean;
+  readonly quality: RegistryQuality | null;
+  readonly permissions?: {
+    readonly network: ReadonlyArray<string>;
+    readonly filesystem: {
+      readonly read: ReadonlyArray<string>;
+      readonly write: ReadonlyArray<string>;
+    };
+  };
+  readonly access?: RegistryAccess;
+}
+
+export interface RegistryInfoResult {
+  readonly registry: string;
+  readonly id: string;
+  readonly publisherId: string;
+  readonly publisherFingerprint: string;
+  readonly provenance: {
+    readonly sourceRepository: string;
+    readonly commit: string;
+    readonly workflow: string;
+  } | null;
+  readonly license: string | null;
+  readonly funding: ReadonlyArray<{ readonly url: string; readonly label?: string }> | null;
+  readonly evidence: {
+    readonly baseline: RegistryEvidenceLine;
+    readonly tested: RegistryEvidenceLine;
+    readonly history: RegistryEvidenceLine;
+    readonly checked: RegistryEvidenceLine;
+  };
+  readonly evidenceFor: { readonly version: string; readonly channel: string };
+  readonly verifiedPublisher: RegistryVerifiedPublisher | null;
+  readonly versions: ReadonlyArray<RegistryInfoVersion>;
+}

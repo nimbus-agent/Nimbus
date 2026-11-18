@@ -924,7 +924,7 @@ describe("I5 — LAN method allowlist is intrinsic to LanServer", () => {
     "incident.timeline",
   ];
 
-  test("I7 (IC10a, IC10b): exactly the five incident reads are renderer-callable; the allowlist is 137", async () => {
+  test("I7 (IC10a, IC10b): exactly the five incident reads are renderer-callable; the allowlist is 140", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
     const start = rust.indexOf("pub const ALLOWED_METHODS: &[&str] = &[");
     const end = rust.indexOf("];", start);
@@ -948,11 +948,33 @@ describe("I5 — LAN method allowlist is intrinsic to LanServer", () => {
       expect(negated || positiveRead || denialLine).toBe(true);
     }
     expect(rust).toMatch(/^\s*"incident\.assemble",\s*$/m); // the Rust denial list names it
-    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*137\s*\)/);
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*140\s*\)/);
     // the Rust denial list names the methods that must stay off the renderer
     for (const m of ["assemble", "advisory", "advisorySet", "remediate", "undo"]) {
       expect(rust).toMatch(new RegExp(String.raw`^\s*"incident\.${m}",\s*$`, "m"));
     }
+  });
+
+  test("I7 (S4 marketplace tile): exactly three registry reads are renderer-callable; install, add, refresh, remove and clone stay off", async () => {
+    const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    const start = rust.indexOf("pub const ALLOWED_METHODS: &[&str] = &[");
+    const end = rust.indexOf("];", start);
+    const list = rust.slice(start, end);
+    // by NAME: swapping `registry.search` for `registry.install` would keep the count
+    expect([...list.matchAll(/"(registry\.[A-Za-z]+)"/g)].map((m) => m[1])).toEqual([
+      "registry.info",
+      "registry.list",
+      "registry.search",
+    ]);
+    expect(list).not.toMatch(/"extension\.install"/);
+    expect(list).not.toMatch(/"extension\.approveRun"/);
+    // the Rust denial list names each write-class registry method
+    for (const m of ["add", "remove", "refresh", "install", "cloneSource"]) {
+      expect(rust).toMatch(new RegExp(String.raw`^\s*"registry\.${m}",\s*$`, "m"));
+    }
+    // the registry namespace stays off the LAN (I5)
+    const lan = await read("packages/gateway/src/ipc/lan-rpc.ts");
+    expect(lan).toMatch(/^\s*"registry",\s*$/m);
   });
 
   test("I7/I5 (IC10a): each renderer-callable incident read still gates on the DECLARED kind first, the bridge declares ui, and the namespace is off the LAN", async () => {
@@ -2382,9 +2404,9 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
     expect(rust).not.toContain("toolgen.");
   });
 
-  test("allowlist_exact_size assertion is 137", async () => {
+  test("allowlist_exact_size assertion is 140", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
-    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*137\s*\)/);
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*140\s*\)/);
   });
 
   // Role packs Project 4: 111 + 7 - 2 = 116; Project 5 (onboarding): + pack.install, decisions.status
@@ -11153,7 +11175,7 @@ describe("I46 — a renderer can create an extension run grant only through migr
     }
     expect(rust).toContain('assert!(is_method_allowed("migration.list"));');
     expect(rust).toContain('assert!(is_method_allowed("migration.accept"));');
-    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*137\s*\)/);
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*140\s*\)/);
   });
 
   // ---- the positive control ------------------------------------------------------------------
