@@ -1,0 +1,45 @@
+---
+/**
+ * The catalog table: one row per extension, newest score, kind and publisher, linking to its page.
+ * Static HTML; every value is Astro text (escaped).
+ */
+import { type CatalogExtension, extensionHref, newestScore } from "../../lib/catalog";
+
+interface Props {
+  extensions: readonly CatalogExtension[];
+}
+const { extensions } = Astro.props;
+---
+
+{
+  extensions.length === 0 ? (
+    <p>No extension matches this filter.</p>
+  ) : (
+    <table>
+      <thead>
+        <tr>
+          <th>Extension</th>
+          <th>Kind</th>
+          <th>Publisher</th>
+          <th>Score</th>
+          <th>Newest</th>
+        </tr>
+      </thead>
+      <tbody>
+        {extensions.map((e) => (
+          <tr>
+            <td>
+              <a href={extensionHref(e.id)}>{e.displayName}</a>
+              <br />
+              <code>{e.id}</code>
+            </td>
+            <td>{e.kind}</td>
+            <td>{e.verifiedPublisher === null ? e.publisherId : `${e.publisherId} (verified @${e.verifiedPublisher})`}</td>
+            <td>{newestScore(e) === null ? "not scored" : `${String(newestScore(e))}/100`}</td>
+            <td>{e.newest}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
