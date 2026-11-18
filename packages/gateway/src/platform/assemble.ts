@@ -356,6 +356,7 @@ import {
   createPremortemRefresher,
   type PremortemRefresher,
 } from "../premortem/premortem-refresh.ts";
+import { createRunbooks } from "../runbook/runbook-run.ts";
 import { vectorSearchChunks } from "../search/vec-store.ts";
 import { shareConsent } from "../share/share-consent-broker.ts";
 import type { ShareFile } from "../share/share-format.ts";
@@ -5019,6 +5020,18 @@ export async function assemblePlatformServices(
       }
     },
   });
+  // IC6: the owner's runbooks (the TOML files under `<configDir>/runbooks`), run one step at a time on the SAME executor
+  // factory as remediation (human-only consent on the asking connection, no delegation, no standing rule).
+  const runbooks = createRunbooks({
+    db,
+    makeExecutor: (o) => {
+      if (incidentExecutorFactory === undefined) throw new Error("no remediation executor");
+      return incidentExecutorFactory(o);
+    },
+    ready: () => incidentExecutorFactory !== undefined,
+    configDir: () => paths.configDir,
+    bindingsFor: (service) => loadServiceBindings(paths.configDir, service),
+  });
   // IC5b (approve-from-push): the push carries its record's top proposal, read through the owner listing only.
   oncallPush.bindTopProposal((recordId) => remediation.topProposal(recordId));
   ipcOpts.incidentRpcCtx = {
@@ -5029,6 +5042,7 @@ export async function assemblePlatformServices(
     // IC9a: `incident.investigate` reads a service's declared `sentry_projects`; a malformed block reads as unreadable.
     serviceConfigs: () => loadNimbusServiceConfigsFromConfigDir(paths.configDir),
     remediation,
+    runbooks,
     // `incident.debt` (IC7b): the same git-aware roots the ownership pass binds (`[[filesystem.roots]]` plus
     // the CLI-registered ones), re-read per call; git runs only from `debt/`.
     debt: {

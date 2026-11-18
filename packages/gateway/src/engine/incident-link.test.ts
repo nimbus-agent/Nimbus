@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 
 import {
   assertIncidentLink,
+  assertLinkedActionAllowed,
+  assertRunbookStep,
   isIncidentLink,
   PROMPT_ROW_MAX_ESCAPED,
   promptForRow,
@@ -67,5 +69,57 @@ describe("promptForRow redacts BEFORE it cuts (review: a credential across the c
   test("a credential fully inside the cut is still redacted and an uncut text is untouched", () => {
     expect(promptForRow(`a ${secret} b`).prompt).toBe("a [REDACTED] b");
     expect(promptForRow("plain").promptCut).toBe(false);
+  });
+});
+
+describe("the runbook step beside a link (IC6, I57 (c))", () => {
+  const link = { id: "inc_0123456789abcdef", version: 1 };
+  const read = { runbook: "pay-rollback", step: 2, kind: "read" as const };
+  const act = {
+    runbook: "pay-rollback",
+    step: 3,
+    kind: "action" as const,
+    reversibility: "reversible" as const,
+  };
+
+  test("a well-formed read or action step beside a link passes", () => {
+    expect(() =>
+      assertLinkedActionAllowed({ incident: link, runbookStep: read }, undefined),
+    ).not.toThrow();
+    expect(() =>
+      assertLinkedActionAllowed({ incident: link, runbookStep: act }, undefined),
+    ).not.toThrow();
+    expect(() => assertRunbookStep(read)).not.toThrow();
+  });
+
+  test("a step with no link, beside an engine proposal, or of the wrong shape is refused", () => {
+    expect(() => assertLinkedActionAllowed({ runbookStep: read }, undefined)).toThrow(
+      "a runbook step is carried only by an incident-linked action",
+    );
+    expect(() =>
+      assertLinkedActionAllowed(
+        {
+          incident: link,
+          runbookStep: act,
+          engineProposal: { proposalId: "prp_0123456789abcdef", reversibility: "unknown" },
+        },
+        undefined,
+      ),
+    ).toThrow("an action is a runbook step or an engine proposal, never both");
+    for (const bad of [
+      null,
+      { ...read, step: 0 },
+      { ...read, step: 51 },
+      { ...read, step: 1.5 },
+      { ...read, runbook: "Bad Name\u001b" },
+      { ...read, reversibility: "reversible" },
+      { ...act, reversibility: "maybe" },
+      { runbook: "x", step: 1, kind: "check" },
+      { ...read, extra: 1 },
+    ]) {
+      expect(() => assertRunbookStep(bad), JSON.stringify(bad)).toThrow(
+        "a runbook step must be exactly",
+      );
+    }
   });
 });

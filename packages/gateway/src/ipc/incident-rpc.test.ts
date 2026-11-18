@@ -261,6 +261,9 @@ describe("owner kinds only (the spec, § 5.3)", () => {
     ["incident.undo", { actionId: "act_0123456789abcdef" }],
     ["incident.advisory", {}],
     ["incident.advisorySet", { on: true }],
+    ["incident.runbooks", { id: "pagerduty:A" }],
+    ["incident.runbookRun", { id: "pagerduty:A", runbook: "r", step: 1 }],
+    ["incident.runbookDone", { id: "pagerduty:A", runbook: "r", step: 1 }],
   ];
 
   test("list, get AND assemble refuse every other kind BEFORE any query or engine call, and serve cli and ui", async () => {

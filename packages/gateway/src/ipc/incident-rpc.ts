@@ -25,6 +25,7 @@ import { type Remediation, RemediationError } from "../incident/remediation.ts";
 import { readTimeline } from "../incident/timeline-read.ts";
 import { TRIGGER_SERVICES } from "../incident/trigger-sources.ts";
 import type { ServiceConfig } from "../metrics/dora-config.ts";
+import { RunbookError, type Runbooks } from "../runbook/runbook-run.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 import type { ClientKind } from "./server/client-kind.ts";
 
@@ -43,12 +44,19 @@ import type { ClientKind } from "./server/client-kind.ts";
  *   incident.advisorySet { on }                        -> { advisory }  (IC5a)
  *   incident.debt { since?, untouched?, minIncidents?, limit? } -> DebtResult   (IC7b; runs `git log` under debt/, never from incident/)
  *   incident.findings { all?, limit? }                -> { findings }   (IC8; the radar's and the anomaly baseline's findings, read only)
+ *   incident.runbooks { id, runbook? }                 -> { recordId, version, advisory, runbooks, errors }   (IC6)
+ *   incident.runbookRun { id, runbook, step }          -> { runbook, step, kind, actionId, status, reason?, nonHuman, result? }   (IC6)
+ *   incident.runbookDone { id, runbook, step }         -> { runbook, step, status: "done" }   (IC6)
  *
  * `incident.get` also answers a live `cascade` (IC4: where this record stands among the open records of the
  * same 30-minute window) and `incident.list { cascade: true }` also answers the open `groups`; both are derived
  * at call time from the open records and the declared `depends_on`, never stored.
  *
- * ALL TWELVE serve only a connection whose DECLARED kind is `cli` or `ui` (`requireOwnerKind`, called first by
+ * The three IC6 methods list, run and mark the steps of the owner's own runbooks (`<configDir>/runbooks/*.toml`);
+ * `runbookRun` runs ONE step through the same human-only executor as `remediate`, on THIS connection, so they are
+ * never renderer-callable either.
+ *
+ * ALL FIFTEEN serve only a connection whose DECLARED kind is `cli` or `ui` (`requireOwnerKind`, called first by
  * every handler, before any query runs): a record holds capped titles of items from several services, and the
  * kind is the connection's (`ctx.getClientKind`), never a param. The whole namespace is LAN-forbidden (I5). The
  * renderer (I7) may call exactly five reads: `list`, `get`, `timeline` (IC10a), `proposals` and `findings` (IC10b);
@@ -78,6 +86,8 @@ export interface IncidentRpcCtx {
   readonly now?: () => number;
   /** IC5a: the remediation service (proposals, remediate, undo, the advisory switch). Absent: those methods refuse. */
   readonly remediation?: Remediation;
+  /** IC6: the owner's runbooks (list, run one step, mark a check done). Absent: those methods refuse. */
+  readonly runbooks?: Runbooks;
   /**
    * `incident.debt` (IC7b): the owner's own `[[filesystem.roots]]`, read fresh per call, and the git reader
    * (default: the real one in `debt/git-history.ts`). Absent: the method answers `ERR_DEBT_UNAVAILABLE`.
@@ -553,6 +563,42 @@ async function remediationCall<T>(run: () => T | Promise<T>): Promise<T> {
   }
 }
 
+function runbooksOf(ctx: IncidentRpcCtx): Runbooks {
+  if (ctx.runbooks === undefined) {
+    throw new IncidentRpcError(
+      -32000,
+      "ERR_RUNBOOK_UNAVAILABLE: this gateway has no runbook service",
+    );
+  }
+  return ctx.runbooks;
+}
+
+/** A runbook refusal as the owner reads it: `<CODE>: <message>`, a params error. */
+async function runbookCall<T>(run: () => T | Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (e) {
+    if (e instanceof RunbookError) throw new IncidentRpcError(-32602, `${e.code}: ${e.message}`);
+    throw e;
+  }
+}
+
+function parseRunbookName(method: string, p: Record<string, unknown>): string {
+  const raw = p["runbook"];
+  if (typeof raw !== "string" || raw === "" || raw.length > 64) {
+    throw new IncidentRpcError(-32602, `${method}: runbook must be a non-empty string`);
+  }
+  return raw;
+}
+
+function parseStep(method: string, p: Record<string, unknown>): number {
+  const raw = p["step"];
+  if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 1 || raw > 50) {
+    throw new IncidentRpcError(-32602, `${method}: step must be an integer 1..50`);
+  }
+  return raw;
+}
+
 function parseProposalId(method: string, p: Record<string, unknown>): string {
   const raw = p["proposalId"];
   if (typeof raw !== "string" || raw === "" || raw.length > 64) {
@@ -632,6 +678,31 @@ export async function dispatchIncidentRpc(
       const actionId = parseActionId(p);
       const clientId = callerClient("incident.undo", caller);
       return remediationCall(() => remediationOf(ctx).undo({ actionId, clientId }));
+    },
+    "incident.runbooks": async (raw) => {
+      requireOwnerKind(caller.kind);
+      const p = requireKeys("incident.runbooks", raw, ["id", "runbook"]);
+      const id = parseId("incident.runbooks", p);
+      const only =
+        p["runbook"] === undefined ? undefined : parseRunbookName("incident.runbooks", p);
+      return await runbookCall(() => runbooksOf(ctx).list(id, only));
+    },
+    "incident.runbookRun": async (raw) => {
+      requireOwnerKind(caller.kind);
+      const p = requireKeys("incident.runbookRun", raw, ["id", "runbook", "step"]);
+      const id = parseId("incident.runbookRun", p);
+      const runbook = parseRunbookName("incident.runbookRun", p);
+      const step = parseStep("incident.runbookRun", p);
+      const clientId = callerClient("incident.runbookRun", caller);
+      return await runbookCall(() => runbooksOf(ctx).run({ ref: id, runbook, step, clientId }));
+    },
+    "incident.runbookDone": async (raw) => {
+      requireOwnerKind(caller.kind);
+      const p = requireKeys("incident.runbookDone", raw, ["id", "runbook", "step"]);
+      const id = parseId("incident.runbookDone", p);
+      const runbook = parseRunbookName("incident.runbookDone", p);
+      const step = parseStep("incident.runbookDone", p);
+      return await runbookCall(() => runbooksOf(ctx).done({ ref: id, runbook, step }));
     },
     "incident.advisory": async (raw) => {
       requireOwnerKind(caller.kind);

@@ -9,6 +9,7 @@ import {
   PREPARE_REFUSALS,
   PrepareRefusedError,
 } from "../engine/prepare-step.ts";
+import { isRunbookReadActionType } from "../engine/runbook-read.ts";
 import { serviceOf } from "../engine/service-of.ts";
 import { extractToolInput } from "../engine/tool-input.ts";
 import type { ConnectorDispatcher, PlannedAction } from "../engine/types.ts";
@@ -325,7 +326,8 @@ export function createConnectorDispatcher(
  * dispatcher actually resolved, before the tool is called; any other type is untouched.
  */
 function assertBeforeReadIsOwnRead(actionType: string, resolvedKey: string): void {
-  if (!isBeforeReadActionType(actionType)) return;
+  // IC6: a runbook read step (`<service>.runbook.read`) is held to the same rule: a read of that service only.
+  if (!isBeforeReadActionType(actionType) && !isRunbookReadActionType(actionType)) return;
   const shown = `action type ${JSON.stringify(actionType)} may not dispatch tool ${JSON.stringify(resolvedKey)}`;
   if (meshServerForToolKey(resolvedKey) !== serviceOf(actionType)) {
     throw new Error(`ERR_BEFORE_READ_SERVICE_MISMATCH: ${shown}`);

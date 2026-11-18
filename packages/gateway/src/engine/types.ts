@@ -90,7 +90,24 @@ export type PlannedAction = {
    * means nothing.
    */
   engineProposal?: EngineProposal;
+  /**
+   * Phase 10 IC6 (I57 (c)): set only by `runbook/runbook-run.ts` on an action it builds from a step of an
+   * owner-authored runbook, always beside `incident` and never beside `engineProposal`. DISPLAY data for the
+   * owner's prompt (`Proposed by: runbook <name>, step N`) and a join key for the audit row; it selects no
+   * tool, no credential and no confirm text, and no gate decision reads it. Top level only.
+   */
+  runbookStep?: RunbookStepRef;
 };
+
+/** Which step of which owner-authored runbook an action runs (IC6). `reversibility` is set for an action step only. */
+export type RunbookStepRef =
+  | { readonly runbook: string; readonly step: number; readonly kind: "read" }
+  | {
+      readonly runbook: string;
+      readonly step: number;
+      readonly kind: "action";
+      readonly reversibility: "reversible" | "irreversible" | "unknown";
+    };
 
 /** What an engine-proposed action's prompt shows: which stored proposal it is and its declared reversibility. */
 export type EngineProposal = {

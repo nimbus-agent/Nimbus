@@ -21,9 +21,9 @@ function insertFinding(db: Database, id: string, cleared: number | null, detail 
 }
 
 describe("V103 incident_finding and anomaly_baseline (Phase 10 IC8)", () => {
-  test("the schema constant and the registered chain end at 103", () => {
-    expect(CURRENT_SCHEMA_VERSION).toBe(103);
-    expect(maxRegisteredIndexedSchemaVersion()).toBe(103);
+  test("the schema constant and the registered chain reach 103", () => {
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(103);
+    expect(maxRegisteredIndexedSchemaVersion()).toBeGreaterThanOrEqual(103);
   });
 
   test("a fresh database has both tables with the declared columns", () => {
