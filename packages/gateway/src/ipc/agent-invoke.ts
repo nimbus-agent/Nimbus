@@ -38,6 +38,13 @@ export type AgentInvokeContext = {
    */
   offerConnectorWriteTools?: boolean;
   /**
+   * Whether this turn may drive a computer-use session (I35, OR-MCU-1): decided ONCE at the IPC entry
+   * from the session's server-held `ClientKind` (`COMPUTER_USE_OFFER_BY_KIND`, `cli` only).
+   */
+  offerComputerUse?: boolean;
+  /** The session id `nimbus ask --computer <id>` named. */
+  computerSessionId?: string;
+  /**
    * Set by `agent.invoke` only: writes a UNICAST `agent.gasLimitReached` to the session that
    * made the call when the agent step budget cut the turn short (`engine/step-budget.ts`). Never
    * a broadcast — the event describes one caller's turn.

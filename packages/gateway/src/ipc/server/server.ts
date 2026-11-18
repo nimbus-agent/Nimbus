@@ -131,6 +131,7 @@ export function createIpcServer(
       sessions.delete(cid);
       clientKinds.forget(cid);
       consentImpl.onClientDisconnect(cid);
+      options.onClientDisconnected?.(cid);
     });
     sessions.set(clientId, session);
     options.onClientConnected?.(clientId);
@@ -256,6 +257,12 @@ export function createIpcServer(
     },
     broadcast(method: string, params: Record<string, unknown>): void {
       broadcastNotification(method, params);
+    },
+    notify(clientId: string, method: string, params: Record<string, unknown>): boolean {
+      const session = sessions.get(clientId);
+      if (session === undefined) return false;
+      session.writeNotification({ jsonrpc: "2.0", method, params });
+      return true;
     },
     async start(): Promise<void> {
       if (hostPlatform() === "win32") {

@@ -4,6 +4,7 @@ import type { ConnectorWriteContext } from "../connectors/connector-write-transp
 import type { TribalKbConfig } from "../connectors/connector-writes/model-write-refusals.ts";
 import type { LazyConnectorMesh } from "../connectors/lazy-mesh/index.ts";
 import type { EmbeddingReadiness } from "../embedding/embedding-readiness.ts";
+import type { ComputerUseBinding } from "../engine/agent-request-context.ts";
 import type { AskExplainRecorder } from "../engine/ask-explain-recorder.ts";
 import type { ExecutorDelegationDep, ExecutorPolicyDep } from "../engine/executor.ts";
 import type { IncidentEngine } from "../incident/incident-engine.ts";
@@ -82,6 +83,11 @@ export interface PlatformServices {
   toolgenRegistry: ToolgenRegistry;
   /** The model's door to the owner's saved generated tools (S4, I60); `gateway-main.ts` hands it to the agent. */
   toolgenModelDoor: ToolgenModelDoorSource;
+  /**
+   * The model's computer-use binding for one turn (I35, OR-MCU-1): an OPEN session this process holds,
+   * with run deps only; its action prompts go to the connection that opened it (OR-MCU-2).
+   */
+  computerUseFor: (sessionId: string) => ComputerUseBinding | undefined;
   /** Credential-aware deps for the connector write dispatcher (warehouse/BI ∪ GitOps/ML; wrapped in index.ts). */
   connectorWriteDeps: ConnectorWriteContext;
   // Owner-side delegated HITL (Slice 2, I20). Present when federation is enabled: the executor gate

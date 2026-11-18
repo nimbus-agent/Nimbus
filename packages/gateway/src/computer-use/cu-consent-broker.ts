@@ -1,5 +1,5 @@
-import { ConsentBroker } from "../util/consent-broker.ts";
 import type { CuActionClass } from "./cu-types.ts";
+import { CuUnicastConsentBroker } from "./cu-unicast-broker.ts";
 
 /**
  * The DISCRIMINANT that routes an approval request to its broker.
@@ -78,14 +78,18 @@ export interface CuActionApprovalInput {
   readonly modelDescription: string | null;
 }
 
-/** Fourth thin binding over the shared ConsentBroker, after share, federation-preflight and exec. */
-export class CuEnvelopeConsentBroker extends ConsentBroker<CuEnvelopeApprovalInput> {
+/**
+ * The two computer-use brokers are UNICAST (I35, OR-MCU-2): a prompt goes only to the connection that
+ * asked, and only that connection's human answer approves. They extend `CuUnicastConsentBroker`, which
+ * has no broadcast arm, rather than the shared broadcasting `ConsentBroker`.
+ */
+export class CuEnvelopeConsentBroker extends CuUnicastConsentBroker<CuEnvelopeApprovalInput> {
   constructor() {
     super("computer.envelopeRequest");
   }
 }
 
-export class CuActionConsentBroker extends ConsentBroker<CuActionApprovalInput> {
+export class CuActionConsentBroker extends CuUnicastConsentBroker<CuActionApprovalInput> {
   constructor() {
     super("computer.actionRequest");
   }

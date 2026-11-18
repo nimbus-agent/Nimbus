@@ -12,6 +12,8 @@ type AskArgs = {
   agent?: string;
   devil?: boolean;
   at?: string;
+  /** A computer-use session id the model may drive (I35, OR-MCU-1). */
+  computer?: string;
 };
 
 function parseAskArgs(args: string[]): AskArgs {
@@ -20,6 +22,7 @@ function parseAskArgs(args: string[]): AskArgs {
   let agent: string | undefined;
   let devil = false;
   let at: string | undefined;
+  let computer: string | undefined;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     // A valued flag that must never silently vanish or leak into the question: dropping it would answer
@@ -30,6 +33,17 @@ function parseAskArgs(args: string[]): AskArgs {
         throw new Error("--at needs a time (e.g. 2026-11-11T09:00, yesterday-09:00, -2h)");
       }
       at = v;
+      i += 1;
+      continue;
+    }
+    // The computer-use session the model may drive (I35, OR-MCU-1): an id `nimbus computer` printed.
+    // Valued and never silently dropped, for the same reason as `--at`.
+    if (a === "--computer") {
+      const v = args[i + 1];
+      if (v === undefined || v.trim() === "" || v.startsWith("--")) {
+        throw new Error("--computer needs the session id `nimbus computer` printed");
+      }
+      computer = v;
       i += 1;
       continue;
     }
@@ -53,7 +67,15 @@ function parseAskArgs(args: string[]): AskArgs {
       rest.push(a);
     }
   }
+  if (computer !== undefined && at !== undefined) {
+    throw new Error(
+      "--computer cannot be combined with --at: a point-in-time answer drives nothing",
+    );
+  }
   const out: AskArgs = { rest };
+  if (computer !== undefined) {
+    out.computer = computer;
+  }
   if (sessionId !== undefined) {
     out.sessionId = sessionId;
   }
@@ -131,6 +153,9 @@ function buildInvokeParams(query: string, parsed: AskArgs): Record<string, unkno
   if (parsed.at !== undefined) {
     invokeParams["at"] = parsed.at;
   }
+  if (parsed.computer !== undefined) {
+    invokeParams["computerSession"] = parsed.computer;
+  }
   return invokeParams;
 }
 
@@ -181,7 +206,7 @@ export async function runAsk(args: string[]): Promise<void> {
   const query = parsed.rest.join(" ").trim();
   if (query.length === 0) {
     throw new Error(
-      'Usage: nimbus ask [--session <uuid>] [--agent <name>] [--devil] [--at <time>] "<natural language query>"',
+      'Usage: nimbus ask [--session <uuid>] [--agent <name>] [--devil] [--at <time>] [--computer <session-id>] "<natural language query>"',
     );
   }
 
@@ -189,6 +214,12 @@ export async function runAsk(args: string[]): Promise<void> {
   const state = await readGatewayState(paths);
   if (state === undefined) {
     throw new Error(gatewayNotRunningMessage(paths.demo === true));
+  }
+  if (parsed.computer !== undefined) {
+    // Every actuating step asks the person at the terminal that OPENED the session, never this one.
+    process.stderr.write(
+      `Driving computer-use session ${parsed.computer}: approve each action in the terminal running nimbus computer.\n`,
+    );
   }
 
   // `agent.invoke` below is awaited by the Gateway for the whole run, and the HITL

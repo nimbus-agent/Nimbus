@@ -33,11 +33,31 @@ export class ComputerRpcError extends Error {
 }
 
 export interface ComputerRpcCtx {
-  /** Everything `openSession`/`runAction`/`closeSession` need; assembled once at boot. */
-  readonly gateDeps: CuGateDeps;
+  /**
+   * Everything `openSession`/`runAction`/`closeSession` need, built for ONE connection: its
+   * `requestApproval` sends the envelope or action prompt to that connection only (I35, OR-MCU-2).
+   */
+  readonly gateDepsFor: (clientId: string) => CuGateDeps;
   /** The owner-approval brokers this surface answers into (I35). */
   readonly envelopeConsent: CuEnvelopeConsentBroker;
   readonly actionConsent: CuActionConsentBroker;
+}
+
+/** One call's context: the calling connection and the gate deps bound to it. */
+interface ComputerCallCtx {
+  readonly clientId: string;
+  readonly gateDeps: CuGateDeps;
+  readonly envelopeConsent: CuEnvelopeConsentBroker;
+  readonly actionConsent: CuActionConsentBroker;
+}
+
+/**
+ * The client's declared answer source, as sent, or `undefined` (an older client that sends none).
+ * Only the exact string `human` approves; the broker compares, nothing here interprets it.
+ */
+function answerSourceOf(params: unknown): string | undefined {
+  const v = asRecord(params)?.["answerSource"];
+  return typeof v === "string" ? v : undefined;
 }
 
 /** `ERR_INVALID_PARAMS: <key> (non-empty string) required`, as a `ComputerRpcError`. */
@@ -135,7 +155,7 @@ function querySessionStatus(
   return { sessions: rows.map(toStatusEntry) };
 }
 
-const HANDLERS: RpcMethodHandlerMap<ComputerRpcCtx> = {
+const HANDLERS: RpcMethodHandlerMap<ComputerCallCtx> = {
   // The I35 chokepoint's only transport. Everything crossing this boundary is `unknown` until
   // validated -- no casts on `params`.
   "computer.sessionOpen": (params, ctx) => {
@@ -211,9 +231,14 @@ const HANDLERS: RpcMethodHandlerMap<ComputerRpcCtx> = {
     const approved = asRecord(params)?.["approved"] === true;
     // The caller does not say which broker a requestId belongs to (a session-open envelope prompt
     // and a per-action prompt share one `computer.approvalRespond` verb), so try both. Each broker
-    // mints its own `randomUUID()`, so at most one of the two calls can ever match.
-    const matchedEnvelope = ctx.envelopeConsent.respond(requestId, approved);
-    const matchedAction = matchedEnvelope ? false : ctx.actionConsent.respond(requestId, approved);
+    // mints its own `randomUUID()`, so at most one of the two calls can ever match. The answer
+    // matches only the connection the prompt was sent to (the server's own connection id, never a
+    // parameter), and approves only when its source is `human` (I35, OR-MCU-2).
+    const from = { clientId: ctx.clientId, answerSource: answerSourceOf(params) };
+    const matchedEnvelope = ctx.envelopeConsent.respondFrom(requestId, approved, from);
+    const matchedAction = matchedEnvelope
+      ? false
+      : ctx.actionConsent.respondFrom(requestId, approved, from);
     return { matched: matchedEnvelope || matchedAction };
   },
 };
@@ -222,6 +247,16 @@ export function dispatchComputerRpc(
   method: string,
   params: unknown,
   ctx: ComputerRpcCtx,
+  clientId: string,
 ): Promise<RpcMissOrHit> {
-  return dispatchByMethod(method, params, ctx, HANDLERS);
+  const call: ComputerCallCtx = {
+    clientId,
+    // Built only for a method this surface serves; an unrelated method builds nothing.
+    get gateDeps() {
+      return ctx.gateDepsFor(clientId);
+    },
+    envelopeConsent: ctx.envelopeConsent,
+    actionConsent: ctx.actionConsent,
+  };
+  return dispatchByMethod(method, params, call, HANDLERS);
 }

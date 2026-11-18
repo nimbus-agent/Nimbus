@@ -408,6 +408,71 @@ describe("runAsk and the generated-tool approval slot (I60)", () => {
   });
 });
 
+describe("runAsk and the computer-use binding (I35, OR-MCU-1)", () => {
+  const BINDING = {
+    session: { sessionId: "cu-1", lane: "browser" as const },
+    gateDeps: {} as never,
+  };
+  async function boundAfter(over: Record<string, unknown>): Promise<AgentRequestContext> {
+    const idx = seed();
+    const store: AgentRequestContext = { computerUse: BINDING };
+    await agentRequestContext.run(store, async () => {
+      await runAsk(params(idx, { llmRouter: fakeRouter([]), ...over }));
+    });
+    idx.close();
+    return store;
+  }
+  const resolver = (id: string) => (id === "cu-1" ? BINDING : undefined);
+
+  test("the owner's cli turn that names an open session is bound to it", async () => {
+    const asked: string[] = [];
+    const store = await boundAfter({
+      offerComputerUse: true,
+      computerSessionId: "cu-1",
+      computerUseFor: (id: string) => {
+        asked.push(id);
+        return resolver(id);
+      },
+    });
+    expect(store.computerUse).toBe(BINDING);
+    expect(asked).toEqual(["cu-1"]);
+  });
+
+  test("a session the platform does not hold open is not bound, and a reused store is cleared", async () => {
+    const store = await boundAfter({
+      offerComputerUse: true,
+      computerSessionId: "gone",
+      computerUseFor: resolver,
+    });
+    expect(store.computerUse).toBeUndefined();
+  });
+
+  test("no offer (not a cli caller), no session named, or a demo root: never bound", async () => {
+    for (const over of [
+      { offerComputerUse: false, computerSessionId: "cu-1", computerUseFor: resolver },
+      { offerComputerUse: true, computerUseFor: resolver },
+      {
+        offerComputerUse: true,
+        computerSessionId: "cu-1",
+        computerUseFor: resolver,
+        paths: { ...paths, demo: true },
+      },
+    ]) {
+      expect((await boundAfter(over)).computerUse).toBeUndefined();
+    }
+  });
+
+  test("a point-in-time turn withdraws a binding", async () => {
+    const store = await boundAfter({
+      offerComputerUse: true,
+      computerSessionId: "cu-1",
+      computerUseFor: resolver,
+      pointInTimeMs: AT,
+    });
+    expect(store.computerUse).toBeUndefined();
+  });
+});
+
 describe("runAsk with pointInTimeMs - the agent path", () => {
   function recordingAgent(reply: string, gapCount: number): Agent {
     return {

@@ -405,6 +405,8 @@ nimbus ask "What caused the payment-service alert — what deployed recently?"
 nimbus ask "Summarise everything that happened across my projects this week"
 ```
 
+**Computer use (`--computer <session-id>`, owner rulings OR-MCU-1/2):** lets the model drive a computer-use session you opened with `nimbus computer` (see `nimbus computer` below). Every prompt for that session, each actuating step included, comes to the terminal running `nimbus computer`, not this one, and only a person's answer there counts. Terminal only (the desktop cannot drive computer-use); not with `--at`.
+
 **Point-in-time mode (`--at <time>`, Phase 10 IC1):** answers as the index stood at that time, for post-incident questions such as "what PRs were open for payment-service at 09:00 yesterday?". Accepted forms: `2026-11-11T09:00Z` (with a zone or offset), `2026-11-11T09:00` and `2026-11-11` (in the gateway's time zone), `yesterday-09:00`, `today-14:30` and `-2h` (units `s`, `m`, `h`, `d`, `w`). An instant in the future, before 2000 or unreadable is refused. Existence and the tracked state keys (status, state, severity, urgency, assignee, merged, draft, due date) are reconstructed from item history, which begins at the upgrade; **titles and bodies are as of now**, and the answer ends with a deterministic block that says so, names where history starts when it begins after T, and counts the items it could not place (`## Gaps`) and therefore does not show. The turn uses only the index: it is answered conversationally (never as a planned action), may not read live connectors or the graph, and is never offered a write. A point-in-time ask is not streamed. A gateway that predates `--at` makes the command print an error and exit 1, and its reply is neither shown nor stored in a `--session`, because its answer is from current data. A time-travel turn neither reads nor writes session history, and the command withholds `resolvePerson` (the people graph has no time axis).
 
 ```bash
@@ -2299,6 +2301,16 @@ session's action count until it closes. It does not drive any action itself,
 and that is by design rather than a gap: `computer.act` is driven from inside
 the gateway by the model-callable browser tools, which exist only while a
 session is live.
+
+**Let the model drive it: `nimbus ask --computer <session-id> "<task>"`** (owner
+rulings OR-MCU-1/2). Open the session here first, copy the id it prints, and run
+the ask in another terminal. Every prompt for the session, the envelope and each
+actuating action, comes to THIS terminal (the one that opened it) and to no
+other, and only your answer here counts: an answer from another connection, or
+an automated one, is not accepted. The ask terminal only shows the model's
+reply. Only the terminal can do this: the desktop cannot drive or approve
+computer-use. `--computer` cannot be combined with `--at`. An older `nimbus`
+that sends no answer source cannot approve: upgrade the CLI with the gateway.
 
 **What the terminal lane does and does not do.** Every command is shown to you
 in full and approved individually before a single byte reaches the shell —

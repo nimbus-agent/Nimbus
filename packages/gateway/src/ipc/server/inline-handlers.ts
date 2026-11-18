@@ -81,6 +81,24 @@ export const CONNECTOR_WRITE_OFFER_BY_KIND: Readonly<Record<ClientKind, boolean>
   push: false,
 };
 
+/**
+ * Which callers may drive a computer-use session through the model (I35, owner ruling OR-MCU-1):
+ * `cli` ONLY. The desktop (`ui`) is excluded on purpose (OR-MCU-1: no desktop consent UX, and
+ * `computer.approvalRespond` stays off the renderer allowlist, I7), as is every other kind. The
+ * declared kind is self-reported on the user-only socket; every actuation still asks a person on
+ * this connection (OR-MCU-2). TOTAL over `ClientKind`.
+ */
+export const COMPUTER_USE_OFFER_BY_KIND: Readonly<Record<ClientKind, boolean>> = {
+  cli: true,
+  ui: false,
+  unknown: false,
+  mcp: false,
+  http: false,
+  chatops: false,
+  fleet: false,
+  push: false,
+};
+
 function requireNonEmptyRpcString(rec: Record<string, unknown> | undefined, key: string): string {
   if (rec === undefined) {
     throw new RpcMethodError(-32602, `Missing or invalid ${key}`);
@@ -170,6 +188,13 @@ export async function dispatchAgentInvoke(
   const clientKind = ctx.getClientKind(clientId);
   const offerUserMcpTools = USER_MCP_OFFER_BY_KIND[clientKind];
   const offerConnectorWriteTools = CONNECTOR_WRITE_OFFER_BY_KIND[clientKind];
+  const offerComputerUse = COMPUTER_USE_OFFER_BY_KIND[clientKind];
+  // `nimbus ask --computer <id>`: the session the owner opened; honoured only for a `cli` caller,
+  // refused with `--at` (a point-in-time turn drives nothing).
+  const computerSessionId = parseOptionalString(rec, "computerSession");
+  if (computerSessionId !== undefined && pointInTimeMs !== undefined) {
+    throw new RpcMethodError(-32602, "computerSession cannot be combined with at");
+  }
   const handler = ctx.getAgentInvokeHandler();
   if (handler === undefined) {
     return {
@@ -195,6 +220,8 @@ export async function dispatchAgentInvoke(
         },
         offerUserMcpTools,
         offerConnectorWriteTools,
+        offerComputerUse,
+        ...(computerSessionId === undefined ? {} : { computerSessionId }),
         notifyGasLimit: (event: GasLimitEvent) => {
           sendGasLimitReached(session, event, streamId);
         },

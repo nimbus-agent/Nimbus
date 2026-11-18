@@ -29,6 +29,7 @@ import type { AgentLatencyRecorder } from "../telemetry/agent-latency.ts";
 import { gatewayZone } from "../util/zoned-time.ts";
 import {
   agentRequestContext,
+  type ComputerUseBinding,
   getAgentRequestSessionId,
   getExplainToolCalls,
 } from "./agent-request-context.ts";
@@ -182,6 +183,19 @@ export type RunAskParams = {
    * only `cli` / `ui`); ChatOps passes a literal `false`.
    */
   offerConnectorWriteTools?: boolean;
+  /**
+   * Whether this turn may drive a computer-use session (I35, OR-MCU-1): decided by the CALLER from
+   * the live session's `ClientKind` (`COMPUTER_USE_OFFER_BY_KIND`, `cli` only). Only `=== true`
+   * offers, never on a demo-rooted gateway and never on a point-in-time turn.
+   */
+  offerComputerUse?: boolean;
+  /** The session the owner named with `nimbus ask --computer <id>`. */
+  computerSessionId?: string;
+  /**
+   * Resolves a session this process holds OPEN to its binding (run deps only; every action prompt
+   * goes to the connection that opened it), or `undefined` when it is not open or computer-use is off.
+   */
+  computerUseFor?: (sessionId: string) => ComputerUseBinding | undefined;
   /**
    * Told when the agent step budget cut this turn short (`engine/step-budget.ts`). Only the IPC
    * entry supplies it, as a UNICAST `agent.gasLimitReached` to the acting session; every other
@@ -389,6 +403,7 @@ function withdrawOfferedExecutors(): void {
   delete store.userMcpExecutor;
   delete store.connectorWriteExecutor;
   delete store.toolgenModelAsk;
+  delete store.computerUse;
 }
 
 function offerUserMcpExecutorIfOwner(p: RunAskParams): void {
@@ -425,6 +440,29 @@ function offerConnectorWriteExecutorIfOwner(p: RunAskParams): void {
 }
 
 /**
+ * Bind the computer-use session the owner named to this turn (I35, OR-MCU-1) when, and only when,
+ * the caller decided this is the local owner's `cli` turn (`p.offerComputerUse === true`), the
+ * gateway is not demo-rooted, and the platform resolves the id to an OPEN session; cleared
+ * otherwise, so a reused store never carries an earlier turn's binding.
+ */
+function bindComputerUseIfOwner(p: RunAskParams): void {
+  const store = agentRequestContext.getStore();
+  if (store === undefined) return;
+  const binding =
+    p.offerComputerUse === true &&
+    !isDemo(p) &&
+    p.computerSessionId !== undefined &&
+    p.computerUseFor !== undefined
+      ? p.computerUseFor(p.computerSessionId)
+      : undefined;
+  if (binding === undefined) {
+    delete store.computerUse;
+  } else {
+    store.computerUse = binding;
+  }
+}
+
+/**
  * The conversational answer path: prior turns + optional indexed context → the agent/router,
  * then persist the turn.
  *
@@ -441,6 +479,7 @@ async function answerConversationally(
   if (atMs === undefined) {
     offerUserMcpExecutorIfOwner(p);
     offerConnectorWriteExecutorIfOwner(p);
+    bindComputerUseIfOwner(p);
   } else {
     // A time-travel turn is never offered a write or a live read (plan deviation 14).
     withdrawOfferedExecutors();

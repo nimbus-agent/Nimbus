@@ -242,34 +242,41 @@ describe("session-memory tools", () => {
   });
 });
 
-describe("computer-use spread", () => {
-  test("a terminal session offers terminal_write and no browser tools", async () => {
+describe("computer-use spread (I35, OR-MCU-1)", () => {
+  const TERMINAL = {
+    session: { sessionId: "cu-1", lane: "terminal" as const },
+    gateDeps: {} as unknown as CuRunDeps,
+  };
+
+  test("a turn bound to a terminal session offers terminal_write and no browser tools", async () => {
     const { localIndex } = freshIndex();
-    const { agent } = createNimbusEngineAgent({
-      ...baseDeps(localIndex),
-      computerUse: {
-        session: { sessionId: "cu-1", lane: "terminal" },
-        gateDeps: {} as unknown as CuRunDeps,
-      },
+    const { agent } = createNimbusEngineAgent(baseDeps(localIndex));
+    await agentRequestContext.run({ computerUse: TERMINAL }, async () => {
+      const names = Object.keys(await listTools(agent));
+      expect(names).toContain("terminal_write");
+      expect(names.filter((n) => n.startsWith("browser_"))).toEqual([]);
     });
-    const names = Object.keys(await listTools(agent));
-    expect(names).toContain("terminal_write");
-    expect(names.filter((n) => n.startsWith("browser_"))).toEqual([]);
   });
 
-  test("computerUse wired with no live session contributes no tool", async () => {
+  test("a turn with no binding is offered no computer-use tool", async () => {
     const { localIndex } = freshIndex();
-    const { agent } = createNimbusEngineAgent({
-      ...baseDeps(localIndex),
-      computerUse: { session: undefined, gateDeps: {} as unknown as CuRunDeps },
+    const { agent } = createNimbusEngineAgent(baseDeps(localIndex));
+    await agentRequestContext.run({}, async () => {
+      const names = Object.keys(await listTools(agent));
+      expect(names).toContain("searchLocalIndex");
+      expect(names.filter((n) => n.startsWith("browser_") || n.startsWith("terminal_"))).toEqual(
+        [],
+      );
     });
-    const names = Object.keys(await listTools(agent)).sort();
-    // Exactly the tool set of an agent with no computer-use wiring at all: no lane's tools, not
-    // only the terminal's.
-    const { agent: plain } = createNimbusEngineAgent(baseDeps(localIndex));
-    expect(names).toEqual(Object.keys(await listTools(plain)).sort());
-    expect(names).toContain("searchLocalIndex");
-    expect(names.filter((n) => n.startsWith("browser_") || n.startsWith("terminal_"))).toEqual([]);
+  });
+
+  test("a point-in-time turn is never offered a computer-use tool, even when bound", async () => {
+    const { localIndex } = freshIndex();
+    const { agent } = createNimbusEngineAgent(baseDeps(localIndex));
+    await agentRequestContext.run({ computerUse: TERMINAL, pointInTimeMs: 1 }, async () => {
+      const names = Object.keys(await listTools(agent));
+      expect(names.filter((n) => n.startsWith("terminal_"))).toEqual([]);
+    });
   });
 });
 

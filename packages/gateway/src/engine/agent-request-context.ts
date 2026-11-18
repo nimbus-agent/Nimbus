@@ -1,6 +1,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
 import { redactAuditPayload } from "../audit/format-audit-payload.ts";
+import type { CuRunDeps } from "../computer-use/cu-gate.ts";
+import type { CuLane } from "../config/nimbus-toml.ts";
 import { MAX_PARAMS_JSON_BYTES } from "../db/tool-call-log.ts";
 import type { PointInTimeFacts } from "../index/item-history-at.ts";
 import type { ToolgenModelAsk } from "../toolgen/toolgen-model-door.ts";
@@ -50,6 +52,14 @@ export type AgentRequestContext = {
    */
   toolgenModelAsk?: ToolgenModelAsk;
   /**
+   * The computer-use session the model may drive on THIS turn (I35, owner ruling OR-MCU-1), with run
+   * deps only (no lane spawner); every action prompt goes to the connection that OPENED the session
+   * (OR-MCU-2), never to this turn. Present ONLY on the
+   * local owner's non-demo `cli` turn that named an OPEN session (`nimbus ask --computer <id>`), set
+   * by `runAsk`; absent, no computer-use tool is listed.
+   */
+  computerUse?: ComputerUseBinding;
+  /**
    * The instant a point-in-time turn (`nimbus ask --at`, Phase 10 IC1) answers for. Present ONLY on such
    * a turn: `toolsFor` then offers the three time-aware tools and nothing else, and the index tools pass
    * the instant to the index. Set by the IPC entry and again by `runAsk`, so the store always agrees with
@@ -61,6 +71,12 @@ export type AgentRequestContext = {
    * the deterministic disclosure after the model has finished. Created lazily, like `explainToolCalls`.
    */
   pointInTimeFacts?: PointInTimeFacts[];
+};
+
+/** A computer-use session bound to one turn: which session, and the run deps its tools call `runAction` with. */
+export type ComputerUseBinding = {
+  readonly session: { readonly sessionId: string; readonly lane: CuLane };
+  readonly gateDeps: CuRunDeps;
 };
 
 export const agentRequestContext = new AsyncLocalStorage<AgentRequestContext>();
@@ -82,6 +98,11 @@ export function getAgentRequestConnectorWriteExecutor(): ToolExecutor | undefine
 /** This turn's generated-tool approval, or `undefined` outside an owner `cli`/`ui` turn (I60). */
 export function getAgentRequestToolgenModelAsk(): ToolgenModelAsk | undefined {
   return agentRequestContext.getStore()?.toolgenModelAsk;
+}
+
+/** This turn's computer-use binding, or `undefined` unless the owner's `cli` turn named an open session. */
+export function getAgentRequestComputerUse(): ComputerUseBinding | undefined {
+  return agentRequestContext.getStore()?.computerUse;
 }
 
 /** This turn's point-in-time instant, or `undefined` outside a turn / for an ordinary turn. */
