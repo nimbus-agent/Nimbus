@@ -1,0 +1,90 @@
+---
+/**
+ * One extension of the official registry, from the verified snapshot. Static HTML: no client script.
+ * Funding links are the only links built from registry data, `https:` only (checked by `parseCatalog`),
+ * opened with `rel="noopener noreferrer"`.
+ */
+import StarlightPage from "@astrojs/starlight/components/StarlightPage.astro";
+import raw from "../../data/official-registry.json";
+import {
+  type CatalogExtension,
+  installCommand,
+  newestScore,
+  pagedExtensions,
+  parseCatalog,
+} from "../../lib/catalog";
+
+export function getStaticPaths() {
+  return pagedExtensions(parseCatalog(raw)).map((e) => ({ params: { id: e.id }, props: { e } }));
+}
+
+interface Props {
+  e: CatalogExtension;
+}
+const { e } = Astro.props;
+const catalog = parseCatalog(raw);
+const newest = e.versions.find((v) => v.version === e.newest);
+const score = newestScore(e);
+const install = installCommand(e.id);
+const list = (xs: readonly string[]): string => (xs.length === 0 ? "none" : xs.join(", "));
+---
+
+<StarlightPage frontmatter={{ title: e.displayName, description: `${e.id} in the official Nimbus registry` }}>
+  <p><code>{e.id}</code> · {e.kind} · publisher <code>{e.publisherId}</code>{e.verifiedPublisher !== null && <> (verified publisher @{e.verifiedPublisher})</>}</p>
+  <p>{e.description}</p>
+
+  <h2>Quality</h2>
+  <ul>
+    <li>Score: {score === null ? "not scored" : `${String(score)}/100 (${String(newest?.passed ?? 0)} of ${String(newest?.cases ?? 0)} cases passed)`}</li>
+    <li>Baseline: {e.baseline}</li>
+    <li>Tested: {e.tested}</li>
+    <li>History: {e.history}</li>
+  </ul>
+
+  <h2>Declared permissions</h2>
+  <ul>
+    <li>Network: {list(e.network)}</li>
+    <li>Reads: {list(e.filesRead)}</li>
+    <li>Writes: {list(e.filesWrite)}</li>
+  </ul>
+  <p>What the sandbox will allow depends on your machine: <code>nimbus extension info {e.id} --registry nimbus-official</code> states it, and the install prompt states it again.</p>
+
+  <h2>Versions</h2>
+  <table>
+    <thead><tr><th>Version</th><th>Channel</th><th>Published</th><th>Score</th><th>Status</th></tr></thead>
+    <tbody>
+      {e.versions.map((v) => (
+        <tr>
+          <td>{v.version}</td>
+          <td>{v.channel}</td>
+          <td>{v.publishedAt}</td>
+          <td>{v.score === null ? "not scored" : `${String(v.score)}/100`}</td>
+          <td>{v.blocked ? "blocked (install refuses it)" : "available"}</td>
+        </tr>
+      ))}
+    </tbody>
+  </table>
+
+  <h2>Source and license</h2>
+  <ul>
+    <li>License: {e.license ?? "not declared"}</li>
+    <li>Build provenance: {e.provenance === null ? "not recorded" : `${e.provenance.sourceRepository} at ${e.provenance.commit}`}</li>
+  </ul>
+
+  {e.funding.length > 0 && (
+    <>
+      <h2>Sponsor the author</h2>
+      <ul>
+        {e.funding.map((f) => (
+          <li><a href={f.url} rel="noopener noreferrer" target="_blank">{f.label ?? f.url}</a></li>
+        ))}
+      </ul>
+      <p>Or from a terminal: <code>nimbus extension sponsor {e.id} --registry nimbus-official</code></p>
+    </>
+  )}
+
+  <h2>Install</h2>
+  {install === null ? <p>This id cannot be shown as a command.</p> : <pre><code>{install}</code></pre>}
+  <p>The install verifies the registry, the manifest signature and the package hash again, and asks you to approve.</p>
+  <p><a href="/extensions/">All extensions</a> · snapshot of sequence {String(catalog.sequence)}</p>
+</StarlightPage>

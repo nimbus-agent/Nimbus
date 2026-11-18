@@ -179,12 +179,17 @@ export {
   validateAndNormalizePermissions,
 } from "./permissions-validator.ts";
 export {
+  type GhVerifyProvenance,
+  MAX_PROVENANCE_BUNDLE_BYTES,
+  type ProvenanceBundleRef,
   type ProvenanceRunner,
+  provenanceBundlePath,
   provenanceFromGhVerify,
   provenanceMatching,
   provenanceNote,
   REPOSITORY_RE,
   readManifestRepository,
+  readProvenanceBundleRef,
   readVersionProvenance,
   type VersionProvenance,
 } from "./provenance.ts";

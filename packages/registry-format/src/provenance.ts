@@ -10,6 +10,10 @@
  * - `provenanceFromGhVerify`: the rule that turns `gh attestation verify --format json` output into
  *   a version's `provenance` (shapes checked against gh 2.96.0's real output).
  * - `readVersionProvenance`: a never-throwing reader of a signed version entry's `provenance`.
+ * - `readProvenanceBundleRef` / `provenanceBundlePath`: the Sigstore bundle the sign job keeps beside
+ *   the package (`extensions/<id>/<version>/provenance.json`), pinned by the signed index's
+ *   `provenance.bundleSha256`, so a client can re-verify the attestation offline. Optional: an entry
+ *   without it is provenance with no bundle.
  */
 
 /** `owner/repo` as GitHub allows them. */
@@ -18,6 +22,16 @@ export const REPOSITORY_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]
 const COMMIT_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const WORKFLOW_RE = /^[A-Za-z0-9._/@+-]{1,200}$/;
 const SLSA_V1 = "https://slsa.dev/provenance/v1";
+const HEX64_RE = /^[0-9a-f]{64}$/;
+
+/** The largest bundle kept or fetched (the measured SLSA bundle is about 14 KB). */
+export const MAX_PROVENANCE_BUNDLE_BYTES = 64 * 1024;
+
+/** The Sigstore bundle media types a bundle may declare (v0.2 and v0.3, as `gh` emits them). */
+const BUNDLE_MEDIA_TYPES: ReadonlySet<string> = new Set([
+  "application/vnd.dev.sigstore.bundle+json;version=0.2",
+  "application/vnd.dev.sigstore.bundle.v0.3+json",
+]);
 
 export type ProvenanceRunner = "github-hosted" | "self-hosted";
 
@@ -61,6 +75,35 @@ export function readVersionProvenance(entry: unknown): VersionProvenance | undef
   return { sourceRepository, commit, workflow, runner, verifiedAt };
 }
 
+/** Where the sign job keeps a version's provenance bundle: beside its `package.tgz`. */
+export function provenanceBundlePath(id: string, version: string): string {
+  return `extensions/${id}/${version}/provenance.json`;
+}
+
+/** The bundle a version entry's provenance pins, or `undefined` for none or anything off-shape. */
+export interface ProvenanceBundleRef {
+  readonly path: string;
+  readonly sha256: string;
+}
+
+/**
+ * `{ path, sha256 }` when the entry has well-formed provenance AND its `provenance` object names the
+ * canonical bundle path for `id`@`version` with a lowercase 64-hex `bundleSha256`; else `undefined`.
+ */
+export function readProvenanceBundleRef(
+  entry: unknown,
+  id: string,
+  version: string,
+): ProvenanceBundleRef | undefined {
+  if (readVersionProvenance(entry) === undefined || !isObject(entry)) return undefined;
+  const p = entry["provenance"];
+  if (!isObject(p)) return undefined;
+  const { bundle, bundleSha256 } = p;
+  if (bundle !== provenanceBundlePath(id, version)) return undefined;
+  if (typeof bundleSha256 !== "string" || !HEX64_RE.test(bundleSha256)) return undefined;
+  return { path: bundle, sha256: bundleSha256 };
+}
+
 /** The provenance to show for `entry`, only when it names the repository the manifest declares. */
 export function provenanceMatching(
   entry: unknown,
@@ -96,12 +139,30 @@ function githubPath(uri: unknown): { repository: string; rest: string } | undefi
 
 type Refusal = { ok: false; reason: string };
 
+/** Provenance, and the qualifying entry's Sigstore bundle as canonical JSON when it has a usable one. */
+export type GhVerifyProvenance = { ok: true; provenance: VersionProvenance; bundle?: string };
+
+/**
+ * The entry's `attestation.bundle` as canonical JSON when it is an object with a known Sigstore media
+ * type and fits `MAX_PROVENANCE_BUNDLE_BYTES` (UTF-8); otherwise `undefined`. Shape only: the bundle
+ * is verified by the client that reads it, never trusted here.
+ */
+function bundleOf(entry: Record<string, unknown>): string | undefined {
+  const attestation = entry["attestation"];
+  const bundle = isObject(attestation) ? attestation["bundle"] : undefined;
+  if (!isObject(bundle)) return undefined;
+  const mediaType = bundle["mediaType"];
+  if (typeof mediaType !== "string" || !BUNDLE_MEDIA_TYPES.has(mediaType)) return undefined;
+  const text = JSON.stringify(bundle);
+  return new TextEncoder().encode(text).length <= MAX_PROVENANCE_BUNDLE_BYTES ? text : undefined;
+}
+
 /** One attestation entry, as provenance for `repository`, or why it is not. */
 function fromEntry(
   entry: unknown,
   repository: string,
   verifiedAt: string,
-): { ok: true; provenance: VersionProvenance } | Refusal {
+): GhVerifyProvenance | Refusal {
   if (!isObject(entry)) return { ok: false, reason: "an attestation entry is not an object" };
   const result = entry["verificationResult"];
   const statement = isObject(result) ? result["statement"] : undefined;
@@ -130,6 +191,7 @@ function fromEntry(
     return { ok: false, reason: "the attestation's workflow path is not recognisable" };
   }
   const runner = cert["runnerEnvironment"] === "github-hosted" ? "github-hosted" : "self-hosted";
+  const bundle = bundleOf(entry);
   return {
     ok: true,
     provenance: {
@@ -139,6 +201,7 @@ function fromEntry(
       runner,
       verifiedAt,
     },
+    ...(bundle !== undefined && { bundle }),
   };
 }
 
@@ -152,7 +215,7 @@ export function provenanceFromGhVerify(
   output: unknown,
   repository: string,
   verifiedAt: string,
-): { ok: true; provenance: VersionProvenance } | Refusal {
+): GhVerifyProvenance | Refusal {
   if (!REPOSITORY_RE.test(repository)) return { ok: false, reason: "malformed repository" };
   if (!Array.isArray(output) || output.length === 0) {
     return { ok: false, reason: "gh returned no attestations" };

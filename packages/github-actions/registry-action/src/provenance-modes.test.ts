@@ -18,6 +18,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  readProvenanceBundleRef,
   readVersionProvenance,
   signIndex,
   type VersionProvenance,
@@ -33,6 +34,7 @@ import {
   git,
   makeExtension,
   makeRegistryRepo,
+  originFile,
   originIndex,
   pushMaintainer,
   type RegistryRepo,
@@ -100,7 +102,7 @@ function verifier(answer: (repository: string) => ProvenanceResult) {
       verifiedAt,
     });
     const r = answer(repository);
-    return Promise.resolve(r.ok ? { ok: true, provenance: { ...r.provenance, verifiedAt } } : r);
+    return Promise.resolve(r.ok ? { ...r, provenance: { ...r.provenance, verifiedAt } } : r);
   };
   return { verify, calls };
 }
@@ -200,6 +202,34 @@ describe("sign records provenance", () => {
     expect(v.calls).toHaveLength(1);
     const entry = versionEntry() as { publishedAt: string };
     expect(readVersionProvenance(entry)?.verifiedAt).toBe(entry.publishedAt);
+  });
+
+  test("a bundle is published beside the package and pinned by the signed entry", async () => {
+    await mergePublish({ repository: "acme/echo" });
+    const bundle = JSON.stringify({ mediaType: "application/vnd.dev.sigstore.bundle.v0.3+json" });
+    const v = verifier(() => ({ ok: true, provenance: PROV, bundle }));
+    await sign(v.verify);
+    const entry = versionEntry() as { provenance: Record<string, unknown> };
+    const path = "extensions/acme/echo/1.0.0/provenance.json";
+    const bytes = originFile(repo, "gh-pages", path);
+    expect(bytes.toString("utf8")).toBe(bundle);
+    expect(entry.provenance["bundle"]).toBe(path);
+    expect(entry.provenance["bundleSha256"]).toBe(createHash("sha256").update(bytes).digest("hex"));
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    expect(readProvenanceBundleRef(entry, "acme/echo", "1.0.0")).toEqual({ path, sha256 });
+    // The five fields are unchanged by the bundle.
+    expect(readVersionProvenance(entry)?.commit).toBe(PROV.commit);
+  });
+
+  test("provenance without a bundle publishes no bundle file and no bundle fields", async () => {
+    await mergePublish({ repository: "acme/echo" });
+    await sign(verifier(() => ({ ok: true, provenance: PROV })).verify);
+    const entry = versionEntry() as { provenance: Record<string, unknown> };
+    expect(Object.hasOwn(entry.provenance, "bundle")).toBe(false);
+    expect(Object.hasOwn(entry.provenance, "bundleSha256")).toBe(false);
+    expect(() =>
+      originFile(repo, "gh-pages", "extensions/acme/echo/1.0.0/provenance.json"),
+    ).toThrow();
   });
 
   test("a malformed repository is ignored: gh is never asked", async () => {

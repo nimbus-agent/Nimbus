@@ -1,0 +1,14 @@
+---
+import StarlightPage from "@astrojs/starlight/components/StarlightPage.astro";
+import CatalogNav from "../../components/catalog/CatalogNav.astro";
+import ExtensionList from "../../components/catalog/ExtensionList.astro";
+import raw from "../../data/official-registry.json";
+import { filterCatalog, parseCatalog, SCORED_THRESHOLD } from "../../lib/catalog";
+
+const catalog = parseCatalog(raw);
+---
+
+<StarlightPage frontmatter={{ title: `Extensions scoring ${String(SCORED_THRESHOLD)} or more` }}>
+  <CatalogNav catalog={catalog} />
+  <ExtensionList extensions={filterCatalog(catalog, { scored: true })} />
+</StarlightPage>

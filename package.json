@@ -89,6 +89,8 @@
     "audit:action-dist": "bun scripts/audit/check-action-dist-drift.ts",
     "audit:trust-snapshot": "bun scripts/trust/check-trust-snapshot.ts",
     "trust:refresh-snapshot": "bun scripts/trust/refresh-trust-snapshot.ts",
+    "audit:sigstore-roots": "bun scripts/trust/check-sigstore-roots.ts",
+    "trust:refresh-sigstore-roots": "bun scripts/trust/refresh-sigstore-roots.ts",
     "audit:windows-console": "bun scripts/audit/check-windows-console-hide.ts",
     "audit:status-drift": "bun scripts/structure-audit/check-status-drift.ts",
     "audit:action-sha-pins": "bun scripts/structure-audit/check-action-sha-pins.ts",

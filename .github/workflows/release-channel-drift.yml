@@ -179,3 +179,79 @@ jobs:
         run: |
           echo "::error::audit:trust-snapshot --live failed — see the trust-snapshot issue"
           exit 1
+
+  # Do the Sigstore trusted roots baked into the release still match `gh attestation trusted-root`
+  # (offline provenance re-verification, owner ruling OR-PROV-5)? A stale root is not a security
+  # failure: a bundle signed under a newer certificate authority reads "not re-verified", never
+  # "re-verified". GitHub's instance has rotated its authority about every seven months, so the
+  # comparison runs here, daily, and files an issue; the offline half gates PRs.
+  # Fix: the `trust:refresh-sigstore-roots` package script, then a PR with the regenerated module.
+  sigstore-roots:
+    name: sigstore-roots-staleness
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - name: Checkout Nimbus
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun + install
+        uses: ./.github/actions/setup-nimbus-ci
+        with:
+          verify-lock: "false"
+
+      - name: Compare the baked roots with gh attestation trusted-root
+        id: audit
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          bun scripts/trust/check-sigstore-roots.ts --live > findings.txt 2>&1
+          echo "code=$?" >> "$GITHUB_OUTPUT"
+          cat findings.txt
+
+      - name: File a sigstore-roots issue
+        if: ${{ steps.audit.outputs.code != '0' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          HEALTH_KEY: sigstore-roots-stale
+          HEALTH_TITLE: "🚨 The baked Sigstore trusted roots do not match gh attestation trusted-root"
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          {
+            echo "\`audit:sigstore-roots --live\` found the Sigstore trusted roots baked into the next release out of step with \`gh attestation trusted-root\`. Refresh them with the \`trust:refresh-sigstore-roots\` package script and open a PR before the next release; until then a provenance bundle signed under a newer certificate authority reads not re-verified."
+            echo
+            echo '```'
+            cat findings.txt
+            echo '```'
+            echo
+            echo "Run: $RUN_URL"
+          } > body.md
+          HEALTH_BODY="$(cat body.md)" bun scripts/release/open-health-issue.ts
+
+      - name: Close the sigstore-roots issue, if any
+        if: ${{ steps.audit.outputs.code == '0' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          HEALTH_KEY: sigstore-roots-stale
+          HEALTH_RESOLVE: "1"
+          HEALTH_BODY: "Resolved: the baked Sigstore roots match gh attestation trusted-root. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        run: bun scripts/release/open-health-issue.ts
+
+      - name: Fail if the roots are out of step
+        if: ${{ steps.audit.outputs.code != '0' }}
+        run: |
+          echo "::error::audit:sigstore-roots --live failed — see the sigstore-roots issue"
+          exit 1

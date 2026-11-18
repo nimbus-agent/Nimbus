@@ -38,8 +38,13 @@ export interface ProvenanceDeps {
   sleep: (ms: number) => Promise<void>;
 }
 
+/**
+ * `bundle`: the qualifying attestation's Sigstore bundle as canonical JSON, when `gh`'s output
+ * carried a usable one (`provenanceFromGhVerify`), so the sign job can publish it for clients to
+ * re-verify offline.
+ */
 export type ProvenanceResult =
-  | { ok: true; provenance: VersionProvenance }
+  | { ok: true; provenance: VersionProvenance; bundle?: string }
   | { ok: false; reason: string };
 
 const TIMEOUT_MS = 60_000;
@@ -223,5 +228,14 @@ export function ghProvenance(token: string): VerifyPackage {
 }
 
 function strip(r: ProvenanceResult & { retry?: boolean }): ProvenanceResult {
-  return r.ok ? { ok: true, provenance: r.provenance } : { ok: false, reason: r.reason };
+  return r.ok ? keepOk(r) : { ok: false, reason: r.reason };
+}
+
+/** An ok result with only its own fields (`provenance`, and `bundle` when there is one). */
+function keepOk(r: { provenance: VersionProvenance; bundle?: string }): ProvenanceResult {
+  return {
+    ok: true,
+    provenance: r.provenance,
+    ...(r.bundle !== undefined && { bundle: r.bundle }),
+  };
 }

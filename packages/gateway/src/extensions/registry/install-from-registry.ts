@@ -11,7 +11,6 @@ import { join } from "node:path";
 import {
   isStarterPack,
   provenanceMatching,
-  provenanceNote,
   publisherKeyFingerprint,
   type RegistryChannel,
   RegistryError,
@@ -81,6 +80,8 @@ import {
 } from "../trust/trust-blocks.ts";
 import { decodeBase64 } from "../verify-signature.ts";
 import { currentSourceRegistry, sourceRegistryOf } from "./builtin-registry.ts";
+import { readProvenanceRecheck, recheckedProvenanceNote } from "./provenance-recheck.ts";
+import type { ProvenanceRecheck } from "./provenance-verify.ts";
 import { createRegistryDependencyResolver } from "./registry-dependency-fetcher.ts";
 import {
   FETCH_FAILURE_CODES,
@@ -207,6 +208,12 @@ export interface VerifiedRegistryPackage {
    * hash-checked, signature-verified manifest names the same repository; else null.
    */
   readonly provenance: VersionProvenance | null;
+  /**
+   * What re-verifying the version's published Sigstore bundle offline found (set only by the
+   * install door, `installFromRegistry`, when there is provenance and a bundle); shown in the
+   * provenance line, never a decision (OR-PROV-2).
+   */
+  readonly provenanceRecheck?: ProvenanceRecheck;
   /**
    * What the registry's signed entry says about this version (tested, history, checks), shown in
    * the install approval. Optional as `index` is: a package built elsewhere (a test fake, a
@@ -389,15 +396,24 @@ function withKeyChange(
   return (request) => approve({ ...request, ...change, ...planWithRoot(request, change) });
 }
 
-/** The approver, showing the version's registry-verified build provenance when there is one. */
+/**
+ * The approver, showing the version's registry-verified build provenance when there is one, and
+ * what the offline re-check of its Sigstore bundle found when that ran.
+ */
 function withProvenance(
   approve: ExtensionInstallApprover,
   provenance: VersionProvenance | null,
   registry: string,
+  recheck: ProvenanceRecheck | undefined,
 ): ExtensionInstallApprover {
   if (provenance === null) return approve;
   return (request) =>
-    approve({ ...request, provenance, provenanceNote: provenanceNote(provenance, registry) });
+    approve({
+      ...request,
+      provenance,
+      provenanceNote: recheckedProvenanceNote(provenance, registry, recheck),
+      ...(recheck === undefined ? {} : { provenanceRecheck: recheck }),
+    });
 }
 
 /**
@@ -513,6 +529,7 @@ export async function installVerifiedRegistryPackage(
           withKeyChange(deps.approve, pkg.publisherChange),
           pkg.provenance,
           pkg.reg.name,
+          pkg.provenanceRecheck,
         ),
         pkg.evidence,
       ),
@@ -606,6 +623,27 @@ async function withLivenessEvidence(
   };
 }
 
+/**
+ * The package with the offline re-check of its provenance bundle (install door only, after the
+ * liveness read): unchanged when there is no provenance, no index or no bundle reference.
+ */
+async function withProvenanceRecheck(
+  deps: InstallFromRegistryDeps,
+  pkg: VerifiedRegistryPackage,
+): Promise<VerifiedRegistryPackage> {
+  const recheck = await readProvenanceRecheck(
+    { ...deps.fetch, db: deps.db },
+    {
+      id: pkg.id,
+      version: pkg.version,
+      reg: pkg.reg,
+      provenance: pkg.provenance,
+      versionEntry: pkg.index?.extensions[pkg.id]?.versions[pkg.version],
+    },
+  );
+  return recheck === undefined ? pkg : { ...pkg, provenanceRecheck: recheck };
+}
+
 export async function installFromRegistry(
   deps: InstallFromRegistryDeps,
   req: InstallFromRegistryRequest,
@@ -616,7 +654,7 @@ export async function installFromRegistry(
   const tmp = mkdtempSync(join(deps.tempRoot ?? tmpdir(), "nimbus-reg-"));
   try {
     const pkg = await fetchVerifiedRegistryPackage(deps, req, tmp);
-    const shown = await withLivenessEvidence(deps, pkg);
+    const shown = await withProvenanceRecheck(deps, await withLivenessEvidence(deps, pkg));
     return await installVerifiedRegistryPackage(deps, shown, req.channel ?? "stable");
   } finally {
     try {

@@ -131,6 +131,11 @@ jobs:
       - name: Trust snapshot audit (baked snapshot verifies against the baked root)
         run: bun run audit:trust-snapshot
 
+      # The baked Sigstore trusted roots (offline provenance re-verification): offline only. The
+      # live comparison runs daily in release-channel-drift.yml.
+      - name: Sigstore roots audit (baked roots are the refresh script's output)
+        run: bun run audit:sigstore-roots
+
       - name: Status-drift audit (docs invariant/schema vs code)
         run: bun run audit:status-drift
 
