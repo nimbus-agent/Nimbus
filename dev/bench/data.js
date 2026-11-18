@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795027600042,
+  "lastUpdate": 1795030083248,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "d2868725e35066c0f3b9db071ad0830fef209732",
-          "message": "chore: release main (#1440)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.8.2</summary>\n\n##\n[7.8.2](https://github.com/nimbus-agent/Nimbus/compare/v7.8.1...v7.8.2)\n(2026-09-04)\n\n\n### Bug Fixes\n\n* **quality:** fix all 29 open Sonar findings in code, cut duplication\n420 to 400 clones, and correct five stale doc facts\n([#1439](https://github.com/nimbus-agent/Nimbus/issues/1439))\n([62a6a20](https://github.com/nimbus-agent/Nimbus/commit/62a6a20286e3d9a55d9507b4b25e8f36b13f8f8b))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-09-04T10:43:28+03:00",
-          "tree_id": "0e536ef176a0ec85c06d5eae0f3ae5880f778e2f",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/d2868725e35066c0f3b9db071ad0830fef209732"
-        },
-        "date": 1788508908830,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 333.196726849999,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 329.4894701499994,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 178.84496335000057,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f6fce1a380f6e61f37c77b01ff3317dade475db9",
+          "message": "feat(gateway): installed extensions keep their offline-verified build provenance, with nimbus extension verify-provenance (V105) (#2073)\n\nSlice 2 of the S4 carried-in row **Offline provenance re-verification**:\ninstalled copies carry it. Owner rulings OR-PROV-1 to OR-PROV-5\n(2026-11-18). Slice 1 was #2066. With this PR the row is complete, and\nthe roadmap ticks it.\n\n## What changes\n\n- **V105.** Two nullable columns on `extension`: `provenance_json` and\n`provenance_bundle`. They are added by a hand step with column probes,\nso the step re-runs safely when `user_version` is rewound. The number\nwas re-derived from `origin/main` (`CURRENT_SCHEMA_VERSION` 104 at\n`fdaf3c9aa`), and no open PR holds a migration.\n- **Recorded at install.** `installVerifiedRegistryPackage` records what\nthe install showed of the package's provenance.\n`extensions/registry/installed-provenance.ts` is the only writer and\nreader. The record holds:\n  - the five registry-signed fields;\n  - the signed package sha256;\n  - the offline re-check result and when it ran;\n- the bundle itself, but only when it was fetched and matched the signed\nindex (at most 64 KiB, kept in the row, not as a file).\n\n  The write is wrapped, so it can never fail a committed install.\n- **Version changes clear it.** The record names its version and is read\nonly for that installed version. `updateExtensionRowVersion`, which\nalready clears `tree_digest`, now also clears both columns on any\nversion change, so an update, or a later downgrade back to the old\nversion, cannot bring the record back. The migration engine records\nnothing: it shows no per-version provenance (I46).\n- **`nimbus extension info <id>`** prints a `Provenance:` line from the\nnew `installedProvenance` field. That field sits on `extension` and\nnever carries the bundle.\n- **`nimbus extension verify-provenance <id> [--json]`** calls the new\n`extension.verifyProvenance` method. It is CLI-only: forbidden over the\nLAN and not on the Tauri allowlist, so `ALLOWED_METHODS` is unchanged.\nIt re-runs the slice-1 verifier over the stored bundle against the\nrunning release's Sigstore roots, with no network and no write. Exit 0\nonly when the bundle verifies. The statuses are `verified`,\n`unverified`, `no_bundle` and `none`.\n- **Evidence only (I51).** Nothing reads the record to install, update,\nspawn, grant or block. Source pins in the I51 block hold the bundle\ncolumn, the reader and the writer to their owners.\n\n## Verification\n\n- **Tests:** V105 migration (fresh, upgrade, re-run), the store, the\ndoor, the IPC handlers, the LAN deny, the CLI and the I51 pins. They use\nthe real `cli/cli` SLSA bundle, plus the slice-1 runtime probe for Bun\nversions before 1.4.\n- **Locally:** `preflight:fast` passes. 4,075 tests pass across the\nextension, automation, migration, IPC, security-invariants and CLI\nextension suites.\n- **Antigravity review, two rounds:**\n- Round 1 had 6 blocking items. Its main asks were clearing the record\non a version change, a probed hand step, an explicit LAN deny and test\ncoverage.\n- All six were resolved, and round 2 approved with advisories only. The\nreplies are recorded in the spec, which stays local.\n\n## Docs\n\n- `docs/SECURITY-INVARIANTS.md`: I51 text extended.\n- `docs/architecture.md`, `docs/schema-reference.md`,\n`docs/cli-reference.md` (new section), `docs/roadmap.md` (row ticked)\nand the `nimbus-ipc` skill.\n- CLAUDE.md and GEMINI.md: the I51 bullet, and `schema V104 → V105` in\nthe status paragraph, which `audit:status-drift` requires. The rest of\nthe hot docs (the status sentence, the top of the CHANGELOG,\n`docs/README.md`) are batched into the batch-final docs PR, per the\nowner's rule; their text is held locally.\n\nNo new invariant, static rule, HITL type or allowlist entry.\n\n## Stated bounds\n\n- **Updates record no provenance.** After an update, the old record is\nno longer shown.\n- **Re-checks use the running release's roots.** A newer Nimbus may\nverify a bundle an older one could not, and the reverse.\n- **GitHub's own Sigstore instance is untested end to end.** No public\nSLSA bundle it signed exists to test with.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCk6NpLauKU2yYCwva\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n- **New Features**\n- Extension details now show available provenance information for\ninstalled registry extensions.\n- Added a command to re-check an installed extension’s stored provenance\noffline. Results indicate whether verification succeeded, failed, or\nevidence is unavailable.\n- Matching provenance bundles are retained during installation for later\noffline checks.\n\n- **Documentation**\n- Updated CLI, security, architecture, and schema references to describe\nprovenance storage and verification limits.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-18T19:19:05Z",
+          "tree_id": "506edb6e62bc52f990365c2dcd1dbe65501923b0",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/f6fce1a380f6e61f37c77b01ff3317dade475db9"
+        },
+        "date": 1795030078147,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 210.28553470000116,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 212.42379659999642,
             "unit": "ms"
           }
         ]
