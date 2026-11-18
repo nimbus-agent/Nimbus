@@ -80,8 +80,6 @@ afterEach(() => {
 
 /** Every concrete broker the test can drive, keyed by class name. */
 const BROKER_CLASSES: Record<string, () => ConsentBroker<object>> = {
-  CuEnvelopeConsentBroker: () => new CuEnvelopeConsentBroker() as ConsentBroker<object>,
-  CuActionConsentBroker: () => new CuActionConsentBroker() as ConsentBroker<object>,
   ExecConsentBroker: () => new ExecConsentBroker() as ConsentBroker<object>,
   PreflightConsentBroker: () => new PreflightConsentBroker() as ConsentBroker<object>,
   ShareConsentBroker: () => new ShareConsentBroker() as ConsentBroker<object>,
@@ -276,6 +274,29 @@ describe("seam: ConsentBroker base (every subclass)", () => {
       b.clear();
     });
   }
+
+  test("the computer-use brokers are UNICAST (I35, OR-MCU-2): one hop per request, a labelled method, no payload text", async () => {
+    for (const b of [new CuEnvelopeConsentBroker(), new CuActionConsentBroker()]) {
+      const toasts = capture();
+      const sent: Array<{ clientId: string; method: string }> = [];
+      b.setUnicast((clientId, method) => {
+        sent.push({ clientId, method });
+        return true;
+      });
+      const p = b.requestFor("c1", SENTINEL_INPUT as never, 60_000);
+      expect(sent).toHaveLength(1);
+      expect(sent[0]?.clientId).toBe("c1");
+      const method = sent[0]?.method ?? "";
+      expect(method in BROKER_METHOD_LABELS).toBe(true);
+      expect(toasts).toHaveLength(1);
+      expect(toasts[0]?.body).toContain(BROKER_METHOD_LABELS[method] ?? "<unlabelled>");
+      const id = b.pendingIds()[0] ?? "";
+      expect(b.respondFrom(id, true, { clientId: "c1", answerSource: "human" })).toBe(true);
+      expect(await p).toBe(true);
+      assertClean(toasts);
+      b.clear();
+    }
+  });
 
   test("the base class with an unknown method uses the generic label", () => {
     const toasts = capture();

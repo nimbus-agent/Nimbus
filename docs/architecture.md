@@ -2062,6 +2062,22 @@ absent from the Tauri allowlist (`I7`), for the same reason `exec.*` is: `comput
 RCE-class and `computer.approvalRespond` is the owner answering a prompt, which no remote peer may
 answer on their behalf.
 
+**Every prompt goes to the connection that opened the session, and only a person's answer counts
+(owner ruling OR-MCU-2).** The two brokers are unicast (`computer-use/cu-unicast-broker.ts`, no broadcast
+arm): `computer-rpc.ts` builds the gate deps per connection, the envelope prompt goes to the opener, and
+every action prompt goes through the session's open-time channel, never the caller's, so whoever calls
+`computer.act` (or a model turn bound to the session) cannot receive or answer its own prompt. An answer
+counts only from that connection and only with `answerSource: "human"` (a client's claim, not proof a
+person answered; a non-human or missing source is denied); a connection that goes away settles its
+prompts as denials.
+
+**The model drives a session the owner opened, from the terminal only (OR-MCU-1).** `nimbus ask
+--computer <session-id>` binds one OPEN session to that turn: a `cli` caller only
+(`COMPUTER_USE_OFFER_BY_KIND`), not demo-rooted, not point-in-time, a session this process holds open
+(`liveSessionLane`). `engine/agent.ts` then offers that lane's tools per request over run deps only. Each
+actuating step is approved in the terminal running `nimbus computer`. The desktop can neither drive nor
+answer computer-use (I7 unchanged; a stated limit). Static D26(d) confines the binding.
+
 **Two approvals, not one.** The owner approves a **session envelope** up front — lane, target, the
 full origin list, the action budget, the wall clock — and that envelope is immutable: widening it is
 unrepresentable rather than merely disallowed. Then every *actuating* step takes its own single-use
@@ -2194,8 +2210,7 @@ pinned (`pinReadVerified`): bytes that do not hash to the approved digest are re
 the body was approved at create and save time, and what the host returns is enveloped but not shown first.
 Agent-initiated tool proposal is still a recorded **deferral**, not a gap: the model can call a tool the owner created,
 saved and listed, never propose a new network-reaching tool mid-conversation, which is a materially larger trust
-boundary that gets its own consent-UX pass. Computer-use is still owner-only (`nimbus computer`); its model half waits
-on two owner decisions recorded in the roadmap row.
+boundary that gets its own consent-UX pass. The model's computer-use door is described in § Computer use above.
 
 ### Overnight sub-agent fleets (`fleet/`, `nimbus fleet`)
 

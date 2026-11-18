@@ -720,12 +720,14 @@ async function runComputerLaneSession<P>(
     await deps.runWithClient(async (c) => {
       c.onNotification("computer.envelopeRequest", (params: unknown) =>
         handleEnvelopeBroadcast(params, deps.ask, (requestId, approved) =>
-          c.call("computer.approvalRespond", { requestId, approved }),
+          // The prompt is the interactive confirm at this terminal: a person answered (I35, OR-MCU-2).
+          c.call("computer.approvalRespond", { requestId, approved, answerSource: "human" }),
         ),
       );
       c.onNotification("computer.actionRequest", (params: unknown) =>
         handleActionBroadcast(params, deps.ask, (requestId, approved) =>
-          c.call("computer.approvalRespond", { requestId, approved }),
+          // The prompt is the interactive confirm at this terminal: a person answered (I35, OR-MCU-2).
+          c.call("computer.approvalRespond", { requestId, approved, answerSource: "human" }),
         ),
       );
 

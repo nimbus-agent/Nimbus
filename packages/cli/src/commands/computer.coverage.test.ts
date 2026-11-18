@@ -366,8 +366,8 @@ describe("runComputer — watching a session", () => {
     await runComputer(["browser", "--origin", "https://example.com"], h.deps);
     const responses = h.calls.filter((c) => c.method === "computer.approvalRespond");
     expect(responses.map((c) => c.params)).toEqual([
-      { requestId: "env-1", approved: true },
-      { requestId: "act-1", approved: false },
+      { requestId: "env-1", approved: true, answerSource: "human" },
+      { requestId: "act-1", approved: false, answerSource: "human" },
     ]);
     expect(asked).toHaveLength(2);
     expect(asked[1]).toContain("gateway observed:  button#buy");

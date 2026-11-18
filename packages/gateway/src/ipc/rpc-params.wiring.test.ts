@@ -60,7 +60,8 @@ function db(): Database {
 const REFUSALS: readonly Refusal[] = [
   {
     module: "computer-rpc",
-    call: () => dispatchComputerRpc("computer.sessionClose", {}, {} as unknown as ComputerRpcCtx),
+    call: () =>
+      dispatchComputerRpc("computer.sessionClose", {}, {} as unknown as ComputerRpcCtx, "c1"),
     errorClass: ComputerRpcError,
     rpcCode: -32602,
     message: "ERR_INVALID_PARAMS: sessionId (non-empty string) required",

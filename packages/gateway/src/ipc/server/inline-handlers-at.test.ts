@@ -197,3 +197,45 @@ describe("dispatchAgentInvoke - at (Phase 10 IC1)", () => {
     expect(r.asOfMs).toBe(BASE + 1000);
   });
 });
+
+describe("dispatchAgentInvoke - computerSession (I35, OR-MCU-1)", () => {
+  const session = { writeNotification: () => {} } as unknown as ClientSession;
+
+  function ctxAs(
+    kind: "cli" | "ui" | "unknown" | "mcp",
+    handler: (p: unknown) => Promise<{ reply: string }>,
+  ): ServerCtx {
+    const ctx = makeCtx(makeIndex());
+    return { ...ctx, getAgentInvokeHandler: () => handler as never, getClientKind: () => kind };
+  }
+
+  test("a cli caller's computerSession rides the payload with the offer; any other kind is not offered", async () => {
+    for (const [kind, offered] of [
+      ["cli", true],
+      ["ui", false],
+      ["unknown", false],
+      ["mcp", false],
+    ] as const) {
+      let payload: Record<string, unknown> | undefined;
+      const ctx = ctxAs(kind, async (p) => {
+        payload = p as Record<string, unknown>;
+        return { reply: "ok" };
+      });
+      await dispatchAgentInvoke(ctx, session, "c1", { input: "q", computerSession: "cu-1" });
+      expect(payload?.["offerComputerUse"]).toBe(offered);
+      expect(payload?.["computerSessionId"]).toBe("cu-1");
+    }
+  });
+
+  test("computerSession with at is refused with -32602 before the agent runs", async () => {
+    let ran = false;
+    const ctx = ctxAs("cli", async () => {
+      ran = true;
+      return { reply: "ok" };
+    });
+    await expect(
+      dispatchAgentInvoke(ctx, session, "c1", { input: "q", computerSession: "cu-1", at: AT }),
+    ).rejects.toMatchObject({ rpcCode: -32602 });
+    expect(ran).toBe(false);
+  });
+});

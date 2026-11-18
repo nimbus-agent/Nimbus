@@ -356,6 +356,8 @@ describe("the commands built on the base answer with its prompt, over its budget
       call: "computer.sessionOpen",
       broadcast: "computer.envelopeRequest",
       respond: "computer.approvalRespond",
+      // Computer-use answers say a person answered (I35, OR-MCU-2); the other gates do not take it.
+      respondExtra: { answerSource: "human" },
       params: {
         sessionId: "s1",
         lane: "browser",
@@ -426,7 +428,14 @@ describe("the commands built on the base answer with its prompt, over its budget
 
         expect(calls).toEqual([
           { method: c.call, params: expect.anything() },
-          { method: c.respond, params: { requestId: "req-1", approved } },
+          {
+            method: c.respond,
+            params: {
+              requestId: "req-1",
+              approved,
+              ...("respondExtra" in c ? c.respondExtra : {}),
+            },
+          },
         ]);
         // One connection, on the INTERACTIVE budget: the call above stays pending while the owner reads.
         expect(constructions).toEqual([

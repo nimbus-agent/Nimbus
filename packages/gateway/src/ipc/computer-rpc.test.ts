@@ -23,6 +23,30 @@ afterEach(() => {
  * object. The seams are nested on `CuGateDeps` (one group per lane); these fixtures each differ in
  * one seam, and spreading by hand at every site would bury that one line.
  */
+/**
+ * The fixture a test builds: one connection's gate deps plus the two brokers. `dispatch` serves it
+ * as the per-connection ctx the transport now takes (I35, OR-MCU-2), calling as connection `c1`.
+ */
+interface FixtureCtx {
+  readonly gateDeps: CuGateDeps;
+  readonly envelopeConsent: CuEnvelopeConsentBroker;
+  readonly actionConsent: CuActionConsentBroker;
+}
+
+const CLIENT = "c1";
+
+function rpcCtxOf(fx: FixtureCtx): ComputerRpcCtx {
+  return {
+    envelopeConsent: fx.envelopeConsent,
+    actionConsent: fx.actionConsent,
+    gateDepsFor: () => fx.gateDeps,
+  };
+}
+
+function dispatch(method: string, params: unknown, fx: FixtureCtx, clientId = CLIENT) {
+  return dispatchComputerRpc(method, params, rpcCtxOf(fx), clientId);
+}
+
 function withBrowserSeams(
   gateDeps: CuGateDeps,
   over: Partial<CuGateDeps["lanes"]["browser"]>,
@@ -30,7 +54,7 @@ function withBrowserSeams(
   return { ...gateDeps.lanes, browser: { ...gateDeps.lanes.browser, ...over } };
 }
 
-function makeCtx(over: Partial<CuGateDeps> = {}): ComputerRpcCtx {
+function makeCtx(over: Partial<CuGateDeps> = {}): FixtureCtx {
   const db = new Database(":memory:");
   runIndexedSchemaMigrations(db, 57);
   const envelopeConsent = new CuEnvelopeConsentBroker();
@@ -96,8 +120,8 @@ function makeCtx(over: Partial<CuGateDeps> = {}): ComputerRpcCtx {
       newId: () => "s1",
       requestApproval: (input) =>
         input.promptKind === "action"
-          ? actionConsent.request(input, 5_000)
-          : envelopeConsent.request(input, 5_000),
+          ? actionConsent.requestFor(CLIENT, input, 5_000)
+          : envelopeConsent.requestFor(CLIENT, input, 5_000),
       ...over,
     },
   };
@@ -156,7 +180,7 @@ function makeWorkingLane(calls: LaneCalls): BrowserLane {
 }
 
 /**
- * A `ComputerRpcCtx` that can actually OPEN a session and ACT on it -- `makeCtx`'s defaults
+ * A `FixtureCtx` that can actually OPEN a session and ACT on it -- `makeCtx`'s defaults
  * (`resolveBrowserPath: () => null`, a throwing `openLane`) are deliberately refusal-only, since
  * every pre-existing test in this file only exercised refusal paths. `requestApproval` here
  * resolves directly (bypassing the real broker's TTL/broadcast machinery) so these tests can focus
@@ -167,7 +191,7 @@ function makeLiveCtx(
   calls: LaneCalls,
   approvals: unknown[] = [],
   overGate: Partial<CuGateDeps> = {},
-): ComputerRpcCtx {
+): FixtureCtx {
   const ctx = makeCtx();
   return {
     ...ctx,
@@ -187,8 +211,8 @@ function makeLiveCtx(
 }
 
 /** Opens a real session against a live ctx and returns its id. */
-async function openLiveRpcSession(ctx: ComputerRpcCtx): Promise<string> {
-  const out = await dispatchComputerRpc(
+async function openLiveRpcSession(ctx: FixtureCtx): Promise<string> {
+  const out = await dispatch(
     "computer.sessionOpen",
     { lane: "browser", navigateOrigins: ["https://example.com"], scriptOrigins: [] },
     ctx,
@@ -202,19 +226,19 @@ async function openLiveRpcSession(ctx: ComputerRpcCtx): Promise<string> {
 
 describe("computer RPC", () => {
   test("an unknown computer.* method MISSES rather than throwing", async () => {
-    const out = await dispatchComputerRpc("computer.nope", {}, makeCtx());
+    const out = await dispatch("computer.nope", {}, makeCtx());
     expect(out.kind).toBe("miss");
   });
 
   test('computer.sessionOpen requires lane to be exactly "browser"', async () => {
     await expect(
-      dispatchComputerRpc("computer.sessionOpen", { lane: "terminal" }, makeCtx()),
+      dispatch("computer.sessionOpen", { lane: "terminal" }, makeCtx()),
     ).rejects.toThrow();
-    await expect(dispatchComputerRpc("computer.sessionOpen", {}, makeCtx())).rejects.toThrow();
+    await expect(dispatch("computer.sessionOpen", {}, makeCtx())).rejects.toThrow();
   });
 
   test("computer.sessionOpen refuses (no browser) rather than throwing once params are valid", async () => {
-    const out = await dispatchComputerRpc(
+    const out = await dispatch(
       "computer.sessionOpen",
       { lane: "browser", navigateOrigins: ["https://example.com"], scriptOrigins: [] },
       makeCtx(),
@@ -228,7 +252,7 @@ describe("computer RPC", () => {
   test("a malformed navigateOrigins array yields an EMPTY list, never a partial one", async () => {
     const ctx = makeCtx();
     let seenReq: unknown;
-    const capturingCtx: ComputerRpcCtx = {
+    const capturingCtx: FixtureCtx = {
       ...ctx,
       gateDeps: {
         ...ctx.gateDeps,
@@ -239,7 +263,7 @@ describe("computer RPC", () => {
         },
       },
     };
-    await dispatchComputerRpc(
+    await dispatch(
       "computer.sessionOpen",
       { lane: "browser", navigateOrigins: ["https://example.com", 42], scriptOrigins: [] },
       capturingCtx,
@@ -248,15 +272,11 @@ describe("computer RPC", () => {
   });
 
   test("computer.sessionClose requires a sessionId", async () => {
-    await expect(dispatchComputerRpc("computer.sessionClose", {}, makeCtx())).rejects.toThrow();
+    await expect(dispatch("computer.sessionClose", {}, makeCtx())).rejects.toThrow();
   });
 
   test("computer.sessionClose reports not_found for an unknown id", async () => {
-    const out = await dispatchComputerRpc(
-      "computer.sessionClose",
-      { sessionId: "nope" },
-      makeCtx(),
-    );
+    const out = await dispatch("computer.sessionClose", { sessionId: "nope" }, makeCtx());
     if (out.kind !== "hit") throw new Error("unreachable");
     expect((out.value as { status: string }).status).toBe("not_found");
   });
@@ -268,11 +288,7 @@ describe("computer RPC", () => {
     const { ComputerRpcError } = await import("./computer-rpc.ts");
     let caught: unknown;
     try {
-      await dispatchComputerRpc(
-        "computer.act",
-        { sessionId: "does-not-exist", kind: "explode" },
-        makeCtx(),
-      );
+      await dispatch("computer.act", { sessionId: "does-not-exist", kind: "explode" }, makeCtx());
     } catch (e) {
       caught = e;
     }
@@ -280,18 +296,16 @@ describe("computer RPC", () => {
   });
 
   test("computer.act requires a sessionId", async () => {
-    await expect(
-      dispatchComputerRpc("computer.act", { kind: "click" }, makeCtx()),
-    ).rejects.toThrow();
+    await expect(dispatch("computer.act", { kind: "click" }, makeCtx())).rejects.toThrow();
   });
 
   test("computer.sessionStatus returns an empty list for an unknown session and when the store is empty", async () => {
     const ctx = makeCtx();
-    const empty = await dispatchComputerRpc("computer.sessionStatus", {}, ctx);
+    const empty = await dispatch("computer.sessionStatus", {}, ctx);
     if (empty.kind !== "hit") throw new Error("unreachable");
     expect((empty.value as { sessions: unknown[] }).sessions).toEqual([]);
 
-    const missing = await dispatchComputerRpc("computer.sessionStatus", { sessionId: "nope" }, ctx);
+    const missing = await dispatch("computer.sessionStatus", { sessionId: "nope" }, ctx);
     if (missing.kind !== "hit") throw new Error("unreachable");
     expect((missing.value as { sessions: unknown[] }).sessions).toEqual([]);
   });
@@ -299,17 +313,18 @@ describe("computer RPC", () => {
   test("computer.approvalRespond resolves the pending envelope approval the broker broadcast", async () => {
     const ctx = makeCtx();
     const broadcasts: Array<Record<string, unknown>> = [];
-    ctx.envelopeConsent.setBroadcast((_m, params) => {
+    ctx.envelopeConsent.setUnicast((_c, _m, params) => {
       broadcasts.push(params as Record<string, unknown>);
+      return true;
     });
-    const runCtx: ComputerRpcCtx = {
+    const runCtx: FixtureCtx = {
       ...ctx,
       gateDeps: {
         ...ctx.gateDeps,
         lanes: withBrowserSeams(ctx.gateDeps, { resolveBrowserPath: () => "/fake/chrome" }),
       },
     };
-    const run = dispatchComputerRpc(
+    const run = dispatch(
       "computer.sessionOpen",
       { lane: "browser", navigateOrigins: ["https://example.com"], scriptOrigins: [] },
       runCtx,
@@ -318,9 +333,9 @@ describe("computer RPC", () => {
     const requestId = broadcasts[0]?.["requestId"] as string;
     expect(typeof requestId).toBe("string");
 
-    const resp = await dispatchComputerRpc(
+    const resp = await dispatch(
       "computer.approvalRespond",
-      { requestId, approved: false },
+      { requestId, approved: false, answerSource: "human" },
       ctx,
     );
     if (resp.kind !== "hit") throw new Error("unreachable");
@@ -332,7 +347,7 @@ describe("computer RPC", () => {
   });
 
   test("computer.approvalRespond reports no match for an unknown requestId on either broker", async () => {
-    const out = await dispatchComputerRpc(
+    const out = await dispatch(
       "computer.approvalRespond",
       { requestId: "nope", approved: true },
       makeCtx(),
@@ -341,27 +356,96 @@ describe("computer RPC", () => {
     expect((out.value as { matched: boolean }).matched).toBe(false);
   });
 
+  /** Opens a session whose envelope prompt is pending for `c1`; returns its request id and the open call. */
+  async function pendingEnvelope(): Promise<{
+    ctx: FixtureCtx;
+    requestId: string;
+    run: ReturnType<typeof dispatch>;
+  }> {
+    const base = makeCtx();
+    const sentTo: string[] = [];
+    const ids: string[] = [];
+    base.envelopeConsent.setUnicast((clientId, _m, params) => {
+      sentTo.push(clientId);
+      ids.push((params as Record<string, unknown>)["requestId"] as string);
+      return true;
+    });
+    const ctx: FixtureCtx = {
+      ...base,
+      gateDeps: {
+        ...base.gateDeps,
+        lanes: withBrowserSeams(base.gateDeps, { resolveBrowserPath: () => "/fake/chrome" }),
+      },
+    };
+    const run = dispatch(
+      "computer.sessionOpen",
+      { lane: "browser", navigateOrigins: ["https://example.com"], scriptOrigins: [] },
+      ctx,
+    );
+    await Bun.sleep(1);
+    expect(sentTo).toEqual([CLIENT]);
+    return { ctx, requestId: ids[0] ?? "", run };
+  }
+
+  test("another connection's answer matches nothing over the transport; the opener still decides (I35, OR-MCU-2)", async () => {
+    const { ctx, requestId, run } = await pendingEnvelope();
+    const foreign = await dispatch(
+      "computer.approvalRespond",
+      { requestId, approved: true, answerSource: "human" },
+      ctx,
+      "c2",
+    );
+    if (foreign.kind !== "hit") throw new Error("unreachable");
+    expect((foreign.value as { matched: boolean }).matched).toBe(false);
+    const own = await dispatch(
+      "computer.approvalRespond",
+      { requestId, approved: false, answerSource: "human" },
+      ctx,
+    );
+    if (own.kind !== "hit") throw new Error("unreachable");
+    expect((own.value as { matched: boolean }).matched).toBe(true);
+    const out = await run;
+    if (out.kind !== "hit") throw new Error("unreachable");
+    expect((out.value as { status: string }).status).toBe("denied");
+  });
+
+  test.each([["script"], ["auto"], [undefined]])(
+    "approved: true with answerSource %s is a denial over the transport",
+    async (answerSource) => {
+      const { ctx, requestId, run } = await pendingEnvelope();
+      await dispatch(
+        "computer.approvalRespond",
+        { requestId, approved: true, ...(answerSource === undefined ? {} : { answerSource }) },
+        ctx,
+      );
+      const out = await run;
+      if (out.kind !== "hit") throw new Error("unreachable");
+      expect((out.value as { status: string }).status).toBe("denied");
+    },
+  );
+
   test("approved defaults to FALSE (denial) when the field is absent", async () => {
     const ctx = makeCtx();
     const broadcasts: Array<Record<string, unknown>> = [];
-    ctx.envelopeConsent.setBroadcast((_m, params) => {
+    ctx.envelopeConsent.setUnicast((_c, _m, params) => {
       broadcasts.push(params as Record<string, unknown>);
+      return true;
     });
-    const runCtx: ComputerRpcCtx = {
+    const runCtx: FixtureCtx = {
       ...ctx,
       gateDeps: {
         ...ctx.gateDeps,
         lanes: withBrowserSeams(ctx.gateDeps, { resolveBrowserPath: () => "/fake/chrome" }),
       },
     };
-    const run = dispatchComputerRpc(
+    const run = dispatch(
       "computer.sessionOpen",
       { lane: "browser", navigateOrigins: ["https://example.com"], scriptOrigins: [] },
       runCtx,
     );
     await Bun.sleep(1);
     const requestId = broadcasts[0]?.["requestId"] as string;
-    await dispatchComputerRpc("computer.approvalRespond", { requestId }, ctx);
+    await dispatch("computer.approvalRespond", { requestId }, ctx);
     const out = await run;
     if (out.kind !== "hit") throw new Error("unreachable");
     expect((out.value as { status: string }).status).toBe("denied");
@@ -370,24 +454,25 @@ describe("computer RPC", () => {
   test("approved defaults to FALSE (denial) when the field is a non-boolean truthy value", async () => {
     const ctx = makeCtx();
     const broadcasts: Array<Record<string, unknown>> = [];
-    ctx.envelopeConsent.setBroadcast((_m, params) => {
+    ctx.envelopeConsent.setUnicast((_c, _m, params) => {
       broadcasts.push(params as Record<string, unknown>);
+      return true;
     });
-    const runCtx: ComputerRpcCtx = {
+    const runCtx: FixtureCtx = {
       ...ctx,
       gateDeps: {
         ...ctx.gateDeps,
         lanes: withBrowserSeams(ctx.gateDeps, { resolveBrowserPath: () => "/fake/chrome" }),
       },
     };
-    const run = dispatchComputerRpc(
+    const run = dispatch(
       "computer.sessionOpen",
       { lane: "browser", navigateOrigins: ["https://example.com"], scriptOrigins: [] },
       runCtx,
     );
     await Bun.sleep(1);
     const requestId = broadcasts[0]?.["requestId"] as string;
-    await dispatchComputerRpc("computer.approvalRespond", { requestId, approved: "yes" }, ctx);
+    await dispatch("computer.approvalRespond", { requestId, approved: "yes" }, ctx);
     const out = await run;
     if (out.kind !== "hit") throw new Error("unreachable");
     expect((out.value as { status: string }).status).toBe("denied");
@@ -402,7 +487,7 @@ describe("computer RPC", () => {
 
     test("computer.sessionOpen returns status 'open' with a sessionId when everything succeeds -- the OPEN member of the discriminated union, never exercised elsewhere in this file", async () => {
       const ctx = makeLiveCtx(freshLaneCalls());
-      const out = await dispatchComputerRpc(
+      const out = await dispatch(
         "computer.sessionOpen",
         { lane: "browser", navigateOrigins: ["https://example.com"], scriptOrigins: [] },
         ctx,
@@ -419,7 +504,7 @@ describe("computer RPC", () => {
       const calls = freshLaneCalls();
       const ctx = makeLiveCtx(calls);
       const sessionId = await openLiveRpcSession(ctx);
-      const out = await dispatchComputerRpc("computer.act", { sessionId, kind: "read" }, ctx);
+      const out = await dispatch("computer.act", { sessionId, kind: "read" }, ctx);
       expect(out.kind).toBe("hit");
       if (out.kind !== "hit") throw new Error("unreachable");
       const value = out.value as { outcome: string; result?: string | null };
@@ -433,7 +518,7 @@ describe("computer RPC", () => {
       const approvals: unknown[] = [];
       const ctx = makeLiveCtx(calls, approvals);
       const sessionId = await openLiveRpcSession(ctx);
-      const out = await dispatchComputerRpc(
+      const out = await dispatch(
         "computer.act",
         {
           sessionId,
@@ -463,7 +548,7 @@ describe("computer RPC", () => {
       const calls = freshLaneCalls();
       const ctx = makeLiveCtx(calls);
       const sessionId = await openLiveRpcSession(ctx);
-      const out = await dispatchComputerRpc(
+      const out = await dispatch(
         "computer.act",
         { sessionId, kind: "type", selector: "#field", text: "hello" },
         ctx,
@@ -478,7 +563,7 @@ describe("computer RPC", () => {
       const calls = freshLaneCalls();
       const ctx = makeLiveCtx(calls);
       const sessionId = await openLiveRpcSession(ctx);
-      const out = await dispatchComputerRpc(
+      const out = await dispatch(
         "computer.act",
         { sessionId, kind: "navigate", url: "https://example.com/next" },
         ctx,
@@ -495,14 +580,14 @@ describe("computer RPC", () => {
       // non-empty string with a RECOGNISED kind, so this reaches `runAction` itself rather than
       // being rejected at the RPC-layer validation this file already covers elsewhere.
       await expect(
-        dispatchComputerRpc("computer.act", { sessionId: "not-a-real-session", kind: "read" }, ctx),
+        dispatch("computer.act", { sessionId: "not-a-real-session", kind: "read" }, ctx),
       ).rejects.toThrow(/no live session/);
     });
 
     test("computer.sessionOpen forwards maxActions from RPC params into the envelope -- a second action past that budget terminates the session", async () => {
       const calls = freshLaneCalls();
       const ctx = makeLiveCtx(calls);
-      const out = await dispatchComputerRpc(
+      const out = await dispatch(
         "computer.sessionOpen",
         {
           lane: "browser",
@@ -515,11 +600,11 @@ describe("computer RPC", () => {
       if (out.kind !== "hit") throw new Error("unreachable");
       const sessionId = (out.value as { sessionId: string }).sessionId;
 
-      const first = await dispatchComputerRpc("computer.act", { sessionId, kind: "read" }, ctx);
+      const first = await dispatch("computer.act", { sessionId, kind: "read" }, ctx);
       if (first.kind !== "hit") throw new Error("unreachable");
       expect((first.value as { outcome: string }).outcome).toBe("actuated");
 
-      const second = await dispatchComputerRpc("computer.act", { sessionId, kind: "read" }, ctx);
+      const second = await dispatch("computer.act", { sessionId, kind: "read" }, ctx);
       if (second.kind !== "hit") throw new Error("unreachable");
       expect((second.value as { outcome: string }).outcome).toBe("terminated_budget");
     });
@@ -528,7 +613,7 @@ describe("computer RPC", () => {
 
 describe("computer.sessionOpen — terminal lane", () => {
   test("accepts a terminal request", async () => {
-    const r = await dispatchComputerRpc(
+    const r = await dispatch(
       "computer.sessionOpen",
       { lane: "terminal", cwd: "/tmp/w" },
       makeCtx(),
@@ -542,38 +627,34 @@ describe("computer.sessionOpen — terminal lane", () => {
   test("rejects a terminal request with no cwd — never defaults one", async () => {
     // Defaulting would silently grant the GATEWAY's working directory, which is not the caller's
     // and is not anything the owner chose.
-    await expect(
-      dispatchComputerRpc("computer.sessionOpen", { lane: "terminal" }, makeCtx()),
-    ).rejects.toThrow(/ERR_INVALID_PARAMS/);
+    await expect(dispatch("computer.sessionOpen", { lane: "terminal" }, makeCtx())).rejects.toThrow(
+      /ERR_INVALID_PARAMS/,
+    );
   });
 
   test("rejects a relative cwd at the transport boundary", async () => {
     await expect(
-      dispatchComputerRpc(
-        "computer.sessionOpen",
-        { lane: "terminal", cwd: "relative/dir" },
-        makeCtx(),
-      ),
+      dispatch("computer.sessionOpen", { lane: "terminal", cwd: "relative/dir" }, makeCtx()),
     ).rejects.toThrow(/absolute path/);
   });
 
   test("rejects the screen lane — a config name with no implementation", async () => {
-    await expect(
-      dispatchComputerRpc("computer.sessionOpen", { lane: "screen" }, makeCtx()),
-    ).rejects.toThrow(/ERR_INVALID_PARAMS/);
+    await expect(dispatch("computer.sessionOpen", { lane: "screen" }, makeCtx())).rejects.toThrow(
+      /ERR_INVALID_PARAMS/,
+    );
   });
 
   test("still rejects an unknown lane", async () => {
-    await expect(
-      dispatchComputerRpc("computer.sessionOpen", { lane: "quantum" }, makeCtx()),
-    ).rejects.toThrow(/ERR_INVALID_PARAMS/);
+    await expect(dispatch("computer.sessionOpen", { lane: "quantum" }, makeCtx())).rejects.toThrow(
+      /ERR_INVALID_PARAMS/,
+    );
   });
 
   test("accepts terminal_write on computer.act", async () => {
     // Reaches `runAction`, which refuses with ERR_CU_NO_SESSION — the point is that the KIND
     // cleared the transport guard rather than being rejected as unrecognised.
     await expect(
-      dispatchComputerRpc(
+      dispatch(
         "computer.act",
         { sessionId: "nope", kind: "terminal_write", text: "ls" },
         makeCtx(),

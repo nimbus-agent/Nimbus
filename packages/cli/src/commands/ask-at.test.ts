@@ -118,3 +118,44 @@ describe("runAsk --at", () => {
     await expect(runAsk([])).rejects.toThrow(/\[--at <time>\]/);
   });
 });
+
+describe("runAsk --computer (I35, OR-MCU-1)", () => {
+  beforeEach(() => {
+    stdoutChunks.length = 0;
+    stderrChunks.length = 0;
+    process.exitCode = 0;
+    installStreamCapture();
+  });
+  afterEach(() => {
+    clearFixture();
+    restoreStreams();
+    process.exitCode = 0;
+  });
+
+  it("consumes --computer and its value and forwards it as computerSession, saying where to approve", async () => {
+    const calls = fixture({ reply: "done" });
+    await runAsk(["open", "--computer", "cu-1", "the", "settings", "page"]);
+    expect(calls.find((c) => c.method === "agent.invoke")?.params).toMatchObject({
+      input: "open the settings page",
+      computerSession: "cu-1",
+    });
+    expect(stderrChunks.join("")).toContain("terminal running nimbus computer");
+  });
+
+  it.each([
+    ["no value", ["hello", "--computer"]],
+    ["a flag as the value", ["hello", "--computer", "--devil"]],
+  ])("--computer with %s is a usage error and nothing is asked", async (_label, args) => {
+    const calls = fixture({ reply: "x" });
+    await expect(runAsk(args)).rejects.toThrow(/--computer needs/);
+    expect(calls.find((c) => c.method === "agent.invoke")).toBeUndefined();
+  });
+
+  it("--computer with --at is refused before anything is asked", async () => {
+    const calls = fixture({ reply: "x" });
+    await expect(runAsk(["hi", "--computer", "cu-1", "--at", "-2h"])).rejects.toThrow(
+      /cannot be combined with --at/,
+    );
+    expect(calls).toEqual([]);
+  });
+});

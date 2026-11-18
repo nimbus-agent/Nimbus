@@ -344,7 +344,8 @@ interface LiveSession {
    * The one thing `runAction` deliberately reads from the CALLER's `deps` instead of this stored
    * copy is `config.enabled` / `enforced.capabilitiesDisabled` (I-3.1) — the live per-action
    * policy re-check has to observe a CHANGE since open time, so it must not consult a frozen
-   * snapshot — and `requestApproval`, which is a live broker channel, not session state.
+   * snapshot. `requestApproval` is NOT read from the caller: every action prompt goes through THIS
+   * copy's channel, bound to the connection that opened the session (I35, OR-MCU-2).
    */
   readonly openDeps: CuGateDeps;
   /**
@@ -385,6 +386,15 @@ function laneBase(handle: CuLaneHandle): CuLaneBase {
 }
 
 const liveSessions = new Map<string, LiveSession>();
+
+/**
+ * The lane of a session THIS gateway process holds open, or `undefined` (never opened here, closed,
+ * or orphaned by an earlier process). The model's computer-use binding (I35, OR-MCU-1) is built only
+ * for such a session; every action still goes through `runAction`'s own checks.
+ */
+export function liveSessionLane(sessionId: string): CuLane | undefined {
+  return liveSessions.get(sessionId)?.lane.kind;
+}
 
 function syncSessionRow(
   deps: Pick<CuGateDeps, "db" | "now">,
@@ -1574,7 +1584,7 @@ interface ActionAuditState {
 /** Everything a lane arm needs, assembled once by `runActionExclusive` and never rebuilt. */
 interface ActionArmContext {
   readonly req: RunActionRequest;
-  /** THIS call's deps — the live policy re-check and the consent broker, which must be current. */
+  /** THIS call's deps — the live policy re-check, which must be current. */
   readonly deps: CuRunDeps;
   readonly session: CuSession;
   /** The session's OPEN-TIME deps: the forensic record follows the session, not the caller. */
@@ -1603,7 +1613,10 @@ async function approveThisAction(
 ): Promise<CuOutcome | null> {
   const { audit, req, session } = ctx;
   audit.stage = "consent";
-  const approved = await ctx.deps.requestApproval({
+  // I35 (OR-MCU-2): the prompt goes to the connection that OPENED the session (its open-time
+  // channel), never to whoever is acting now: a caller that can reach `computer.act` (or a model
+  // turn bound to the session) cannot receive, and so cannot answer, its own prompt.
+  const approved = await ctx.openDeps.requestApproval({
     promptKind: "action",
     sessionId: req.sessionId,
     seq: ctx.seq,

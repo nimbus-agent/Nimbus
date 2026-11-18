@@ -97,6 +97,12 @@ export type CreateIpcServerOptions = {
    *  gate and the demo-only `demo.*` namespace — invariant I41 */
   demo?: boolean;
   onClientConnected?: (clientId: string) => void;
+  /**
+   * Called when a connection goes away. The computer-use brokers settle that connection's open prompts
+   * as denials at once (I35, OR-MCU-2), so a closed terminal never holds a session's action queue
+   * until the prompt's deadline.
+   */
+  onClientDisconnected?: (clientId: string) => void;
   // Per-connection client-kind store (Task 2, S1 agents-as-MCP-tools). Optional DI seam: when
   // omitted, `createIpcServer` constructs its own. Tests inject their own instance so they can
   // observe `declare()`/`forget()` firing from the real wiring (attachSession's disconnect

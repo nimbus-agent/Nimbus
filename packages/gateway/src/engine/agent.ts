@@ -6,9 +6,7 @@ import { ModelRouterLanguageModel } from "@mastra/core/llm";
 import { createTool } from "@mastra/core/tools";
 
 import { redactAuditPayload } from "../audit/format-audit-payload.ts";
-import type { CuRunDeps } from "../computer-use/cu-gate.ts";
 import { buildComputerUseTools } from "../computer-use/cu-tools.ts";
-import type { CuLane } from "../config/nimbus-toml.ts";
 import { Config } from "../config.ts";
 import { CONNECTOR_SERVICE_IDS } from "../connectors/connector-catalog.ts";
 import { getConnectorHealth } from "../connectors/health.ts";
@@ -26,6 +24,7 @@ import {
   type ToolgenModelDoorSource,
 } from "../toolgen/toolgen-model-door.ts";
 import {
+  getAgentRequestComputerUse,
   getAgentRequestConnectorWriteExecutor,
   getAgentRequestPointInTimeMs,
   getAgentRequestSessionId,
@@ -216,25 +215,6 @@ export type NimbusEngineAgentDeps = {
    * config edit applies on the next call (it degrades to none when the config is unreadable).
    */
   oncallServiceConfigs?: () => readonly OncallServiceBinding[];
-  /**
-   * The live computer-use browser session (if any) this agent may drive, plus everything
-   * `runAction` (Task 10's gate) needs to act on it. Omitted in every caller today: the browser
-   * lane is DEFAULT OFF and opt-in per lane, so on a stock install no session can
-   * open and `buildComputerUseTools` is unreachable — undefined here reproduces exactly that,
-   * rather than a disabled tool that errors when called. When a caller DOES wire this, `sessionId`
-   * still gates per-call: it must name a session `runAction`'s own `deps.db`-backed session store
-   * currently has open, or every call refuses through the gate's own machinery.
-   */
-  computerUse?: {
-    /**
-     * The LANE travels with the id because the tool set is lane-specific: a terminal session must
-     * not put `browser_click` in front of the model, and a browser session must not offer
-     * `terminal_write`. The gate refuses a mismatched kind anyway, but a tool the model can see is
-     * a tool it will try, and every attempt is noise in an audit log a human has to read.
-     */
-    session: { sessionId: string; lane: CuLane } | undefined;
-    gateDeps: CuRunDeps;
-  };
   /**
    * The owner's SAVED generated tools (S4, I60): the door's source (`toolgen/toolgen-model-door.ts`).
    * Offered PER REQUEST, and only when the turn carries the owner-only approval
@@ -649,12 +629,6 @@ export function createNimbusEngineAgent(deps: NimbusEngineAgentDeps): {
           ),
         }
       : {}),
-    // Non-negotiable (spec § 3.3 step 7): `buildComputerUseTools` returns `{}` unless
-    // `deps.computerUse` names a live session, so outside an owner-approved envelope this spread
-    // contributes nothing — not a disabled tool that errors when called, no tool at all.
-    ...(deps.computerUse !== undefined
-      ? buildComputerUseTools(deps.computerUse.session, deps.computerUse.gateDeps)
-      : {}),
   };
 
   // `tools` is a DynamicArgument (@mastra/core/dist/agent/agent.d.ts:876) -- resolved PER REQUEST.
@@ -663,6 +637,13 @@ export function createNimbusEngineAgent(deps: NimbusEngineAgentDeps): {
   // Async is part of that contract (`Promise<T> | T`, @mastra/core/dist/types/dynamic-argument.d.ts).
   const otherToolsFor = async (): Promise<ToolsInput> => ({
     ...baseTools,
+    // I35 (OR-MCU-1): the computer-use tools of the ONE session this turn's request context binds
+    // (the local owner's `cli` turn that named an open session), each call through `runAction` with
+    // approvals unicast to this connection (OR-MCU-2). No binding, no tool at all.
+    ...(() => {
+      const cu = getAgentRequestComputerUse();
+      return cu === undefined ? {} : buildComputerUseTools(cu.session, cu.gateDeps);
+    })(),
     // I60: the approval's PRESENCE is the offer decision (the local owner's non-demo `cli`/`ui`
     // turn); the door re-derives what is offerable at listing and again at every call.
     ...(deps.toolgen === undefined || getAgentRequestToolgenModelAsk() === undefined
