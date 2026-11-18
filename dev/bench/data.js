@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794985008151,
+  "lastUpdate": 1794985407341,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "305344ea9b8c47c6c209447b70bb822b9fd9e720",
-          "message": "chore: release main (#1423)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.5.0</summary>\n\n##\n[7.5.0](https://github.com/nimbus-agent/Nimbus/compare/v7.4.0...v7.5.0)\n(2026-09-01)\n\n\n### Features\n\n* **agents:** why, expert and ownership answer about an indexed item\n([#1421](https://github.com/nimbus-agent/Nimbus/issues/1421))\n([b5fabb2](https://github.com/nimbus-agent/Nimbus/commit/b5fabb2d176f67b8286b8cdf237231ce565d9f49))\n* **computer-use:** raw-CDP browser lane driver; the browser egress\nclass goes live\n([#1418](https://github.com/nimbus-agent/Nimbus/issues/1418))\n([0c52e96](https://github.com/nimbus-agent/Nimbus/commit/0c52e9661282299c9927f0689c6a49bbeb0c56f6))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-09-01T18:17:51Z",
-          "tree_id": "7e5113fbe029e6c0c4ec1cbdba203de8e2d0969b",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/305344ea9b8c47c6c209447b70bb822b9fd9e720"
-        },
-        "date": 1788287425442,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 337.438319349998,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 342.1284232000056,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 172.50287720000088,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "819f0c36382d810b5b2dbc136a86d62f2496bb41",
+          "message": "docs: record the slices that shipped on 2026-11-16 to 2026-11-18 in the status text, the changelog and the README (#2057)\n\nBatch-final hot-docs PR (owner rule: in a batch of parallel PRs, the\nshared status files are updated in the last PR). It records the slices\nthat shipped 2026-11-16 to 2026-11-18 in the CLAUDE.md and GEMINI.md\nstatus paragraph, the top of `docs/CHANGELOG.md` and `docs/README.md`,\nand ticks the roadmap rows the slice PRs left open.\n\nSlices recorded:\n- #2031 ChatOps watcher notice\n- #2032 pre-mortem for Linear (PM2)\n- #2033 AD8 Developer pack\n- #2035 AD3b, the agent door enforces (v11.0.0)\n- #2036 audit append row id (CHANGELOG only)\n- #2038 IC4\n- #2040 signed workflow import and export (V101, I59, D50)\n- #2042 IC10a\n- #2043 IC9a\n- #2045 IC7b\n- #2046 IC5a (V102, I57 (b), D46(c))\n- #2048 IC7a\n- #2053 IC8 (V103, D46(f))\n- #2052 IC9b\n- #2051 IC5b\n\nRoadmap:\n- **Ticked:** Incident timeline (IC4), Cascade root-cause ranking (IC4),\nSuggested remediation (IC5a).\n- **Closed:** Decision pattern recognition, as delivered by SA5 (owner\ndecision 2026-11-16).\n- **Progress notes:** Deep automated investigation (IC9a), Confidence +\nevidence + dry-run remediation (IC5a), One-tap rollback (IC5a/IC5b).\n\nCounts were re-derived from code on main:\n- `ALLOWED_METHODS` 135 (`gateway_bridge.rs`)\n- 186 HITL types (`executor-confirm.test.ts`)\n- invariants I1–I59\n- static rules D10–D50\n- schema V103\n\n`audit:doc-refs`, `audit:status-drift` and `preflight:fast` pass.\n\nNot touched: the Phase 10 *Automatic incident assembly* row stays open,\nas IC3's own PR left it (the data-incident brief parts are not built).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCk6NpLauKU2yYCwva\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-18T06:52:45Z",
+          "tree_id": "93891739dbd175d7a5a40f89ebeb75f8ec9b43f1",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/819f0c36382d810b5b2dbc136a86d62f2496bb41"
+        },
+        "date": 1794985403411,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 161.5312455500003,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 162.8016551000015,
             "unit": "ms"
           }
         ]
