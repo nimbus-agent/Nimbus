@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [11.5.0](https://github.com/nimbus-agent/Nimbus/compare/v11.4.0...v11.5.0) (2026-11-17)
+
+
+### Features
+
+* **gateway:** incident engine IC8, an expectation radar and an anomaly baseline that record findings and never act (V103, D46(f)) ([#2053](https://github.com/nimbus-agent/Nimbus/issues/2053)) ([585a283](https://github.com/nimbus-agent/Nimbus/commit/585a2832b7c562a2d205047e3b0332265445f8d8))
+
 ## [11.4.0](https://github.com/nimbus-agent/Nimbus/compare/v11.3.0...v11.4.0) (2026-11-17)
 
 

@@ -16,6 +16,7 @@ import {
   loadNimbusFleetFromConfigDir,
   resolveFleetJobs,
 } from "./fleet-toml.ts";
+import { loadNimbusIncidentPredictFromConfigDir } from "./incident-predict-toml.ts";
 import { loadNimbusIncidentFromConfigDir } from "./incident-toml.ts";
 import { loadNimbusIndexFromConfigDir } from "./index-toml.ts";
 import {
@@ -108,6 +109,7 @@ export const SECTION_LOADERS: Readonly<Record<string, (configDir: string) => unk
   "hitl.quorum": loadNimbusQuorumFromConfigDir,
   identity: loadNimbusIdentityFromConfigDir,
   incident: loadNimbusIncidentFromConfigDir,
+  "incident.expect": loadNimbusIncidentPredictFromConfigDir,
   index: loadNimbusIndexFromConfigDir,
   lan: loadNimbusLanFromConfigDir,
   llm: loadNimbusLlmFromConfigDir,

@@ -73,6 +73,7 @@ import {
   type NimbusFleetLoad,
   type NimbusFleetToml,
 } from "../config/fleet-toml.ts";
+import { loadNimbusIncidentPredictFromConfigDir } from "../config/incident-predict-toml.ts";
 import { loadNimbusIncidentFromConfigDir } from "../config/incident-toml.ts";
 import { loadNimbusIndexFromConfigDir } from "../config/index-toml.ts";
 import { getLayeredConfig, initLayeredConfig } from "../config/layered-config.ts";
@@ -273,7 +274,9 @@ import { buildTeamsBotJwtValidator } from "../identity/teams-bot-jwt.ts";
 import { isOperatorValid } from "../identity/verifier.ts";
 import { createIncidentEngine, type IncidentEngine } from "../incident/incident-engine.ts";
 import { startIncidentRetention } from "../incident/incident-retention.ts";
+import { startPredictScheduler } from "../incident/predict-pass.ts";
 import { createRemediation, type MakeExecutor } from "../incident/remediation.ts";
+import { readSyncTelemetrySeed, recordSyncScore } from "../incident/sync-anomaly-findings.ts";
 import { readUnreadChatThreads } from "../index/chat-unread-query.ts";
 import { startItemHistoryRetention } from "../index/item-history-retention.ts";
 import {
@@ -444,7 +447,7 @@ import { setApprovalPendingNotifier } from "../util/approval-pending.ts";
 import { createNimbusVault } from "../vault/factory.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { GATEWAY_VERSION } from "../version.ts";
-import { createSyncAnomalyDetector } from "../watcher/anomaly-notifier.ts";
+import { createSyncAnomalyDetector, SYNC_WINDOW } from "../watcher/anomaly-notifier.ts";
 import { registerConnectorMeshSyncables } from "./assemble-sync-registrations.ts";
 import { openUrlInDefaultBrowser } from "./browser.ts";
 import { bootPolicyFor } from "./demo-boot.ts";
@@ -851,8 +854,9 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
   // I41 clause (6), spec § 11.2: a demo gateway's scheduler exists (IPC and the post-sync
   // refreshers are built alongside it) but can never run a job.
   const syncEnabled = bootPolicyFor(paths).syncScheduler;
+  const anomalyConfig = loadNimbusAnomalyFromConfigDir(paths.configDir);
   const syncAnomaly = createSyncAnomalyDetector({
-    config: loadNimbusAnomalyFromConfigDir(paths.configDir),
+    config: anomalyConfig,
     demo: !syncEnabled,
     notify: (title, body) => showIgnoringFailure(notifications, title, body),
     now: () => Date.now(),
@@ -863,6 +867,10 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
         "sync telemetry anomaly (stub — no automated remediation)",
       );
     },
+    // Phase 10 IC8: the window is seeded from the persisted telemetry, and each scored sample opens or clears
+    // a sync anomaly finding (a record only; the toast above stays `[watcher.anomaly]`'s).
+    seed: () => readSyncTelemetrySeed(db, SYNC_WINDOW),
+    onScore: (e) => recordSyncScore(db, e, anomalyConfig.minScore),
   });
 
   // Off by default and never in a demo gateway (I41): then `watcherChat` is undefined and no post
@@ -4190,6 +4198,26 @@ export async function assemblePlatformServices(
     onError: (err) => syncLogger.warn({ err }, "incident record retention pass failed"),
   });
   sidecarStops.push(() => incidentRetention.stop());
+
+  // Incident predictions (Phase 10 IC8, I57 (a), D-IC-5): the expectation radar and the index anomaly baseline,
+  // every 15 minutes and once at boot. Reads the local index and writes only its own findings; its only outward
+  // effects are a counts-only toast (none on a demo gateway, I41) and the `incident.finding` event.
+  const incidentPredict = startPredictScheduler({
+    db,
+    config: () => loadNimbusIncidentPredictFromConfigDir(paths.configDir),
+    serviceConfigs: () => loadNimbusServiceConfigsFromConfigDir(paths.configDir),
+    nowMs: Date.now,
+    ...(paths.demo === true
+      ? {}
+      : {
+          notify: (title: string, body: string) => {
+            void showIgnoringFailure(notifications, title, body);
+          },
+        }),
+    emit: (p) => emitGatewayEvent("incident.finding", { ...p }),
+    onError: (err) => syncLogger.warn({ err }, "incident predict pass failed"),
+  });
+  sidecarStops.push(() => incidentPredict.stop());
 
   // GDPR purge-retry (Task 25): each cycle, retry the pending `federation.purge`
   // requests durable in the gdpr_purge ledger; when all of a job's requests are

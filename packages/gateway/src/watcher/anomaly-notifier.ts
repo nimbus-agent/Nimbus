@@ -1,5 +1,9 @@
 import type { NimbusAnomalyToml } from "../config/anomaly-toml.ts";
-import { AnomalyDetectorStub, type AnomalyNotification } from "./anomaly-detector.ts";
+import {
+  AnomalyDetectorStub,
+  type AnomalyNotification,
+  type AnomalyScoreEvent,
+} from "./anomaly-detector.ts";
 
 export type AnomalyNotifierDeps = {
   readonly config: NimbusAnomalyToml;
@@ -64,17 +68,42 @@ export function createAnomalyNotifyHandler(
   };
 }
 
-/** The sync-telemetry detector `platform/assemble.ts` builds: always scores, notifies only if on. */
+/** The window of the sync-telemetry detector, and so the number of persisted samples it is seeded with. */
+export const SYNC_WINDOW = 64;
+
+/**
+ * The sync-telemetry detector `platform/assemble.ts` builds: always scores, notifies only if on. Since Phase 10 IC8
+ * its windows are seeded from the persisted telemetry (`seed`, read once at boot) and every scored sample reaches
+ * `onScore` (the incident engine records a sync anomaly finding from it). A throwing seed or `onScore` is reported
+ * through `onFailure` and never stops the detector.
+ */
 export function createSyncAnomalyDetector(
-  deps: AnomalyNotifierDeps & { readonly logger: (e: AnomalyNotification) => void },
+  deps: AnomalyNotifierDeps & {
+    readonly logger: (e: AnomalyNotification) => void;
+    readonly seed?: () => ReadonlyMap<string, readonly number[]>;
+    readonly onScore?: (e: AnomalyScoreEvent) => void;
+  },
 ): AnomalyDetectorStub {
   const toast = createAnomalyNotifyHandler(deps);
-  return new AnomalyDetectorStub({
-    windowSize: 64,
+  const detector = new AnomalyDetectorStub({
+    windowSize: SYNC_WINDOW,
     minScore: deps.config.minScore,
     onNotify: (e) => {
       deps.logger(e);
       toast?.(e);
     },
+    onScore: (e) => {
+      try {
+        deps.onScore?.(e);
+      } catch (err) {
+        deps.onFailure?.(err);
+      }
+    },
   });
+  try {
+    for (const [seriesId, samples] of deps.seed?.() ?? []) detector.seed(seriesId, samples);
+  } catch (err) {
+    deps.onFailure?.(err);
+  }
+  return detector;
 }

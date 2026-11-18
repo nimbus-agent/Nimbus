@@ -473,6 +473,39 @@ describe("system_state", () => {
     expect(f.evidence).toContain("dep");
   });
 
+  test("an open Sentry, Monte Carlo or Bigeye incident record on the service or a dependency is elevated (IC8)", () => {
+    const rec = (id: string, src: string, service: string | null, status = "open"): void => {
+      db.run(
+        `INSERT INTO incident_record (id, trigger_item_id, trigger_service, trigger_type, service, title, status, version,
+           assembled_at_ms, checked_at_ms, record_sha256, cited_services, record_json, markdown, opened_at_ms)
+         VALUES (?, ?, ?, 'x', ?, 't', ?, 1, 1, 1, 'h', '[]', '{}', '', ?)`,
+        [id, `item:${id}`, src, service, status, NOW - HOUR],
+      );
+    };
+    rec("inc_s", "sentry", "svc");
+    rec("inc_m", "montecarlo", "dep");
+    rec("inc_closed", "bigeye", "svc", "closed");
+    rec("inc_pd", "pagerduty", "svc");
+    rec("inc_other", "sentry", "elsewhere");
+    rec("inc_unbound", "sentry", null);
+    const dep = cfgOf({ serviceId: "dep", pagerdutyServices: [], repos: [] });
+    const cfg = cfgOf({ pagerdutyServices: [], dependsOn: ["dep"] });
+    const f = systemStateFactor(
+      inputs({
+        cfg,
+        configs: new Map([
+          ["svc", cfg],
+          ["dep", dep],
+        ]),
+      }),
+    );
+    expect(f).toMatchObject({ level: "elevated", known: true });
+    expect(f.evidence).toContain("open sentry incident record inc_s on svc");
+    expect(f.evidence).toContain("open montecarlo incident record inc_m on dep");
+    for (const id of ["inc_closed", "inc_pd", "inc_other", "inc_unbound"])
+      expect(f.evidence).not.toContain(id);
+  });
+
   test("an unconfigured dependency is named as not checked", () => {
     seedSync("pagerduty", NOW - HOUR);
     const f = systemStateFactor(inputs({ cfg: cfgOf({ dependsOn: ["ghost"] }) }));

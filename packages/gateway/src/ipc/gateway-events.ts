@@ -19,7 +19,8 @@ export type GatewayEventKind =
   | "hitl.resolved"
   | "oncall.briefPushed"
   | "briefing.ready"
-  | "incident.assembled";
+  | "incident.assembled"
+  | "incident.finding";
 
 export interface GatewayEventNotification<P = Record<string, unknown>> {
   readonly kind: GatewayEventKind;

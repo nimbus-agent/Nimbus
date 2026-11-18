@@ -74,6 +74,7 @@ import { GRAPH_V7_MIGRATION_SQL } from "../graph-v7-sql.ts";
 import { rebuildHitlStatusTables } from "../hitl-status-v87-sql.ts";
 import { V34_IDENTITY_SQL } from "../identity-v34-sql.ts";
 import { INCIDENT_ALERT_SOURCES_V96_SQL } from "../incident-alert-sources-v96-sql.ts";
+import { INCIDENT_PREDICT_V103_SQL } from "../incident-predict-v103-sql.ts";
 import { INCIDENT_PROPOSAL_V102_SQL } from "../incident-proposal-v102-sql.ts";
 import { INCIDENT_RECORD_V100_SQL } from "../incident-record-v100-sql.ts";
 import { ITEM_HISTORY_V94_SQL } from "../item-history-v94-sql.ts";
@@ -918,6 +919,12 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     102,
     "incident remediation proposals and engine state (Phase 10 IC5a)",
     INCIDENT_PROPOSAL_V102_SQL,
+  ),
+  simpleStep(
+    102,
+    103,
+    "incident findings and the anomaly baseline (Phase 10 IC8)",
+    INCIDENT_PREDICT_V103_SQL,
   ),
 ];
 
