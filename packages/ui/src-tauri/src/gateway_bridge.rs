@@ -184,6 +184,9 @@ pub const ALLOWED_METHODS: &[&str] = &[
     "profile.delete",
     "profile.list",
     "profile.switch",
+    "registry.info",
+    "registry.list",
+    "registry.search",
     "scim.listUsers",
     "scim.status",
     "share.get",
@@ -833,6 +836,30 @@ mod tests {
     }
 
     #[test]
+    fn allowlist_registry_reads_only() {
+        // S4 marketplace tile: the renderer may browse registries (list, search, info) and nothing
+        // else. Adding a trust root, refreshing, removing, installing or cloning stays a terminal
+        // act: a compromised renderer also draws the consent popup (B1 chain C1).
+        for m in [
+            "registry.add",
+            "registry.remove",
+            "registry.refresh",
+            "registry.install",
+            "registry.cloneSource",
+        ] {
+            assert!(!is_method_allowed(m), "{m} must not be renderer-callable");
+        }
+        let registry: Vec<&&str> = ALLOWED_METHODS
+            .iter()
+            .filter(|m| m.starts_with("registry."))
+            .collect();
+        assert_eq!(
+            registry,
+            vec![&"registry.info", &"registry.list", &"registry.search"]
+        );
+    }
+
+    #[test]
     fn allowlist_incident_reads_only() {
         // Phase 10 IC10a and IC10b: the desktop reads incident records, their proposals and the
         // findings. Only the five reads join the renderer; `assemble` runs the engine, and the
@@ -1116,7 +1143,7 @@ mod tests {
 
     #[test]
     fn allowlist_exact_size() {
-        assert_eq!(ALLOWED_METHODS.len(), 137);
+        assert_eq!(ALLOWED_METHODS.len(), 140);
     }
 
     #[test]

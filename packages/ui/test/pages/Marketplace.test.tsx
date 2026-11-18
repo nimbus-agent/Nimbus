@@ -5,11 +5,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../src/ipc/client");
 
-const openMock = vi.fn<() => Promise<string | null>>();
-vi.mock("@tauri-apps/plugin-dialog", () => ({
-  open: (...args: unknown[]) => openMock(...(args as [])),
-}));
-
 import {
   callMock,
   extensionDisableMock,
@@ -53,7 +48,6 @@ function renderPage() {
 
 beforeEach(() => {
   callMock.mockReset();
-  openMock.mockReset();
   extensionEnableMock.mockReset();
   extensionDisableMock.mockReset();
   extensionInstallMock.mockReset();
@@ -192,14 +186,6 @@ describe("Marketplace page", () => {
     expect(screen.queryByTestId("orphan-notice")).toBeNull();
   });
 
-  it("the next install clears the orphan notice", async () => {
-    openMock.mockResolvedValue(null);
-    await showNotice([EXT_1]);
-    await userEvent.click(screen.getByRole("button", { name: /install from directory/i }));
-    await waitFor(() => expect(openMock).toHaveBeenCalled());
-    expect(screen.queryByTestId("orphan-notice")).toBeNull();
-  });
-
   it("the next remove clears the orphan notice before it answers", async () => {
     await showNotice([EXT_1, EXT_2]);
     let answer: (v: unknown) => void = () => {};
@@ -230,30 +216,14 @@ describe("Marketplace page", () => {
     expect(screen.queryByTestId("orphan-notice")).toBeNull();
   });
 
-  it("opens directory dialog and calls extensionInstall with the selected path", async () => {
+  it("offers no install control: installing is a terminal command (B1 chain C1)", async () => {
     stubExtensionList([]);
-    openMock.mockResolvedValue("/my/extension/dir");
-    extensionInstallMock.mockResolvedValue({
-      id: "my-ext",
-      version: "1.0.0",
-      installPath: "/extensions/my-ext",
-      manifestHash: "xyz",
-      entryHash: "uvw",
-    });
     renderPage();
     await waitFor(() => expect(callMock).toHaveBeenCalled());
-    await userEvent.click(screen.getByRole("button", { name: /install from directory/i }));
-    expect(openMock).toHaveBeenCalledWith({ directory: true, multiple: false });
-    expect(extensionInstallMock).toHaveBeenCalledWith("/my/extension/dir");
-  });
-
-  it("does not call extensionInstall when dialog returns null", async () => {
-    stubExtensionList([]);
-    openMock.mockResolvedValue(null);
-    renderPage();
-    await waitFor(() => expect(callMock).toHaveBeenCalled());
-    await userEvent.click(screen.getByRole("button", { name: /install from directory/i }));
+    expect(screen.queryByRole("button", { name: /install/i })).toBeNull();
+    expect(screen.getByTestId("install-hint")).toHaveTextContent("nimbus extension install <path>");
     expect(extensionInstallMock).not.toHaveBeenCalled();
+    expect(callMock.mock.calls.map((c) => c[0])).not.toContain("extension.install");
   });
 
   it("does not remove anything when the confirmation is declined", async () => {
@@ -263,26 +233,6 @@ describe("Marketplace page", () => {
     expect(await screen.findByText("nimbus-git")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /remove extension nimbus-git/i }));
     expect(extensionRemoveMock).not.toHaveBeenCalled();
-  });
-
-  it("shows why an install failed", async () => {
-    stubExtensionList([]);
-    openMock.mockResolvedValue("/my/extension/dir");
-    extensionInstallMock.mockRejectedValue(new Error("manifest is invalid"));
-    renderPage();
-    await waitFor(() => expect(callMock).toHaveBeenCalled());
-    await userEvent.click(screen.getByRole("button", { name: /install from directory/i }));
-    expect(await screen.findByText("manifest is invalid")).toBeInTheDocument();
-  });
-
-  it("shows a non-Error install failure as text", async () => {
-    stubExtensionList([]);
-    openMock.mockResolvedValue("/my/extension/dir");
-    extensionInstallMock.mockRejectedValue("plain failure");
-    renderPage();
-    await waitFor(() => expect(callMock).toHaveBeenCalled());
-    await userEvent.click(screen.getByRole("button", { name: /install from directory/i }));
-    expect(await screen.findByText("plain failure")).toBeInTheDocument();
   });
 
   it("ignores a second toggle while the first is still in flight", async () => {
@@ -319,10 +269,10 @@ describe("Marketplace page", () => {
     }
   });
 
-  it("'Install from directory' button is disabled when offline", () => {
+  it("the registry search is disabled when offline", () => {
     useNimbusStore.setState({ connectionState: "disconnected" });
     callMock.mockResolvedValue({ extensions: [] });
     renderPage();
-    expect(screen.getByRole("button", { name: /install from directory/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Search" })).toBeDisabled();
   });
 });
