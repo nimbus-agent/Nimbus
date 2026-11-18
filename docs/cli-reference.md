@@ -2913,7 +2913,8 @@ contract. An ephemeral (created-but-not-saved) tool is not invocable at all.
 
 **The model can call a saved tool you list (S4, I60).** Add the tool's id to
 `[tool_generation] model_tools` and the conversational model is offered it on your own `nimbus ask`
-(or desktop) turn, never on a ChatOps, HTTP, MCP-agent, fleet, demo or `--at` turn:
+(or desktop) turn, never on a ChatOps, HTTP, MCP-agent, fleet, demo or `--at` turn. A turn the
+local model answers (`[llm] prefer_local = true`) is offered no tools at all, so it cannot call one:
 
 ```toml
 [tool_generation]

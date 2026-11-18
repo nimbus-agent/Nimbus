@@ -25,6 +25,7 @@ import { escapeEnvelopeClosers, wrapToolDescription } from "../engine/tool-outpu
 import type { PlannedAction } from "../engine/types.ts";
 import type { EnforcedPolicy } from "../policy/policy-gate.ts";
 import type { AI_V2_CAPABILITIES } from "../policy/types.ts";
+import { constantTimeStringEqual } from "../util/timing-safe-compare.ts";
 import { buildGeneratedTools } from "./toolgen-agent-tools.ts";
 import { digestOfCanonicalBytes } from "./toolgen-artifact.ts";
 import { isToolgenCapabilityEnabled } from "./toolgen-capability.ts";
@@ -52,6 +53,8 @@ export const TOOLGEN_MODEL_REFUSALS = {
   declined: "the owner declined this call",
   notHuman: "the owner's approval must be answered by a person",
   tooLarge: "the input is too large to show the owner; nothing ran",
+  unrecorded:
+    "the tool may have run, but its audit row could not be written; do not call it again before the owner checks",
 } as const;
 
 /** The longest rendered input the prompt shows; a longer input is refused, never cut. */
@@ -62,10 +65,15 @@ const DESCRIPTION_MAX = 1_000;
 /** A parameter description shown to the model, closer-escaped and capped. */
 const PARAM_DESCRIPTION_MAX = 200;
 
-/** What a call is bound to: the artifact digest the owner approved, and the approval's audit row. */
+/**
+ * What a call is bound to: the artifact digest the owner approved, the approval's audit row, and a
+ * live re-check of the offer that the pinned spawn runs immediately before it starts the child (after
+ * the per-tool lane, the Vault read and the artifact read, any of which can wait).
+ */
 export type ToolgenModelPin = {
   readonly expectedDigest: string;
   readonly approvalAuditId: number;
+  readonly stillAllowed: () => boolean;
 };
 
 export type ToolgenModelDoorSource = {
@@ -73,6 +81,12 @@ export type ToolgenModelDoorSource = {
   readonly config: () => Pick<NimbusToolGenerationToml, "enabled" | "modelTools">;
   /** The resolved org policy now, or `undefined` when it cannot be read (refused). */
   readonly enforced: () => Pick<EnforcedPolicy, "capabilitiesDisabled"> | undefined;
+  /**
+   * True when this install is meant to be governed (a policy is persisted or an org anchor pinned)
+   * but no verified policy is active, so `enforced()` is only the local baseline: model access is
+   * then refused rather than read from a baseline that carries no org lock-off.
+   */
+  readonly policyUnverified: () => boolean;
   readonly registry: Pick<ToolgenRegistry, "savedTools">;
   /** The saved row's artifact digest (`generated_tool.artifact_digest`), or `null` without a row. */
   readonly savedDigest: (toolId: string) => string | null;
@@ -93,6 +107,7 @@ export type ToolgenModelAsk = (action: PlannedAction) => Promise<OwnerApproval>;
 
 /** Whether both switches and both lock-offs allow model access now. */
 function modelAccessAllowed(source: ToolgenModelDoorSource): boolean {
+  if (source.policyUnverified()) return false;
   const enforced = source.enforced();
   if (enforced === undefined) return false;
   if (!isToolgenCapabilityEnabled({ config: source.config(), enforced })) return false;
@@ -187,7 +202,7 @@ export function modelInvokePromptText(
   const { artifact } = envelope;
   return [
     `The model asks to run the saved generated tool ${renderConst(envelope.toolId)} (${renderConst(artifact.toolName)}).`,
-    `Saved artifact: sha256 ${digest.slice(0, 12)}`,
+    `Saved artifact: blake3 ${digest.slice(0, 12)}`,
     `Description (the owner's, as saved): ${renderConst(artifact.description.slice(0, DESCRIPTION_MAX))}`,
     `Hosts it may send to: ${listOrNone(artifact.approvedHosts)}`,
     `Hosts that receive a credential: ${listOrNone(artifact.credentialHosts)}`,
@@ -225,7 +240,8 @@ export function modelInvokeAction(
 export type ToolgenModelCallResult =
   | { readonly result: unknown }
   | { readonly refused: string }
-  | { readonly error: string };
+  | { readonly error: string }
+  | { readonly unrecorded: string };
 
 /** The tool as it is offered now, with its saved digest, or `undefined` when it is not. */
 function offeredNow(
@@ -269,11 +285,22 @@ export async function invokeForModel(
   // The prompt may have stayed open: a switch flipped or a re-save meanwhile vetoes the approved call.
   const after = offeredNow(source, toolId);
   if (after === undefined) return { refused: TOOLGEN_MODEL_REFUSALS.notOffered };
-  if (after.digest !== before.digest) return { refused: TOOLGEN_MODEL_REFUSALS.changed };
-  const outcome = await source.invoke(toolId, rendered.plain, {
-    expectedDigest: before.digest,
-    approvalAuditId: answer.auditId,
-  });
+  if (!constantTimeStringEqual(after.digest, before.digest)) {
+    return { refused: TOOLGEN_MODEL_REFUSALS.changed };
+  }
+  let outcome: ToolgenInvokeOutcome;
+  try {
+    outcome = await source.invoke(toolId, rendered.plain, {
+      expectedDigest: before.digest,
+      approvalAuditId: answer.auditId,
+      stillAllowed: () => offeredNow(source, toolId) !== undefined,
+    });
+  } catch {
+    // `invokeSavedTool` handles every spawn and run failure itself and throws only when its audit
+    // append fails, which can come after the tool ran: the model is told exactly that, never a plain
+    // failure it might retry.
+    return { unrecorded: TOOLGEN_MODEL_REFUSALS.unrecorded };
+  }
   switch (outcome.status) {
     case "executed":
       return { result: outcome.result };
@@ -322,7 +349,10 @@ export function pinReadVerified(
 ): typeof readVerifiedSavedTool {
   return async (configDir, toolId, pubkeyB64) => {
     const verified = await read(configDir, toolId, pubkeyB64);
-    if (verified.ok && digestOfCanonicalBytes(verified.canonicalJson) !== expectedDigest) {
+    if (
+      verified.ok &&
+      !constantTimeStringEqual(digestOfCanonicalBytes(verified.canonicalJson), expectedDigest)
+    ) {
       throw new ToolgenError(
         ERR_TOOLGEN_ARTIFACT_CHANGED,
         `the saved artifact of "${toolId}" is not the one the owner approved`,
@@ -330,4 +360,10 @@ export function pinReadVerified(
     }
     return verified;
   };
+}
+
+/** Whether a door result is anything but a completed call (tool-call diagnostics record it as an error). */
+export function isModelCallNotOk(raw: unknown): boolean {
+  if (raw === null || typeof raw !== "object") return false;
+  return "refused" in raw || "error" in raw || "unrecorded" in raw;
 }

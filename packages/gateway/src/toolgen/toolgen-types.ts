@@ -162,6 +162,8 @@ export const ERR_TOOLGEN_PUBKEY_UNAVAILABLE = "ERR_TOOLGEN_PUBKEY_UNAVAILABLE";
 export const ERR_TOOLGEN_INPUT_INVALID = "ERR_TOOLGEN_INPUT_INVALID";
 /** A model call's pinned spawn read a saved artifact that is not the one the owner approved (I60). */
 export const ERR_TOOLGEN_ARTIFACT_CHANGED = "ERR_TOOLGEN_ARTIFACT_CHANGED";
+/** A model call's offer was withdrawn (a lock-off, an opt-out) after its approval, before the child started (I60). */
+export const ERR_TOOLGEN_MODEL_ACCESS_WITHDRAWN = "ERR_TOOLGEN_MODEL_ACCESS_WITHDRAWN";
 /**
  * The platform sandbox cannot confine this tool (`SandboxRunner.canConfine` returned a reason).
  * Shared by the create gate's pre-consent check and the invoke gate's pre-spawn check, so "could

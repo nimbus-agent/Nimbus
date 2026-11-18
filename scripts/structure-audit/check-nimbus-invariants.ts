@@ -3844,7 +3844,8 @@ const D51_RULES: readonly { readonly re: RegExp; readonly allowed: readonly stri
     allowed: [D51_CONTEXT, `${D51_SRC}engine/agent.ts`, D51_DOOR],
   },
 ];
-const D51_LITERAL_RE = /(["'`])tool\.model\.invoke\1/g;
+const D51_STRING_LITERAL_RE = /(["'`])((?:\\[\s\S]|(?!\1)[^\\\n])*)\1/g;
+const D51_TYPE_VALUE = "tool.model.invoke";
 const D51_LITERAL_ALLOWED: readonly string[] = [D51_DOOR, `${D51_SRC}engine/executor.ts`];
 
 export function checkToolgenModelDoorConfinement(files: readonly FileEntry[]): Violation[] {
@@ -3869,7 +3870,11 @@ export function checkToolgenModelDoorConfinement(files: readonly FileEntry[]): V
       for (const m of code.matchAll(r.re)) push(code, m.index);
     }
     if (!D51_LITERAL_ALLOWED.includes(f.relPath)) {
-      for (const m of withStrings.matchAll(D51_LITERAL_RE)) push(withStrings, m.index);
+      // Every string literal, scanned left to right, so a quoted word inside a longer string is part
+      // of that string's value and never matches on its own.
+      for (const m of withStrings.matchAll(D51_STRING_LITERAL_RE)) {
+        if (m[2] === D51_TYPE_VALUE) push(withStrings, m.index);
+      }
     }
   }
   return out;

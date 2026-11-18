@@ -8,6 +8,7 @@ import {
   buildModelGeneratedTools,
   describeModelTool,
   invokeForModel,
+  isModelCallNotOk,
   listModelOfferableTools,
   modelFacingSchema,
   renderModelInput,
@@ -58,6 +59,7 @@ type Harness = {
     modelTools: string[];
     disabled: Set<string>;
     enforcedReadable: boolean;
+    policyUnverified: boolean;
     digest: string | null;
     tools: SavedToolEnvelope[];
     outcome: ToolgenInvokeOutcome | undefined;
@@ -73,6 +75,7 @@ function harness(): Harness {
     modelTools: ["weather"],
     disabled: new Set<string>(),
     enforcedReadable: true,
+    policyUnverified: false,
     digest: DIGEST,
     tools: [saved("weather")],
     outcome: undefined,
@@ -80,6 +83,7 @@ function harness(): Harness {
   const source: ToolgenModelDoorSource = {
     config: () => ({ enabled: state.enabled, modelTools: state.modelTools }),
     enforced: () => (state.enforcedReadable ? { capabilitiesDisabled: state.disabled } : undefined),
+    policyUnverified: () => state.policyUnverified,
     registry: { savedTools: () => state.tools },
     savedDigest: () => state.digest,
     invoke: async (toolId, input, pin) => {
@@ -136,6 +140,12 @@ describe("listModelOfferableTools", () => {
     },
   );
 
+  test("nothing on a governed install whose policy did not verify", () => {
+    const h = harness();
+    h.state.policyUnverified = true;
+    expect(listModelOfferableTools(h.source)).toEqual([]);
+  });
+
   test("nothing when the policy cannot be read (fail closed)", () => {
     const h = harness();
     h.state.enforcedReadable = false;
@@ -190,13 +200,15 @@ describe("invokeForModel", () => {
       result: { tempC: 21 },
     });
     expect(o.rows).toEqual([{ type: TOOLGEN_MODEL_INVOKE_TYPE, status: "approved" }]);
-    expect(h.calls).toEqual([
-      {
-        toolId: "weather",
-        input: { city: "Haifa" },
-        pin: { expectedDigest: DIGEST, approvalAuditId: 1 },
-      },
-    ]);
+    expect(h.calls).toHaveLength(1);
+    expect(h.calls[0]?.toolId).toBe("weather");
+    expect(h.calls[0]?.input).toEqual({ city: "Haifa" });
+    expect(h.calls[0]?.pin.expectedDigest).toBe(DIGEST);
+    expect(h.calls[0]?.pin.approvalAuditId).toBe(1);
+    // The pin's last-moment check follows the live offer.
+    expect(h.calls[0]?.pin.stillAllowed()).toBe(true);
+    h.state.disabled.add(TOOLGEN_MODEL_ACCESS_CAPABILITY);
+    expect(h.calls[0]?.pin.stillAllowed()).toBe(false);
   });
 
   test("the prompt names the tool, the hosts, the digest and the input", async () => {
@@ -207,7 +219,7 @@ describe("invokeForModel", () => {
     expect(prompt).toContain('"weather"');
     expect(prompt).toContain('Hosts it may send to: "api.weather.example"');
     expect(prompt).toContain('Hosts that receive a credential: "api.weather.example"');
-    expect(prompt).toContain(`sha256 ${DIGEST.slice(0, 12)}`);
+    expect(prompt).toContain(`blake3 ${DIGEST.slice(0, 12)}`);
     expect(prompt).toContain('{"city": "Haifa"}');
     expect(prompt).toContain("Requested by: the model");
   });
@@ -305,6 +317,20 @@ describe("invokeForModel", () => {
     expect(o.prompts).toEqual([]);
   });
 
+  test("an audit append that fails after the run is reported as possibly run, never as a plain failure", async () => {
+    const h = harness();
+    const o = ownerAsk("human");
+    const source = {
+      ...h.source,
+      invoke: async () => {
+        throw new Error("SQLITE_BUSY");
+      },
+    };
+    expect(await invokeForModel(source, () => o.ask, "weather", { city: "x" })).toEqual({
+      unrecorded: TOOLGEN_MODEL_REFUSALS.unrecorded,
+    });
+  });
+
   test("a failed run and a refused spawn reach the model as such", async () => {
     const h = harness();
     const o = ownerAsk("human");
@@ -399,5 +425,16 @@ describe("what the model reads", () => {
     ) as Record<string, { execute: (input: unknown) => Promise<unknown> }>;
     expect(await tools["weather"]?.execute({ city: "Haifa" })).toEqual({ result: { tempC: 21 } });
     expect(o.rows).toEqual([{ type: TOOLGEN_MODEL_INVOKE_TYPE, status: "approved" }]);
+  });
+});
+
+describe("isModelCallNotOk", () => {
+  test("a refusal, an error and an unrecorded call are not ok; a result is", () => {
+    expect(isModelCallNotOk({ refused: "x" })).toBe(true);
+    expect(isModelCallNotOk({ error: "x" })).toBe(true);
+    expect(isModelCallNotOk({ unrecorded: "x" })).toBe(true);
+    expect(isModelCallNotOk({ result: 1 })).toBe(false);
+    expect(isModelCallNotOk("text")).toBe(false);
+    expect(isModelCallNotOk(null)).toBe(false);
   });
 });

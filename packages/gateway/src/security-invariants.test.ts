@@ -3653,6 +3653,9 @@ code_execution=true
     expect(captureCtx).toContain(
       "previewCredentialFor: previewCredentialResolver(connectorWriteDeps, connectorMesh),",
     );
+    // A refused, failed or unrecorded call is logged as an error, never as ok.
+    expect(agent).toContain("wrapToolForLlm(service, tool, def, deps.auditDb, isModelCallNotOk)");
+
     const main = stripComments(await read("packages/gateway/src/gateway-main.ts"));
     expect(main).toMatch(
       /createConnectorWriteDispatcher\(\s*createConnectorDispatcher\(dispatcherClient\),\s*platform\.connectorWriteDeps,?\s*\)/,
@@ -17409,6 +17412,7 @@ describe("I60 - a saved generated tool reaches the model only on the owner's tur
     const source = {
       config: () => ({ enabled: true, modelTools: ["t"] }),
       enforced: () => undefined,
+      policyUnverified: () => false,
       registry: { savedTools: () => [{ toolId: "t" }] as never },
       savedDigest: () => "d",
       invoke: async () => {
@@ -17424,6 +17428,7 @@ describe("I60 - a saved generated tool reaches the model only on the owner's tur
     const source = {
       config: () => ({ enabled: true, modelTools: ["t"] }),
       enforced: () => ({ capabilitiesDisabled: new Set<string>() }),
+      policyUnverified: () => false,
       registry: { savedTools: () => [] },
       savedDigest: () => "d",
       invoke: async () => {
@@ -17483,7 +17488,14 @@ describe("I60 - a saved generated tool reaches the model only on the owner's tur
 
     const assemble = stripComments(await read("packages/gateway/src/platform/assemble.ts"));
     const door = assemble.slice(assemble.indexOf("const toolgenModelDoor: ToolgenModelDoorSource"));
-    expect(door).toContain("spawn: (id) => spawnSaved(id, pin.expectedDigest)");
+    expect(door).toContain("spawn: (id) => spawnSaved(id, pin)");
+    expect(door).toContain(
+      "policyUnverified: () => policyGate.governanceIntended() && !policyGate.status().signatureValid",
+    );
+    const spawn = assemble.slice(assemble.indexOf("const spawnSaved = async ("));
+    expect(spawn.slice(0, spawn.indexOf("\n  };\n"))).toContain(
+      "if (pin !== undefined && !pin.stillAllowed())",
+    );
     expect(door).toContain("approvalAuditId: pin.approvalAuditId");
   });
 });

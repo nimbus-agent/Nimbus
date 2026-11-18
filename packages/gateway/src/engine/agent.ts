@@ -22,6 +22,7 @@ import type { SessionMemoryStore } from "../memory/session-memory-store.ts";
 import { searchPersons } from "../people/person-store.ts";
 import {
   buildModelGeneratedTools,
+  isModelCallNotOk,
   type ToolgenModelDoorSource,
 } from "../toolgen/toolgen-model-door.ts";
 import {
@@ -89,6 +90,12 @@ function wrapToolForLlm<T>(
   tool: string,
   toolDef: T,
   auditDb: Database | undefined,
+  /**
+   * Optional: whether a RETURNED result is a failure (a refusal or an error object the tool returns
+   * instead of throwing), so the tool-call log and `nimbus explain last` record it as `error`. The
+   * result still reaches the model through the envelope either way.
+   */
+  isNotOk?: (raw: unknown) => boolean,
 ): T {
   const td = toolDef as unknown as {
     execute?: (input: unknown, ctx?: unknown) => Promise<unknown>;
@@ -106,6 +113,7 @@ function wrapToolForLlm<T>(
       try {
         raw = await original(input, ctx);
         envelope = wrapToolOutput({ service, tool }, raw);
+        if (isNotOk?.(raw) === true) status = "error";
       } catch (err) {
         status = "error";
         envelope = wrapToolOutput({ service, tool }, { error: String(err) });
@@ -661,8 +669,8 @@ export function createNimbusEngineAgent(deps: NimbusEngineAgentDeps): {
       ? {}
       : buildModelGeneratedTools(deps.toolgen, (service, tool, def) =>
           // I11. `wrapToolForLlm` is module-private here, which is why it is passed rather than
-          // imported by the toolgen module.
-          wrapToolForLlm(service, tool, def, deps.auditDb),
+          // imported by the toolgen module. A refused or failed call is logged as an error.
+          wrapToolForLlm(service, tool, def, deps.auditDb, isModelCallNotOk),
         )),
     // The executor's PRESENCE is the offer decision: absent (not the local owner, or outside a
     // turn), nothing is listed, so no user server is spawned for this request.

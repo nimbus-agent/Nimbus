@@ -1283,23 +1283,28 @@ function applyNimbusToolGenerationKey(
 const MODEL_TOOL_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
 /**
- * `model_tools`: exact ids, de-duplicated in the owner's order. A malformed value or an entry that is
- * not an id is dropped (never widened into a match), and a value that does not parse is the empty list.
+ * `model_tools`: exact ids, de-duplicated in the owner's order. Only a QUOTED entry counts: a bare
+ * token (`123`, `true`, a word) is dropped, never read as an id, so the list names only strings the
+ * owner wrote as strings. An entry that is not an id is dropped (never widened into a match), and a
+ * value that is not one bracketed array is the empty list.
  */
 function parseModelToolIds(valRaw: string): string[] {
-  let values: string[];
-  try {
-    values = parseStringArray(valRaw);
-  } catch {
-    return [];
-  }
+  const v = valRaw.trim();
+  if (!v.startsWith("[") || !v.endsWith("]")) return [];
   const out: string[] = [];
-  for (const v of values) {
-    const id = v.trim();
+  for (const raw of v.slice(1, -1).split(",")) {
+    const entry = raw.trim();
+    if (entry === "") continue;
+    const quoted = MODEL_TOOL_QUOTED.exec(entry);
+    if (quoted === null) continue;
+    const id = quoted[2] ?? "";
     if (MODEL_TOOL_ID_PATTERN.test(id) && !out.includes(id)) out.push(id);
   }
   return out;
 }
+
+/** One quoted entry: double or single quotes, nothing outside them. */
+const MODEL_TOOL_QUOTED = /^(["'])([^"']*)\1$/;
 
 export function parseNimbusToolGenerationToml(
   raw: string,

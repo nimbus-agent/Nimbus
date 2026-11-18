@@ -1992,6 +1992,13 @@ describe("[tool_generation]", () => {
     expect(cfg.modelTools).toEqual(["tg_a", "tg-b"]);
   });
 
+  test("a bare token in model_tools is never read as an id; a quoted numeric id is", () => {
+    const cfg = parseNimbusToolGenerationToml(
+      ["[tool_generation]", "model_tools = [123, true, weather, \"456\", 'tg_b']"].join("\n"),
+    );
+    expect(cfg.modelTools).toEqual(["456", "tg_b"]);
+  });
+
   test("a model_tools value that does not parse offers nothing", () => {
     const cfg = parseNimbusToolGenerationToml(
       ["[tool_generation]", 'model_tools = "tg_a"'].join("\n"),

@@ -8165,6 +8165,16 @@ describe("D51 - the model's door to saved generated tools stays confined (I60)",
     );
   });
 
+  test("the type inside a longer string (a diagnostic) is not the type", () => {
+    const msg = file(
+      `${SRC}ipc/x.ts`,
+      "const m = 'The \"tool.model.invoke\" action needs consent';",
+    );
+    expect(rules([...GOOD, msg])).toEqual([]);
+    const bare = file(`${SRC}ipc/x.ts`, "const t = `tool.model.invoke`;");
+    expect(rules([...GOOD, bare])).toContain("toolgen-model-door-confined");
+  });
+
   test("an aliased import is still caught; a comment or a test file is not", () => {
     expect(
       rules([...GOOD, file(`${SRC}ipc/x.ts`, 'import { invokeSavedTool as run } from "./y.ts";')]),

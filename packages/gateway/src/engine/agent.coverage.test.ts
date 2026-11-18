@@ -302,6 +302,7 @@ describe("toolgen spread (I60)", () => {
     return {
       config: () => ({ enabled: true, modelTools: ["weather_lookup"] }),
       enforced: () => ({ capabilitiesDisabled: new Set<string>() }),
+      policyUnverified: () => false,
       registry: { savedTools: () => [SAVED] },
       savedDigest: () => "d".repeat(64),
       invoke: (toolId, args) => {

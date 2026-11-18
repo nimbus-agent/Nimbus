@@ -411,7 +411,11 @@ import type { ToolgenGateDeps } from "../toolgen/toolgen-gate.ts";
 import { createEndpointFinder } from "../toolgen/toolgen-grounding.ts";
 import { invokeSavedTool, type ToolgenInvokeDeps } from "../toolgen/toolgen-invoke-gate.ts";
 import { TOOLGEN_SIGNING_PUBKEY } from "../toolgen/toolgen-keypair.ts";
-import { pinReadVerified, type ToolgenModelDoorSource } from "../toolgen/toolgen-model-door.ts";
+import {
+  pinReadVerified,
+  type ToolgenModelDoorSource,
+  type ToolgenModelPin,
+} from "../toolgen/toolgen-model-door.ts";
 import { ToolgenRegistry } from "../toolgen/toolgen-registry.ts";
 import type { ToolgenSaveDeps } from "../toolgen/toolgen-save-gate.ts";
 import { getSavedTool } from "../toolgen/toolgen-saved-repo.ts";
@@ -433,6 +437,7 @@ import {
 } from "../toolgen/toolgen-script-store.ts";
 import {
   CLI_TOOLGEN_SESSION_ID,
+  ERR_TOOLGEN_MODEL_ACCESS_WITHDRAWN,
   ERR_TOOLGEN_NOT_SAVED,
   ERR_TOOLGEN_PUBKEY_UNAVAILABLE,
   ToolgenError,
@@ -5321,7 +5326,7 @@ export async function assemblePlatformServices(
   const runtimeReadPaths = resolveRuntimeById("bun").requiredReadPaths();
   // One spawn path for both callers: `nimbus tool run` (no pin) and the model's door (pinned to the
   // artifact digest the owner approved, I60), so the two can never diverge in what they verify.
-  const spawnSaved = async (toolId: string, expectedDigest?: string) => {
+  const spawnSaved = async (toolId: string, pin?: ToolgenModelPin) => {
     const pubkeyB64 = await vault.get(TOOLGEN_SIGNING_PUBKEY);
     if (pubkeyB64 === null) {
       throw new ToolgenError(ERR_TOOLGEN_PUBKEY_UNAVAILABLE, "toolgen signing pubkey unavailable");
@@ -5337,13 +5342,22 @@ export async function assemblePlatformServices(
       row: { approvedAt: row.approvedAt },
       runtime: { requiredReadPaths: () => runtimeReadPaths },
       readVerifiedSavedTool:
-        expectedDigest === undefined
+        pin === undefined
           ? readVerifiedSavedTool
-          : pinReadVerified(readVerifiedSavedTool, expectedDigest),
+          : pinReadVerified(readVerifiedSavedTool, pin.expectedDigest),
       savedToolDir,
       rewriteSavedToolScript,
-      spawn: (envelope) =>
-        spawnGeneratedTool(envelope, toolgenBroker, dirname(envelope.scriptPath)),
+      spawn: (envelope) => {
+        // A model call re-checks its offer at the last moment before the child starts (I60), after
+        // every wait above: a lock-off or an opt-out set meanwhile refuses the spawn.
+        if (pin !== undefined && !pin.stillAllowed()) {
+          throw new ToolgenError(
+            ERR_TOOLGEN_MODEL_ACCESS_WITHDRAWN,
+            `model access to "${toolId}" was withdrawn before it started`,
+          );
+        }
+        return spawnGeneratedTool(envelope, toolgenBroker, dirname(envelope.scriptPath));
+      },
     });
   };
 
@@ -5378,12 +5392,14 @@ export async function assemblePlatformServices(
   const toolgenModelDoor: ToolgenModelDoorSource = {
     config: () => loadNimbusToolGenerationFromConfigDir(paths.configDir),
     enforced: () => policyGate.enforced(),
+    // A governed install whose policy did not verify offers nothing: its `enforced()` is only the baseline.
+    policyUnverified: () => policyGate.governanceIntended() && !policyGate.status().signatureValid,
     registry: toolgenRegistry,
     savedDigest: (toolId) => getSavedTool(db, toolId)?.artifactDigest ?? null,
     invoke: (toolId, input, pin) =>
       invokeSavedTool(
         { toolId, input, sessionId: CLI_TOOLGEN_SESSION_ID, approvalAuditId: pin.approvalAuditId },
-        { ...toolgenInvokeDeps, spawn: (id) => spawnSaved(id, pin.expectedDigest) },
+        { ...toolgenInvokeDeps, spawn: (id) => spawnSaved(id, pin) },
       ),
     warn: (msg) => syncLogger.warn({ capability: "toolgen_model_access" }, msg),
   };

@@ -371,11 +371,13 @@ describe("runAsk with pointInTimeMs", () => {
 });
 
 describe("runAsk and the generated-tool approval slot (I60)", () => {
-  async function slotAfter(over: Record<string, unknown>): Promise<AgentRequestContext> {
+  const SEEDED = (async () => ({ approved: true, auditId: 1 })) as never;
+  async function slotAfter(
+    over: Record<string, unknown>,
+    seeded = true,
+  ): Promise<AgentRequestContext> {
     const idx = seed();
-    const store: AgentRequestContext = {
-      toolgenModelAsk: (async () => ({ approved: true, auditId: 1 })) as never,
-    };
+    const store: AgentRequestContext = seeded ? { toolgenModelAsk: SEEDED } : {};
     await agentRequestContext.run(store, async () => {
       await runAsk(params(idx, { llmRouter: fakeRouter([]), ...over }));
     });
@@ -384,8 +386,12 @@ describe("runAsk and the generated-tool approval slot (I60)", () => {
   }
 
   test("the local owner's non-demo cli/ui turn carries the owner-only approval", async () => {
-    const store = await slotAfter({ offerConnectorWriteTools: true });
+    // Started empty, so the assignment itself is what makes this pass.
+    const store = await slotAfter({ offerConnectorWriteTools: true }, false);
     expect(typeof store.toolgenModelAsk).toBe("function");
+    // A reused store gets a fresh approval, not the earlier turn's.
+    const reused = await slotAfter({ offerConnectorWriteTools: true });
+    expect(reused.toolgenModelAsk).not.toBe(SEEDED);
   });
 
   test("any other turn clears a reused store's approval", async () => {
