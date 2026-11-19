@@ -160,6 +160,7 @@ describe("checkLanMethodAllowed", () => {
     "incident.postmortemPush",
     "incident.proposals",
     "incident.remediate",
+    "incident.dryRun",
     "incident.undo",
     "incident.advisory",
     "incident.advisorySet",

@@ -157,7 +157,7 @@ describe("reversibility: the six reversible rows, each proven by a recorded befo
     };
     const input = { name: "web", id: 3 };
     const captured = capture("argocd_app_rollback", reply, input);
-    expect(captured).toEqual({ currentHistoryId: "5" });
+    expect(captured).toEqual({ currentHistoryId: "5", autoSync: "off", historyIds: "5,4,3" });
     expect(invert("argocd_app_rollback", input, captured)).toEqual({ name: "web", id: 5 });
     expect(invert("argocd_app_rollback", { name: "web", id: 5 }, captured)).toBeUndefined();
     expect(invert("argocd_app_rollback", input, { currentHistoryId: "x5" })).toBeUndefined();

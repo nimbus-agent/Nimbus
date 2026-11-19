@@ -22,6 +22,7 @@ import {
 } from "../connectors/connector-writes/preview.ts";
 import type {
   BoundWrite,
+  ConnectorWriteBeforeState,
   ConnectorWriteRow,
   PreviewCredentialResolver,
 } from "../connectors/connector-writes/types.ts";
@@ -1342,7 +1343,28 @@ export interface ToolExecutorExtras {
    * Set only by `buildIacDriftExecutor` in `engine/run-ask.ts`, whose consent channel refuses everything.
    */
   readonly driftCheck?: boolean | undefined;
+  /**
+   * Phase 17 remediation dry run (I57 (b), static D46(c)): this executor may run
+   * {@link ToolExecutor.readBeforeOnly}. Set only by `newRemediationExecutor` in `engine/run-ask.ts`.
+   */
+  readonly dryRun?: boolean | undefined;
 }
+
+/** The fixed reason an executor not built for dry runs refuses one. */
+export const DRY_RUN_NOT_BUILT_REASON = "dry run: this executor cannot run a dry run";
+/** A bound row's facts come from a prepare child, which a dry run never starts. */
+export const DRY_RUN_BOUND_REASON = "dry run: a bound write has no dry run";
+/** The payload names another row's tool (the dispatcher would pick that tool, I3). */
+export const DRY_RUN_MISMATCH_REASON = "dry run: the action names another row's tool";
+
+/**
+ * What a dry run returns: the target's current state the row's reader showed (`ok` or `unavailable`, the preview's
+ * own before-state), a refusal with a fixed reason, or `no_reader` when the row has no before reader.
+ */
+export type BeforeOnlyOutcome =
+  | ConnectorWriteBeforeState
+  | { readonly status: "refused"; readonly reason: string }
+  | { readonly status: "no_reader" };
 
 /** The Terraform row whose prepare step a drift check runs (its plan and show reads only, never the apply). */
 const DRIFT_ROW_ACTION_TYPE = "iac.terraform.apply";
@@ -1381,10 +1403,14 @@ export class ToolExecutor {
     this.unattended = extras.unattended === true;
     this.userMcpWriteGrants = extras.userMcpWriteGrants;
     this.driftCheck = extras.driftCheck === true;
+    this.dryRun = extras.dryRun === true;
   }
 
   /** IaC drift D2: see {@link ToolExecutorExtras.driftCheck}. */
   private readonly driftCheck: boolean;
+
+  /** Remediation dry run: see {@link ToolExecutorExtras.dryRun}. */
+  private readonly dryRun: boolean;
 
   /** I15 (AD5b): see {@link ToolExecutorExtras.userMcpWriteGrants}. */
   private readonly userMcpWriteGrants:
@@ -1962,6 +1988,40 @@ export class ToolExecutor {
    * `plan` and `show` profiles, with a settle that shows a no-change plan; then the cleanup and the mutex
    * release, always. Every failure is a fixed reason, never error text.
    */
+  /**
+   * Phase 17 remediation dry run (I57 (b), static D46(c)). Runs ONLY the before-state reads of `planned`'s row
+   * and returns what they showed. Each read is a `<service>.before.read` action through THIS executor's gate
+   * (audited, I29-ledgered, incident-linked like the reads of a real run, refused rather than prompted when it
+   * would need approval) and dispatchable only as a read of the same connector. The write itself is never
+   * gated, never prompted for and never handed to the dispatcher: this method calls neither `gateWithin` on
+   * it nor `dispatch` with it. Refused on an executor not built with `dryRun`, for a row the type does not
+   * find, a bound row (a dry run never starts a prepare child), a row that refuses every door, and a payload
+   * that names another row's tool.
+   */
+  async readBeforeOnly(planned: PlannedAction): Promise<BeforeOnlyOutcome> {
+    const refused = (reason: string): BeforeOnlyOutcome => ({ status: "refused", reason });
+    if (!this.dryRun) return refused(DRY_RUN_NOT_BUILT_REASON);
+    const action = structuredClone(planned);
+    if (this.namesOtherTypesWrite(action)) return refused(DRY_RUN_MISMATCH_REASON);
+    const rowRefusal = this.rowRefusal(action);
+    if (rowRefusal !== undefined) return refused(rowRefusal);
+    if (this.boundRowOf(action) !== undefined) return refused(DRY_RUN_BOUND_REASON);
+    const row = findConnectorWriteRow(action, this.rows());
+    if (row?.before === undefined) return { status: "no_reader" };
+    assertLinkedActionAllowed(action, undefined);
+    const scope: GateScope = {
+      bind: false,
+      ...(action.incident === undefined ? {} : { step: randomBytes(8).toString("hex") }),
+    };
+    try {
+      const before = (await this.captureBeforePhase(action, undefined, scope))?.before;
+      return before ?? { status: "no_reader" };
+    } catch (e) {
+      if (e instanceof BeforeStateRefusedError) return refused(e.reason);
+      throw e;
+    }
+  }
+
   async checkTerraformDrift(workingDirectory: string): Promise<TerraformDriftOutcome> {
     const refuse = (reason: string): TerraformDriftOutcome => ({ ok: false, reason });
     if (!this.driftCheck) return refuse(DRIFT_CHECK_NOT_BUILT_REASON);

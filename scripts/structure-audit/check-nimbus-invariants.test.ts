@@ -7613,6 +7613,9 @@ describe("D46(c) - an engine-proposed action is built in one module (Phase 10 IC
   const TYPES = `${SRC}engine/types.ts`;
   const RUN_ASK = `${SRC}engine/run-ask.ts`;
   const MAIN = `${SRC}gateway-main.ts`;
+  const EXECUTOR = `${SRC}engine/executor.ts`;
+  const DRY_RUN_BODY = (inner: string): string =>
+    `class T {\n  async readBeforeOnly(planned: PlannedAction): Promise<BeforeOnlyOutcome> {\n    ${inner}\n  }\n}\n`;
   const GOOD: FileEntry[] = [
     file(
       REMEDIATION,
@@ -7627,8 +7630,9 @@ describe("D46(c) - an engine-proposed action is built in one module (Phase 10 IC
     file(RUN_ASK, "export function buildRemediationExecutor(p) { return null; }\n"),
     file(MAIN, "platform.bind(() => buildRemediationExecutor({}));\n"),
     file(
-      `${SRC}engine/executor.ts`,
-      "const p = action.engineProposal;\nif (action.engineProposal !== undefined) {}\n",
+      EXECUTOR,
+      "const p = action.engineProposal;\nif (action.engineProposal !== undefined) {}\n" +
+        DRY_RUN_BODY("const before = await this.captureBeforePhase(action, undefined, scope);"),
     ),
     file(
       `${SRC}incident/x.test.ts`,
@@ -7692,6 +7696,37 @@ describe("D46(c) - an engine-proposed action is built in one module (Phase 10 IC
         file(REMEDIATION, 'db.run("UPDATE incident_proposal SET a = 1");\n'),
       ]),
     ).toEqual(["incident-proposal-table-confined"]);
+  });
+
+  test("clause 5 (Phase 17): readBeforeOnly is called only in remediation.ts and its body never gates, asks or dispatches the write", () => {
+    expect(rules(bad(`${SRC}ipc/x.ts`, "await executor.readBeforeOnly(a);\n"))).toEqual([
+      "remediation-dry-run-confined",
+    ]);
+    expect(rules(bad(`${SRC}ipc/y.ts`, "// executor.readBeforeOnly(a)\n"))).toEqual([]);
+    expect(
+      rules([
+        ...GOOD.filter((f) => f.relPath !== REMEDIATION),
+        file(REMEDIATION, "await executor.readBeforeOnly(buildRemediationAction());\n"),
+      ]),
+    ).toEqual([]);
+    const withBody = (inner: string): FileEntry[] => [
+      ...GOOD.filter((f) => f.relPath !== EXECUTOR),
+      file(EXECUTOR, DRY_RUN_BODY(inner)),
+    ];
+    for (const inner of [
+      "return this.gateWithin(action, undefined, scope);",
+      "return this.approvalPhase(action, p, c, r);",
+      "this.dispatchBoundPhase(action, scope);",
+      "return this.execute(action);",
+      "await this.connectors.dispatch(action);",
+    ]) {
+      expect(rules(withBody(inner)), inner).toEqual(["remediation-dry-run-confined"]);
+    }
+    // A comment naming them is not a call; a missing method is itself a violation.
+    expect(rules(withBody("// this.gateWithin(action) is never called here"))).toEqual([]);
+    expect(
+      rules([...GOOD.filter((f) => f.relPath !== EXECUTOR), file(EXECUTOR, "class T {}\n")]),
+    ).toEqual(["remediation-dry-run-confined"]);
   });
 
   test("clause 3: buildRemediationAction is named only in remediation.ts", () => {

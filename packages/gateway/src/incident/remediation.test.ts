@@ -109,7 +109,7 @@ function harness(
       return { status: "requested" };
     },
   };
-  const makeExecutor: MakeExecutor = ({ clientId, onCaptured, onNonHuman }) => {
+  const makeExecutor: MakeExecutor = ({ clientId, onCaptured, onNonHuman, dryRun }) => {
     makes += 1;
     const wrapped: ConsentCoordinator = {
       ...coordinator,
@@ -138,6 +138,7 @@ function harness(
       egressSink: { append: (e) => egress.push(e) },
       getTribalKbConfig: () => undefined,
       onCaptured,
+      dryRun: dryRun === true,
     });
   };
   const base = buildRecord({ boundService: "payments", openedAtMs: OPENED });
@@ -206,7 +207,7 @@ describe("the bad-deploy rollback, end to end through the real gate", () => {
       undoable: false,
     });
     expect(rb?.evidence?.dryRun).toBe(
-      "no dry run available; the preview shows the target's current state",
+      "--dry-run reads the target's current state and, where its reader captures it, predicts the outcome; nothing is run",
     );
     expect(view.advisory).toBe(false);
     expect(view.proposals.map((p) => p.kind)).toEqual(["rollback_deploy", "acknowledge", "close"]);
@@ -230,7 +231,11 @@ describe("the bad-deploy rollback, end to end through the real gate", () => {
     expect(h.dispatched[1]?.payload).toMatchObject({ input: { name: "pay-app", id: 6 } });
     const stored = getProposal(db, id);
     expect(stored?.status).toBe("executed");
-    expect(JSON.parse(stored?.captured_json ?? "")).toEqual({ currentHistoryId: "7" });
+    expect(JSON.parse(stored?.captured_json ?? "")).toEqual({
+      currentHistoryId: "7",
+      autoSync: "off",
+      historyIds: "7,6,5",
+    });
     expect(stored?.action_id).toBe(out.actionId);
     // The write carries no origin and no caller-chosen tool: built from the stored row.
     const writeRow = db
@@ -843,5 +848,153 @@ describe("a remediation waiting for the owner is never swept as stale (IC5b revi
     expect(out.status).toBe("executed");
     expect(out.undoable).toBe(false);
     expect(out.reason).toContain("cannot be undone");
+  });
+});
+
+describe("the dry run (Phase 17): the before-state reads only, never the write", () => {
+  test("a rollback dry run reads once, predicts the move, prompts for nothing and leaves the proposal open", async () => {
+    const h = harness();
+    const id = pick(h, "rollback_deploy");
+    const out = await h.svc.dryRun({ ref: h.recordId, proposalId: id, clientId: "cli-1" });
+    expect(out.proposalId).toBe(id);
+    expect(out.toolId).toBe("argocd_app_rollback");
+    expect(out.before.status).toBe("ok");
+    expect(out.prediction).toEqual({
+      verdict: "would_change",
+      text: "the application moves from history 7 back to the revision of history 6",
+    });
+    expect(out.label).toContain("not asked to simulate");
+    expect(h.prompts).toEqual([]);
+    expect(h.confirms).toEqual([]);
+    expect(h.dispatched.map((a) => a.type)).toEqual(["argocd.before.read"]);
+    const stored = getProposal(db, id);
+    expect(stored?.status).toBe("proposed");
+    expect(stored?.action_id).toBeNull();
+    expect(stored?.captured_json).toBeNull();
+    // The read is audited with the incident link; the write is not audited at all.
+    const rows = db.query("SELECT action_type, action_json FROM audit_log").all() as Array<{
+      action_type: string;
+      action_json: string;
+    }>;
+    expect(rows.map((r) => r.action_type)).toEqual(["argocd.before.read"]);
+    expect(rows[0]?.action_json).toContain(`"incident":{"id":"${h.recordId}"`);
+    expect(h.egress.length).toBe(1);
+  });
+
+  test("the listing says what --dry-run can do for each proposal", () => {
+    const h = harness();
+    const view = h.svc.proposals(h.recordId).proposals;
+    expect(view.find((p) => p.kind === "rollback_deploy")?.dryRun).toBe("predicted");
+    expect(view.find((p) => p.kind === "acknowledge")?.dryRun).toBe("current_state");
+  });
+
+  test("an alert proposal shows the current state and predicts nothing", async () => {
+    const h = harness();
+    const id = pick(h, "acknowledge");
+    const out = await h.svc.dryRun({ ref: h.recordId, proposalId: id, clientId: "cli-1" });
+    expect(out.prediction.verdict).toBe("none");
+    expect(h.prompts).toEqual([]);
+    expect(h.dispatched.every((a) => a.type.endsWith(".before.read"))).toBe(true);
+  });
+
+  test("advisory mode refuses a dry run before any read or executor, like remediate (I57 (b))", async () => {
+    const h = harness();
+    const id = pick(h, "rollback_deploy");
+    setAdvisory(db, true, NOW);
+    await expect(
+      h.svc.dryRun({ ref: h.recordId, proposalId: id, clientId: "cli-1" }),
+    ).rejects.toMatchObject({ code: "ERR_ADVISORY_MODE" });
+    expect(h.makeCalls()).toBe(0);
+    expect(h.dispatched).toEqual([]);
+  });
+
+  test("a real run's executor is never built for a dry run; a dry run's always is", async () => {
+    const seen: (boolean | undefined)[] = [];
+    const h = harness();
+    const id = pick(h, "acknowledge");
+    const svc = createRemediation({
+      db,
+      makeExecutor: (o) => {
+        seen.push(o.dryRun);
+        return {
+          execute: async () => ({ status: "ok", result: {} }),
+          readBeforeOnly: async () => ({ status: "no_reader" }),
+        };
+      },
+      bindingsFor: () => undefined,
+      dependsOn: () => new Map(),
+      now: () => NOW,
+    });
+    await svc.dryRun({ ref: h.recordId, proposalId: id, clientId: "a" });
+    await svc.remediate({ ref: h.recordId, proposalId: id, clientId: "a" });
+    expect(seen).toEqual([true, undefined]);
+  });
+
+  test("a running proposal is ERR_PROPOSAL_BUSY, an expired-status one ERR_PROPOSAL_EXPIRED", async () => {
+    const h = harness();
+    const id = pick(h, "rollback_deploy");
+    db.run("UPDATE incident_proposal SET status = 'executing' WHERE id = ?", [id]);
+    await expect(
+      h.svc.dryRun({ ref: h.recordId, proposalId: id, clientId: "a" }),
+    ).rejects.toMatchObject({ code: "ERR_PROPOSAL_BUSY" });
+    db.run("UPDATE incident_proposal SET status = 'expired' WHERE id = ?", [id]);
+    await expect(
+      h.svc.dryRun({ ref: h.recordId, proposalId: id, clientId: "a" }),
+    ).rejects.toMatchObject({ code: "ERR_PROPOSAL_EXPIRED" });
+    expect(h.dispatched).toEqual([]);
+  });
+
+  test("an executor without a dry run reads nothing and predicts nothing", async () => {
+    const h = harness();
+    const id = pick(h, "rollback_deploy");
+    const svc = createRemediation({
+      db,
+      makeExecutor: () => ({ execute: async () => ({ status: "ok", result: {} }) }),
+      bindingsFor: () => ({ argocdApps: ["pay-app"], deployEnvironments: ["prod"] }),
+      dependsOn: () => new Map([["checkout", ["payments"]]]),
+      now: () => NOW,
+    });
+    const out = await svc.dryRun({ ref: h.recordId, proposalId: id, clientId: "a" });
+    expect(out.before).toEqual({ status: "no_reader" });
+    expect(out.prediction.verdict).toBe("none");
+  });
+
+  test("refusals: a malformed id, another record's or a missing proposal, one not open, an expired one, a stale one, not ready", async () => {
+    const h = harness();
+    const id = pick(h, "rollback_deploy");
+    const call = (proposalId: string) =>
+      h.svc.dryRun({ ref: h.recordId, proposalId, clientId: "a" });
+    await expect(call("nope")).rejects.toMatchObject({ code: "ERR_PROPOSAL_NOT_FOUND" });
+    await expect(call("prp_0000000000000000")).rejects.toMatchObject({
+      code: "ERR_PROPOSAL_NOT_FOUND",
+    });
+    db.run("UPDATE incident_proposal SET status = 'denied' WHERE id = ?", [id]);
+    await expect(call(id)).rejects.toMatchObject({ code: "ERR_PROPOSAL_STALE" });
+    db.run("UPDATE incident_proposal SET status = 'proposed', expires_at_ms = ? WHERE id = ?", [
+      NOW,
+      id,
+    ]);
+    await expect(call(id)).rejects.toMatchObject({ code: "ERR_PROPOSAL_EXPIRED" });
+    db.run("UPDATE incident_proposal SET expires_at_ms = ?, input_json = ? WHERE id = ?", [
+      NOW + 60_000,
+      JSON.stringify({ name: "pay-app", id: 5 }),
+      id,
+    ]);
+    await expect(call(id)).rejects.toMatchObject({ code: "ERR_PROPOSAL_STALE" });
+    expect(getProposal(db, id)?.status).toBe("proposed");
+    const notReady = createRemediation({
+      db,
+      makeExecutor: () => {
+        throw new Error("never");
+      },
+      ready: () => false,
+      bindingsFor: () => undefined,
+      dependsOn: () => new Map(),
+      now: () => NOW,
+    });
+    await expect(
+      notReady.dryRun({ ref: h.recordId, proposalId: id, clientId: "a" }),
+    ).rejects.toMatchObject({ code: "ERR_REMEDIATION_UNAVAILABLE" });
+    expect(h.dispatched).toEqual([]);
   });
 });
