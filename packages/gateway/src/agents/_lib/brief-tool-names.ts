@@ -34,4 +34,5 @@ export const TOOL_NAME_BY_KIND: Readonly<Record<SynthInput["kind"], string>> = {
   incident_investigation: "agents.incident_investigation",
   // The one record brief a model may rewrite (IC7a): only in a command the owner runs, never unattended.
   incident_postmortem: "agents.incident_postmortem",
+  pr_prereview: "agents.pr_prereview",
 };

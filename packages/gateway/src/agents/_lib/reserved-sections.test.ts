@@ -61,6 +61,7 @@ describe("RESERVED_HEADINGS_BY_KIND", () => {
       "negotiate",
       "oncall",
       "ownership",
+      "pr_prereview",
       "preflight",
       "premortem",
       "standup",

@@ -8,6 +8,7 @@ import { renderBriefing } from "./briefing-render.ts";
 import { renderIncidentData } from "./incident-data-render.ts";
 import { renderIncidentInvestigation } from "./incident-investigation-render.ts";
 import { renderIncidentPostmortem } from "./incident-postmortem-render.ts";
+import { renderPrereview } from "./prreview-render.ts";
 import { renderIncident } from "./incident-render.ts";
 import {
   stripMetaPreamble,
@@ -161,6 +162,8 @@ function deterministicRender(brief: SynthInput, opts?: RenderOpts): string {
       return renderIncidentInvestigation(brief, opts);
     case brief.kind === "incident_postmortem":
       return renderIncidentPostmortem(brief, opts);
+    case brief.kind === "pr_prereview":
+      return renderPrereview(brief, opts);
     default:
       return assertNeverBrief(brief);
   }
