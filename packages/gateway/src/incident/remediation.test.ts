@@ -80,7 +80,12 @@ type Harness = {
 };
 
 function harness(
-  opts: { deployment?: boolean; now?: () => number; onPrompt?: () => void } = {},
+  opts: {
+    deployment?: boolean;
+    now?: () => number;
+    onPrompt?: () => void;
+    dependsOn?: () => ReadonlyMap<string, readonly string[]>;
+  } = {},
 ): Harness {
   const prompts: string[] = [];
   const confirms: string[] = [];
@@ -170,7 +175,7 @@ function harness(
     db,
     makeExecutor,
     bindingsFor: () => ({ argocdApps: ["pay-app"], deployEnvironments: ["prod"] }),
-    dependsOn: () => new Map([["checkout", ["payments"]]]),
+    dependsOn: opts.dependsOn ?? (() => new Map([["checkout", ["payments"]]])),
     now: opts.now ?? (() => NOW),
     newActionId: (() => {
       let n = 0;
@@ -862,6 +867,32 @@ describe("Phase 17 one-tap rollback: the blast radius in the prompt", () => {
     );
     expect(prompt).toContain("Depends on it: checkout");
     expect(prompt).not.toContain("as recorded");
+  });
+
+  test("a depends_on change between listing and running shows the new dependents (the run re-derives before it claims)", async () => {
+    let graph = new Map<string, readonly string[]>([["checkout", ["payments"]]]);
+    const h = harness({ dependsOn: () => graph });
+    const id = pick(h, "rollback_deploy");
+    graph = new Map([
+      ["checkout", ["payments"]],
+      ["ledger", ["payments"]],
+    ]);
+    await h.svc.remediate({ ref: h.recordId, proposalId: id, clientId: "cli-1" });
+    expect(h.prompts[0]).toContain("Depends on it: checkout, ledger");
+  });
+
+  test("a configured name that is not a plain id reaches the prompt only as the unverified line", async () => {
+    const h = harness({ dependsOn: () => new Map([["web‮checkout", ["payments"]]]) });
+    await h.svc.remediate({
+      ref: h.recordId,
+      proposalId: pick(h, "rollback_deploy"),
+      clientId: "cli-1",
+    });
+    const prompt = h.prompts[0] ?? "";
+    expect(prompt).toContain(
+      "Blast radius: not shown - a name in it is not a plain configuration id; check depends_on before approving",
+    );
+    expect(prompt).not.toContain("‮");
   });
 
   test("undo shows the blast radius as recorded when the action ran", async () => {

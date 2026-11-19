@@ -793,6 +793,15 @@ describe("Phase 17 one-tap rollback: the blast radius in the executor's own prom
     );
   });
 
+  test("the recorded label rides on the unbound and unverified forms too", async () => {
+    expect((await linesAfterReversibility(blast({ service: null, recorded: true })))[0]).toBe(
+      "Blast radius (as recorded when the action ran): unknown - the incident is bound to no service, so Nimbus cannot tell what depends on it",
+    );
+    expect((await linesAfterReversibility({ unverified: true, recorded: true }))[0]).toBe(
+      "Blast radius (as recorded when the action ran): not shown - a name in it is not a plain configuration id; check depends_on before approving",
+    );
+  });
+
   test("an engine proposal with no blast field says it was not recorded", async () => {
     expect((await linesAfterReversibility(undefined))[0]).toBe("Blast radius: not recorded");
   });
