@@ -16,7 +16,11 @@ import {
 } from "../connectors/connector-writes/types.ts";
 import { makeEgressSink } from "../egress/egress-ledger.ts";
 import { LocalIndex } from "../index/local-index.ts";
-import { createBeforeStateRunner, isBeforeReadActionType } from "./before-state.ts";
+import {
+  type BeforeStateRunner,
+  createBeforeStateRunner,
+  isBeforeReadActionType,
+} from "./before-state.ts";
 import {
   DRY_RUN_BOUND_REASON,
   DRY_RUN_MISMATCH_REASON,
@@ -69,6 +73,7 @@ function harness(opts: {
   dryRun?: boolean;
   readReply?: unknown;
   rows?: readonly ConnectorWriteRow[];
+  runner?: BeforeStateRunner;
 }) {
   db = new Database(":memory:");
   LocalIndex.ensureSchema(db);
@@ -104,10 +109,12 @@ function harness(opts: {
     NO_POLICY_OVERLAY,
     undefined,
     {
-      beforeState: createBeforeStateRunner({
-        readsEveryOrigin: true,
-        rows: opts.rows ?? [READ_ROW, NO_READER_ROW],
-      }),
+      beforeState:
+        opts.runner ??
+        createBeforeStateRunner({
+          readsEveryOrigin: true,
+          rows: opts.rows ?? [READ_ROW, NO_READER_ROW],
+        }),
       ...(opts.dryRun === false ? {} : { dryRun: true }),
     },
   );
@@ -195,6 +202,23 @@ describe("ToolExecutor.readBeforeOnly (remediation dry run)", () => {
       reason: DRY_RUN_MISMATCH_REASON,
     });
     expect(h.dispatched).toEqual([]);
+  });
+
+  test("a runner that reads nothing is `no_reader`; a runner that throws anything but a refusal propagates", async () => {
+    const quiet: BeforeStateRunner = { rows: [READ_ROW], read: async () => undefined };
+    expect(await harness({ runner: quiet }).exec.readBeforeOnly(WRITE)).toEqual({
+      status: "no_reader",
+    });
+    const broken: BeforeStateRunner = {
+      rows: [READ_ROW],
+      read: async () => {
+        throw new Error("runner broke");
+      },
+    };
+    const h = harness({ runner: broken });
+    await expect(h.exec.readBeforeOnly(WRITE)).rejects.toThrow("runner broke");
+    expect(h.dispatched).toEqual([]);
+    expect(h.prompts).toEqual([]);
   });
 
   test("a bound row and a row that refuses every door are refused before any read or child", async () => {
