@@ -211,11 +211,12 @@ export function formatProposals(r: ProposalsReply): string {
     lines.push("", "Earlier:");
     for (const p of past) {
       const ran = p.actionId === null ? "" : `, action ${clean(p.actionId)}`;
+      // The exact command, so the owner never has to find the action id (Phase 17 one-tap rollback).
       const undo =
         p.undoStatus === "undone"
           ? ", undone"
-          : p.undoable
-            ? ", can be undone: nimbus incident undo"
+          : p.undoable && p.actionId !== null
+            ? `, undo it with: nimbus incident undo ${clean(p.actionId)}`
             : "";
       lines.push(
         `  - ${clean(p.kind)} ${clean(p.toolId)} ${inputText(p.input)} [${clean(p.status)}]${ran}${undo}`,
