@@ -1,7 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 
-import type { SynthesisRunner } from "../agents/_lib/synthesis-llm.ts";
 import { NOW, prUrl, seedDb, seedGithubPr } from "../prreview/__fixtures__/prereview-seed.ts";
 import { checkLanMethodAllowed } from "./lan-rpc.ts";
 import {
@@ -28,7 +27,7 @@ function seeded(): Database {
 }
 
 function ctxFor(db: Database, extra: Partial<PrereviewRpcCtx> = {}): PrereviewRpcCtx {
-  return { db, now: () => NOW, runner: () => undefined, ...extra };
+  return { db, now: () => NOW, ...extra };
 }
 
 async function call(
@@ -53,37 +52,13 @@ async function rejects(p: Promise<unknown>): Promise<PrereviewRpcError> {
 }
 
 describe("prreview.run", () => {
-  test("returns the deterministic brief with no runner built", async () => {
+  test("returns the deterministic brief", async () => {
     const db = seeded();
-    let built = 0;
-    const r = await call(
-      { url: prUrl("acme/app", 9) },
-      ctxFor(db, {
-        runner: () => {
-          built += 1;
-          return undefined;
-        },
-      }),
-    );
-    expect(built).toBe(0);
-    expect(r.synthesis).toBeNull();
+    const r = await call({ url: prUrl("acme/app", 9) }, ctxFor(db));
     expect(r.brief.kind).toBe("pr_prereview");
     expect(r.markdown).toContain("`docs/a.md` also changed");
     expect(r.markdown.endsWith("\n")).toBe(true);
-  });
-
-  test("synthesize: true reaches the runner; no runner available reads as disabled", async () => {
-    const db = seeded();
-    const runner: SynthesisRunner = {
-      run: async () => ({ ok: true, markdown: "VIA-RUNNER", model: "m", remote: false }),
-    };
-    const r = await call({ url: prUrl("acme/app", 9), synthesize: true }, ctxFor(db, { runner: () => runner }));
-    expect(r.markdown).toContain("VIA-RUNNER");
-    expect(r.markdown).toContain("## Gaps");
-    expect(r.synthesis).toMatchObject({ attempted: true, used: true });
-    const none = await call({ url: prUrl("acme/app", 9), synthesize: true }, ctxFor(db));
-    expect(none.synthesis).toEqual({ attempted: false, reason: "disabled" });
-    expect(none.markdown).toContain("## Usually changes with this");
+    expect(Object.keys(r).sort()).toEqual(["brief", "markdown"]);
   });
 
   test("a non-owner kind is refused before any query", async () => {
@@ -99,12 +74,23 @@ describe("prreview.run", () => {
     }
     // the desktop is an owner surface
     const db = seeded();
-    expect((await call({ url: prUrl("acme/app", 9) }, ctxFor(db), "ui")).brief.target.number).toBe(9);
+    expect((await call({ url: prUrl("acme/app", 9) }, ctxFor(db), "ui")).brief.target.number).toBe(
+      9,
+    );
   });
 
   test("bad parameters are -32602", async () => {
     const db = seeded();
-    for (const bad of [null, [], "x", { url: "" }, { url: 7 }, { url: "u", extra: 1 }, { url: "u", synthesize: "yes" }, { url: "x".repeat(3_000) }]) {
+    for (const bad of [
+      null,
+      [],
+      "x",
+      { url: "" },
+      { url: 7 },
+      { url: "u", extra: 1 },
+      { url: "u", synthesize: true },
+      { url: "x".repeat(3_000) },
+    ]) {
       expect((await rejects(call(bad, ctxFor(db)))).rpcCode).toBe(-32602);
     }
   });

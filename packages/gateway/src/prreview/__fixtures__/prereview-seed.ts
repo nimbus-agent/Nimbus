@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 
 import { createMemoryIndexDb } from "../../connectors/connector-sync-test-helpers.ts";
 import { extractPrMetadataForIndex } from "../../connectors/github-sync.ts";
-import { buildPrMetadata } from "../../connectors/pr-meta.ts";
+import { buildPrMetadata, normalizeBitbucketPrState } from "../../connectors/pr-meta.ts";
 import { itemPrimaryKey } from "../../index/item-key.ts";
 import { upsertIndexedItem } from "../../index/item-store.ts";
 import { recordPrChangedFiles } from "../../prfiles/pr-changed-file-store.ts";
@@ -136,4 +136,41 @@ export function seedReview(
     metadata: { repo, pr_number: r.prNumber, review_id: r.reviewId, state: r.state },
     syncedAt: NOW,
   });
+}
+
+/** A Bitbucket PR in the canonical shape: `buildPrMetadata` with NO merge time (Bitbucket never sends one). */
+export function seedBitbucketPr(
+  db: Database,
+  n: number,
+  state: "OPEN" | "MERGED",
+  files: readonly string[],
+): string {
+  const repo = "acme/app";
+  const externalId = `${repo}#${String(n)}`;
+  const url = `https://bitbucket.org/${repo}/pull-requests/${String(n)}`;
+  upsertIndexedItem(db, {
+    service: "bitbucket",
+    type: "pr",
+    externalId,
+    title: `BB ${String(n)}`,
+    body: "",
+    url,
+    canonicalUrl: url,
+    modifiedAt: NOW - n * DAY,
+    metadata: buildPrMetadata(
+      {},
+      { state: normalizeBitbucketPrState(state), stateRaw: state, repo, number: n },
+    ),
+    syncedAt: NOW,
+  });
+  const id = itemPrimaryKey("bitbucket", externalId);
+  recordPrChangedFiles(db, {
+    itemId: id,
+    repoFull: repo,
+    files: files.map((path) => ({ path, status: "modified", counterpartPath: null })),
+    apiFileCount: files.length,
+    truncated: false,
+    nowMs: NOW,
+  });
+  return id;
 }

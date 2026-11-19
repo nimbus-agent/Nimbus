@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { buildRecordKindFixtures } from "../../incident/__fixtures__/data-brief.ts";
 import { buildRecord } from "../../incident/__fixtures__/record-builder.ts";
-import { buildPrereviewFixture } from "../../prreview/__fixtures__/prereview-brief.ts";
 import type { SynthInput } from "./brief-kinds.ts";
 import type { BriefingBrief } from "./briefing-types.ts";
 import type { ChangelogBrief } from "./changelog-types.ts";
@@ -514,7 +513,6 @@ const BY_KIND: Readonly<Record<SynthInput["kind"], SynthInput>> = {
   briefing: BRIEFING,
   incident: INCIDENT,
   ...buildRecordKindFixtures(),
-  pr_prereview: buildPrereviewFixture({ gaps: [GAP] }),
 };
 
 const ALL_KINDS: readonly SynthInput[] = Object.values(BY_KIND);

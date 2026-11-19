@@ -86,7 +86,6 @@ export const RESERVED_HEADINGS_BY_KIND: Readonly<Record<SynthInput["kind"], read
       GAPS_HEADING,
       INCIDENT_FRESHNESS_HEADING,
     ],
-    pr_prereview: [GAPS_HEADING],
   });
 
 export function reservedHeadingsFor(brief: SynthInput): readonly string[] {

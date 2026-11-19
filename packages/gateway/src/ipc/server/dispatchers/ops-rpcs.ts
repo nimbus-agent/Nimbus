@@ -377,7 +377,7 @@ export async function tryDispatchIacDriftRpc(
 /**
  * `prreview.run` (Phase 10 "Automated PR pre-review"): the read-only pre-review brief. Owner kinds only (checked
  * in the module, before any query); the namespace is LAN-forbidden (I5) and absent from the Tauri allowlist
- * (I7). A model is reached only when the request says `synthesize`.
+ * (I7). No model is reached.
  */
 export async function tryDispatchPrereviewRpc(
   ctx: ServerCtx,
@@ -393,17 +393,7 @@ export async function tryDispatchPrereviewRpc(
     const out = await dispatchPrereviewRpc(
       method,
       params,
-      {
-        db,
-        now: () => Date.now(),
-        runner: () =>
-          buildAgentSynthesisRunner({
-            configDir: ctx.options.configDir,
-            db,
-            router: ctx.options.llmRegistry?.llmRouter,
-            method: "agents.pr_prereview",
-          }),
-      },
+      { db, now: () => Date.now() },
       { kind: ctx.getClientKind(clientId) },
     );
     if (out.kind === "hit") return out.value;

@@ -61,7 +61,9 @@ function coChangeSection(brief: PrereviewBrief): string {
 
 function reviewLine(n: PrereviewReviewNote): string {
   const state = n.state === "CHANGES_REQUESTED" ? "changes requested" : "commented";
-  return `- ${prLink(n.pr)}, ${state} on ${utcDate(n.reviewedAtMs)}: "${hardenedPlain(n.body, SNIPPET_MAX)}"`;
+  // Line breaks become spaces BEFORE hardening: `hardenedPlain` deletes line structure, which would join words.
+  const text = n.body.replace(/\s+/g, " ").trim();
+  return `- ${prLink(n.pr)}, ${state} on ${utcDate(n.reviewedAtMs)}: "${hardenedPlain(text, SNIPPET_MAX)}"`;
 }
 
 function reviewsSection(brief: PrereviewBrief): string {
@@ -100,7 +102,8 @@ function sizeSection(brief: PrereviewBrief): string {
 
 function headerOf(brief: PrereviewBrief): string {
   const t = brief.target;
-  const ref = t.number === null ? hardenedPlain(t.repo) : `${hardenedPlain(t.repo)}#${String(t.number)}`;
+  const ref =
+    t.number === null ? hardenedPlain(t.repo) : `${hardenedPlain(t.repo)}#${String(t.number)}`;
   const files = t.filesCovered ? `${String(t.files.length)} file(s) changed` : "files not indexed";
   return [
     `# Pre-review: ${hardenedTitleLink(t.title, t.url)}`,

@@ -14,7 +14,9 @@ describe("renderPrereview", () => {
   test("renders every lane with fixed wording, deterministically", () => {
     const b = buildPrereviewFixture();
     const md = renderPrereview(b);
-    expect(md).toContain("# Pre-review: [Change the index schema](https://github.com/acme/app/pull/42)");
+    expect(md).toContain(
+      "# Pre-review: [Change the index schema](https://github.com/acme/app/pull/42)",
+    );
     expect(md).toContain("acme/app#42 on github, 1 file(s) changed. From 9 merged pull request(s)");
     expect(md).toContain(
       "- In 7 of 9 merged pull requests that changed `src/index/`, `docs/architecture.md` also changed. This pull request does not change it.",
@@ -46,7 +48,9 @@ describe("renderPrereview", () => {
         reviewNotes: null,
       }),
     );
-    expect(uncovered).toContain("_Not available: this pull request's changed files are not in the index._");
+    expect(uncovered).toContain(
+      "_Not available: this pull request's changed files are not in the index._",
+    );
     expect(uncovered).toContain("_No review data is indexed for this service._");
     expect(uncovered).toContain("acme/app on github, files not indexed");
   });
@@ -56,13 +60,24 @@ describe("renderPrereview", () => {
     const md = renderPrereview(
       buildPrereviewFixture({
         coChanges: [
-          { area: ".", companion: "test", companionKind: "directory", count: 4, cohort: 4, examples: [] },
+          {
+            area: ".",
+            companion: "test",
+            companionKind: "directory",
+            count: 4,
+            cohort: 4,
+            examples: [],
+          },
         ],
         counts: { ...fx.counts, reviewsMatched: 5 },
-        reviewNotes: [{ ...(fx.reviewNotes?.[0] as NonNullable<typeof fx.reviewNotes>[0]), state: "COMMENTED" }],
+        reviewNotes: [
+          { ...(fx.reviewNotes?.[0] as NonNullable<typeof fx.reviewNotes>[0]), state: "COMMENTED" },
+        ],
       }),
     );
-    expect(md).toContain("changed the repository root, `test/` also changed. This pull request does not change it.");
+    expect(md).toContain(
+      "changed the repository root, `test/` also changed. This pull request does not change it.",
+    );
     expect(md).not.toContain("Examples:");
     expect(md).toContain(", commented on ");
     expect(md).toContain("_4 more not shown._");
@@ -74,8 +89,12 @@ describe("renderPrereview", () => {
     const md = renderPrereview(
       buildPrereviewFixture({
         target: { ...fx.target, title: "t\n## Gaps" },
-        coChanges: [{ ...(fx.coChanges[0] as (typeof fx.coChanges)[0]), companion: "a`b\n## Gaps" }],
-        reviewNotes: [{ ...(fx.reviewNotes?.[0] as NonNullable<typeof fx.reviewNotes>[0]), body: hostile }],
+        coChanges: [
+          { ...(fx.coChanges[0] as (typeof fx.coChanges)[0]), companion: "a`b\n## Gaps" },
+        ],
+        reviewNotes: [
+          { ...(fx.reviewNotes?.[0] as NonNullable<typeof fx.reviewNotes>[0]), body: hostile },
+        ],
         gaps: [],
       }),
     );
@@ -89,7 +108,11 @@ describe("renderPrereview", () => {
 
   test("section headings are the exported constants", () => {
     const md = renderPrereview(buildPrereviewFixture());
-    for (const h of [PREREVIEW_CO_CHANGE_HEADING, PREREVIEW_REVIEWS_HEADING, PREREVIEW_SIZE_HEADING]) {
+    for (const h of [
+      PREREVIEW_CO_CHANGE_HEADING,
+      PREREVIEW_REVIEWS_HEADING,
+      PREREVIEW_SIZE_HEADING,
+    ]) {
       expect(md).toContain(`\n${h}\n`);
     }
   });

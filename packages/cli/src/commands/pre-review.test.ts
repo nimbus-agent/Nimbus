@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import type { IPCClient } from "../ipc-client/index.ts";
-import { parsePreReviewArgs, type PreReviewSink, runPreReviewWith } from "./pre-review.ts";
+import { type PreReviewSink, parsePreReviewArgs, runPreReviewWith } from "./pre-review.ts";
 
 function sink(): PreReviewSink & { stdout: string; stderr: string } {
   const s = {
@@ -37,17 +37,22 @@ describe("parsePreReviewArgs", () => {
     expect(parsePreReviewArgs(["https://x/pull/1"])).toEqual({
       url: "https://x/pull/1",
       json: false,
-      synthesize: false,
     });
-    expect(parsePreReviewArgs(["https://x/pull/1", "--json", "--synthesize"])).toEqual({
+    expect(parsePreReviewArgs(["https://x/pull/1", "--json"])).toEqual({
       url: "https://x/pull/1",
       json: true,
-      synthesize: true,
     });
   });
 
   test("usage errors", () => {
-    for (const bad of [[], ["--json"], ["a", "b"], ["a", "--yes"], ["a", "--json", "--json"]]) {
+    for (const bad of [
+      [],
+      ["--json"],
+      ["a", "b"],
+      ["a", "--yes"],
+      ["a", "--json", "--json"],
+      ["a", "--synthesize"],
+    ]) {
       expect(parsePreReviewArgs(bad)).toBeUndefined();
     }
   });
@@ -58,8 +63,8 @@ describe("runPreReviewWith", () => {
     const calls: Call[] = [];
     const s = sink();
     const code = await runPreReviewWith(
-      client({ markdown: "# Pre-review: x\n\nbody", synthesis: null }, calls),
-      { url: "https://x/pull/1", json: false, synthesize: false },
+      client({ markdown: "# Pre-review: x\n\nbody" }, calls),
+      { url: "https://x/pull/1", json: false },
       s,
     );
     expect(code).toBe(0);
@@ -69,44 +74,18 @@ describe("runPreReviewWith", () => {
     expect(s.stderr).toBe("");
   });
 
-  test("--synthesize is sent and the outcome is noted on stderr", async () => {
-    const calls: Call[] = [];
-    const used = sink();
-    await runPreReviewWith(
-      client({ markdown: "m\n", synthesis: { attempted: true, used: true, model: "local" } }, calls),
-      { url: "u", json: false, synthesize: true },
-      used,
-    );
-    expect(calls.at(-1)?.params).toEqual({ url: "u", synthesize: true });
-    expect(used.stderr).toContain("Rewritten by local");
-    const off = sink();
-    await runPreReviewWith(
-      client({ markdown: "m", synthesis: { attempted: false, reason: "disabled" } }),
-      { url: "u", json: false, synthesize: true },
-      off,
-    );
-    expect(off.stderr).toContain("No model was used (disabled)");
-    const dropped = sink();
-    await runPreReviewWith(
-      client({ markdown: "m", synthesis: { attempted: true, used: false, reason: "timeout" } }),
-      { url: "u", json: false, synthesize: true },
-      dropped,
-    );
-    expect(dropped.stderr).toContain("was not used (timeout)");
-  });
-
   test("--json prints the raw reply", async () => {
     const s = sink();
-    const reply = { markdown: "m", synthesis: null, brief: { kind: "pr_prereview" } };
-    expect(await runPreReviewWith(client(reply), { url: "u", json: true, synthesize: false }, s)).toBe(0);
+    const reply = { markdown: "m", brief: { kind: "pr_prereview" } };
+    expect(await runPreReviewWith(client(reply), { url: "u", json: true }, s)).toBe(0);
     expect(JSON.parse(s.stdout)).toEqual(reply);
   });
 
   test("control and invisible characters are stripped from what is printed", async () => {
     const s = sink();
     await runPreReviewWith(
-      client({ markdown: `a\u001b[31mred\u202eb\nline2`, synthesis: null }),
-      { url: "u", json: false, synthesize: false },
+      client({ markdown: `a\u001b[31mred\u202eb\nline2` }),
+      { url: "u", json: false },
       s,
     );
     expect(s.stdout).toBe("a [31mred b\nline2\n");
@@ -116,7 +95,7 @@ describe("runPreReviewWith", () => {
     const s = sink();
     const code = await runPreReviewWith(
       client(new Error("ERR_PREREVIEW_UNRESOLVED: not indexed\u001b")),
-      { url: "u", json: false, synthesize: false },
+      { url: "u", json: false },
       s,
     );
     expect(code).toBe(1);

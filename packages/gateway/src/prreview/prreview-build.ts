@@ -38,6 +38,7 @@ export const FINDINGS_MAX = 10;
 export const EXAMPLES_MAX = 3;
 export const REVIEWS_SCANNED = 200;
 export const REVIEWS_SHOWN = 6;
+export const REVIEWS_PER_PR = 2;
 export const TERMS_MAX = 8;
 export const MIN_REVIEWS_FOR_TERM = 2;
 
@@ -59,7 +60,8 @@ export class PrereviewError extends Error {
 }
 
 const MISS_TEXT: Readonly<Record<PrereviewMissReason, string>> = {
-  not_indexed: "that pull request is not in the local index (run `nimbus connector sync <service>`)",
+  not_indexed:
+    "that pull request is not in the local index (run `nimbus connector sync <service>`)",
   ambiguous: "that URL matches more than one indexed item; pass the pull request's own URL",
   not_a_pr: "that URL resolves to an indexed item that is not a pull request or merge request",
   unresolvable_url: "that is not an http or https URL",
@@ -148,9 +150,9 @@ function resolveTarget(db: Database, url: string): ItemRow {
 type CoverageRow = { truncated: number; api_file_count: number };
 
 function filesOf(db: Database, itemId: string): string[] {
-  const rows = db
-    .query("SELECT path FROM pr_changed_file WHERE item_id = ?")
-    .all(itemId) as Array<{ path: string }>;
+  const rows = db.query("SELECT path FROM pr_changed_file WHERE item_id = ?").all(itemId) as Array<{
+    path: string;
+  }>;
   return rows.map((r) => r.path).sort(byString);
 }
 
@@ -180,14 +182,15 @@ function loadHistory(
     .query(
       `SELECT i.id, i.service, i.title, i.url, i.metadata,
               CAST(json_extract(i.metadata, '$.merged_at') AS INTEGER) AS merged_at,
+              COALESCE(CAST(json_extract(i.metadata, '$.merged_at') AS INTEGER), i.modified_at) AS recency,
               s.truncated AS truncated
          FROM item i
          LEFT JOIN pr_files_state s ON s.item_id = i.id
         WHERE i.service = ? AND i.type = 'pr' AND i.id <> ?
           AND json_extract(i.metadata, '$.repo') = ?
           AND json_extract(i.metadata, '$.state') = 'merged'
-          AND CAST(json_extract(i.metadata, '$.merged_at') AS INTEGER) >= ?
-        ORDER BY merged_at DESC, i.id ASC
+          AND COALESCE(CAST(json_extract(i.metadata, '$.merged_at') AS INTEGER), i.modified_at) >= ?
+        ORDER BY recency DESC, i.id ASC
         LIMIT ?`,
     )
     .all(target.service, target.id, repo, since, HISTORY_MAX) as HistoryRow[];
@@ -235,6 +238,14 @@ function touchesKey(files: readonly string[], key: string, kind: "file" | "direc
 
 type Candidate = { key: string; kind: "file" | "directory"; prs: HistoryPr[] };
 
+/** Drops a directory finding when another finding of the same area lies strictly under it (the more specific wins). */
+function mostSpecific(kept: readonly Candidate[]): Candidate[] {
+  return kept.filter(
+    (c) =>
+      c.kind === "file" || !kept.some((o) => o !== c && o.key !== c.key && isUnder(o.key, c.key)),
+  );
+}
+
 /**
  * The co-change findings for ONE area (spec § 3.3). Pure over its inputs, exported for the threshold tests.
  * Returns null when the area has too little history to judge.
@@ -268,19 +279,16 @@ export function coChangesForArea(
     if (touchesKey(targetFiles, c.key, c.kind)) continue;
     kept.push(c);
   }
-  const fileKeys = kept.filter((c) => c.kind === "file").map((c) => c.key);
-  return kept
-    .filter((c) => c.kind === "file" || !fileKeys.some((f) => isUnder(f, c.key)))
-    .map(
-      (c): PrereviewCoChange => ({
-        area,
-        companion: c.key,
-        companionKind: c.kind,
-        count: c.prs.length,
-        cohort: cohort.length,
-        examples: c.prs.slice(0, EXAMPLES_MAX).map((p) => p.ref),
-      }),
-    );
+  return mostSpecific(kept).map(
+    (c): PrereviewCoChange => ({
+      area,
+      companion: c.key,
+      companionKind: c.kind,
+      count: c.prs.length,
+      cohort: cohort.length,
+      examples: c.prs.slice(0, EXAMPLES_MAX).map((p) => p.ref),
+    }),
+  );
 }
 
 function rankCoChanges(a: PrereviewCoChange, b: PrereviewCoChange): number {
@@ -349,7 +357,10 @@ export function recurringTerms(bodies: readonly string[]): PrereviewTerm[] {
     .map(([term, reviews]) => ({ term, reviews }));
 }
 
-function sizeOf(targetMeta: Record<string, unknown>, cohort: readonly HistoryPr[]): PrereviewSize | null {
+function sizeOf(
+  targetMeta: Record<string, unknown>,
+  cohort: readonly HistoryPr[],
+): PrereviewSize | null {
   const add = numOrNull(targetMeta["additions"]);
   const del = numOrNull(targetMeta["deletions"]);
   if (add === null || del === null) return null;
@@ -412,18 +423,26 @@ export function buildPrereviewBrief(db: Database, url: string, nowMs: number): P
   const all: PrereviewCoChange[] = [];
   let thin = 0;
   const cohortIds = new Set<string>();
+  // A truncated file list proves what the PR touches, never what it does not, so it gets no co-change finding.
+  const canJudgeAbsence = coverage !== null && coverage.truncated === 0;
   for (const area of areas) {
     const found = coChangesForArea(area, files, history);
     if (found === null) {
       thin++;
       continue;
     }
-    all.push(...found);
+    if (canJudgeAbsence) all.push(...found);
     for (const pr of history) {
       if (pr.files.some((f) => isUnder(areaOf(f), area))) cohortIds.add(pr.ref.itemId);
     }
   }
-  const ranked = [...all].sort(rankCoChanges);
+  const seenCompanion = new Set<string>();
+  const ranked = [...all].sort(rankCoChanges).filter((c) => {
+    const k = `${c.companionKind}\u0000${c.companion}`;
+    if (seenCompanion.has(k)) return false;
+    seenCompanion.add(k);
+    return true;
+  });
   const coChanges = ranked.slice(0, FINDINGS_MAX);
   const cohort = history.filter((p) => cohortIds.has(p.ref.itemId));
 
@@ -435,7 +454,14 @@ export function buildPrereviewBrief(db: Database, url: string, nowMs: number): P
     for (const p of cohort) if (p.number !== null) byNumber.set(p.number, p.ref);
     const notes = reviewsFor(db, repo, byNumber);
     matched = notes.length;
-    reviewNotes = notes.slice(0, REVIEWS_SHOWN);
+    const perPr = new Map<string, number>();
+    reviewNotes = notes
+      .filter((n) => {
+        const k = perPr.get(n.pr.itemId) ?? 0;
+        perPr.set(n.pr.itemId, k + 1);
+        return k < REVIEWS_PER_PR;
+      })
+      .slice(0, REVIEWS_SHOWN);
     reviewTerms = recurringTerms(notes.map((n) => n.body));
   } else {
     gaps.push({
@@ -444,6 +470,13 @@ export function buildPrereviewBrief(db: Database, url: string, nowMs: number): P
     });
   }
   const size = sizeOf(meta, cohort);
+  if (row.service === "bitbucket") {
+    gaps.push({
+      category: "missing_entity_type",
+      detail:
+        "Bitbucket records no merge time, so the history window uses each pull request's last update time instead.",
+    });
+  }
 
   if (coverage === null) {
     gaps.push({
@@ -455,7 +488,7 @@ export function buildPrereviewBrief(db: Database, url: string, nowMs: number): P
   } else if (coverage.truncated !== 0) {
     gaps.push({
       category: "missing_entity_type",
-      detail: `This pull request's file list is incomplete in the index (${String(files.length)} of ${String(coverage.api_file_count)} files stored), so checks may be missing.`,
+      detail: `This pull request's file list is incomplete in the index (${String(files.length)} of ${String(coverage.api_file_count)} files stored), so no co-change check is shown: a missing file might be among the unstored ones.`,
     });
   }
   if (noCoverage > 0 || truncated > 0) {

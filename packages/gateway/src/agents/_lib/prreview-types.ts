@@ -2,8 +2,8 @@ import type { GapNote } from "@nimbus-dev/sdk";
 
 /**
  * The `pr_prereview` brief (Phase 10 "Automated PR pre-review"). `prreview/prreview-build.ts` builds it from
- * the local index with no model and no write; `prreview-render.ts` renders it deterministically. It is a brief
- * KIND for the I31 machinery (reserved `## Gaps`), not an `agents/` emitter: `ipc/prreview-rpc.ts` answers it
+ * the local index with no model and no write; `prreview-render.ts` renders it deterministically. No model ever
+ * rewrites it (it is not a synthesis kind), and it is not an `agents/` emitter: `ipc/prreview-rpc.ts` answers it
  * (static D22(d)). Types only.
  */
 
