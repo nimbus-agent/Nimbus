@@ -601,6 +601,11 @@ function blastPromptLines(p: EngineProposal): string[] {
   const b = p.blast;
   if (b === undefined) return ["Blast radius: not recorded"];
   const label = b.recorded ? "Blast radius (as recorded when the action ran)" : "Blast radius";
+  if ("unverified" in b) {
+    return [
+      `${label}: not shown - a name in it is not a plain configuration id; check depends_on before approving`,
+    ];
+  }
   if (b.service === null) {
     return [
       `${label}: unknown - the incident is bound to no service, so Nimbus cannot tell what depends on it`,

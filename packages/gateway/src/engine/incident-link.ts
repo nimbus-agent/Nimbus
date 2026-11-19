@@ -92,6 +92,9 @@ function isBlast(x: unknown): boolean {
   const keys = Reflect.ownKeys(x)
     .map(String)
     .sort((a, b) => Number(a > b) - Number(a < b));
+  if (keys.join(",") === "recorded,unverified") {
+    return x["unverified"] === true && typeof x["recorded"] === "boolean";
+  }
   if (keys.join(",") !== BLAST_KEYS.join(",")) return false;
   const deps = x["dependents"];
   return (

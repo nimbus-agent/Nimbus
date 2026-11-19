@@ -113,14 +113,17 @@ export type RunbookStepRef =
  * What a rollback touches, from the owner's configured `depends_on` only (Phase 17 one-tap rollback): the record's
  * bound service, the deploy's environment and the services that depend on it (at most 20, sorted). DISPLAY data.
  */
-export type EngineProposalBlast = {
-  readonly service: string | null;
-  readonly environment: string | null;
-  readonly dependents: readonly string[];
-  readonly dependentsTruncated: boolean;
-  /** True for an undo: the blast radius as recorded when the action ran, not as derived now. */
-  readonly recorded: boolean;
-};
+export type EngineProposalBlast =
+  | {
+      readonly service: string | null;
+      readonly environment: string | null;
+      readonly dependents: readonly string[];
+      readonly dependentsTruncated: boolean;
+      /** True for an undo: the blast radius as recorded when the action ran, not as derived now. */
+      readonly recorded: boolean;
+    }
+  /** The evidence held a blast radius, but a name in it is not a plain configuration id: shown as such. */
+  | { readonly unverified: true; readonly recorded: boolean };
 
 /**
  * What an engine-proposed action's prompt shows: which stored proposal it is, its declared reversibility and

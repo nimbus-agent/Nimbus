@@ -787,6 +787,12 @@ describe("Phase 17 one-tap rollback: the blast radius in the executor's own prom
     );
   });
 
+  test("an unverified blast says it is not shown (never reads as no blast radius)", async () => {
+    expect((await linesAfterReversibility({ unverified: true, recorded: false }))[0]).toBe(
+      "Blast radius: not shown - a name in it is not a plain configuration id; check depends_on before approving",
+    );
+  });
+
   test("an engine proposal with no blast field says it was not recorded", async () => {
     expect((await linesAfterReversibility(undefined))[0]).toBe("Blast radius: not recorded");
   });
@@ -799,6 +805,9 @@ describe("Phase 17 one-tap rollback: the blast radius in the executor's own prom
       { ...blast(), dependents: Array.from({ length: 21 }, (_, i) => `s${String(i)}`) },
       { ...blast(), dependentsTruncated: "no" },
       { service: "checkout" },
+      { unverified: false, recorded: false },
+      { unverified: true },
+      { unverified: true, recorded: false, service: "x" },
     ];
     for (const b of bad) {
       const h = harness();

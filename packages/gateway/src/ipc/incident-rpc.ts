@@ -39,7 +39,7 @@ import type { ClientKind } from "./server/client-kind.ts";
  *   incident.investigate { id }                        -> { investigation, markdown }                            (IC9a)
  *   incident.proposals { id }                          -> { recordId, version, advisory, proposals, unavailable }  (IC5a)
  *   incident.remediate { id, proposalId }              -> { proposalId, actionId, status, reason?, nonHuman, undoable }  (IC5a)
- *   incident.undo { actionId } | { last: true }       -> { actionId, status, reason?, nonHuman }  (IC5a; last: Phase 17)
+ *   incident.undo { actionId }                         -> { actionId, status, reason?, nonHuman }  (IC5a)
  *   incident.advisory {}                               -> { advisory }  (IC5a)
  *   incident.advisorySet { on }                        -> { advisory }  (IC5a)
  *   incident.debt { since?, untouched?, minIncidents?, limit? } -> DebtResult   (IC7b; runs `git log` under debt/, never from incident/)
@@ -674,18 +674,7 @@ export async function dispatchIncidentRpc(
     },
     "incident.undo": async (raw) => {
       requireOwnerKind(caller.kind);
-      const p = requireKeys("incident.undo", raw, ["actionId", "last"]);
-      // Exactly one of the two: an explicit action id, or `last: true` (the newest action that can be undone).
-      if (p["last"] !== undefined) {
-        if (p["last"] !== true || p["actionId"] !== undefined) {
-          throw new IncidentRpcError(
-            -32602,
-            "incident.undo: pass either actionId or last: true, not both",
-          );
-        }
-        const clientId = callerClient("incident.undo", caller);
-        return remediationCall(() => remediationOf(ctx).undoLast({ clientId }));
-      }
+      const p = requireKeys("incident.undo", raw, ["actionId"]);
       const actionId = parseActionId(p);
       const clientId = callerClient("incident.undo", caller);
       return remediationCall(() => remediationOf(ctx).undo({ actionId, clientId }));

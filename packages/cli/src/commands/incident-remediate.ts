@@ -13,7 +13,7 @@ import { stripControl } from "./captures-format.ts";
 
 export const REMEDIATE_USAGE =
   "       nimbus incident remediate <id> [--pick <n|prp_...>] [--json]   list the proposals; with --pick, run one (needs a terminal)\n" +
-  "       nimbus incident undo [<act_...>]                               reverse an executed reversible action; no id: the latest (needs a terminal)\n" +
+  "       nimbus incident undo <act_...>                                 reverse an executed reversible action (needs a terminal)\n" +
   "       nimbus incident advisory on|off|status [--json]                advisory mode: proposals are shown, nothing is run";
 
 export type RemediationArgs =
@@ -23,8 +23,7 @@ export type RemediationArgs =
       readonly id: string;
       readonly pick?: string;
     }
-  /** No `actionId`: the newest engine action that can still be undone (the gateway picks it). */
-  | { readonly verb: "undo"; readonly actionId?: string }
+  | { readonly verb: "undo"; readonly actionId: string }
   | { readonly verb: "advisory"; readonly json: boolean; readonly action: "on" | "off" | "status" };
 
 /** `--yes`, `-y` and any spelling of `--script-consent-source`: a person approves, nothing else. */
@@ -72,7 +71,6 @@ export function parseRemediationArgs(
   if (verb === "remediate") return parseRemediate(rest);
   if (verb === "undo") {
     const [id, ...more] = rest;
-    if (id === undefined) return { verb: "undo" };
     return more.length === 0 && ID_OK(id) && /^act_[0-9a-f]{16}$/.test(id)
       ? { verb: "undo", actionId: id }
       : undefined;
@@ -213,11 +211,12 @@ export function formatProposals(r: ProposalsReply): string {
     lines.push("", "Earlier:");
     for (const p of past) {
       const ran = p.actionId === null ? "" : `, action ${clean(p.actionId)}`;
+      // The exact command, so the owner never has to find the action id (Phase 17 one-tap rollback).
       const undo =
         p.undoStatus === "undone"
           ? ", undone"
-          : p.undoable
-            ? ", can be undone: nimbus incident undo"
+          : p.undoable && p.actionId !== null
+            ? `, undo it with: nimbus incident undo ${clean(p.actionId)}`
             : "";
       lines.push(
         `  - ${clean(p.kind)} ${clean(p.toolId)} ${inputText(p.input)} [${clean(p.status)}]${ran}${undo}`,
@@ -290,7 +289,7 @@ async function runRemediate(
 export function reportRemediateOutcome(out: RemediateReply, sink: Sink): number {
   if (out.status === "executed") {
     sink.out(
-      `Done. Action ${clean(out.actionId)}.${out.undoable ? ` Undo with: nimbus incident undo (while it is the latest) or nimbus incident undo ${clean(out.actionId)}` : ""}\n`,
+      `Done. Action ${clean(out.actionId)}.${out.undoable ? ` Undo with: nimbus incident undo ${clean(out.actionId)}` : ""}\n`,
     );
     // The gateway ran it but could not record it (its proposal row changed meanwhile): say so, still exit 0.
     if (out.reason !== undefined) sink.err(`Note: ${clean(out.reason)}\n`);
@@ -311,15 +310,7 @@ async function runUndo(
     sink.err(`${TTY_REFUSAL}\n`);
     return 2;
   }
-  if (a.actionId === undefined) {
-    sink.out(
-      "Undoing the most recent action the incident engine ran that can still be undone; the prompt names it.\n",
-    );
-  }
-  const out = await c.call<UndoReply>(
-    "incident.undo",
-    a.actionId === undefined ? { last: true } : { actionId: a.actionId },
-  );
+  const out = await c.call<UndoReply>("incident.undo", { actionId: a.actionId });
   if (out.status === "undone") {
     sink.out(`Undone. Action ${clean(out.actionId)} was reversed.\n`);
     return 0;

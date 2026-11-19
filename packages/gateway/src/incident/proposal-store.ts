@@ -237,20 +237,6 @@ export function supersedeProposal(db: Database, id: string, nowMs: number): bool
   );
 }
 
-/**
- * The executed engine actions that may still be undone, newest first (at most 50): no undo yet and a recorded
- * before-state. Whether the row is reversible today is the caller's check (`remediation.ts` `undoLast`).
- */
-export function latestUndoableCandidates(db: Database): ProposalRow[] {
-  return db
-    .query(
-      `SELECT * FROM incident_proposal
-        WHERE status = 'executed' AND undo_status IS NULL AND captured_json IS NOT NULL AND action_id IS NOT NULL
-        ORDER BY updated_at_ms DESC, id DESC LIMIT 50`,
-    )
-    .all() as ProposalRow[];
-}
-
 /** Take the single undo of an executed action: `executed` with no undo yet to `undoing`. False if not claimable. */
 export function claimUndo(db: Database, actionId: string, nowMs: number): boolean {
   return (

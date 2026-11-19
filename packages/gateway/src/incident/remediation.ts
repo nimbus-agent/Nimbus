@@ -25,7 +25,6 @@ import {
   getProposal,
   getProposalByAction,
   isAdvisory,
-  latestUndoableCandidates,
   listProposals,
   type ProposalRow,
   setAdvisory,
@@ -172,24 +171,27 @@ function parseEvidence(json: string): unknown {
 const FAIL_TEXT_MAX = 200;
 
 /**
- * The blast radius a prompt may show, from a proposal's evidence (Phase 17 one-tap rollback). Every name must be a
- * configuration id ({@link BLAST_NAME_RE}); anything else, or a malformed evidence object, gives `undefined`, and
- * the prompt then says the blast radius was not recorded. Never throws.
+ * The blast radius a prompt may show, from a proposal's evidence (Phase 17 one-tap rollback). No blast in the
+ * evidence gives `undefined` (the prompt says it was not recorded). A blast whose names are not all
+ * configuration ids ({@link BLAST_NAME_RE}), or that is malformed, gives the `unverified` form, so the prompt
+ * says it is not shown rather than implying there is none. Never throws.
  */
 export function blastForPrompt(
   evidence: unknown,
   recorded: boolean,
 ): EngineProposalBlast | undefined {
   if (evidence === null || typeof evidence !== "object") return undefined;
+  if (!Object.hasOwn(evidence, "blast")) return undefined;
+  const unverified = { unverified: true, recorded } as const;
   const b = (evidence as { blast?: unknown }).blast;
-  if (b === null || typeof b !== "object") return undefined;
+  if (b === null || typeof b !== "object") return unverified;
   const { service, environment, dependents, dependentsTruncated } = b as Record<string, unknown>;
   const name = (x: unknown): x is string => typeof x === "string" && BLAST_NAME_RE.test(x);
-  if (service !== null && !name(service)) return undefined;
-  if (environment !== null && environment !== undefined && !name(environment)) return undefined;
-  if (!Array.isArray(dependents) || dependents.length > BLAST_MAX_DEPENDENTS) return undefined;
-  if (!dependents.every(name)) return undefined;
-  if (typeof dependentsTruncated !== "boolean") return undefined;
+  if (service !== null && !name(service)) return unverified;
+  if (environment !== null && environment !== undefined && !name(environment)) return unverified;
+  if (!Array.isArray(dependents) || dependents.length > BLAST_MAX_DEPENDENTS) return unverified;
+  if (!dependents.every(name)) return unverified;
+  if (typeof dependentsTruncated !== "boolean") return unverified;
   return {
     service,
     environment: environment ?? null,
@@ -594,37 +596,11 @@ export function createRemediation(deps: RemediationDeps) {
     }
   }
 
-  /**
-   * Undo the MOST RECENT engine action that can still be undone (`nimbus incident undo` with no id): executed, no
-   * undo yet, a recorded before-state and a `reversible` row today. Then exactly the `undo` path above, so the owner
-   * still approves the inverse in the executor's prompt. Advisory mode refuses first, before any lookup.
-   */
-  async function undoLast(p: { readonly clientId: string }): Promise<UndoOutcome> {
-    if (isAdvisory(db)) {
-      throw new RemediationError(
-        "ERR_ADVISORY_MODE",
-        "advisory mode is on: nothing is run (nimbus incident advisory off)",
-      );
-    }
-    requireReady();
-    const target = latestUndoableCandidates(db).find(
-      (c) => c.action_id !== null && rowOf(c.tool_id)?.reversibility?.class === "reversible",
-    );
-    if (target === undefined || target.action_id === null) {
-      throw new RemediationError(
-        "ERR_PROPOSAL_NOT_FOUND",
-        "nothing the incident engine ran can be undone right now",
-      );
-    }
-    return await undo({ actionId: target.action_id, clientId: p.clientId });
-  }
-
   return {
     proposals,
     topProposal,
     remediate,
     undo,
-    undoLast,
     advisory: (): boolean => isAdvisory(db),
     setAdvisory: (on: boolean): boolean => {
       setAdvisory(db, on, now());
