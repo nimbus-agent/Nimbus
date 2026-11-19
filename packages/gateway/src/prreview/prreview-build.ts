@@ -171,6 +171,7 @@ type HistoryPr = {
 
 type HistoryRow = ItemRow & { merged_at: number | null; truncated: number | null };
 
+// lane-census: scope=pr service=github,gitlab,bitbucket
 function loadHistory(
   db: Database,
   target: ItemRow,
@@ -302,6 +303,7 @@ function rankCoChanges(a: PrereviewCoChange, b: PrereviewCoChange): number {
 
 type ReviewRow = { body: string | null; modified_at: number; metadata: string | null };
 
+// lane-census: scope=review service=github
 function reviewsFor(
   db: Database,
   repo: string,
@@ -397,6 +399,7 @@ const OWNERS_GAP: GapNote = {
 };
 
 /** Builds the pre-review brief for `url`. Throws {@link PrereviewError} when the URL is not an indexed PR. */
+// lane-census: scope=pr service=github,gitlab,bitbucket
 export function buildPrereviewBrief(db: Database, url: string, nowMs: number): PrereviewBrief {
   const row = resolveTarget(db, url);
   const meta = parseMeta(row.metadata);
