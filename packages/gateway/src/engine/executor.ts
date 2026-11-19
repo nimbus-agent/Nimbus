@@ -592,6 +592,28 @@ function reversibilityPromptLine(p: EngineProposal): string {
     : "Reversibility: unknown - Nimbus does not know whether this can be undone";
 }
 
+/**
+ * Phase 17 one-tap rollback: what the action touches, from the owner's configured `depends_on`, in the
+ * executor's own prompt so every door (the terminal, a push, a ChatOps card) shows it. The names passed
+ * `assertEngineProposal` (`BLAST_NAME_RE`), so they carry no control text. DISPLAY only.
+ */
+function blastPromptLines(p: EngineProposal): string[] {
+  const b = p.blast;
+  if (b === undefined) return ["Blast radius: not recorded"];
+  const label = b.recorded ? "Blast radius (as recorded when the action ran)" : "Blast radius";
+  if (b.service === null) {
+    return [
+      `${label}: unknown - the incident is bound to no service, so Nimbus cannot tell what depends on it`,
+    ];
+  }
+  const first = `${label}: service ${b.service}, environment ${b.environment ?? "unknown"}`;
+  if (b.dependents.length === 0) return [first, "Depends on it: nothing declared (depends_on)"];
+  const more = b.dependentsTruncated
+    ? ` (first ${String(b.dependents.length)}; more depend on it)`
+    : "";
+  return [first, `Depends on it: ${b.dependents.join(", ")}${more}`];
+}
+
 function runbookStepPromptLines(r: RunbookStepRef): string[] {
   const first = `Proposed by: runbook ${r.runbook}, step ${String(r.step)}`;
   if (r.kind === "read") return [first];
@@ -619,7 +641,11 @@ function formatConsentPromptBody(
   // IC5a (I57 (b)): the incident engine's proposal names itself and its declared reversibility, the
   // irreversible label first and in capitals. Gateway-set, never payload text.
   if (action.engineProposal !== undefined) {
-    lines.push("Proposed by: the incident engine", reversibilityPromptLine(action.engineProposal));
+    lines.push(
+      "Proposed by: the incident engine",
+      reversibilityPromptLine(action.engineProposal),
+      ...blastPromptLines(action.engineProposal),
+    );
   }
   // IC6 (I57 (c)): a step of an owner-authored runbook names the runbook and the step (the name is checked
   // against `RUNBOOK_NAME_RE` by the gate's link check, so it carries no control text). Gateway-set.

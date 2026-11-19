@@ -6,9 +6,13 @@ import { REMEDIATION_CATALOG } from "../connectors/connector-writes/remediation-
 import { reversibilityClassOf } from "../connectors/connector-writes/reversibility.ts";
 import type { ConnectorWriteRow } from "../connectors/connector-writes/types.ts";
 import { mcpClientToolKey } from "../connectors/lazy-mesh/tool-map.ts";
-import { ENGINE_PROPOSAL_ID_RE } from "../engine/incident-link.ts";
+import {
+  BLAST_MAX_DEPENDENTS,
+  BLAST_NAME_RE,
+  ENGINE_PROPOSAL_ID_RE,
+} from "../engine/incident-link.ts";
 import { serviceOf } from "../engine/service-of.ts";
-import type { ActionResult, PlannedAction } from "../engine/types.ts";
+import type { ActionResult, EngineProposalBlast, PlannedAction } from "../engine/types.ts";
 import { resolveIncidentRef } from "./incident-id.ts";
 import { mintIncidentLink } from "./incident-link-mint.ts";
 import type { IncidentRecordV1 } from "./incident-record-types.ts";
@@ -21,6 +25,7 @@ import {
   getProposal,
   getProposalByAction,
   isAdvisory,
+  latestUndoableCandidates,
   listProposals,
   type ProposalRow,
   setAdvisory,
@@ -156,7 +161,43 @@ export type UndoOutcome = {
 };
 
 const ACTION_ID_RE = /^act_[0-9a-f]{16}$/;
+
+function parseEvidence(json: string): unknown {
+  try {
+    return JSON.parse(json) as unknown;
+  } catch {
+    return null;
+  }
+}
 const FAIL_TEXT_MAX = 200;
+
+/**
+ * The blast radius a prompt may show, from a proposal's evidence (Phase 17 one-tap rollback). Every name must be a
+ * configuration id ({@link BLAST_NAME_RE}); anything else, or a malformed evidence object, gives `undefined`, and
+ * the prompt then says the blast radius was not recorded. Never throws.
+ */
+export function blastForPrompt(
+  evidence: unknown,
+  recorded: boolean,
+): EngineProposalBlast | undefined {
+  if (evidence === null || typeof evidence !== "object") return undefined;
+  const b = (evidence as { blast?: unknown }).blast;
+  if (b === null || typeof b !== "object") return undefined;
+  const { service, environment, dependents, dependentsTruncated } = b as Record<string, unknown>;
+  const name = (x: unknown): x is string => typeof x === "string" && BLAST_NAME_RE.test(x);
+  if (service !== null && !name(service)) return undefined;
+  if (environment !== null && environment !== undefined && !name(environment)) return undefined;
+  if (!Array.isArray(dependents) || dependents.length > BLAST_MAX_DEPENDENTS) return undefined;
+  if (!dependents.every(name)) return undefined;
+  if (typeof dependentsTruncated !== "boolean") return undefined;
+  return {
+    service,
+    environment: environment ?? null,
+    dependents: [...dependents],
+    dependentsTruncated,
+    recorded,
+  };
+}
 
 function failText(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err);
@@ -227,12 +268,7 @@ export function createRemediation(deps: RemediationDeps) {
   function view(p: ProposalRow): ProposalView {
     const row = rowOf(p.tool_id);
     const decl = row?.reversibility;
-    let evidence: ProposalEvidence | null = null;
-    try {
-      evidence = JSON.parse(p.evidence_json) as ProposalEvidence;
-    } catch {
-      evidence = null;
-    }
+    const evidence = parseEvidence(p.evidence_json) as ProposalEvidence | null;
     return {
       id: p.id,
       kind: p.kind,
@@ -320,12 +356,14 @@ export function createRemediation(deps: RemediationDeps) {
     proposalId: string,
     row: ConnectorWriteRow,
     input: unknown,
+    blast: EngineProposalBlast | undefined,
   ): PlannedAction {
+    const reversibility = reversibilityClassOf(row);
     return {
       type: row.actionType,
       payload: { mcpToolId: mcpClientToolKey(serviceOf(row.actionType), row.toolId), input },
       incident: mintIncidentLink(db, recordId),
-      engineProposal: { proposalId, reversibility: reversibilityClassOf(row) },
+      engineProposal: { proposalId, reversibility, ...(blast === undefined ? {} : { blast }) },
     };
   }
 
@@ -400,11 +438,14 @@ export function createRemediation(deps: RemediationDeps) {
     try {
       const row = rowOf(stored.tool_id);
       if (row === undefined) throw new Error("the write row for this proposal no longer exists");
+      // The blast radius comes from the derivation that just proved the proposal still offered, not from the
+      // stored row: the owner's `depends_on` may have changed since the proposal was first listed.
       const action = buildRemediationAction(
         rec.recordId,
         stored.id,
         row,
         JSON.parse(stored.input_json) as unknown,
+        blastForPrompt(draft.evidence, false),
       );
       const executor = deps.makeExecutor({
         clientId: p.clientId,
@@ -519,7 +560,13 @@ export function createRemediation(deps: RemediationDeps) {
     inFlight.add(stored.id);
     try {
       const inverseId = proposalIdFor(stored.record_id, "undo", inverseRow.toolId, inverseInput);
-      const action = buildRemediationAction(stored.record_id, inverseId, inverseRow, inverseInput);
+      const action = buildRemediationAction(
+        stored.record_id,
+        inverseId,
+        inverseRow,
+        inverseInput,
+        blastForPrompt(parseEvidence(stored.evidence_json), true),
+      );
       const executor = deps.makeExecutor({
         clientId: p.clientId,
         onCaptured: () => {},
@@ -547,11 +594,37 @@ export function createRemediation(deps: RemediationDeps) {
     }
   }
 
+  /**
+   * Undo the MOST RECENT engine action that can still be undone (`nimbus incident undo` with no id): executed, no
+   * undo yet, a recorded before-state and a `reversible` row today. Then exactly the `undo` path above, so the owner
+   * still approves the inverse in the executor's prompt. Advisory mode refuses first, before any lookup.
+   */
+  async function undoLast(p: { readonly clientId: string }): Promise<UndoOutcome> {
+    if (isAdvisory(db)) {
+      throw new RemediationError(
+        "ERR_ADVISORY_MODE",
+        "advisory mode is on: nothing is run (nimbus incident advisory off)",
+      );
+    }
+    requireReady();
+    const target = latestUndoableCandidates(db).find(
+      (c) => c.action_id !== null && rowOf(c.tool_id)?.reversibility?.class === "reversible",
+    );
+    if (target === undefined || target.action_id === null) {
+      throw new RemediationError(
+        "ERR_PROPOSAL_NOT_FOUND",
+        "nothing the incident engine ran can be undone right now",
+      );
+    }
+    return await undo({ actionId: target.action_id, clientId: p.clientId });
+  }
+
   return {
     proposals,
     topProposal,
     remediate,
     undo,
+    undoLast,
     advisory: (): boolean => isAdvisory(db),
     setAdvisory: (on: boolean): boolean => {
       setAdvisory(db, on, now());

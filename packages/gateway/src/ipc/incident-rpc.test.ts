@@ -450,6 +450,10 @@ describe("IC5a: remediate, undo, proposals and the advisory switch", () => {
           undoable: false,
         };
       },
+      undoLast: async (p: { clientId: string }) => {
+        calls.push(`undoLast ${p.clientId}`);
+        return { actionId: "act_last", status: "undone", nonHuman: false };
+      },
       undo: async (p: { actionId: string; clientId: string }) => {
         calls.push(`undo ${p.actionId} ${p.clientId}`);
         return { actionId: p.actionId, status: "undone", nonHuman: false };
@@ -507,6 +511,7 @@ describe("IC5a: remediate, undo, proposals and the advisory switch", () => {
       { remediation: r },
     );
     await act("incident.undo", { actionId: "act_0123456789abcdef" }, { remediation: r });
+    await act("incident.undo", { last: true }, { remediation: r });
     expect(await act("incident.advisory", {}, { remediation: r })).toEqual({ advisory: true });
     expect(await act("incident.advisorySet", { on: false }, { remediation: r })).toEqual({
       advisory: false,
@@ -515,6 +520,7 @@ describe("IC5a: remediate, undo, proposals and the advisory switch", () => {
       "proposals inc_a",
       "remediate inc_a prp_0123456789abcdef client-1",
       "undo act_0123456789abcdef client-1",
+      "undoLast client-1",
       "advisory",
       "set false",
     ]);
@@ -586,6 +592,13 @@ describe("IC5a: remediate, undo, proposals and the advisory switch", () => {
       ["incident.undo", {}, /actionId must be a non-empty string/],
       ["incident.undo", { actionId: "" }, /actionId/],
       ["incident.undo", { actionId: "a", id: "b" }, /unknown parameter "id"/],
+      ["incident.undo", { last: false }, /either actionId or last: true/],
+      ["incident.undo", { last: "yes" }, /either actionId or last: true/],
+      [
+        "incident.undo",
+        { last: true, actionId: "act_0123456789abcdef" },
+        /either actionId or last: true/,
+      ],
       ["incident.advisory", { on: true }, /unknown parameter "on"/],
       ["incident.advisorySet", {}, /on must be a boolean/],
       ["incident.advisorySet", { on: "yes" }, /on must be a boolean/],

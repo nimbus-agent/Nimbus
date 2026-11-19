@@ -75,17 +75,52 @@ const REVERSIBILITY_LABELS: ReadonlySet<unknown> = new Set([
   "unknown",
 ]);
 
-/** Throws unless `x` is exactly `{ proposalId: prp_<16 hex>, reversibility: <one of the three labels> }`. */
+/** A service or environment name the blast radius may carry: a configuration id, never provider text. */
+export const BLAST_NAME_RE = /^[A-Za-z0-9._:/@+-]{1,128}$/;
+
+/** The most dependents a blast radius lists (`incident/proposals.ts` stops there and sets the truncation flag). */
+export const BLAST_MAX_DEPENDENTS = 20;
+
+const BLAST_KEYS = ["dependents", "dependentsTruncated", "environment", "recorded", "service"];
+
+function isBlastName(x: unknown): boolean {
+  return typeof x === "string" && BLAST_NAME_RE.test(x);
+}
+
+function isBlast(x: unknown): boolean {
+  if (!isPlainData(x)) return false;
+  const keys = Reflect.ownKeys(x)
+    .map(String)
+    .sort((a, b) => Number(a > b) - Number(a < b));
+  if (keys.join(",") !== BLAST_KEYS.join(",")) return false;
+  const deps = x["dependents"];
+  return (
+    (x["service"] === null || isBlastName(x["service"])) &&
+    (x["environment"] === null || isBlastName(x["environment"])) &&
+    Array.isArray(deps) &&
+    deps.length <= BLAST_MAX_DEPENDENTS &&
+    deps.every(isBlastName) &&
+    typeof x["dependentsTruncated"] === "boolean" &&
+    typeof x["recorded"] === "boolean"
+  );
+}
+
+/**
+ * Throws unless `x` is exactly `{ proposalId: prp_<16 hex>, reversibility: <one of the three labels> }`, optionally
+ * with a `blast` of exactly the {@link EngineProposalBlast} shape (names matching {@link BLAST_NAME_RE}).
+ */
 export function assertEngineProposal(x: unknown): asserts x is EngineProposal {
+  const keys = isPlainData(x) ? Reflect.ownKeys(x) : [];
   const ok =
     isPlainData(x) &&
-    Reflect.ownKeys(x).length === 2 &&
+    (keys.length === 2 ||
+      (keys.length === 3 && Object.hasOwn(x, "blast") && isBlast(x["blast"]))) &&
     typeof x["proposalId"] === "string" &&
     ENGINE_PROPOSAL_ID_RE.test(x["proposalId"]) &&
     REVERSIBILITY_LABELS.has(x["reversibility"]);
   if (!ok) {
     throw new IncidentLinkError(
-      "an engine proposal must be exactly { proposalId: prp_<16 hex>, reversibility: reversible | irreversible | unknown }",
+      "an engine proposal must be exactly { proposalId: prp_<16 hex>, reversibility: reversible | irreversible | unknown, blast? }",
     );
   }
 }

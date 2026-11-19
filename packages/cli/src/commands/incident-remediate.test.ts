@@ -136,9 +136,10 @@ describe("parsing", () => {
     }
   });
 
-  test("undo takes exactly one act_ id; advisory takes on, off or status", () => {
+  test("undo takes one act_ id or none (the latest); advisory takes on, off or status", () => {
     expect(parseRemediationArgs("undo", [ACT])).toEqual({ verb: "undo", actionId: ACT });
-    for (const bad of [[], ["act_x"], [REC], [ACT, "x"], ["--act"]]) {
+    expect(parseRemediationArgs("undo", [])).toEqual({ verb: "undo" });
+    for (const bad of [["act_x"], [REC], [ACT, "x"], ["--act"]]) {
       expect(parseRemediationArgs("undo", bad)).toBeUndefined();
     }
     expect(parseRemediationArgs("advisory", ["on"])).toEqual({
@@ -376,7 +377,9 @@ describe("running", () => {
       method: "incident.remediate",
       params: { id: REC, proposalId: PRP },
     });
-    expect(h.out.join("")).toContain(`Done. Action ${ACT}. Undo with: nimbus incident undo ${ACT}`);
+    expect(h.out.join("")).toContain(
+      `Done. Action ${ACT}. Undo with: nimbus incident undo (while it is the latest) or nimbus incident undo ${ACT}`,
+    );
     expect(h.out.join("")).toContain("Running [reversible] rollback_deploy");
   });
 
@@ -439,6 +442,17 @@ describe("running", () => {
       ).toBe(1);
       expect(h.err.join("")).toContain(expected);
     }
+  });
+
+  test("bare undo asks the gateway for the latest undoable action and says so first", async () => {
+    const h = harness({ "incident.undo": { actionId: ACT, status: "undone", nonHuman: false } });
+    expect(await runRemediation(h.ipc, { verb: "undo" }, h.sink, TTY)).toBe(0);
+    expect(h.calls[0]).toEqual({ method: "incident.undo", params: { last: true } });
+    expect(h.out.join("")).toContain("Undoing the most recent action the incident engine ran");
+    expect(h.out.join("")).toContain(`Undone. Action ${ACT} was reversed.`);
+    const noTty = harness({});
+    expect(await runRemediation(noTty.ipc, { verb: "undo" }, noTty.sink, NO_TTY)).toBe(2);
+    expect(noTty.calls).toHaveLength(0);
   });
 
   test("undo: done, declined, failed, non-human", async () => {

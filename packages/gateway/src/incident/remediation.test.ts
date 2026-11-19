@@ -14,7 +14,12 @@ import { buildRecord } from "./__fixtures__/record-builder.ts";
 import type { DeploymentView } from "./incident-record-types.ts";
 import { upsertIncidentRecord } from "./incident-store.ts";
 import { getProposal, getProposalByAction, setAdvisory } from "./proposal-store.ts";
-import { createRemediation, type MakeExecutor, RemediationError } from "./remediation.ts";
+import {
+  blastForPrompt,
+  createRemediation,
+  type MakeExecutor,
+  RemediationError,
+} from "./remediation.ts";
 
 function must<T>(x: T | undefined): T {
   if (x === undefined) throw new Error("expected a value");
@@ -240,7 +245,7 @@ describe("the bad-deploy rollback, end to end through the real gate", () => {
       true,
     );
     expect(writeRow.action_json).toContain(
-      `"engineProposal":{"proposalId":"${id}","reversibility":"reversible"}`,
+      `"engineProposal":{"proposalId":"${id}","reversibility":"reversible","blast":{`,
     );
     expect(writeRow.action_json).not.toContain('"origin"');
     expect(h.egress.length).toBeGreaterThanOrEqual(2);
@@ -843,5 +848,116 @@ describe("a remediation waiting for the owner is never swept as stale (IC5b revi
     expect(out.status).toBe("executed");
     expect(out.undoable).toBe(false);
     expect(out.reason).toContain("cannot be undone");
+  });
+});
+
+describe("Phase 17 one-tap rollback: blast radius in the prompt, undo of the latest action", () => {
+  test("remediate shows the blast radius derived NOW: the bound service, its environment and its dependents", async () => {
+    const h = harness();
+    const id = pick(h, "rollback_deploy");
+    await h.svc.remediate({ ref: h.recordId, proposalId: id, clientId: "cli-1" });
+    const prompt = h.prompts[0] ?? "";
+    expect(prompt).toContain(
+      `Blast radius: service payments, environment ${DEPLOYMENT.environment ?? "unknown"}`,
+    );
+    expect(prompt).toContain("Depends on it: checkout");
+    expect(prompt).not.toContain("as recorded");
+  });
+
+  test("undo shows the blast radius as recorded when the action ran", async () => {
+    const h = harness();
+    const out = await h.svc.remediate({
+      ref: h.recordId,
+      proposalId: pick(h, "rollback_deploy"),
+      clientId: "cli-1",
+    });
+    await h.svc.undo({ actionId: out.actionId, clientId: "cli-1" });
+    expect(h.prompts[1]).toContain(
+      "Blast radius (as recorded when the action ran): service payments",
+    );
+  });
+
+  test("undoLast reverses the newest action that can still be undone, through the same prompt", async () => {
+    let t = NOW;
+    const h = harness({ now: () => t });
+    const ack = await h.svc.remediate({
+      ref: h.recordId,
+      proposalId: pick(h, "acknowledge"),
+      clientId: "cli-1",
+    });
+    t += 1000;
+    const rb = await h.svc.remediate({
+      ref: h.recordId,
+      proposalId: pick(h, "rollback_deploy"),
+      clientId: "cli-1",
+    });
+    expect(rb.undoable).toBe(true);
+    const before = h.prompts.length;
+    const undone = await h.svc.undoLast({ clientId: "cli-1" });
+    expect(undone).toEqual({ actionId: rb.actionId, status: "undone", nonHuman: false });
+    expect(h.prompts.length).toBe(before + 1);
+    // The rollback is undone; the acknowledgement (not reversible here, or not captured) is not picked next.
+    expect(ack.actionId).not.toBe(rb.actionId);
+    await expect(h.svc.undoLast({ clientId: "cli-1" })).rejects.toMatchObject({
+      code: "ERR_PROPOSAL_NOT_FOUND",
+    });
+  });
+
+  test("undoLast with nothing to undo is ERR_PROPOSAL_NOT_FOUND and builds no executor", async () => {
+    const h = harness();
+    await expect(h.svc.undoLast({ clientId: "a" })).rejects.toMatchObject({
+      code: "ERR_PROPOSAL_NOT_FOUND",
+    });
+    expect(h.makeCalls()).toBe(0);
+  });
+
+  test("undoLast is refused in advisory mode before any lookup", async () => {
+    const h = harness();
+    await h.svc.remediate({
+      ref: h.recordId,
+      proposalId: pick(h, "rollback_deploy"),
+      clientId: "a",
+    });
+    const made = h.makeCalls();
+    h.svc.setAdvisory(true);
+    await expect(h.svc.undoLast({ clientId: "a" })).rejects.toMatchObject({
+      code: "ERR_ADVISORY_MODE",
+    });
+    expect(h.makeCalls()).toBe(made);
+  });
+});
+
+describe("blastForPrompt (the names a prompt may carry)", () => {
+  const ok = {
+    blast: {
+      service: "payments",
+      environment: "prod",
+      dependents: ["a"],
+      dependentsTruncated: false,
+    },
+  };
+  test("a well-formed evidence blast passes through, with the recorded flag", () => {
+    expect(blastForPrompt(ok, true)).toEqual({
+      service: "payments",
+      environment: "prod",
+      dependents: ["a"],
+      dependentsTruncated: false,
+      recorded: true,
+    });
+  });
+  test("anything that is not configuration ids gives undefined (the prompt says not recorded)", () => {
+    const bad: unknown[] = [
+      null,
+      "x",
+      {},
+      { blast: null },
+      { blast: { ...ok.blast, service: "payments" } },
+      { blast: { ...ok.blast, environment: "prod‮" } },
+      { blast: { ...ok.blast, dependents: "a" } },
+      { blast: { ...ok.blast, dependents: ["bad name"] } },
+      { blast: { ...ok.blast, dependents: Array.from({ length: 21 }, (_, i) => `s${String(i)}`) } },
+      { blast: { ...ok.blast, dependentsTruncated: 1 } },
+    ];
+    for (const b of bad) expect(blastForPrompt(b, false)).toBeUndefined();
   });
 });

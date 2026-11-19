@@ -16922,6 +16922,25 @@ describe("I57 (b) - an engine-proposed action reaches dispatch only as the local
     );
   });
 
+  test("3b (Phase 17 one-tap rollback): the blast radius is shown in the executor's own prompt, derived fresh for a remediation, and only configuration ids reach it", async () => {
+    const exec = await read("packages/gateway/src/engine/executor.ts");
+    const branch = exec.slice(exec.indexOf("if (action.engineProposal !== undefined) {"));
+    expect(branch.slice(0, 300)).toContain("...blastPromptLines(action.engineProposal)");
+    expect(exec).toContain('return ["Blast radius: not recorded"];');
+    const link = await read("packages/gateway/src/engine/incident-link.ts");
+    expect(link).toContain("export const BLAST_NAME_RE = /^[A-Za-z0-9._:/@+-]{1,128}$/;");
+    const rem = await read("packages/gateway/src/incident/remediation.ts");
+    // A remediation's prompt reads the derivation that just proved the proposal still offered; an undo says it is recorded.
+    expect(rem).toContain("blastForPrompt(draft.evidence, false)");
+    expect(rem).toContain("blastForPrompt(parseEvidence(stored.evidence_json), true)");
+    // undoLast ends in the same undo path (advisory first, then the one claim and the executor's prompt).
+    const ul = rem.slice(rem.indexOf("async function undoLast("));
+    expect(ul.indexOf("isAdvisory(db)")).toBeLessThan(ul.indexOf("latestUndoableCandidates(db)"));
+    expect(ul.slice(0, 1200)).toContain(
+      "return await undo({ actionId: target.action_id, clientId: p.clientId });",
+    );
+  });
+
   test("4: the remediation executor has no delegation, no standing rules and no unattended flag; its consent takes a human answer only", async () => {
     const run = await read("packages/gateway/src/engine/run-ask.ts");
     const at = run.indexOf("function newRemediationExecutor(");
