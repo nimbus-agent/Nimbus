@@ -121,6 +121,8 @@ PRIVACY & AUDIT
   nimbus security scan        Local security scan (secrets, vulnerable deps, risky IaC)
   nimbus cost anomalies [--service <id>] [--days <n>] [--json]
                               Days whose cloud spend jumped over the 7-day baseline, from the local index
+  nimbus cost waste [--service <id>] [--kind <kind>] [--json]
+                              Orphaned or idle resources among the FinOps vendor's recommendations (read-only)
   nimbus data export|import|delete   Encrypted bundle export/import; per-service deletion
   nimbus vault set|get|delete|list   Secrets (OS keyring only — never config, never logs)
   nimbus telemetry show | disable
