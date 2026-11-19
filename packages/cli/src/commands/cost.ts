@@ -2,6 +2,7 @@ import { CliExit } from "../lib/cli-exit.ts";
 import { stripControlChars } from "../lib/strip-control-chars.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { getCliPlatformPaths } from "../paths.ts";
+import { parseCostWasteArgs, runCostWasteWith } from "./cost-waste.ts";
 
 /**
  * `nimbus cost anomalies [--service <id>] [--days <n>] [--json]` - the cost anomaly detector over the
@@ -20,7 +21,9 @@ export interface CostSink {
   err(s: string): void;
 }
 
-export const COST_USAGE = "Usage: nimbus cost anomalies [--service <id>] [--days <1-30>] [--json]";
+export const COST_USAGE =
+  "Usage: nimbus cost anomalies [--service <id>] [--days <1-30>] [--json]\n" +
+  "       nimbus cost waste [--service <id>] [--kind <unattached|idle|orphaned_snapshot|empty_environment>] [--json]";
 
 export interface CostAnomaliesArgs {
   readonly json: boolean;
@@ -221,18 +224,22 @@ export async function runCostAnomaliesWith(
 }
 
 export async function runCostCommand(args: string[]): Promise<void> {
-  const a = args[0] === "anomalies" ? parseCostAnomaliesArgs(args.slice(1)) : undefined;
-  if (a === undefined) {
+  const sink: CostSink = {
+    out: (s) => process.stdout.write(s),
+    err: (s) => process.stderr.write(s),
+  };
+  let run: ((c: CostIpc) => Promise<number>) | undefined;
+  if (args[0] === "anomalies") {
+    const a = parseCostAnomaliesArgs(args.slice(1));
+    if (a !== undefined) run = (c) => runCostAnomaliesWith(c, a, sink);
+  } else if (args[0] === "waste") {
+    const w = parseCostWasteArgs(args.slice(1));
+    if (w !== undefined) run = (c) => runCostWasteWith(c, w, sink);
+  }
+  if (run === undefined) {
     process.stderr.write(`${COST_USAGE}\n`);
     throw new CliExit(1);
   }
-  const code = await withGatewayIpc(
-    (c) =>
-      runCostAnomaliesWith(c, a, {
-        out: (s) => process.stdout.write(s),
-        err: (s) => process.stderr.write(s),
-      }),
-    getCliPlatformPaths(),
-  );
+  const code = await withGatewayIpc(run, getCliPlatformPaths());
   if (code !== 0) throw new CliExit(code);
 }

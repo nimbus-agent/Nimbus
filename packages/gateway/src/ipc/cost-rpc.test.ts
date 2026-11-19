@@ -4,12 +4,18 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { initLayeredConfig, resetLayeredConfigsForTests } from "../config/layered-config.ts";
-import { costAllocationItem, mapVantageCostRow } from "../connectors/vantage-cost-mapping.ts";
+import {
+  costAllocationItem,
+  mapVantageCostRow,
+  mapVantageRecommendationToItem,
+} from "../connectors/vantage-cost-mapping.ts";
 import type { CostAnomalyResult } from "../finops/cost-anomaly-query.ts";
 import { type CostPoint, DAY_MS } from "../finops/cost-item-contract.ts";
 import { rollUpCostPoints } from "../finops/cost-rollup.ts";
+import type { CostWasteResult } from "../finops/cost-waste-query.ts";
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
@@ -26,7 +32,7 @@ beforeEach(() => {
   runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
   dir = mkdtempSync(join(tmpdir(), "nimbus-cost-rpc-"));
   globalThis.fetch = (() => {
-    throw new Error("cost.anomalies must never make a network call");
+    throw new Error("the cost methods must never make a network call");
   }) as unknown as typeof fetch;
 });
 afterEach(() => {
@@ -107,5 +113,46 @@ describe("cost.anomalies", () => {
     const err = await call(params).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(CostRpcError);
     expect((err as CostRpcError).rpcCode).toBe(-32602);
+  });
+});
+
+async function callWaste(params: unknown): Promise<CostWasteResult> {
+  const out = await dispatchCostRpc("cost.waste", params, { db, now: () => SYNCED });
+  if (out.kind !== "hit") throw new Error("miss");
+  return out.value as CostWasteResult;
+}
+
+describe("cost.waste", () => {
+  test("an empty index is no_data, and waste is reported from indexed recommendations", async () => {
+    expect((await callWaste(undefined)).status).toBe("no_data");
+    const item = mapVantageRecommendationToItem(
+      { token: "r1", type: "unattached_volume", potential_savings: "12", currency_code: "USD" },
+      { syncedAt: SYNCED },
+    );
+    if (item === null) throw new Error("mapper refused the fixture");
+    upsertIndexedItem(db, item);
+    const r = await callWaste({ service: "vantage", kind: "unattached" });
+    expect(r.status).toBe("waste");
+    expect(r.candidates[0]?.estimatedMonthlySavings).toBe(12);
+  });
+
+  test.each([
+    [null, "requires an object payload"],
+    [[], "requires an object payload"],
+    [{ days: 1 }, 'unknown parameter "days"'],
+    [{ service: "aws" }, "service must be a cost service id"],
+    [{ kind: "rightsizing" }, "kind must be one of"],
+  ])("refuses %p", async (params, message) => {
+    const err = await callWaste(params).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(CostRpcError);
+    expect((err as CostRpcError).rpcCode).toBe(-32602);
+    expect((err as Error).message).toContain(message);
+  });
+
+  test("no cost method is renderer-callable (I7): the desktop bridge names none", async () => {
+    const rust = await Bun.file(
+      fileURLToPath(new URL("../../../ui/src-tauri/src/gateway_bridge.rs", import.meta.url)),
+    ).text();
+    expect(rust).not.toContain('"cost.');
   });
 });

@@ -1602,8 +1602,9 @@ export async function tryDispatchStatuspageRpc(
 }
 
 /**
- * `cost.anomalies` (Phase 10 FinOps) - the cost anomaly detector over the indexed daily cost series, local
- * index only. Also answers in a demo gateway (no cost rows there: `no_data`). LAN-forbidden by the `cost`
+ * `cost.anomalies` (Phase 10 FinOps) - the cost anomaly detector over the indexed daily cost series - and
+ * `cost.waste` (the waste report over the indexed FinOps recommendations), local index only. Both also
+ * answer in a demo gateway (no cost rows there: `no_data`). LAN-forbidden by the `cost`
  * namespace entry (I5); NOT renderer-callable (CLI only).
  */
 export async function tryDispatchCostRpc(

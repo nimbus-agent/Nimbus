@@ -43,6 +43,13 @@ describe("tryDispatchCostRpc", () => {
     expect(out.status).toBe("no_data");
   });
 
+  test("cost.waste is answered through the same group", async () => {
+    const out = (await tryDispatchPhase4Rpc(makeCtx(true), "cost.waste", {}, "c1")) as {
+      status: string;
+    };
+    expect(out.status).toBe("no_data");
+  });
+
   test("other namespaces, other cost methods and a missing index are skipped", async () => {
     expect(await tryDispatchCostRpc(makeCtx(true), "oncall.now", {})).toBe(phase4RpcSkipped);
     expect(await tryDispatchCostRpc(makeCtx(true), "cost.zzz", {})).toBe(phase4RpcSkipped);
@@ -59,5 +66,6 @@ describe("tryDispatchCostRpc", () => {
 
   test("the demo gateway does not refuse it (its index has no cost rows)", () => {
     expect(demoRefusal("cost.anomalies")).toBeUndefined();
+    expect(demoRefusal("cost.waste")).toBeUndefined();
   });
 });

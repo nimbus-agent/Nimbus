@@ -196,11 +196,12 @@ describe("runCostAnomaliesWith json and errors", () => {
 
 describe("runCostCommand", () => {
   test("a bad subcommand or flag prints usage and exits 1", async () => {
-    for (const argv of [[], ["bogus"], ["anomalies", "--nope"]]) {
+    for (const argv of [[], ["bogus"], ["anomalies", "--nope"], ["waste", "--kind", "nope"]]) {
       const err = await runCostCommand(argv).catch((e: unknown) => e);
       expect(err).toBeInstanceOf(CliExit);
       expect((err as CliExit).code).toBe(1);
     }
     expect(COST_USAGE).toContain("nimbus cost anomalies");
+    expect(COST_USAGE).toContain("nimbus cost waste");
   });
 });
