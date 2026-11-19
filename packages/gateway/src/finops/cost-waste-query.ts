@@ -169,19 +169,24 @@ function currencyTotals(cands: readonly WasteCandidate[]): CurrencyTotal[] {
     t.count += 1;
     by.set(key, t);
   }
-  return [...by.values()].sort(
-    (a, b) =>
-      b.monthlySavings - a.monthlySavings || (a.currency ?? "").localeCompare(b.currency ?? ""),
-  );
+  return [...by.values()].sort((a, b) => compareCurrency(a.currency, b.currency));
+}
+
+/**
+ * Currency codes by code unit (no currency last). Never locale-aware: two codes that differ only in
+ * case must not compare equal, or the comparator would stop before its later keys.
+ */
+function compareCurrency(a: string | null, b: string | null): number {
+  if (a === b) return 0;
+  if (a === null) return 1;
+  if (b === null) return -1;
+  return a < b ? -1 : 1;
 }
 
 /** Currency first (no currency last), then saving descending (no estimate last), title, id. */
 function compareCandidates(a: WasteCandidate, b: WasteCandidate): number {
-  if (a.currency !== b.currency) {
-    if (a.currency === null) return 1;
-    if (b.currency === null) return -1;
-    return a.currency.localeCompare(b.currency);
-  }
+  const byCurrency = compareCurrency(a.currency, b.currency);
+  if (byCurrency !== 0) return byCurrency;
   const sa = a.estimatedMonthlySavings;
   const sb = b.estimatedMonthlySavings;
   if (sa !== sb) {

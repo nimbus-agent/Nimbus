@@ -97,6 +97,8 @@ describe("runCostWasteWith", () => {
     expect(text).toContain("unattached: 1 (40.00 USD/month)");
     expect(text).toContain("40.00 USD/month, 2 resource(s) (aws, EBS, account 123)");
     expect(text).toContain("docs: https://example.com/doc");
+    expect(text).toContain("id: i1");
+    expect(text).toContain("Candidates (by currency, largest saving first):");
     expect(text).toContain("[idle] Idle instance: no estimate");
     expect(text).toContain("... and 4 more");
     expect(text).toContain("Nothing was deleted or queued");

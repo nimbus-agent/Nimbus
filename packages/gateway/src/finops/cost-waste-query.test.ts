@@ -100,9 +100,10 @@ describe("queryCostWaste", () => {
       { token: "d", type: "idle_instance" },
     ]);
     const r = queryCostWaste(db, { nowMs: NOW });
+    // Ordered by currency code, never by comparing amounts across currencies.
     expect(r.totals).toEqual([
-      { currency: "USD", monthlySavings: 30, count: 2 },
       { currency: "EUR", monthlySavings: 7, count: 1 },
+      { currency: "USD", monthlySavings: 30, count: 2 },
     ]);
     expect(r.byKind).toEqual([
       {
@@ -175,8 +176,8 @@ describe("queryCostWaste", () => {
       { token: "b", type: "idle_instance", potential_savings: "99" },
     ]);
     expect(queryCostWaste(db, { nowMs: NOW }).totals).toEqual([
-      { currency: null, monthlySavings: 99, count: 1 },
       { currency: "USD", monthlySavings: 10, count: 1 },
+      { currency: null, monthlySavings: 99, count: 1 },
     ]);
   });
 
@@ -209,5 +210,21 @@ describe("queryCostWaste", () => {
     const r = queryCostWaste(db, { nowMs: NOW });
     expect(r.counts.recommendations).toBe(1);
     expect(r.candidates.map((c) => c.kind)).toEqual(["idle"]);
+  });
+
+  test("currency codes that differ only in case stay apart and keep a total order", () => {
+    const db = freshDb();
+    indexRecs(db, [
+      { token: "a", type: "idle_instance", potential_savings: "1", currency_code: "usd" },
+      { token: "b", type: "idle_instance", potential_savings: "2", currency_code: "USD" },
+      { token: "c", type: "idle_instance", potential_savings: "3", currency_code: "usd" },
+    ]);
+    const r = queryCostWaste(db, { nowMs: NOW });
+    expect(r.totals.map((t) => t.currency)).toEqual(["USD", "usd"]);
+    expect(r.candidates.map((c) => [c.currency, c.estimatedMonthlySavings])).toEqual([
+      ["USD", 2],
+      ["usd", 3],
+      ["usd", 1],
+    ]);
   });
 });

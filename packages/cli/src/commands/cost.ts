@@ -223,19 +223,27 @@ export async function runCostAnomaliesWith(
   }
 }
 
-export async function runCostCommand(args: string[]): Promise<void> {
-  const sink: CostSink = {
-    out: (s) => process.stdout.write(s),
-    err: (s) => process.stderr.write(s),
-  };
-  let run: ((c: CostIpc) => Promise<number>) | undefined;
+/** The run for `nimbus cost <args>`, or undefined for a usage error (no gateway is contacted). */
+export function costRunner(
+  args: readonly string[],
+  sink: CostSink,
+): ((c: CostIpc) => Promise<number>) | undefined {
   if (args[0] === "anomalies") {
     const a = parseCostAnomaliesArgs(args.slice(1));
-    if (a !== undefined) run = (c) => runCostAnomaliesWith(c, a, sink);
-  } else if (args[0] === "waste") {
-    const w = parseCostWasteArgs(args.slice(1));
-    if (w !== undefined) run = (c) => runCostWasteWith(c, w, sink);
+    return a === undefined ? undefined : (c) => runCostAnomaliesWith(c, a, sink);
   }
+  if (args[0] === "waste") {
+    const w = parseCostWasteArgs(args.slice(1));
+    return w === undefined ? undefined : (c) => runCostWasteWith(c, w, sink);
+  }
+  return undefined;
+}
+
+export async function runCostCommand(args: string[]): Promise<void> {
+  const run = costRunner(args, {
+    out: (s) => process.stdout.write(s),
+    err: (s) => process.stderr.write(s),
+  });
   if (run === undefined) {
     process.stderr.write(`${COST_USAGE}\n`);
     throw new CliExit(1);

@@ -129,6 +129,7 @@ function candidateLines(c: Candidate): string {
   const affected =
     c.resourcesAffected === null ? "" : `, ${String(c.resourcesAffected)} resource(s)`;
   let text = `  [${c.kind}] ${clean(c.title)}: ${saving}${affected}${where === "" ? "" : ` (${where})`}\n`;
+  text += `      id: ${clean(c.itemId)}\n`;
   if (c.documentationUrl !== null) text += `      docs: ${clean(c.documentationUrl)}\n`;
   return text;
 }
@@ -153,7 +154,7 @@ function render(r: WasteResult, sink: CostWasteSink): number {
     for (const k of r.byKind) {
       sink.out(`  ${k.kind}: ${String(k.count)} (${totalsText(k.totals, k.noEstimate)})\n`);
     }
-    sink.out("Candidates (largest saving first):\n");
+    sink.out("Candidates (by currency, largest saving first):\n");
     for (const cand of r.candidates) sink.out(candidateLines(cand));
     if (r.candidatesTruncated > 0) {
       sink.out(`  ... and ${String(r.candidatesTruncated)} more (use --kind to narrow).\n`);
