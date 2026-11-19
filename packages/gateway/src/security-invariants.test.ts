@@ -16983,7 +16983,7 @@ describe("I57 (b) - an engine-proposed action reaches dispatch only as the local
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
     // `proposals` is the read the desktop gains at IC10b (pinned by the IC10a/IC10b I7 test); the four that
     // START an action or flip the switch stay off.
-    for (const m of ["remediate", "undo", "advisory", "advisorySet"]) {
+    for (const m of ["remediate", "dryRun", "undo", "advisory", "advisorySet"]) {
       // The method name appears in the Rust file exactly once: in the incident negative list (each entry asserted
       // `!is_method_allowed`), never in the allowlist.
       const hits = rust.split(`"incident.${m}"`).length - 1;
@@ -16997,11 +16997,32 @@ describe("I57 (b) - an engine-proposed action reaches dispatch only as the local
     const lan = await read("packages/gateway/src/ipc/lan-rpc.ts");
     expect(lan).toContain('"incident"');
     const rpc = await read("packages/gateway/src/ipc/incident-rpc.ts");
-    for (const m of ["proposals", "remediate", "undo", "advisory", "advisorySet"]) {
+    for (const m of ["proposals", "remediate", "dryRun", "undo", "advisory", "advisorySet"]) {
       const at = rpc.indexOf(`"incident.${m}": async (raw) => {`);
       expect(at, m).toBeGreaterThan(-1);
       expect(rpc.slice(at, at + 120), m).toContain("requireOwnerKind(caller.kind);");
     }
+  });
+
+  test("9 (Phase 17): the dry run reads only: advisory refuses it first, its executor is the only one built for it, and readBeforeOnly never gates, asks or dispatches", async () => {
+    const rem = stripComments(await read("packages/gateway/src/incident/remediation.ts"));
+    const start = rem.indexOf("async function dryRun(");
+    expect(start).toBeGreaterThan(-1);
+    const body = rem.slice(start, rem.indexOf("\n  }\n", start));
+    // Advisory mode refuses before anything else (I57 (b)), as remediate and undo do.
+    expect(body.indexOf("isAdvisory(db)")).toBeGreaterThan(-1);
+    expect(body.indexOf("isAdvisory(db)")).toBeLessThan(body.indexOf("requireReady()"));
+    // It never claims, never finishes and never writes the proposal store.
+    for (const forbidden of ["claimProposal", "finishProposal", "syncProposals", "supersedeProposal", ".execute("]) {
+      expect(body, forbidden).not.toContain(forbidden);
+    }
+    // Its executor is built for a dry run, through the one action builder; real runs never pass the flag.
+    expect(body).toContain("dryRun: true,");
+    expect(body).toContain("buildRemediationAction(");
+    expect(rem.match(/dryRun: true,/g)).toHaveLength(1);
+    const runAsk = await read("packages/gateway/src/engine/run-ask.ts");
+    expect(runAsk).toContain("dryRun: p.dryRun === true,");
+    // Static D46(c) clause 5 runs over the real tree in test 1 (a missing readBeforeOnly body is itself a violation).
   });
 
   test("7: the action is built from the stored row: the caller supplies a record and a proposal id and nothing else", async () => {

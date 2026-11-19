@@ -8,7 +8,15 @@ import type { ConnectorWriteRow } from "../connectors/connector-writes/types.ts"
 import { mcpClientToolKey } from "../connectors/lazy-mesh/tool-map.ts";
 import { ENGINE_PROPOSAL_ID_RE } from "../engine/incident-link.ts";
 import { serviceOf } from "../engine/service-of.ts";
+import type { BeforeOnlyOutcome } from "../engine/executor.ts";
 import type { ActionResult, PlannedAction } from "../engine/types.ts";
+import {
+  DRY_RUN_LABEL,
+  type DryRunKind,
+  type DryRunPrediction,
+  dryRunKindOf,
+  predictOutcome,
+} from "../connectors/connector-writes/dry-run-predict.ts";
 import { resolveIncidentRef } from "./incident-id.ts";
 import { mintIncidentLink } from "./incident-link-mint.ts";
 import type { IncidentRecordV1 } from "./incident-record-types.ts";
@@ -72,7 +80,11 @@ export class RemediationError extends Error {
 }
 
 /** What the engine needs of an executor: one call. Production: the remediation `ToolExecutor`. */
-export type ExecutorLike = { execute(action: PlannedAction): Promise<ActionResult> };
+export type ExecutorLike = {
+  execute(action: PlannedAction): Promise<ActionResult>;
+  /** The row's before-state reads only, never the write (Phase 17 dry run); absent: no dry run. */
+  readBeforeOnly?(action: PlannedAction): Promise<BeforeOnlyOutcome>;
+};
 
 export type MakeExecutor = (opts: {
   readonly clientId: string;
@@ -80,6 +92,8 @@ export type MakeExecutor = (opts: {
   readonly onCaptured: (action: PlannedAction, captured: Readonly<Record<string, string>>) => void;
   /** Told when an approval was refused because it did not come from a person. */
   readonly onNonHuman: () => void;
+  /** Phase 17: build it for a dry run (it may then run `readBeforeOnly`); absent for every real run. */
+  readonly dryRun?: boolean;
 }) => ExecutorLike;
 
 export type RemediationDeps = {
@@ -117,6 +131,17 @@ export type ProposalView = {
   readonly actionId: string | null;
   readonly undoStatus: string | null;
   readonly undoable: boolean;
+  /** What `--dry-run` can do for this proposal's tool (Phase 17). */
+  readonly dryRun: DryRunKind;
+};
+
+/** A dry run's result (Phase 17): the live read and the outcome predicted from it. Nothing was run. */
+export type DryRunOutcome = {
+  readonly proposalId: string;
+  readonly toolId: string;
+  readonly before: BeforeOnlyOutcome;
+  readonly prediction: DryRunPrediction;
+  readonly label: string;
 };
 
 export type ProposalsResult = {
@@ -252,6 +277,7 @@ export function createRemediation(deps: RemediationDeps) {
         p.undo_status === null &&
         p.captured_json !== null &&
         decl?.class === "reversible",
+      dryRun: dryRunKindOf(p.tool_id, row?.before !== undefined),
     };
   }
 
@@ -464,6 +490,87 @@ export function createRemediation(deps: RemediationDeps) {
     }
   }
 
+  /**
+   * Phase 17 dry run: the proposal's row's before-state reads through the remediation executor, and the outcome
+   * predicted from them. Refused in advisory mode like `remediate` (I57 (b)): a dry run still reads the target with
+   * the owner's credentials. It claims nothing and writes nothing to the proposal store; the action is built in the
+   * one place (`buildRemediationAction`, static D46(c)). The reply carries the reader's display fields only, never
+   * the captured machine values.
+   */
+  async function dryRun(p: {
+    readonly ref: string;
+    readonly proposalId: string;
+    readonly clientId: string;
+  }): Promise<DryRunOutcome> {
+    if (isAdvisory(db)) {
+      throw new RemediationError(
+        "ERR_ADVISORY_MODE",
+        "advisory mode is on: nothing is read or run (nimbus incident advisory off)",
+      );
+    }
+    requireReady();
+    if (!ENGINE_PROPOSAL_ID_RE.test(p.proposalId)) {
+      throw new RemediationError("ERR_PROPOSAL_NOT_FOUND", "that is not a proposal id");
+    }
+    const rec = requireRecord(p.ref);
+    const stored = getProposal(db, p.proposalId);
+    if (stored === null || stored.record_id !== rec.recordId) {
+      throw new RemediationError("ERR_PROPOSAL_NOT_FOUND", "no proposal of this incident has that id");
+    }
+    if (inFlight.has(stored.id) || stored.status === "executing") {
+      throw new RemediationError("ERR_PROPOSAL_BUSY", "that proposal is already running");
+    }
+    if (stored.status === "expired") {
+      throw new RemediationError("ERR_PROPOSAL_EXPIRED", "that proposal expired; list the proposals again");
+    }
+    if (stored.status !== "proposed") {
+      throw new RemediationError(
+        "ERR_PROPOSAL_STALE",
+        `that proposal is ${stored.status}; list the proposals again`,
+      );
+    }
+    if (stored.expires_at_ms <= now()) {
+      throw new RemediationError("ERR_PROPOSAL_EXPIRED", "that proposal expired; list the proposals again");
+    }
+    // Derive only (no store write): the proposal must still be offered, identical, for the record as it is now.
+    const draft = deriveFor(rec).drafts.find((d) => d.id === stored.id);
+    if (
+      draft === undefined ||
+      stored.tool_id !== draft.toolId ||
+      stored.input_json !== JSON.stringify(draft.input)
+    ) {
+      throw new RemediationError(
+        "ERR_PROPOSAL_STALE",
+        "the incident record has changed and no longer offers this proposal; list the proposals again",
+      );
+    }
+    const row = rowOf(stored.tool_id);
+    if (row === undefined) {
+      throw new RemediationError("ERR_PROPOSAL_STALE", "the write row for this proposal no longer exists");
+    }
+    const input = JSON.parse(stored.input_json) as unknown;
+    let captured: Readonly<Record<string, string>> | undefined;
+    const executor = deps.makeExecutor({
+      clientId: p.clientId,
+      onCaptured: (a, c) => {
+        if (a.engineProposal?.proposalId === stored.id) captured = c;
+      },
+      onNonHuman: () => {},
+      dryRun: true,
+    });
+    const before: BeforeOnlyOutcome =
+      executor.readBeforeOnly === undefined
+        ? { status: "no_reader" }
+        : await executor.readBeforeOnly(buildRemediationAction(rec.recordId, stored.id, row, input));
+    return {
+      proposalId: stored.id,
+      toolId: stored.tool_id,
+      before,
+      prediction: predictOutcome(stored.tool_id, input, before.status === "ok" ? captured : undefined),
+      label: DRY_RUN_LABEL,
+    };
+  }
+
   async function undo(p: {
     readonly actionId: string;
     readonly clientId: string;
@@ -551,6 +658,7 @@ export function createRemediation(deps: RemediationDeps) {
     proposals,
     topProposal,
     remediate,
+    dryRun,
     undo,
     advisory: (): boolean => isAdvisory(db),
     setAdvisory: (on: boolean): boolean => {

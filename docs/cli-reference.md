@@ -1305,6 +1305,7 @@ nimbus incident timeline inc_0123456789abcdef --version 1 # what was known at ve
 nimbus incident list --open --cascade     # the open records ranked into cascades
 nimbus incident remediate inc_0123456789abcdef            # the proposals, each led by its reversibility label
 nimbus incident remediate inc_0123456789abcdef --pick 1   # run one (needs a terminal; you approve at the prompt)
+nimbus incident remediate inc_0123456789abcdef --pick 1 --dry-run   # read the target and predict the outcome; runs nothing
 nimbus incident undo act_0123456789abcdef                 # reverse an executed reversible action
 nimbus incident advisory on                               # proposals are shown, nothing can be run
 nimbus incident debt                      # symbols incidents keep pointing at that nobody has touched

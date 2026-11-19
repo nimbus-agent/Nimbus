@@ -39,6 +39,7 @@ import type { ClientKind } from "./server/client-kind.ts";
  *   incident.investigate { id }                        -> { investigation, markdown }                            (IC9a)
  *   incident.proposals { id }                          -> { recordId, version, advisory, proposals, unavailable }  (IC5a)
  *   incident.remediate { id, proposalId }              -> { proposalId, actionId, status, reason?, nonHuman, undoable }  (IC5a)
+ *   incident.dryRun { id, proposalId }                 -> { proposalId, toolId, before, prediction, label }  (Phase 17 dry run)
  *   incident.undo { actionId }                         -> { actionId, status, reason?, nonHuman }  (IC5a)
  *   incident.advisory {}                               -> { advisory }  (IC5a)
  *   incident.advisorySet { on }                        -> { advisory }  (IC5a)
@@ -671,6 +672,14 @@ export async function dispatchIncidentRpc(
       const proposalId = parseProposalId("incident.remediate", p);
       const clientId = callerClient("incident.remediate", caller);
       return remediationCall(() => remediationOf(ctx).remediate({ ref: id, proposalId, clientId }));
+    },
+    "incident.dryRun": async (raw) => {
+      requireOwnerKind(caller.kind);
+      const p = requireKeys("incident.dryRun", raw, ["id", "proposalId"]);
+      const id = parseId("incident.dryRun", p);
+      const proposalId = parseProposalId("incident.dryRun", p);
+      const clientId = callerClient("incident.dryRun", caller);
+      return remediationCall(() => remediationOf(ctx).dryRun({ ref: id, proposalId, clientId }));
     },
     "incident.undo": async (raw) => {
       requireOwnerKind(caller.kind);

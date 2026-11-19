@@ -3,6 +3,8 @@ import { describe, expect, test } from "bun:test";
 import { type IncidentIpc, runIncidentWith } from "./incident.ts";
 import { INCIDENT_USAGE, parseIncidentArgs } from "./incident-format.ts";
 import {
+  type DryRunReply,
+  formatDryRun,
   formatProposals,
   type ProposalLike,
   type ProposalsReply,
@@ -504,5 +506,111 @@ describe("running", () => {
     const u = harness({ "incident.undo": new Error("ERR_UNDO_REFUSED: x") });
     expect(await runIncidentWith(u.ipc, { verb: "undo", actionId: ACT }, u.sink, 0, TTY)).toBe(1);
     expect(u.err.join("")).toContain("ERR_UNDO_REFUSED: x");
+  });
+});
+
+describe("--dry-run (Phase 17)", () => {
+  const DRY: DryRunReply = {
+    proposalId: PRP,
+    toolId: "argocd_app_rollback",
+    before: { status: "ok", fields: [{ label: "Sync", value: "Synced[31m" }], notShown: 2 },
+    prediction: {
+      verdict: "would_change",
+      text: "the application moves from history 7 back to the revision of history 6",
+    },
+    label: "Predicted from a live read; the provider was not asked to simulate the change.",
+  };
+
+  test("parses only with --pick; may print JSON; repeated or pick-less is a usage error", () => {
+    expect(parseRemediationArgs("remediate", [REC, "--pick", "1", "--dry-run"])).toEqual({
+      verb: "remediate",
+      json: false,
+      id: REC,
+      pick: "1",
+      dryRun: true,
+    });
+    expect(parseRemediationArgs("remediate", ["--dry-run", REC, "--pick", PRP, "--json"])).toMatchObject({
+      json: true,
+      dryRun: true,
+    });
+    expect(parseRemediationArgs("remediate", [REC, "--dry-run"])).toBeUndefined();
+    expect(parseRemediationArgs("remediate", [REC, "--pick", "1", "--dry-run", "--dry-run"])).toBeUndefined();
+    expect(parseRemediationArgs("remediate", [REC, "--pick", "1", "--dry-run", "--yes"])).toBeUndefined();
+  });
+
+  test("runs without a terminal: lists, then calls incident.dryRun once, never incident.remediate", async () => {
+    const h = harness({ "incident.proposals": reply(), "incident.dryRun": DRY });
+    const code = await runRemediation(
+      h.ipc,
+      { verb: "remediate", json: false, id: REC, pick: "1", dryRun: true },
+      h.sink,
+      NO_TTY,
+    );
+    expect(code).toBe(0);
+    expect(h.calls.map((c) => c.method)).toEqual(["incident.proposals", "incident.dryRun"]);
+    expect(h.calls[1]?.params).toEqual({ id: REC, proposalId: PRP });
+    const text = h.out.join("");
+    expect(text).toContain("Predicted outcome: would change - the application moves from history 7");
+    expect(text).toContain("Sync: Synced[31m");
+    expect(text).not.toContain("");
+    expect(text).toContain("(2 more not shown)");
+    expect(text).toContain("Nothing was run.");
+  });
+
+  test("--json prints the reply; a missing pick exits 1 without a dry run", async () => {
+    const h = harness({ "incident.proposals": reply(), "incident.dryRun": DRY });
+    await runRemediation(
+      h.ipc,
+      { verb: "remediate", json: true, id: REC, pick: PRP, dryRun: true },
+      h.sink,
+      NO_TTY,
+    );
+    expect(JSON.parse(h.out.join("")).prediction.verdict).toBe("would_change");
+    const miss = harness({ "incident.proposals": reply({ proposals: [] }) });
+    const code = await runRemediation(
+      miss.ipc,
+      { verb: "remediate", json: false, id: REC, pick: "1", dryRun: true },
+      miss.sink,
+      NO_TTY,
+    );
+    expect(code).toBe(1);
+    expect(miss.calls.map((c) => c.method)).toEqual(["incident.proposals"]);
+    for (const before of [
+      { status: "refused", reason: "policy requires approval" },
+      { status: "unavailable", reason: "failed" },
+    ] as const) {
+      const h2 = harness({ "incident.proposals": reply(), "incident.dryRun": { ...DRY, before } });
+      const failed = await runRemediation(
+        h2.ipc,
+        { verb: "remediate", json: false, id: REC, pick: "1", dryRun: true },
+        h2.sink,
+        NO_TTY,
+      );
+      expect(failed, before.status).toBe(1);
+    }
+  });
+
+  test("formats an unread, a refused and a reader-less dry run, and the listing names what --dry-run does", () => {
+    const p = proposal();
+    expect(formatDryRun(p, { ...DRY, before: { status: "no_reader" } })).toContain(
+      "this action has no reader, so nothing was read",
+    );
+    expect(
+      formatDryRun(p, {
+        ...DRY,
+        before: { status: "unavailable", reason: "failed" },
+        prediction: { verdict: "none", text: "the current state could not be read" },
+      }),
+    ).toContain("Current state: unavailable (failed)");
+    expect(formatDryRun(p, { ...DRY, before: { status: "refused", reason: "no" } })).toContain(
+      "Current state: refused (no)",
+    );
+    for (const [kind, want] of [
+      ["predicted", "(here: the outcome is predicted)"],
+      ["current_state", "(here: the current state only, no prediction)"],
+      ["none", "(here: nothing can be read)"],
+    ] as const) {
+      expect(formatProposals(reply({ proposals: [proposal({ dryRun: kind })] }))).toContain(want);
+    }
   });
 });

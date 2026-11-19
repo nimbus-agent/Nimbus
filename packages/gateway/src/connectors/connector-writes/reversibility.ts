@@ -62,12 +62,33 @@ const ECS_CAPTURES: BeforeCaptures = {
   },
 };
 
+/** How many of the newest history ids the dry run's capture keeps (well under the 512-character value cap). */
+const ARGO_HISTORY_IDS_KEPT = 30;
+
+/** Whether `spec.syncPolicy.automated` is an object: its presence is what turns Argo CD auto-sync on. */
+function argoAutoSyncOn(j: unknown): boolean {
+  const automated = (j as { spec?: { syncPolicy?: { automated?: unknown } } } | null)?.spec?.syncPolicy
+    ?.automated;
+  return automated !== null && typeof automated === "object" && !Array.isArray(automated);
+}
+
+/**
+ * `currentHistoryId` is what the inverse needs. `autoSync` (`on`/`off`) and `historyIds` (the newest ids Argo CD
+ * retains, comma-separated, newest first) are read only by the remediation dry run's prediction
+ * (`dry-run-predict.ts`): Argo CD refuses a rollback while auto-sync is on, and to an id it no longer keeps.
+ */
 const ARGO_CAPTURES: BeforeCaptures = {
-  keys: ["currentHistoryId"],
+  keys: ["currentHistoryId", "autoSync", "historyIds"],
   pick(reply) {
-    const ids = argoHistoryIds(beforeReplyJson(reply));
+    const j = beforeReplyJson(reply);
+    const ids = argoHistoryIds(j);
     if (ids.length === 0) throw new Error("capture: no history");
-    return { currentHistoryId: String(Math.max(...ids)) };
+    const newest = [...new Set(ids)].sort((a, b) => b - a).slice(0, ARGO_HISTORY_IDS_KEPT);
+    return {
+      currentHistoryId: String(newest[0]),
+      autoSync: argoAutoSyncOn(j) ? "on" : "off",
+      historyIds: newest.join(","),
+    };
   },
 };
 
