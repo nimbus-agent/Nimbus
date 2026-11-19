@@ -1,15 +1,5 @@
 import type { Database } from "bun:sqlite";
 import { randomBytes } from "node:crypto";
-
-import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
-import { REMEDIATION_CATALOG } from "../connectors/connector-writes/remediation-catalog.ts";
-import { reversibilityClassOf } from "../connectors/connector-writes/reversibility.ts";
-import type { ConnectorWriteRow } from "../connectors/connector-writes/types.ts";
-import { mcpClientToolKey } from "../connectors/lazy-mesh/tool-map.ts";
-import { ENGINE_PROPOSAL_ID_RE } from "../engine/incident-link.ts";
-import { serviceOf } from "../engine/service-of.ts";
-import type { BeforeOnlyOutcome } from "../engine/executor.ts";
-import type { ActionResult, PlannedAction } from "../engine/types.ts";
 import {
   DRY_RUN_LABEL,
   type DryRunKind,
@@ -17,6 +7,15 @@ import {
   dryRunKindOf,
   predictOutcome,
 } from "../connectors/connector-writes/dry-run-predict.ts";
+import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
+import { REMEDIATION_CATALOG } from "../connectors/connector-writes/remediation-catalog.ts";
+import { reversibilityClassOf } from "../connectors/connector-writes/reversibility.ts";
+import type { ConnectorWriteRow } from "../connectors/connector-writes/types.ts";
+import { mcpClientToolKey } from "../connectors/lazy-mesh/tool-map.ts";
+import type { BeforeOnlyOutcome } from "../engine/executor.ts";
+import { ENGINE_PROPOSAL_ID_RE } from "../engine/incident-link.ts";
+import { serviceOf } from "../engine/service-of.ts";
+import type { ActionResult, PlannedAction } from "../engine/types.ts";
 import { resolveIncidentRef } from "./incident-id.ts";
 import { mintIncidentLink } from "./incident-link-mint.ts";
 import type { IncidentRecordV1 } from "./incident-record-types.ts";
@@ -515,13 +514,19 @@ export function createRemediation(deps: RemediationDeps) {
     const rec = requireRecord(p.ref);
     const stored = getProposal(db, p.proposalId);
     if (stored === null || stored.record_id !== rec.recordId) {
-      throw new RemediationError("ERR_PROPOSAL_NOT_FOUND", "no proposal of this incident has that id");
+      throw new RemediationError(
+        "ERR_PROPOSAL_NOT_FOUND",
+        "no proposal of this incident has that id",
+      );
     }
     if (inFlight.has(stored.id) || stored.status === "executing") {
       throw new RemediationError("ERR_PROPOSAL_BUSY", "that proposal is already running");
     }
     if (stored.status === "expired") {
-      throw new RemediationError("ERR_PROPOSAL_EXPIRED", "that proposal expired; list the proposals again");
+      throw new RemediationError(
+        "ERR_PROPOSAL_EXPIRED",
+        "that proposal expired; list the proposals again",
+      );
     }
     if (stored.status !== "proposed") {
       throw new RemediationError(
@@ -530,7 +535,10 @@ export function createRemediation(deps: RemediationDeps) {
       );
     }
     if (stored.expires_at_ms <= now()) {
-      throw new RemediationError("ERR_PROPOSAL_EXPIRED", "that proposal expired; list the proposals again");
+      throw new RemediationError(
+        "ERR_PROPOSAL_EXPIRED",
+        "that proposal expired; list the proposals again",
+      );
     }
     // Derive only (no store write): the proposal must still be offered, identical, for the record as it is now.
     const draft = deriveFor(rec).drafts.find((d) => d.id === stored.id);
@@ -546,7 +554,10 @@ export function createRemediation(deps: RemediationDeps) {
     }
     const row = rowOf(stored.tool_id);
     if (row === undefined) {
-      throw new RemediationError("ERR_PROPOSAL_STALE", "the write row for this proposal no longer exists");
+      throw new RemediationError(
+        "ERR_PROPOSAL_STALE",
+        "the write row for this proposal no longer exists",
+      );
     }
     const input = JSON.parse(stored.input_json) as unknown;
     let captured: Readonly<Record<string, string>> | undefined;
@@ -561,12 +572,18 @@ export function createRemediation(deps: RemediationDeps) {
     const before: BeforeOnlyOutcome =
       executor.readBeforeOnly === undefined
         ? { status: "no_reader" }
-        : await executor.readBeforeOnly(buildRemediationAction(rec.recordId, stored.id, row, input));
+        : await executor.readBeforeOnly(
+            buildRemediationAction(rec.recordId, stored.id, row, input),
+          );
     return {
       proposalId: stored.id,
       toolId: stored.tool_id,
       before,
-      prediction: predictOutcome(stored.tool_id, input, before.status === "ok" ? captured : undefined),
+      prediction: predictOutcome(
+        stored.tool_id,
+        input,
+        before.status === "ok" ? captured : undefined,
+      ),
       label: DRY_RUN_LABEL,
     };
   }

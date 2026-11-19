@@ -290,10 +290,12 @@ const VERDICT_TEXT: Readonly<Record<DryRunReply["prediction"]["verdict"], string
 };
 
 function beforeLines(b: DryRunReply["before"]): string[] {
-  if (b.status === "no_reader") return ["Current state: this action has no reader, so nothing was read"];
+  if (b.status === "no_reader")
+    return ["Current state: this action has no reader, so nothing was read"];
   if (b.status !== "ok") return [`Current state: ${b.status} (${clean(b.reason)})`];
   const out = ["Current state:", ...b.fields.map((f) => `  ${clean(f.label)}: ${clean(f.value)}`)];
-  if (b.notShown !== undefined && b.notShown > 0) out.push(`  (${String(b.notShown)} more not shown)`);
+  if (b.notShown !== undefined && b.notShown > 0)
+    out.push(`  (${String(b.notShown)} more not shown)`);
   return out;
 }
 

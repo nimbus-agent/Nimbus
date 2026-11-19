@@ -67,8 +67,8 @@ const ARGO_HISTORY_IDS_KEPT = 30;
 
 /** Whether `spec.syncPolicy.automated` is an object: its presence is what turns Argo CD auto-sync on. */
 function argoAutoSyncOn(j: unknown): boolean {
-  const automated = (j as { spec?: { syncPolicy?: { automated?: unknown } } } | null)?.spec?.syncPolicy
-    ?.automated;
+  const automated = (j as { spec?: { syncPolicy?: { automated?: unknown } } } | null)?.spec
+    ?.syncPolicy?.automated;
   return automated !== null && typeof automated === "object" && !Array.isArray(automated);
 }
 

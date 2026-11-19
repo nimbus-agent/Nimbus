@@ -10,7 +10,9 @@ describe("predictOutcome", () => {
     expect(predictOutcome("launchdarkly_flag_toggle", { on: true }, { on: "true" }).verdict).toBe(
       "no_change",
     );
-    expect(predictOutcome("launchdarkly_flag_toggle", {}, { on: "true" }).verdict).toBe("uncertain");
+    expect(predictOutcome("launchdarkly_flag_toggle", {}, { on: "true" }).verdict).toBe(
+      "uncertain",
+    );
     expect(predictOutcome("launchdarkly_flag_toggle", { on: true }, { on: "maybe" }).verdict).toBe(
       "none",
     );
@@ -54,11 +56,18 @@ describe("predictOutcome", () => {
 
   test("an ECS update compares the task definition", () => {
     expect(
-      predictOutcome("aws_ecs_service_update", { taskDefinition: "td:2" }, { taskDefinition: "td:1" }),
+      predictOutcome(
+        "aws_ecs_service_update",
+        { taskDefinition: "td:2" },
+        { taskDefinition: "td:1" },
+      ),
     ).toEqual({ verdict: "would_change", text: "task definition: td:1 -> td:2" });
     expect(
-      predictOutcome("aws_ecs_service_update", { taskDefinition: "td:1" }, { taskDefinition: "td:1" })
-        .verdict,
+      predictOutcome(
+        "aws_ecs_service_update",
+        { taskDefinition: "td:1" },
+        { taskDefinition: "td:1" },
+      ).verdict,
     ).toBe("no_change");
     expect(predictOutcome("aws_ecs_service_update", {}, { taskDefinition: "td:1" }).verdict).toBe(
       "uncertain",
@@ -92,8 +101,12 @@ describe("predictOutcome", () => {
   });
 
   test("an unpredictable tool, a failed read or a non-object input never claims a change", () => {
-    expect(predictOutcome("pd_incident_acknowledge", { incidentId: "P1" }, {}).verdict).toBe("none");
-    expect(predictOutcome("launchdarkly_flag_toggle", { on: true }, undefined).verdict).toBe("none");
+    expect(predictOutcome("pd_incident_acknowledge", { incidentId: "P1" }, {}).verdict).toBe(
+      "none",
+    );
+    expect(predictOutcome("launchdarkly_flag_toggle", { on: true }, undefined).verdict).toBe(
+      "none",
+    );
     expect(predictOutcome("launchdarkly_flag_toggle", [true], { on: "true" }).verdict).toBe(
       "uncertain",
     );

@@ -17013,7 +17013,13 @@ describe("I57 (b) - an engine-proposed action reaches dispatch only as the local
     expect(body.indexOf("isAdvisory(db)")).toBeGreaterThan(-1);
     expect(body.indexOf("isAdvisory(db)")).toBeLessThan(body.indexOf("requireReady()"));
     // It never claims, never finishes and never writes the proposal store.
-    for (const forbidden of ["claimProposal", "finishProposal", "syncProposals", "supersedeProposal", ".execute("]) {
+    for (const forbidden of [
+      "claimProposal",
+      "finishProposal",
+      "syncProposals",
+      "supersedeProposal",
+      ".execute(",
+    ]) {
       expect(body, forbidden).not.toContain(forbidden);
     }
     // Its executor is built for a dry run, through the one action builder; real runs never pass the flag.

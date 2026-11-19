@@ -158,9 +158,15 @@ describe("ToolExecutor.readBeforeOnly (remediation dry run)", () => {
     const h = harness({});
     const guarded: PlannedAction = {
       ...WRITE,
-      payload: { mcpToolId: "jira_jira_issue_update", input: { issueKey: "NIM-1", summary: "guarded" } },
+      payload: {
+        mcpToolId: "jira_jira_issue_update",
+        input: { issueKey: "NIM-1", summary: "guarded" },
+      },
     };
-    expect(await h.exec.readBeforeOnly(guarded)).toEqual({ status: "refused", reason: GUARD_REASON });
+    expect(await h.exec.readBeforeOnly(guarded)).toEqual({
+      status: "refused",
+      reason: GUARD_REASON,
+    });
     expect(h.prompts).toEqual([]);
     expect(h.dispatched.every((a) => isBeforeReadActionType(a.type))).toBe(true);
   });

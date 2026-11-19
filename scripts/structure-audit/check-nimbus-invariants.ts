@@ -1322,7 +1322,8 @@ const D46C_EXECUTOR_RE = /\bbuildRemediationExecutor\b/g;
 const D46C_DRY_RUN_CALLER = `${D46C_SRC}incident/remediation.ts`;
 const D46C_DRY_RUN_EXECUTOR = `${D46C_SRC}engine/executor.ts`;
 const D46C_DRY_RUN_CALL_RE = /\.readBeforeOnly\s*\(/g;
-const D46C_DRY_RUN_SIG = "async readBeforeOnly(planned: PlannedAction): Promise<BeforeOnlyOutcome> {";
+const D46C_DRY_RUN_SIG =
+  "async readBeforeOnly(planned: PlannedAction): Promise<BeforeOnlyOutcome> {";
 const D46C_DRY_RUN_FORBIDDEN_RE =
   /\bgateWithin\s*\(|\bapprovalPhase\s*\(|\bdispatchBoundPhase\s*\(|\.execute\s*\(|\bconnectors\.dispatch\s*\(/g;
 

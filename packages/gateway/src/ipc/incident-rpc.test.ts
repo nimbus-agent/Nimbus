@@ -601,7 +601,11 @@ describe("IC5a: remediate, undo, proposals and the advisory switch", () => {
         /unknown parameter/,
       ],
       ["incident.dryRun", { id: "a" }, /proposalId must be a non-empty string/],
-      ["incident.dryRun", { id: "a", proposalId: "prp_0123456789abcdef", x: 1 }, /unknown parameter/],
+      [
+        "incident.dryRun",
+        { id: "a", proposalId: "prp_0123456789abcdef", x: 1 },
+        /unknown parameter/,
+      ],
       ["incident.undo", {}, /actionId must be a non-empty string/],
       ["incident.undo", { actionId: "" }, /actionId/],
       ["incident.undo", { actionId: "a", id: "b" }, /unknown parameter "id"/],

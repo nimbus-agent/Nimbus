@@ -529,13 +529,19 @@ describe("--dry-run (Phase 17)", () => {
       pick: "1",
       dryRun: true,
     });
-    expect(parseRemediationArgs("remediate", ["--dry-run", REC, "--pick", PRP, "--json"])).toMatchObject({
+    expect(
+      parseRemediationArgs("remediate", ["--dry-run", REC, "--pick", PRP, "--json"]),
+    ).toMatchObject({
       json: true,
       dryRun: true,
     });
     expect(parseRemediationArgs("remediate", [REC, "--dry-run"])).toBeUndefined();
-    expect(parseRemediationArgs("remediate", [REC, "--pick", "1", "--dry-run", "--dry-run"])).toBeUndefined();
-    expect(parseRemediationArgs("remediate", [REC, "--pick", "1", "--dry-run", "--yes"])).toBeUndefined();
+    expect(
+      parseRemediationArgs("remediate", [REC, "--pick", "1", "--dry-run", "--dry-run"]),
+    ).toBeUndefined();
+    expect(
+      parseRemediationArgs("remediate", [REC, "--pick", "1", "--dry-run", "--yes"]),
+    ).toBeUndefined();
   });
 
   test("runs without a terminal: lists, then calls incident.dryRun once, never incident.remediate", async () => {
@@ -550,7 +556,9 @@ describe("--dry-run (Phase 17)", () => {
     expect(h.calls.map((c) => c.method)).toEqual(["incident.proposals", "incident.dryRun"]);
     expect(h.calls[1]?.params).toEqual({ id: REC, proposalId: PRP });
     const text = h.out.join("");
-    expect(text).toContain("Predicted outcome: would change - the application moves from history 7");
+    expect(text).toContain(
+      "Predicted outcome: would change - the application moves from history 7",
+    );
     expect(text).toContain("Sync: Synced[31m");
     expect(text).not.toContain("");
     expect(text).toContain("(2 more not shown)");

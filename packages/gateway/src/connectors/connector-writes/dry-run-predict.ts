@@ -98,7 +98,10 @@ export function predictOutcome(
       const p = boolPrediction("enabled", captured["enabled"], inp["enabled"]);
       return inp["value"] === undefined
         ? p
-        : { verdict: p.verdict === "none" ? "none" : "uncertain", text: `${p.text}; the feature value is also set and is not compared` };
+        : {
+            verdict: p.verdict === "none" ? "none" : "uncertain",
+            text: `${p.text}; the feature value is also set and is not compared`,
+          };
     }
     case "aws_ec2_instance_stop":
     case "aws_ec2_instance_start":
@@ -129,7 +132,10 @@ export function predictOutcome(
         return uncertain(`history ${target} is no longer in the application's retained history`);
       }
       return current === target
-        ? { verdict: "no_change", text: `the application is already at history ${target}: no change` }
+        ? {
+            verdict: "no_change",
+            text: `the application is already at history ${target}: no change`,
+          }
         : {
             verdict: "would_change",
             text: `the application moves from history ${current} back to the revision of history ${target}`,
