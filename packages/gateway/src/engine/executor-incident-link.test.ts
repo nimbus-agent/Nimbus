@@ -776,6 +776,10 @@ describe("Phase 17 one-tap rollback: the blast radius in the executor's own prom
     expect(
       (await linesAfterReversibility(blast({ dependents: ["a"], dependentsTruncated: true })))[1],
     ).toBe("Depends on it: a (first 1; more depend on it)");
+    // An empty list that says it is truncated never reads as "nothing declared".
+    expect(
+      (await linesAfterReversibility(blast({ dependents: [], dependentsTruncated: true })))[1],
+    ).toBe("Depends on it: list incomplete (dependents not shown)");
     expect((await linesAfterReversibility(blast({ environment: null })))[0]).toBe(
       "Blast radius: service checkout, environment unknown",
     );

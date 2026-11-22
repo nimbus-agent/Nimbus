@@ -387,7 +387,7 @@ export function createRemediation(deps: RemediationDeps) {
     }
     const rec = requireRecord(p.ref);
     const stored0 = getProposal(db, p.proposalId);
-    if (stored0 === null || stored0.record_id !== rec.recordId) {
+    if (stored0?.record_id !== rec.recordId) {
       throw new RemediationError(
         "ERR_PROPOSAL_NOT_FOUND",
         "no proposal of this incident has that id",
@@ -407,8 +407,7 @@ export function createRemediation(deps: RemediationDeps) {
     const stored = getProposal(db, p.proposalId);
     if (
       draft === undefined ||
-      stored === null ||
-      stored.tool_id !== draft.toolId ||
+      stored?.tool_id !== draft.toolId ||
       stored.input_json !== JSON.stringify(draft.input)
     ) {
       if (stored?.status === "proposed") supersedeProposal(db, p.proposalId, now());
