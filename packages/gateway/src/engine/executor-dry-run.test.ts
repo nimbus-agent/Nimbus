@@ -74,7 +74,7 @@ function harness(opts: {
   dryRun?: boolean;
   readReply?: unknown;
   rows?: readonly ConnectorWriteRow[];
-  runner?: BeforeStateRunner;
+  runner?: BeforeStateRunner | "none";
 }) {
   db = new Database(":memory:");
   LocalIndex.ensureSchema(db);
@@ -110,12 +110,16 @@ function harness(opts: {
     NO_POLICY_OVERLAY,
     undefined,
     {
-      beforeState:
-        opts.runner ??
-        createBeforeStateRunner({
-          readsEveryOrigin: true,
-          rows: opts.rows ?? [READ_ROW, NO_READER_ROW],
-        }),
+      ...(opts.runner === "none"
+        ? {}
+        : {
+            beforeState:
+              opts.runner ??
+              createBeforeStateRunner({
+                readsEveryOrigin: true,
+                rows: opts.rows ?? [READ_ROW, NO_READER_ROW],
+              }),
+          }),
       ...(opts.dryRun === false ? {} : { dryRun: true }),
     },
   );
@@ -239,6 +243,15 @@ describe("ToolExecutor.readBeforeOnly (remediation dry run)", () => {
     });
     expect(w2.dispatched).toEqual([]);
     expect(w2.prompts).toEqual([]);
+  });
+
+  test("a dry-run executor with no before-state runner is `no_reader` for a row that has a reader, and reads nothing", async () => {
+    // With no runner the executor previews over the production table, where the Jira update has a reader.
+    const h = harness({ runner: "none" });
+    expect(await h.exec.readBeforeOnly(WRITE)).toEqual({ status: "no_reader" });
+    expect(h.dispatched).toEqual([]);
+    expect(h.audits).toEqual([]);
+    expect(h.prompts).toEqual([]);
   });
 
   test("a bound row and a row that refuses every door are refused before any read or child", async () => {
