@@ -56,7 +56,8 @@ export interface WasteKindTotal {
 
 /**
  * `no_data`: nothing from a FinOps source is indexed at all (no recommendation and no cost row).
- * `no_waste_found`: FinOps data is indexed but no recommendation classifies as waste. That is NOT
+ * `no_waste_found`: FinOps data is indexed but no recommendation classifies as waste (of the selected
+ * kind, when one is given; `counts.waste` still covers every kind). That is NOT
  * "your cloud has no waste": nothing here scans the cloud, and the result says so.
  */
 export type CostWasteStatus = "no_data" | "no_waste_found" | "waste";
@@ -66,7 +67,7 @@ export interface CostWasteResult {
   readonly asOfMs: number;
   readonly service: string | null;
   readonly kind: WasteKind | null;
-  /** The newest `synced_at` of the recommendation rows read; null when none were read. */
+  /** The newest `synced_at` of the recommendation rows read (staleness is judged per service, in `gaps`); null when none were read. */
   readonly lastSyncedMs: number | null;
   readonly counts: {
     readonly recommendations: number;
@@ -206,9 +207,19 @@ function countRows(db: Database, services: readonly string[], type: string): num
   return r.n;
 }
 
+/** The newest `synced_at` per service, so a recently synced source cannot hide a stale one. */
+function lastSyncedByService(rows: readonly Row[]): Map<string, number> {
+  const by = new Map<string, number>();
+  for (const r of rows) {
+    const prev = by.get(r.service);
+    if (prev === undefined || r.synced_at > prev) by.set(r.service, r.synced_at);
+  }
+  return by;
+}
+
 function freshnessGaps(
   q: CostWasteQuery,
-  lastSyncedMs: number | null,
+  lastSynced: ReadonlyMap<string, number>,
   rowCount: number,
   costRows: number,
 ): string[] {
@@ -218,10 +229,14 @@ function freshnessGaps(
       "Cost rows are indexed but no recommendations are: the recommendation drain may have failed, or the vendor listed none.",
     );
   }
-  if (lastSyncedMs !== null && q.nowMs - lastSyncedMs > COST_WASTE_STALE_MS) {
-    gaps.push(
-      `The recommendations were last synced ${new Date(lastSyncedMs).toISOString()}, more than 24 hours ago; the vendor's current list may differ.`,
-    );
+  const services = [...lastSynced.keys()].sort((a, b) => (a < b ? -1 : 1));
+  for (const service of services) {
+    const at = lastSynced.get(service) ?? q.nowMs;
+    if (q.nowMs - at > COST_WASTE_STALE_MS) {
+      gaps.push(
+        `The ${service} recommendations were last synced ${new Date(at).toISOString()}, more than 24 hours ago; the vendor's current list may differ.`,
+      );
+    }
   }
   return gaps;
 }
@@ -263,11 +278,9 @@ export function queryCostWaste(db: Database, q: CostWasteQuery): CostWasteResult
           )
           .all(...services, COST_RECOMMENDATION_TYPE) as Row[]);
   const costRows = services.length === 0 ? 0 : countRows(db, services, COST_ALLOCATION_TYPE);
-  let lastSyncedMs: number | null = null;
-  for (const r of rows) {
-    if (lastSyncedMs === null || r.synced_at > lastSyncedMs) lastSyncedMs = r.synced_at;
-  }
-  const gaps = freshnessGaps(q, lastSyncedMs, rows.length, costRows);
+  const lastSynced = lastSyncedByService(rows);
+  const lastSyncedMs = lastSynced.size === 0 ? null : Math.max(...lastSynced.values());
+  const gaps = freshnessGaps(q, lastSynced, rows.length, costRows);
   if (rows.length === 0 && costRows === 0) {
     return {
       ...base,

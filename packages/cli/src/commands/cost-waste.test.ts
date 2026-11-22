@@ -26,7 +26,7 @@ const WASTE = {
     {
       itemId: "i1",
       kind: "unattached",
-      title: "Unattached volume ‮evil\u001B[31m",
+      title: "Unattached volume \u202Eevil\u001B[31m",
       provider: "aws",
       cloudService: "EBS",
       accountId: "123",
@@ -102,7 +102,7 @@ describe("runCostWasteWith", () => {
     expect(text).toContain("[idle] Idle instance: no estimate");
     expect(text).toContain("... and 4 more");
     expect(text).toContain("Nothing was deleted or queued");
-    expect(text).not.toContain("‮");
+    expect(text).not.toContain("\u202E");
     expect(text).not.toContain("\u001B");
   });
 

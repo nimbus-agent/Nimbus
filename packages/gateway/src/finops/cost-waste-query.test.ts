@@ -153,7 +153,35 @@ describe("queryCostWaste", () => {
   test("a stale set gets a gap", () => {
     const db = freshDb();
     indexRecs(db, [{ token: "a", type: "idle_instance" }], SYNCED - 3 * 86_400_000);
-    expect(queryCostWaste(db, { nowMs: NOW }).gaps.join(" ")).toContain("more than 24 hours ago");
+    expect(queryCostWaste(db, { nowMs: NOW }).gaps.join(" ")).toContain(
+      "The vantage recommendations were last synced",
+    );
+  });
+
+  test("a recently synced service does not hide a stale one", () => {
+    const db = freshDb();
+    const stale = SYNCED - 3 * 86_400_000;
+    indexRecs(db, [{ token: "a", type: "idle_instance" }], stale);
+    const fresh = mapVantageRecommendationToItem(
+      { provider: "aws", token: "b", type: "idle_instance" },
+      { syncedAt: SYNCED },
+    );
+    if (fresh === null) throw new Error("mapper refused a fixture");
+    upsertIndexedItem(db, { ...fresh, service: "cloudhealth" });
+    const r = queryCostWaste(db, { nowMs: NOW });
+    expect(r.lastSyncedMs).toBe(SYNCED);
+    const stalegaps = r.gaps.filter((g) => g.includes("more than 24 hours ago"));
+    expect(stalegaps).toHaveLength(1);
+    expect(stalegaps[0]).toContain("The vantage recommendations");
+    expect(stalegaps[0]).toContain(new Date(stale).toISOString());
+  });
+
+  test("no stale note when every service is recent", () => {
+    const db = freshDb();
+    indexRecs(db, [{ token: "a", type: "idle_instance" }]);
+    expect(queryCostWaste(db, { nowMs: NOW }).gaps.join(" ")).not.toContain(
+      "more than 24 hours ago",
+    );
   });
 
   test("the list is capped, largest saving first, and the rest counted", () => {

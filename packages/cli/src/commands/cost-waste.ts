@@ -128,7 +128,8 @@ function candidateLines(c: Candidate): string {
       : `${money(c.estimatedMonthlySavings, c.currency)}/month`;
   const affected =
     c.resourcesAffected === null ? "" : `, ${String(c.resourcesAffected)} resource(s)`;
-  let text = `  [${c.kind}] ${clean(c.title)}: ${saving}${affected}${where === "" ? "" : ` (${where})`}\n`;
+  const location = where === "" ? "" : ` (${where})`;
+  let text = `  [${c.kind}] ${clean(c.title)}: ${saving}${affected}${location}\n`;
   text += `      id: ${clean(c.itemId)}\n`;
   if (c.documentationUrl !== null) text += `      docs: ${clean(c.documentationUrl)}\n`;
   return text;
