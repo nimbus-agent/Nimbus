@@ -4,6 +4,7 @@ import { CliExit } from "../lib/cli-exit.ts";
 import {
   COST_USAGE,
   type CostIpc,
+  costRunner,
   parseCostAnomaliesArgs,
   runCostAnomaliesWith,
   runCostCommand,
@@ -196,11 +197,34 @@ describe("runCostAnomaliesWith json and errors", () => {
 
 describe("runCostCommand", () => {
   test("a bad subcommand or flag prints usage and exits 1", async () => {
-    for (const argv of [[], ["bogus"], ["anomalies", "--nope"]]) {
+    for (const argv of [[], ["bogus"], ["anomalies", "--nope"], ["waste", "--kind", "nope"]]) {
       const err = await runCostCommand(argv).catch((e: unknown) => e);
       expect(err).toBeInstanceOf(CliExit);
       expect((err as CliExit).code).toBe(1);
     }
     expect(COST_USAGE).toContain("nimbus cost anomalies");
+    expect(COST_USAGE).toContain("nimbus cost waste");
+  });
+});
+
+describe("costRunner", () => {
+  test("routes anomalies and waste to their own IPC methods, and refuses the rest", async () => {
+    const out: string[] = [];
+    const sink = { out: (x: string) => out.push(x), err: (x: string) => out.push(x) };
+    const seen: string[] = [];
+    const ipc: CostIpc = {
+      call: async (m: string) => {
+        seen.push(m);
+        throw new Error("stop");
+      },
+    };
+    for (const argv of [["anomalies"], ["waste", "--kind", "idle"]]) {
+      const run = costRunner(argv, sink);
+      expect(run).toBeDefined();
+      expect(await run?.(ipc)).toBe(1);
+    }
+    expect(seen).toEqual(["cost.anomalies", "cost.waste"]);
+    expect(costRunner(["waste", "--kind", "nope"], sink)).toBeUndefined();
+    expect(costRunner(["nope"], sink)).toBeUndefined();
   });
 });

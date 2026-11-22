@@ -1230,6 +1230,30 @@ nimbus cost anomalies --service vantage --json
 
 **Bounds.** Amounts are the vendor's, not verified against a live account. History begins when the first sync ran (45 days at most), so a new series needs a week of rows first. The IPC method is `cost.anomalies` (the whole `cost` namespace is LAN-forbidden; it is not on the desktop allowlist). Series names are vendor strings and are stripped of control characters before printing.
 
+### `nimbus cost waste`
+
+Orphaned and idle cloud resources among the recommendations your FinOps vendor already made (today the Vantage sync's indexed recommendations). It makes **no provider call**, sends nothing, uses no model and **deletes, queues or proposes nothing**: cleaning up is your own action in the cloud console or CLI.
+
+```bash
+nimbus cost waste
+nimbus cost waste --kind unattached
+nimbus cost waste --service vantage --json
+```
+
+| Flag | Description |
+|---|---|
+| `--service <id>` | One cost service (`vantage` today). Omit it for every indexed cost service. |
+| `--kind <kind>` | List only one kind: `unattached`, `idle`, `orphaned_snapshot` or `empty_environment`. The waste count still covers every kind. |
+| `--json` | Print the result object (`status`, `lastSyncedMs`, `counts`, `byKind`, `totals`, `candidates`, `candidatesTruncated`, `gaps`) on one line, with the same exit codes. |
+
+**What counts as waste.** Each recommendation is classified by a keyword table over the vendor's type, category and description: unattached volumes, disks and IPs; idle or unused instances, databases and load balancers; orphaned or old snapshots and images; empty or abandoned environments and clusters. Rightsizing, reservations, savings plans and commitments are counted as "other" and not listed. The table is a heuristic over vendor strings that have not been checked against a live account, and the output says so.
+
+**Savings.** Estimated monthly savings are the vendor's, summed per currency and never across currencies (a figure with no currency is its own bucket). A candidate with no estimate is counted as "no estimate", never as zero. Candidates are listed grouped by currency, largest saving first (at most 100; the rest are counted).
+
+**Statuses and exit codes.** `waste` (exit 0): at least one candidate. `no_waste_found` (exit 0): FinOps data is indexed but no recommendation reads as waste (with `--kind`, none of that kind: recommendations of other kinds may still be waste, and the waste count still includes them); that does NOT mean your cloud has none, because nothing here scans the cloud. `no_data` (exit 1): no FinOps row of any kind is indexed. Notes name each cost service whose recommendations were last synced more than 24 hours ago, and cost rows indexed with no recommendations (the recommendation drain may have failed).
+
+**Bounds.** Only what the vendor recommends is visible: no cloud inventory is indexed and no resource ids are shown (a recommendation carries only a count of affected resources). The IPC method is `cost.waste` (the whole `cost` namespace is LAN-forbidden; it is not on the desktop allowlist). In the text output, vendor strings are stripped of control and direction-control characters and cut to 200 characters. The `--json` output carries the vendor strings unchanged (JSON escaping covers control characters, not direction-control characters, and nothing is cut), so treat them as untrusted text. Only `http(s)` documentation links are kept, in both outputs.
+
 ### `nimbus briefing`
 
 Your morning briefing, built from the local index. It makes **no provider call** and **uses no model**: the text is rendered deterministically, and nothing leaves the machine except a local notification.
