@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795373775141,
+  "lastUpdate": 1795378583036,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "4d03c7032688d03dc4795ca6583c80a3a8450b72",
-          "message": "chore: release main (#1452)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.10.1</summary>\n\n##\n[7.10.1](https://github.com/nimbus-agent/Nimbus/compare/v7.10.0...v7.10.1)\n(2026-09-05)\n\n\n### Bug Fixes\n\n* **gateway:** stop console windows flashing on every Windows sync\n([#1451](https://github.com/nimbus-agent/Nimbus/issues/1451))\n([2042740](https://github.com/nimbus-agent/Nimbus/commit/2042740e9aac2b8cbf87e9ab04e801a3f51e5df2))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-09-05T20:26:20+03:00",
-          "tree_id": "dd8f02c6a1d8b0f6318f717b6936344ad2e13419",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/4d03c7032688d03dc4795ca6583c80a3a8450b72"
-        },
-        "date": 1788629885294,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 347.25719860000174,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 339.1818545999922,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 179.89058160000477,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0f1ad1c798085f90a99239114c35c926410c5e45",
+          "message": "test(gateway): move the shared security-invariants test helpers to test/helpers (split prep) (#2083)\n\n## What\n\nStep 0 of splitting `packages/gateway/src/security-invariants.test.ts`\n(about 17.8k lines) into one file per invariant. This PR moves ONLY the\nshared top-level helpers into\n`packages/gateway/test/helpers/security-invariants.ts`. No test moves,\nno assertion changes.\n\nMoved (each was used by more than one describe block): `reachRunner`,\n`baseInvariantWriteCtx`, `fakeVault`, `SRC_ROOT`, `REPO_ROOT`, `read`,\n`readDirConcat`, `readDirFiles`, `grepRepo`, and the mid-file fixtures\n`WriteUnderTest`, `confirmableInput`, `censusPrepareReply`,\n`censusCapabilities`, `writesUnderTest`, `freshEgressDb` (with its lazy\nmigrated-template cache, still one instance per process) and\n`egressRows`.\n\nDeliberately left in the test file: `AGENT_PROPOSER` (used only by I20),\n`productionTsUnder`, `signTrustStatementDyn`, `moduleSpecifiers`\n(single-block helpers).\n\nThe helper lives under `test/`, not `src/`, because `readDirFiles` and\n`grepRepo` scan `packages/gateway/src` and skip only `*.test.ts`. A\nhelper in `src/` would be scanned as production code. Every scan root is\nunder `packages/gateway/src` or other `src` trees, so none of them sees\nthe new file.\n\n`REPO_ROOT` is now `resolve(import.meta.dir, \"../../../..\")` from the\nhelper and `SRC_ROOT` is `REPO_ROOT/packages/gateway/src`, equal to the\nold values. The in-block `import.meta.dir` uses (chatops, tribal,\ntrust-blocks, trust-keys, connector-writes, agent-tools) now use\n`SRC_ROOT`, which is identical to the old value. Unused imports were\nremoved from the test file.\n\n## Evidence\n\n- JUnit before and after (sorted describe path, test name, status):\nidentical. 665 tests, 665 pass, 0 skipped, 0 failed on both sides; 4758\n`expect()` calls on both.\n- `expect(` occurrences: test file 2572 before and 2572 after; helper 0.\n- `bun run typecheck`, `bun run typecheck:tests` (no new baseline\nerrors) and `bun run preflight:fast` pass, including\n`audit:import-meta-dir` and the structure audits.\n\n## Docs\n\nNo doc describes where these helpers live. The five core status docs\n(CLAUDE.md and GEMINI.md status paragraph, roadmap, architecture,\ndocs/README, cli-reference) need no change for a test-only refactor.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrGFPLqt8C3Ybzk2dHq\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Tests**\n* Consolidated shared helpers for security-invariant tests and\nstandardized how they locate and inspect source files.\n* Added reusable test support for connector-write scenarios and\negress-ledger checks.\n  * No changes to production behavior or user-facing functionality.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-22T22:04:55+02:00",
+          "tree_id": "1a09d6d3acb13e02a163b692a11c5890beef41ef",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/0f1ad1c798085f90a99239114c35c926410c5e45"
+        },
+        "date": 1795378578137,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 270.99718614999654,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 269.67064419999804,
             "unit": "ms"
           }
         ]
