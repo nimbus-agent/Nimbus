@@ -9,7 +9,7 @@ import type { PlannedAction } from "./types.ts";
  * marks an outside origin.
  *
  * No other gateway file compares an action's `origin` to a literal (pinned in
- * `security-invariants.test.ts`); the standing-rule check refuses any origin at all.
+ * `i58-agent-door.test.ts`); the standing-rule check refuses any origin at all.
  */
 
 /** True for an action the conversational model proposed (`origin: "model"`, I53). */

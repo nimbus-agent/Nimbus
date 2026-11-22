@@ -101,7 +101,7 @@ describe("cloneRegistrySource", () => {
     expect(createHash("sha256").update(bytes).digest("hex")).toBe(out.packageSha256);
     expect(listExtensions(db)).toEqual(before);
     // No Vault write is structural: `CloneSourceDeps` carries no Vault, and the I44 source pin in
-    // security-invariants.test.ts forbids `vault` and `publisherKeyDecision` in the clone function.
+    // i44-registry-verified-chain.test.ts forbids `vault` and `publisherKeyDecision` in the clone function.
   });
 
   test("clones an id that is installed, leaving the row and its run grant unchanged", async () => {

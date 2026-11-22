@@ -309,7 +309,7 @@ is clamped.
 usage/filters; docs. Adding a `ClientKind` is a compile error in `CAPTURE_ROLE_BY_KIND` — decide its role.
 
 **Always:** the triple rule (wiring + `docs/SECURITY-INVARIANTS.md` + the `I28` describe block in
-`packages/gateway/src/security-invariants.test.ts`, same commit); run that WHOLE file, not `-t I28`
+`packages/gateway/src/security-invariants/i28-mcp-capture-gate.test.ts`, same commit); run that WHOLE file, not `-t I28`
 (other blocks pin counts this area moves, e.g. I22's). Each D32 rule needs a red-proving fixture.
 Update `CLAUDE.md` + `GEMINI.md`, `docs/architecture.md` (§ MCP capture sink),
 `docs/cli-reference.md` (§ `nimbus captures` and the MCP server section),
@@ -346,7 +346,7 @@ A capture row holds `client_label` and, since V99, `label_source`: `declared` (t
 or `kit` (the `--agent <name>` value of `nimbus mcp-server --stdio --agent <name>`, sent as `labelSource: "kit"`
 on `capture.submit`). Both are UNVERIFIED and DISPLAY ONLY: the prompt, `approvals.list`/`approvals.get`, the accept
 audit row and the proof show the source; no step of `capture-gate.ts`, `capture-act.ts` or the executor may branch on
-it (a source pin in the I28 block of `security-invariants.test.ts` fails on any line there that is not a declaration or a
+it (a source pin in the I28 block of `i28-mcp-capture-gate.test.ts` fails on any line there that is not a declaration or a
 pass-through). A new fixture that builds a `NewCaptureRow` must set `labelSource`.
 
 ## The protocol layer (AD6b)

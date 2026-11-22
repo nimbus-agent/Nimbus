@@ -21,7 +21,7 @@ export interface ActuationRequest {
  *
  * Callable only from `cu-gate.ts` plus this definition file, enforced both statically
  * (`check-nimbus-invariants.ts`'s `checkActuationConfinement`) and at runtime
- * (`security-invariants.test.ts`'s `describe("I35 — …")`), landed together in Task 13. A second
+ * (`i35-computer-use-envelope.test.ts`'s `describe("I35 — …")`), landed together in Task 13. A second
  * caller would be a second path from a model-proposed action to the host, bypassing the envelope
  * check, the structural classifier, the consent round-trip and the audit-log append the gate makes
  * around every call here. Mirrors D23's `runConfined` confinement exactly.

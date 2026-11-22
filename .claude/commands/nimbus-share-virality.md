@@ -50,7 +50,7 @@ An outbound share leaves the machine **only** through `share/share-gate.ts` `cre
 5. **Audit** — the applied redaction-set is appended to the audit log (`approved` on success, `rejected` on deny/timeout).
 6. **Fail-closed** — a denied or timed-out approval emits nothing.
 
-**Static `D21`** (`scripts/structure-audit/check-nimbus-invariants.ts`): the `share.publish` literal may be NAMED only in `engine/executor.ts` (the frozen-set membership) + `share-gate.ts`; the `share.signing.privkey` literal only in `share-keypair.ts`; and `createShare` may be CALLED only from `share-gate.ts` (its home) + `share-rpc.ts` (the single wiring/emit site) + the boot site that builds its `requestApproval` dependency. The runtime counterpart is the I27 describe block in `packages/gateway/src/security-invariants.test.ts`. See the `nimbus-security-invariants` skill for the triple-rule contract.
+**Static `D21`** (`scripts/structure-audit/check-nimbus-invariants.ts`): the `share.publish` literal may be NAMED only in `engine/executor.ts` (the frozen-set membership) + `share-gate.ts`; the `share.signing.privkey` literal only in `share-keypair.ts`; and `createShare` may be CALLED only from `share-gate.ts` (its home) + `share-rpc.ts` (the single wiring/emit site) + the boot site that builds its `requestApproval` dependency. The runtime counterpart is the I27 describe block in `packages/gateway/src/security-invariants/i27-share-gate.test.ts`. See the `nimbus-security-invariants` skill for the triple-rule contract.
 
 ## Surfaces
 

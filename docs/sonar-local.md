@@ -55,7 +55,7 @@ This is acceptable because:
 - **The "Sonar way" *On New Code* conditions match what we'd have written ourselves**: 0 new bugs, 0 new vulnerabilities, all new security hotspots reviewed, ≥80% coverage on new code, ≤3% duplication on new code, and A ratings (security / reliability / maintainability / security review) on new code.
 - **Project-level enforcement is covered elsewhere in the repo.** What "Sonar way" does *not* enforce — overall security/reliability ratings staying at A across the whole project, and 100% triage of legacy security hotspots — is covered by:
   - [CodeQL](../.github/workflows/codeql.yml) for security analysis (semantic, not heuristic — generally stronger than Sonar's hotspot detection).
-  - [`packages/gateway/src/security-invariants.test.ts`](../packages/gateway/src/security-invariants.test.ts) for runtime enforcement of every `I<N>` invariant in [`docs/SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md).
+  - [`packages/gateway/src/security-invariants/`](../packages/gateway/src/security-invariants/) for runtime enforcement of every `I<N>` invariant in [`docs/SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md).
   - [`scripts/structure-audit/`](../scripts/structure-audit/) for static-time enforcement of I1 (spawn rule) and the vault-key allow-list.
   - The 22 per-subsystem coverage gates in [`package.json`](../package.json) (e.g. `test:coverage:engine` ≥85%, `test:coverage:vault` ≥90%) — stricter than Sonar's 80% default on every security-critical subsystem.
 

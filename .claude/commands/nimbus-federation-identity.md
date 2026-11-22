@@ -60,7 +60,7 @@ Slice 2 (Team Vault + Quorum HITL) shipped 2026-06-07 ✅ — its surface is fro
 - **I17** — federated answering only in `query-gate.ts`; leak-proof shape; static **D13** forbids any federation module other than `query-gate.ts` from importing the item-list query. Answering `peerId` is forced from the NaCl-authenticated session, never the request body (I17/R1).
 - **I18** — IdP token validation only in `identity/verifier.ts`; raw tokens Vault-only; federation consults `isOperatorValid()`; static **D14** forbids identity-token Vault-key literals outside `identity/`. (D11 is connector-scoped, which is why non-connector identity keys needed a purpose-built D14.)
 
-Both are asserted at runtime in `packages/gateway/src/security-invariants.test.ts` (I17/I18 describe blocks) and statically in `scripts/structure-audit/check-nimbus-invariants.ts` (D13/D14). See the `nimbus-security-invariants` skill for the triple-rule contract.
+Both are asserted at runtime in `packages/gateway/src/security-invariants/` (I17/I18 describe blocks) and statically in `scripts/structure-audit/check-nimbus-invariants.ts` (D13/D14). See the `nimbus-security-invariants` skill for the triple-rule contract.
 
 ## Surfaces
 

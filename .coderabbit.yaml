@@ -73,7 +73,7 @@ reviews:
       instructions: >-
         Enforce the TRIPLE RULE for any structural defense: production wiring,
         a row in docs/SECURITY-INVARIANTS.md, and an enforcement test in
-        security-invariants.test.ts all land in the SAME commit — a defense
+        security-invariants/ all land in the SAME commit — a defense
         defined but never wired looks identical to one that works, and an audit
         previously found three of those. When a guard asserts on source text,
         check it cannot pass on a leftover import: assert the CALL

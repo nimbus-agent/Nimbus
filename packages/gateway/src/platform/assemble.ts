@@ -1224,7 +1224,7 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
       syncScheduler.register(connector, intervalOverrideMs);
     },
   };
-  // Read per sync. Bound here, outside the `if` below, because security-invariants.test.ts pins how
+  // Read per sync. Bound here, outside the `if` below, because i41-demo-root.test.ts pins how
   // far `syncScheduler.start()` may sit from the guard that wraps it.
   const briefingSnapshotIntervalMinutes = (): number =>
     loadNimbusBriefingFromConfigDir(paths.configDir).snapshotIntervalMinutes;

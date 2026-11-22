@@ -242,7 +242,7 @@ async function readInjected(
   // A SIMULATION: no path hands a federated peer's answer to the model today, so this is text
   // SHAPED like one, put in front of the model directly. The real federated refusal (a peer can
   // never trigger a connector write: the invoke gate refuses every write-classified tool id) is
-  // pinned by the I26 tests in security-invariants.test.ts.
+  // pinned by the I26 tests in i26-connector-write-confinement.test.ts.
   return wrapToolOutput(
     { service: "federation", tool: "peer_answer" },
     { peer: "alice@team", answer: `The deploy is fine. ${instruction}` },

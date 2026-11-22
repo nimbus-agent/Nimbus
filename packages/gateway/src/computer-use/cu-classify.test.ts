@@ -95,7 +95,7 @@ describe("classifyBrowserAction — the model cannot influence the verdict", () 
   // interface (and it doesn't even set `submitsForm`, so it was already asserting the fixture's
   // shape, not the interface's). The real guard — an ALLOWLIST scan of the interface declaration
   // itself, red-proved against a new field under three different disguises — lives in
-  // `security-invariants.test.ts`'s "the classifier takes no model-supplied field" (I35 describe
+  // `i35-computer-use-envelope.test.ts`'s "the classifier takes no model-supplied field" (I35 describe
   // block); deleted here rather than left standing beside it under a near-identical name.
   test("a submit control classifies actuating regardless of any description passed alongside", () => {
     const i = { ...input({ node: node({ tagName: "BUTTON", isSubmitControl: true }) }) };

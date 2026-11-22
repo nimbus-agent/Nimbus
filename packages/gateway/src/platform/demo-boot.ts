@@ -30,7 +30,7 @@ import type { PlatformPaths } from "./paths.ts";
  *   no business touching. The demo fires a P1 page, so the on-call push would raise one.
  *
  * A pure function so the decision is unit-testable; `assemble.ts` is too large to execute in a
- * unit test, and `security-invariants.test.ts` pins that it consults this.
+ * unit test, and `i41-demo-root.test.ts` pins that it consults this.
  */
 export type BootPolicy = {
   readonly reapAppContainers: boolean;

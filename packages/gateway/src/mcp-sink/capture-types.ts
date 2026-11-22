@@ -198,7 +198,7 @@ export const NO_BASIS_CLASS = "agent_no_basis";
 /**
  * Where a proposer label came from: `declared` is the MCP client's own `clientInfo.name`, `kit`
  * the `--agent <kit>` value in the agent's server entry (AD7a). Neither is verified and neither
- * is read by any decision (a source pin in `security-invariants.test.ts` holds that).
+ * is read by any decision (a source pin in `i58-agent-door.test.ts` holds that).
  */
 export type LabelSource = "declared" | "kit";
 

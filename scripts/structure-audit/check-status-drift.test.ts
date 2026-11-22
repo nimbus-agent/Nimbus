@@ -20,7 +20,8 @@ function inSync(overrides: Record<string, string> = {}): Record<string, string> 
   return {
     "packages/gateway/src/index/local-index.ts": "export const CURRENT_SCHEMA_VERSION = 42;\n",
     "packages/gateway/src/index/foo-v42-sql.ts": "// migration",
-    "packages/gateway/src/security-invariants.test.ts": 'describe("I27", () => {});\n',
+    "packages/gateway/src/security-invariants/i27-share-gate.test.ts":
+      'describe("I27", () => {});\n',
     "CLAUDE.md": "Status: invariants through I27; schema V42.\n",
     "GEMINI.md": "Status: invariants through I27; schema V42.\n",
     "docs/architecture.md": "Current invariants through I27; schema V42.\n",
@@ -323,5 +324,36 @@ describe("auditStatusDrift — the I7 allowlist count in the tauri-allowlist ski
     const repoRoot = join(import.meta.dir, "..", "..");
     const errors = auditStatusDrift(repoRoot).errors.filter((e) => e.includes(SKILL));
     expect(errors).toEqual([]);
+  });
+});
+
+describe("auditStatusDrift: the invariant ceiling comes from the per-invariant test folder", () => {
+  test("fails when the old single test file is back", () => {
+    const result = auditStatusDrift(
+      makeRepo(inSync({ "packages/gateway/src/security-invariants.test.ts": "// back\n" })),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.errors.join("\n")).toContain("still exists");
+  });
+
+  test("fails when the folder holds no test file", () => {
+    const layout = inSync();
+    delete layout["packages/gateway/src/security-invariants/i27-share-gate.test.ts"];
+    const result = auditStatusDrift(makeRepo(layout));
+    expect(result.ok).toBe(false);
+    expect(result.errors.join("\n")).toContain("no *.test.ts files");
+  });
+
+  test("takes the highest I<N> across every file in the folder", () => {
+    const result = auditStatusDrift(
+      makeRepo(
+        inSync({
+          "packages/gateway/src/security-invariants/i28-mcp-capture-gate.test.ts":
+            'describe("I28", () => {});\n',
+        }),
+      ),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.errors.join("\n")).toMatch(/I28|I27/);
   });
 });
