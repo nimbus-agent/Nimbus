@@ -143,9 +143,23 @@ export function throwIfWave4WithoutPreview(
   action: PlannedAction,
   rows: readonly ConnectorWriteRow[],
 ): void {
+  const reason = wave4WithoutPreviewReason(action, rows);
+  if (reason !== undefined) throw new BeforeStateRefusedError(reason);
+}
+
+/**
+ * The same D1 decision as {@link throwIfWave4WithoutPreview}, as a value: {@link WAVE4_BEFORE_REFUSAL}
+ * when that helper would throw, else `undefined`. The remediation dry run (`ToolExecutor.readBeforeOnly`)
+ * reports it as its outcome; only `gate()` consumes the thrown error.
+ */
+export function wave4WithoutPreviewReason(
+  action: PlannedAction,
+  rows: readonly ConnectorWriteRow[],
+): string | undefined {
   if (isOutsideOrigin(action) && rows.some((r) => r.wave === 4 && r.actionType === action.type)) {
-    throw new BeforeStateRefusedError(WAVE4_BEFORE_REFUSAL);
+    return WAVE4_BEFORE_REFUSAL;
   }
+  return undefined;
 }
 
 export interface BeforeStateRunner {

@@ -20,6 +20,7 @@ import {
   type BeforeStateRunner,
   createBeforeStateRunner,
   isBeforeReadActionType,
+  WAVE4_BEFORE_REFUSAL,
 } from "./before-state.ts";
 import {
   DRY_RUN_BOUND_REASON,
@@ -219,6 +220,25 @@ describe("ToolExecutor.readBeforeOnly (remediation dry run)", () => {
     await expect(h.exec.readBeforeOnly(WRITE)).rejects.toThrow("runner broke");
     expect(h.dispatched).toEqual([]);
     expect(h.prompts).toEqual([]);
+  });
+
+  test("a row with a reader but no typed preview reads nothing: an outside-origin Wave 4 type is refused with the Wave 4 text, any other is `no_reader`", async () => {
+    const unpreviewed = (wave: 2 | 4): ConnectorWriteRow =>
+      // Hand-built: `withBefore` refuses a reader without a preview, so only a malformed table reaches this branch.
+      ({ ...row("jira_issue_update", "jira.issue.update", "mesh", wave), before: READER });
+    const w4 = harness({ rows: [unpreviewed(4)] });
+    expect(await w4.exec.readBeforeOnly({ ...WRITE, origin: "model" })).toEqual({
+      status: "refused",
+      reason: WAVE4_BEFORE_REFUSAL,
+    });
+    expect(await w4.exec.readBeforeOnly(WRITE)).toEqual({ status: "no_reader" });
+    expect(w4.dispatched).toEqual([]);
+    const w2 = harness({ rows: [unpreviewed(2)] });
+    expect(await w2.exec.readBeforeOnly({ ...WRITE, origin: "model" })).toEqual({
+      status: "no_reader",
+    });
+    expect(w2.dispatched).toEqual([]);
+    expect(w2.prompts).toEqual([]);
   });
 
   test("a bound row and a row that refuses every door are refused before any read or child", async () => {

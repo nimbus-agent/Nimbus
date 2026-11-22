@@ -39,10 +39,12 @@ import { withoutTemplateText } from "./audit-bodies.ts";
 import { commitFilesDigest, withoutFileText } from "./audit-files.ts";
 import {
   BEFORE_READ_HITL_REFUSAL,
+  type BeforeStateOutcome,
   BeforeStateRefusedError,
   type BeforeStateRunner,
   isBeforeReadActionType,
   throwIfWave4WithoutPreview,
+  wave4WithoutPreviewReason,
 } from "./before-state.ts";
 import type { BoundWriteCapabilities, SettleContext } from "./bound-write-capabilities.ts";
 import { type RemoteApprovalOutcome, resolveDelegatedApproval } from "./delegated-approval.ts";
@@ -1940,14 +1942,42 @@ export class ToolExecutor {
     opts: ExecuteOptions | undefined,
     scope: GateScope,
   ): Promise<ConnectorWritePreview | undefined> {
-    await this.refreshPreviewInstance(action);
-    const runner = this.beforeState;
-    const preview = buildConnectorWritePreviewFrom(action, this.rows(), this.previewCredentialFor);
-    if (runner === undefined) return preview;
-    if (preview === undefined) {
+    const read = await this.readBeforeStateOf(action, opts, scope);
+    if (read.kind === "no_runner") return read.preview;
+    if (read.kind === "no_preview") {
       throwIfWave4WithoutPreview(action, this.rows());
       return undefined;
     }
+    const { preview, before } = read;
+    if (before === undefined) return preview;
+    if (before.status === "refused") throw new BeforeStateRefusedError(before.reason);
+    return { ...preview, before };
+  }
+
+  /**
+   * The before-state reads behind {@link captureBeforePhase} and {@link readBeforeOnly}, as a value that never
+   * throws a refusal: the typed preview and, when this executor has a runner and the preview exists, the
+   * runner's outcome (a guard's refusal included). Each read goes through THIS executor's gate and dispatcher
+   * (audited, I29-ledgered); the write itself is never gated or dispatched here.
+   */
+  private async readBeforeStateOf(
+    action: PlannedAction,
+    opts: ExecuteOptions | undefined,
+    scope: GateScope,
+  ): Promise<
+    | { readonly kind: "no_runner"; readonly preview: ConnectorWritePreview | undefined }
+    | { readonly kind: "no_preview" }
+    | {
+        readonly kind: "read";
+        readonly preview: ConnectorWritePreview;
+        readonly before: BeforeStateOutcome | undefined;
+      }
+  > {
+    await this.refreshPreviewInstance(action);
+    const runner = this.beforeState;
+    const preview = buildConnectorWritePreviewFrom(action, this.rows(), this.previewCredentialFor);
+    if (runner === undefined) return { kind: "no_runner", preview };
+    if (preview === undefined) return { kind: "no_preview" };
     const before = await runner.read(
       action,
       {
@@ -1961,9 +1991,7 @@ export class ToolExecutor {
       },
       opts?.beforeReaderUnlisted === true ? { readerUnlisted: true } : {},
     );
-    if (before === undefined) return preview;
-    if (before.status === "refused") throw new BeforeStateRefusedError(before.reason);
-    return { ...preview, before };
+    return { kind: "read", preview, before };
   }
 
   /**
@@ -2013,13 +2041,13 @@ export class ToolExecutor {
       bind: false,
       ...(action.incident === undefined ? {} : { step: randomBytes(8).toString("hex") }),
     };
-    try {
-      const before = (await this.captureBeforePhase(action, undefined, scope))?.before;
-      return before ?? { status: "no_reader" };
-    } catch (e) {
-      if (e instanceof BeforeStateRefusedError) return refused(e.reason);
-      throw e;
+    const read = await this.readBeforeStateOf(action, undefined, scope);
+    if (read.kind === "no_preview") {
+      const wave4 = wave4WithoutPreviewReason(action, this.rows());
+      return wave4 === undefined ? { status: "no_reader" } : refused(wave4);
     }
+    if (read.kind === "no_runner") return { status: "no_reader" };
+    return read.before ?? { status: "no_reader" };
   }
 
   async checkTerraformDrift(workingDirectory: string): Promise<TerraformDriftOutcome> {

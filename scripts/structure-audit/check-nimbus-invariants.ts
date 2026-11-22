@@ -1296,7 +1296,7 @@ export function checkIncidentLinkMinting(files: readonly FileEntry[]): Violation
 //   `remediation-dry-run-confined` (Phase 17 dry run): a call `.readBeforeOnly(` only in `incident/remediation.ts`
 //       (its one caller), and the body of `ToolExecutor.readBeforeOnly` in `engine/executor.ts` holds no call of
 //       `gateWithin(`, `approvalPhase(`, `dispatchBoundPhase(`, `.execute(` or `connectors.dispatch(`: it runs
-//       the before-state reads (`captureBeforePhase`, whose reads go through the gate) and never gates, asks
+//       the before-state reads (`readBeforeStateOf`, shared with `captureBeforePhase`, whose reads go through the gate) and never gates, asks
 //       about or dispatches the write. The body is found by the method's own signature; a missing body is
 //       itself a violation.
 // Stated bounds: a text scan, so a dynamically composed key or name evades it (the executor refuses an engine proposal
