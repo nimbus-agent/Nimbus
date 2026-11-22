@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795371334642,
+  "lastUpdate": 1795373775141,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "2042740e9aac2b8cbf87e9ab04e801a3f51e5df2",
-          "message": "fix(gateway): stop console windows flashing on every Windows sync (#1451)\n\n## What\n\nConsole windows stop flashing on Windows while Nimbus syncs.\n\nThe Gateway is launched **detached and console-less**\n(`cli/src/lib/spawn-gateway.ts` passes `windowsHide: true` + `detached:\ntrue`), so on Windows every console-subsystem child it spawns is handed\na brand-new console **and a visible window**. `filesystem-v2-sync`\nspawns one `git blame` per indexed file — up to 120 per root, on\n**every** tick, with no cursor gate — and `blame-index-sync` up to 400\non a full run. The user-visible result is a screenful of windows opening\nand closing every 10 minutes on an otherwise idle machine.\n\n`platform/spawn-capture.ts` already exists for exactly this and fixed\nthe vendor CLIs (`aws`/`gcloud`/`az`/`bq`/`kubectl`). The git, ffmpeg,\nvoice and sandbox paths were written afterwards without it. A helper you\ncan decline to use is not a defense, so this adds the gate too.\n\n## Measurement\n\nWindows 11 / Bun 1.3.14, console-less parent, counting **visible\n`ConsoleWindowClass` windows** via `EnumWindows` + `IsWindowVisible`:\n\n| what | windows |\n| --- | --- |\n| `Bun.spawn`, no flag, 8 children | 8 |\n| `Bun.spawn`, `windowsHide: true` | 0 |\n| `node:child_process` under Bun, no flag | 8 |\n| `node:child_process` under Bun, `windowsHide: true` | 0 |\n\nEnd-to-end on the real production helper (`gitBlameLinePorcelain`, 10\nfiles, launched console-less):\n\n| | windows |\n| --- | --- |\n| flag forced off — the pre-fix behaviour, as a positive control | **7**\n|\n| as shipped | **0** |\n\n**Counting `conhost.exe` cannot detect this bug.** `CREATE_NO_WINDOW`\nstill allocates a console and still spawns a conhost — it is only\ninvisible — so both modes give identical conhost counts. Two of my\nmeasurement attempts were worthless for exactly that reason before I\nswitched to visible-window enumeration.\n\n## Changes\n\n- **26 spawn sites** under `packages/gateway/src` now pass `windowsHide:\ntrue`. Nine platform-scoped ones (Linux PAL, macOS sandbox,\n`open`/`xdg-open`) carry `// windows-console-ok: <reason>` instead,\nsince the flag would be dead code there.\n- **New gate `audit:windows-console`**\n(`scripts/audit/check-windows-console-hide.ts`), wired into\n`_test-suite.yml` and the preflight manifest. Static because nothing\nelse can catch this: the symptom needs a real detached Windows daemon,\nwhich no test on any runner is. Scoped to `packages/gateway/src` —\n`packages/cli` is a console app whose children inherit the user's\nterminal.\n- **`spawn-capture.ts`'s rationale corrected.** It claimed `windowsHide`\n\"appears nowhere in `@types/bun`\" and would be a no-op on `Bun.spawn`.\n`bun-types@1.3.14` declares it and Bun honours it. The helper is still\nthe right shape for capture-style spawns; only the stated reason was\nwrong, and it would have talked the next person out of the one-line fix.\n- **`stripComments` / `stripStringLiterals` now understand regex\nliterals.** Prerequisite, not a drive-by: a quote inside a regex opened\na phantom string and swallowed the rest of the file, blinding the new\nguard on **12 of 1986** `gateway/src` files — including\n`platform/linux.ts`, which holds two real violations it could not see.\n`lib.ts`'s own note asked for this \"the next time someone is in this\nfile with reason to\", and unlike the connector case it cited, this guard\nhas no backstop. `gateway/src` now derails **0 of 1986**. The\n`/`-as-regex vs `/`-as-division call refuses to cross a newline, so a\nwrong call can never eat more than its own line.\n\n## Verification\n\n- `bun test packages/gateway packages/cli scripts` — **21004 pass, 0\nfail** (the CI command, whole-repo, one process).\n- `bun run preflight:fast` — all gates pass, including the new one.\n- Every audit consuming the changed stripper re-run individually:\n`invariants`, `worker-entries`, `import-meta-dir`, `coverage-gate-pal`,\n`cross-platform` — all exit 0. `audit:any` unchanged at 1.\n- Each production fix is covered by a test that was watched failing\nfirst.\n\n## Review follow-ups\n\nTwo real holes in the gate, found in review and fixed in `16dcd09e`:\n\n- **`windowsHide: false` passed.** The rule accepted the bare token, so\na spawn that explicitly disables the flag satisfied it while still\npopping a window. Not hypothetical — the positive control in the\nmeasurement above is built from exactly that shape. The value must now\nbe the literal `true`, and it must sit in the call's own options object:\n`parens === 1` so a nested call cannot excuse the outer one, `braces ===\n1` so a flag one object deeper cannot either. Re-run after tightening:\nstill 0 violations, so all 26 sites genuinely pass `windowsHide: true`\nat the right depth rather than merely containing the token.\n- **A `node:child_process` namespace import bypassed the gate.** Member\ncalls were excluded wholesale to ignore `runner.spawn` indirection,\nwhich also skipped `childProcess.spawn` — a real spawn in the same\nshape. The qualifier is captured rather than excluded now. No such\nimport exists today; the gate exists for the code written next.\n\nAlso red-proved against the tree rather than only fixtures: flipping one\nshipped site to `windowsHide: false` is caught, reverting clears it.\n\nA third comment asked for a `docs/SECURITY-INVARIANTS.md` row plus a\n`security-invariants.test.ts` entry under the triple rule. Declined,\nwith reasoning on the thread: that file scopes itself to structural\n**security** defenses from the B1 threat chains, and a console window\nhas no confidentiality, integrity or availability impact.\n`audit:cross-platform` is the direct precedent — same kind of static\nCI-gated source guard, zero hits in that document. The defense is\nenforced by a blocking gate plus 23 unit tests, which is the right\nmechanism for it.\n\n## Not in this PR\n\n`syncFilesystemCodeSymbolsForRoot` re-blames up to 120 files on every\n10-minute tick with **no cursor gate** — it redoes identical work\nforever. That is a real efficiency bug and it is what made the window\nstorm so dense, but fixing it changes indexing semantics and deserves\nits own PR. Flagged, not touched.\n\nOne file still derails the stripper —\n`scripts/structure-audit/check-coverage-gate-pal.ts`, on a\nnested-template-substitution shape, unrelated to regex literals. No\naudit reads that file as input; recorded in `lib.ts` as the remaining\nlimitation.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01U1wLEizp9Qpq81VZYQjsuo\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n- **Bug Fixes**\n- Prevented visible Windows console windows when Gateway launches Git,\nmedia, browser, voice, sandbox, and other child processes.\n- Preserved existing process output, launch behavior, and sandbox\ncontrols.\n\n- **Tests**\n- Added Windows-specific coverage for hidden-console behavior across\nsupported subprocesses.\n\n- **Chores**\n- Added automated audits and preflight checks to detect subprocesses\nthat could show Windows consoles.\n- Improved code scanning to correctly handle comments, strings, and\nregular expressions.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-05T13:47:06Z",
-          "tree_id": "b26b96471aa074ac9d13c35c9d14d8cc23a6f777",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/2042740e9aac2b8cbf87e9ab04e801a3f51e5df2"
-        },
-        "date": 1788616813944,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 337.91887704999755,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 343.7927299000024,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 178.5426589999999,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7f5bbe5795a4e4e965539d9bc8feddf15f9faae4",
+          "message": "ci(sonar): give the scanner's JS/TS analysis 8 GB, and fail the gate when the scan uploaded nothing (#2082)\n\n## Summary\n\nSince 2026-11-18 every SonarCloud scan, on `main` pushes and on PRs, has\nrun out of memory: \"Node.js process running out of memory (heap size\nlimit 4288 MB)\". Without an explicit setting, Node sets the heap for the\nscanner's JS/TS analysis process at about 4288 MB on the `ubuntu-24.04`\nrunner, and the analysis of this tree no longer fits.\n\nWhen the scan crashes it uploads nothing. The \"SonarQube quality gate\n(enforced)\" step in `_test-suite.yml` then finds no\n`.scannerwork/report-task.txt` and skips the gate (fail-open). So the\njob stays green, and no change since the 11-19 analysis has been scored.\nThat includes the Sonar fixes made in #2077 and #2078.\n\nThis PR does two things. It sets `sonar.javascript.node.maxspace=8192`\nin `sonar-project.properties`. The runner has 16 GB of RAM, and the\ncoverage tests have finished by the time the scan runs. 8192 is an\nestimate with headroom, not a measured need.\n\n## How to verify\n\nOn this PR's `Unit + Coverage` job:\n- the \"SonarQube Cloud analysis\" step has no out-of-memory line in its\nlog;\n- the gate step reads a real verdict instead of the \"No Sonar\nreport-task.txt\" warning;\n- a `SonarCloud Code Analysis` check appears on the head commit.\n\n## The gate now fails closed when the scan uploaded nothing\n\nThe gate step used to pass with a warning when there was no\n`.scannerwork/report-task.txt`. That is how an out-of-memory scan went\nunnoticed for days. Now:\n\n- **no `report-task.txt`, or one with no `ceTaskUrl`:** the job fails.\nThe error names the scan step's outcome and says what to do: raise\n`maxspace` for an out-of-memory crash, re-run for a network or\nSonarCloud failure.\n- **upload happened, then SonarCloud's Compute Engine task failed or\ntimed out, or the verdict is indeterminate:** still warns and passes.\nThat is SonarCloud's server side, not our scan.\n- **no `SONAR_TOKEN`:** both steps are still skipped by their `if:`.\n\nThe scan step gets `id: sonar-scan` so the gate can read its outcome.\nThe step stays `continue-on-error: true`, so the gate step makes the\ndecision.\n\nThe trade-off: a SonarCloud outage during upload now blocks PRs until a\nre-run succeeds, where before it let them through unscored.\n\n`docs/sonar-local.md`, the `nimbus-preflight` skill and the\n`nimbus-sonar-gate` agent brief now describe the new policy.\n\nThe five core docs are unchanged: this is a CI configuration change with\nno product, command or roadmap effect.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrGFPLqt8C3Ybzk2dHq\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* Quality checks now fail when a scan does not produce a usable report,\nincluding when the report is missing required task information.\n* Increased the memory available to JavaScript and TypeScript analysis\nto reduce scan failures.\n* **Documentation**\n* Updated guidance to clarify how scan upload failures differ from\nserver-side processing failures and how each affects the quality-check\nresult.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-22T18:48:38Z",
+          "tree_id": "d58e44795c7c93a473deafa52207171e0c2415fa",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/7f5bbe5795a4e4e965539d9bc8feddf15f9faae4"
+        },
+        "date": 1795373771007,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 179.85431505000014,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 179.89058160000477,
             "unit": "ms"
           }
         ]
