@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795370794197,
+  "lastUpdate": 1795371334642,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "5c622162e5ef638757fec7a1d6fba1540e8baa9c",
-          "message": "chore: release main (#1450)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.10.0</summary>\n\n##\n[7.10.0](https://github.com/nimbus-agent/Nimbus/compare/v7.9.0...v7.10.0)\n(2026-09-05)\n\n\n### Features\n\n* **http:** resolve a forge file coordinate to a path in the reader's\ncheckout ([#1447](https://github.com/nimbus-agent/Nimbus/issues/1447))\n([b472f67](https://github.com/nimbus-agent/Nimbus/commit/b472f67988de1f7ef16577e47da57f7c42f7e7db))\n* **multimodal:** cloud byte-fetch for Photos, Drive and OneDrive (S2 PR\n3 of 4) ([#1448](https://github.com/nimbus-agent/Nimbus/issues/1448))\n([3f7e7b6](https://github.com/nimbus-agent/Nimbus/commit/3f7e7b62668387cf61b40ff0a3ddcc6bf6cf69e9))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-09-05T06:51:25Z",
-          "tree_id": "bc4676e8e98585ddaed8fa9270f8313fb9411637",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/5c622162e5ef638757fec7a1d6fba1540e8baa9c"
-        },
-        "date": 1788591739628,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 298.69603274999645,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 295.9203590000008,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 178.15487495000016,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ee278ba733564f82233589712e901e48afb39855",
+          "message": "chore: release main (#2080)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>11.11.0</summary>\n\n##\n[11.11.0](https://github.com/nimbus-agent/Nimbus/compare/v11.10.0...v11.11.0)\n(2026-11-22)\n\n\n### Features\n\n* **gateway:** nimbus cost waste, orphaned and idle cloud resources from\nthe indexed FinOps recommendations (Phase 10 cost garbage collection,\nslice G4a) ([#2078](https://github.com/nimbus-agent/Nimbus/issues/2078))\n([8712b19](https://github.com/nimbus-agent/Nimbus/commit/8712b19944ff4b0d373f87a5c86560db3592ca57))\n* **gateway:** remediation dry run, read the target and predict the\noutcome without running it (Phase 17)\n([#2079](https://github.com/nimbus-agent/Nimbus/issues/2079))\n([96bc6a5](https://github.com/nimbus-agent/Nimbus/commit/96bc6a590677cea94205c0017ed0da64d6797a74))\n* **gateway:** the remediation approval prompt shows the blast radius,\nand the listing prints each undo command (Phase 17 one-tap rollback)\n([#2077](https://github.com/nimbus-agent/Nimbus/issues/2077))\n([40aa010](https://github.com/nimbus-agent/Nimbus/commit/40aa01056f348d881b559447306fa925af09d677))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-22T18:07:53Z",
+          "tree_id": "d64f1bea0dfd013377c1be5a0891d79f9201a3a9",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/ee278ba733564f82233589712e901e48afb39855"
+        },
+        "date": 1795371330851,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 177.16876845000152,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 178.5426589999999,
             "unit": "ms"
           }
         ]
