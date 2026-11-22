@@ -1448,6 +1448,19 @@ describe("D1 group C selectors (Argo CD, Flux, MLflow, Snowflake)", () => {
         spec: { destination: { namespace: "ns" }, syncPolicy: { automated: {} } },
       }),
     ).toMatchObject({ Destination: "ns", "Auto-sync": "on (prune: no)" });
+    // Argo CD 3.x: `automated: { enabled: false }` keeps the settings and turns auto-sync off.
+    expect(
+      selectOf("argocd_app_sync", {
+        metadata: { name: "web" },
+        spec: { syncPolicy: { automated: { enabled: false, prune: true } } },
+      })["Auto-sync"],
+    ).toBe("off");
+    expect(
+      selectOf("argocd_app_sync", {
+        metadata: { name: "web" },
+        spec: { syncPolicy: { automated: { enabled: true } } },
+      })["Auto-sync"],
+    ).toBe("on (prune: no)");
   });
 
   test("Argo CD rollback: the history entry the write names, and a note that auto-sync makes Argo CD refuse it", () => {
@@ -1461,6 +1474,12 @@ describe("D1 group C selectors (Argo CD, Flux, MLflow, Snowflake)", () => {
     );
     expect(noAuto["History entry 11"]).toBe("r11 (deployed 2026-10-01T10:00:00Z)");
     expect(Object.hasOwn(noAuto, "Note")).toBe(false);
+    const disabled = selectOf(
+      "argocd_app_rollback",
+      { ...APP, spec: { ...APP.spec, syncPolicy: { automated: { enabled: false } } } },
+      { id: "11" },
+    );
+    expect(Object.hasOwn(disabled, "Note")).toBe(false);
     expect(selectOf("argocd_app_rollback", APP, { id: 99 })["History entry 99"]).toBe(
       "not in the deployment history",
     );

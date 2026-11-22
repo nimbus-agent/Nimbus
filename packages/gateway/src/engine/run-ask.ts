@@ -979,6 +979,8 @@ export type RemediationExecutorParams = ExecutorBuildParams &
       action: PlannedAction,
       captured: Readonly<Record<string, string>>,
     ) => void;
+    /** Phase 17: the executor is built for a dry run, so it may run `readBeforeOnly` (static D46(c)). */
+    readonly dryRun?: boolean;
   };
 
 /**
@@ -1007,6 +1009,9 @@ function newRemediationExecutor(
         ...(p.beforeStateRows === undefined ? {} : { rows: p.beforeStateRows }),
         guardContext: () => ({ kb: p.getTribalKbConfig() }),
       }),
+      // Phase 17 remediation dry run: the only executor that may run `readBeforeOnly` (static D46(c)), and
+      // only when the call asked for a dry run.
+      dryRun: p.dryRun === true,
     },
     p.localIndex,
   );

@@ -878,6 +878,8 @@ mod tests {
             "incident.advisory",
             "incident.advisorySet",
             "incident.remediate",
+            // Phase 17: the dry run reads with the owner's credentials; CLI only.
+            "incident.dryRun",
             "incident.undo",
             "incident.export",
             "incident.replay",

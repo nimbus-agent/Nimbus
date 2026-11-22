@@ -13,6 +13,7 @@ import { stripControl } from "./captures-format.ts";
 
 export const REMEDIATE_USAGE =
   "       nimbus incident remediate <id> [--pick <n|prp_...>] [--json]   list the proposals; with --pick, run one (needs a terminal)\n" +
+  "       nimbus incident remediate <id> --pick <n|prp_...> --dry-run [--json]   read the target, predict the outcome; runs nothing\n" +
   "       nimbus incident undo <act_...>                                 reverse an executed reversible action (needs a terminal)\n" +
   "       nimbus incident advisory on|off|status [--json]                advisory mode: proposals are shown, nothing is run";
 
@@ -22,6 +23,7 @@ export type RemediationArgs =
       readonly json: boolean;
       readonly id: string;
       readonly pick?: string;
+      readonly dryRun?: boolean;
     }
   | { readonly verb: "undo"; readonly actionId: string }
   | { readonly verb: "advisory"; readonly json: boolean; readonly action: "on" | "off" | "status" };
@@ -38,9 +40,13 @@ function parseRemediate(rest: readonly string[]): RemediationArgs | undefined {
   let json = false;
   let id: string | undefined;
   let pick: string | undefined;
+  let dryRun = false;
   for (let i = 0; i < rest.length; i += 1) {
     const a = rest[i] as string;
-    if (a === "--json") {
+    if (a === "--dry-run") {
+      if (dryRun) return undefined;
+      dryRun = true;
+    } else if (a === "--json") {
       if (json) return undefined;
       json = true;
     } else if (a === "--pick") {
@@ -57,6 +63,8 @@ function parseRemediate(rest: readonly string[]): RemediationArgs | undefined {
     }
   }
   if (id === undefined) return undefined;
+  // A dry run names one proposal and asks nothing, so it needs --pick and may print JSON.
+  if (dryRun) return pick === undefined ? undefined : { verb: "remediate", json, id, pick, dryRun };
   // A run holds the terminal for the prompt, so it has no --json form.
   if (pick !== undefined && json) return undefined;
   return { verb: "remediate", json, id, ...(pick === undefined ? {} : { pick }) };
@@ -122,6 +130,8 @@ export type ProposalLike = {
   undoStatus: string | null;
   undoable: boolean;
   expiresAtMs: number;
+  /** What `--dry-run` can do for this proposal (absent from an older gateway). */
+  dryRun?: "predicted" | "current_state" | "none";
 };
 
 export type ProposalsReply = {
@@ -184,8 +194,15 @@ function evidenceLines(p: ProposalLike): string[] {
       `blast radius: service ${b.service === null ? "unbound" : clean(b.service)}, environment ${b.environment === null ? "unknown" : clean(b.environment)}; ${deps}; the target's current state is shown when you approve`,
     );
   }
-  if (e.dryRun !== undefined) out.push(`dry run: ${clean(e.dryRun)}`);
+  if (e.dryRun !== undefined) out.push(`dry run: ${clean(e.dryRun)}${dryRunKindText(p.dryRun)}`);
   return out;
+}
+
+function dryRunKindText(kind: ProposalLike["dryRun"]): string {
+  if (kind === "predicted") return " (here: the outcome is predicted)";
+  if (kind === "current_state") return " (here: the current state only, no prediction)";
+  if (kind === "none") return " (here: nothing can be read)";
+  return "";
 }
 
 /** An earlier entry's undo state: the exact command, so the owner never has to find the action id (Phase 17 one-tap rollback). */
@@ -254,17 +271,74 @@ function resolvePick(proposals: readonly ProposalLike[], pick: string): Proposal
   return open[Number(pick) - 1];
 }
 
+type BeforeField = { label: string; value: string };
+export type DryRunReply = {
+  proposalId: string;
+  toolId: string;
+  before:
+    | { status: "ok"; fields: BeforeField[]; notShown?: number }
+    | { status: "unavailable"; reason: string }
+    | { status: "refused"; reason: string }
+    | { status: "no_reader" };
+  prediction: { verdict: "would_change" | "no_change" | "uncertain" | "none"; text: string };
+  label: string;
+};
+
+const VERDICT_TEXT: Readonly<Record<DryRunReply["prediction"]["verdict"], string>> = {
+  would_change: "would change",
+  no_change: "no change",
+  uncertain: "uncertain",
+  none: "not predicted",
+};
+
+function beforeLines(b: DryRunReply["before"]): string[] {
+  if (b.status === "no_reader")
+    return ["Current state: this action has no reader, so nothing was read"];
+  if (b.status !== "ok") return [`Current state: ${b.status} (${clean(b.reason)})`];
+  const out = ["Current state:", ...b.fields.map((f) => `  ${clean(f.label)}: ${clean(f.value)}`)];
+  if (b.notShown !== undefined && b.notShown > 0)
+    out.push(`  (${String(b.notShown)} more not shown)`);
+  return out;
+}
+
+/** A dry run as the owner reads it: what was read, what is predicted, and the fixed label. Nothing was run. */
+export function formatDryRun(chosen: ProposalLike, r: DryRunReply): string {
+  return [
+    `Dry run of [${headline(chosen)}] ${clean(chosen.kind)} - ${clean(r.toolId)} ${inputText(chosen.input)}  (${clean(r.proposalId)})`,
+    ...beforeLines(r.before),
+    `Predicted outcome: ${VERDICT_TEXT[r.prediction.verdict] ?? "not predicted"} - ${clean(r.prediction.text)}`,
+    clean(r.label),
+    "Nothing was run.",
+  ].join("\n");
+}
+
+async function runDryRun(
+  c: Pick<IPCClient, "call">,
+  a: Extract<RemediationArgs, { verb: "remediate" }>,
+  chosen: ProposalLike,
+  sink: Sink,
+): Promise<number> {
+  const out = await c.call<DryRunReply>("incident.dryRun", { id: a.id, proposalId: chosen.id });
+  sink.out(a.json ? `${JSON.stringify(out)}\n` : `${formatDryRun(chosen, out)}\n`);
+  // A read that was refused or failed answers nothing reliable about the target.
+  return out.before.status === "refused" || out.before.status === "unavailable" ? 1 : 0;
+}
+
 async function runRemediate(
   c: Pick<IPCClient, "call">,
   a: Extract<RemediationArgs, { verb: "remediate" }>,
   sink: Sink,
   tty: Tty,
 ): Promise<number> {
-  if (a.pick !== undefined && !(tty.stdin && tty.stdout)) {
+  if (a.pick !== undefined && a.dryRun !== true && !(tty.stdin && tty.stdout)) {
     sink.err(`${TTY_REFUSAL}\n`);
     return 2;
   }
-  const view = await c.call<ProposalsReply>("incident.proposals", { id: a.id });
+  // A dry run writes nothing back: its listing must not revive a denied or expired proposal or renew a TTL.
+  const view = await c.call<ProposalsReply>(
+    "incident.proposals",
+    a.dryRun === true ? { id: a.id, revive: false } : { id: a.id },
+  );
   if (a.pick === undefined) {
     sink.out(a.json ? `${JSON.stringify(view)}\n` : `${formatProposals(view)}\n`);
     return 0;
@@ -276,6 +350,7 @@ async function runRemediate(
     );
     return 1;
   }
+  if (a.dryRun === true) return runDryRun(c, a, chosen, sink);
   sink.out(
     `Running [${headline(chosen)}] ${clean(chosen.kind)} - ${clean(chosen.toolId)} ${inputText(chosen.input)}\n`,
   );

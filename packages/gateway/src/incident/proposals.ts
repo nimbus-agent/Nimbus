@@ -20,7 +20,8 @@ import type { ProposalDraft, ProposalReversibility } from "./proposal-store.ts";
  * What cannot be proposed is listed with its reason (`unavailable`), never silently dropped.
  */
 
-export const DRY_RUN_LINE = "no dry run available; the preview shows the target's current state";
+export const DRY_RUN_LINE =
+  "--dry-run reads the target's current state and, where its reader captures it, predicts the outcome; nothing is run";
 
 /** The fixed confidence weights (sum 100). */
 export const CONFIDENCE_WEIGHTS = Object.freeze({

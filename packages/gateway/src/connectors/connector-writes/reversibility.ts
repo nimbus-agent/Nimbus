@@ -62,12 +62,38 @@ const ECS_CAPTURES: BeforeCaptures = {
   },
 };
 
+/** How many of the newest history ids the dry run's capture keeps (well under the 512-character value cap). */
+const ARGO_HISTORY_IDS_KEPT = 30;
+
+/**
+ * Whether Argo CD auto-sync is on: `spec.syncPolicy.automated` is an object whose `enabled` is not `false`. Its
+ * presence turns auto-sync on; Argo CD 3.x also accepts `automated: { enabled: false }`, which keeps the settings and
+ * turns it off. `{}`, `enabled: true` and `enabled: null` stay on.
+ */
+function argoAutoSyncOn(j: unknown): boolean {
+  const automated = (j as { spec?: { syncPolicy?: { automated?: unknown } } } | null)?.spec
+    ?.syncPolicy?.automated;
+  if (automated === null || typeof automated !== "object" || Array.isArray(automated)) return false;
+  return (automated as { enabled?: unknown }).enabled !== false;
+}
+
+/**
+ * `currentHistoryId` is what the inverse needs. `autoSync` (`on`/`off`) and `historyIds` (the newest ids Argo CD
+ * retains, comma-separated, newest first) are read only by the remediation dry run's prediction
+ * (`dry-run-predict.ts`): Argo CD refuses a rollback while auto-sync is on, and to an id it no longer keeps.
+ */
 const ARGO_CAPTURES: BeforeCaptures = {
-  keys: ["currentHistoryId"],
+  keys: ["currentHistoryId", "autoSync", "historyIds"],
   pick(reply) {
-    const ids = argoHistoryIds(beforeReplyJson(reply));
+    const j = beforeReplyJson(reply);
+    const ids = argoHistoryIds(j);
     if (ids.length === 0) throw new Error("capture: no history");
-    return { currentHistoryId: String(Math.max(...ids)) };
+    const newest = [...new Set(ids)].sort((a, b) => b - a).slice(0, ARGO_HISTORY_IDS_KEPT);
+    return {
+      currentHistoryId: String(newest[0]),
+      autoSync: argoAutoSyncOn(j) ? "on" : "off",
+      historyIds: newest.join(","),
+    };
   },
 };
 

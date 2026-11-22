@@ -1292,7 +1292,13 @@ export function checkIncidentLinkMinting(files: readonly FileEntry[]): Violation
 //       `incident/proposal-store.ts` and the V102 DDL file;
 //   `remediation-action-builder-confined`: the identifier `buildRemediationAction` only in `incident/remediation.ts`;
 //   `remediation-executor-confined`: the identifier `buildRemediationExecutor` only in `engine/run-ask.ts` (its
-//       definition) and `gateway-main.ts` (its one caller).
+//       definition) and `gateway-main.ts` (its one caller);
+//   `remediation-dry-run-confined` (Phase 17 dry run): a call `.readBeforeOnly(` only in `incident/remediation.ts`
+//       (its one caller), and the body of `ToolExecutor.readBeforeOnly` in `engine/executor.ts` holds no call of
+//       `gateWithin(`, `approvalPhase(`, `dispatchBoundPhase(`, `.execute(` or `connectors.dispatch(`: it runs
+//       the before-state reads (`readBeforeStateOf`, shared with `captureBeforePhase`, whose reads go through the gate) and never gates, asks
+//       about or dispatches the write. The body is found by the method's own signature; a missing body is
+//       itself a violation.
 // Stated bounds: a text scan, so a dynamically composed key or name evades it (the executor refuses an engine proposal
 // that is not beside a valid link, and `security-invariants.test.ts` pins the behaviour: never delegated, never
 // standing-approved, refused in advisory mode, never offered to the model); a write verb spelled in a template
@@ -1313,6 +1319,21 @@ const D46C_KEY_RE = /\bengineProposal\s*\??\s*:|["']engineProposal["']\s*:/g;
 const D46C_TABLE_WRITE_RE = d46dWriteRe("incident_(?:proposal|engine_state)");
 const D46C_BUILDER_RE = /\bbuildRemediationAction\b/g;
 const D46C_EXECUTOR_RE = /\bbuildRemediationExecutor\b/g;
+const D46C_DRY_RUN_CALLER = `${D46C_SRC}incident/remediation.ts`;
+const D46C_DRY_RUN_EXECUTOR = `${D46C_SRC}engine/executor.ts`;
+const D46C_DRY_RUN_CALL_RE = /\.readBeforeOnly\s*\(/g;
+const D46C_DRY_RUN_SIG =
+  "async readBeforeOnly(planned: PlannedAction): Promise<BeforeOnlyOutcome> {";
+const D46C_DRY_RUN_FORBIDDEN_RE =
+  /\bgateWithin\s*\(|\bapprovalPhase\s*\(|\bdispatchBoundPhase\s*\(|\.execute\s*\(|\bconnectors\.dispatch\s*\(/g;
+
+/** The body of `readBeforeOnly` in comment- and string-free source: from its signature to the method's closing brace. */
+function d46cDryRunBody(code: string): { start: number; body: string } | undefined {
+  const start = code.indexOf(D46C_DRY_RUN_SIG);
+  if (start === -1) return undefined;
+  const end = code.indexOf("\n  }\n", start);
+  return end === -1 ? undefined : { start, body: code.slice(start, end) };
+}
 
 export function checkIncidentRemediationConfinement(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];
@@ -1348,6 +1369,23 @@ export function checkIncidentRemediationConfinement(files: readonly FileEntry[])
     if (!D46C_EXECUTOR_ALLOWED.includes(f.relPath)) {
       for (const m of code.matchAll(D46C_EXECUTOR_RE)) {
         add("remediation-executor-confined", f, code, m.index);
+      }
+    }
+    if (f.relPath !== D46C_DRY_RUN_CALLER) {
+      for (const m of code.matchAll(D46C_DRY_RUN_CALL_RE)) {
+        add("remediation-dry-run-confined", f, code, m.index);
+      }
+    }
+    if (f.relPath === D46C_DRY_RUN_EXECUTOR) {
+      // Scanned with comments AND string contents blanked (length preserved), so a forbidden call spelled inside a
+      // string is not a call; the signature holds no string literal, so it is found the same way.
+      const span = d46cDryRunBody(code);
+      if (span === undefined) {
+        add("remediation-dry-run-confined", f, code, 0);
+      } else {
+        for (const m of span.body.matchAll(D46C_DRY_RUN_FORBIDDEN_RE)) {
+          add("remediation-dry-run-confined", f, code, span.start + (m.index ?? 0));
+        }
       }
     }
   }

@@ -450,6 +450,16 @@ describe("IC5a: remediate, undo, proposals and the advisory switch", () => {
           undoable: false,
         };
       },
+      dryRun: async (p: { ref: string; proposalId: string; clientId: string }) => {
+        calls.push(`dryRun ${p.ref} ${p.proposalId} ${p.clientId}`);
+        return {
+          proposalId: p.proposalId,
+          toolId: "argocd_app_rollback",
+          before: { status: "no_reader" },
+          prediction: { verdict: "none", text: "t" },
+          label: "l",
+        };
+      },
       undo: async (p: { actionId: string; clientId: string }) => {
         calls.push(`undo ${p.actionId} ${p.clientId}`);
         return { actionId: p.actionId, status: "undone", nonHuman: false };
@@ -506,6 +516,11 @@ describe("IC5a: remediate, undo, proposals and the advisory switch", () => {
       { id: "inc_a", proposalId: "prp_0123456789abcdef" },
       { remediation: r },
     );
+    await act(
+      "incident.dryRun",
+      { id: "inc_a", proposalId: "prp_0123456789abcdef" },
+      { remediation: r },
+    );
     await act("incident.undo", { actionId: "act_0123456789abcdef" }, { remediation: r });
     expect(await act("incident.advisory", {}, { remediation: r })).toEqual({ advisory: true });
     expect(await act("incident.advisorySet", { on: false }, { remediation: r })).toEqual({
@@ -514,6 +529,7 @@ describe("IC5a: remediate, undo, proposals and the advisory switch", () => {
     expect(calls).toEqual([
       "proposals inc_a",
       "remediate inc_a prp_0123456789abcdef client-1",
+      "dryRun inc_a prp_0123456789abcdef client-1",
       "undo act_0123456789abcdef client-1",
       "advisory",
       "set false",
@@ -526,6 +542,26 @@ describe("IC5a: remediate, undo, proposals and the advisory switch", () => {
     await act("incident.proposals", { id: "inc_a" }, { remediation: r, kind: "cli" });
     await act("incident.proposals", { id: "inc_a" }, { remediation: r, kind: "ui" });
     expect(calls).toEqual(["proposals inc_a", "proposals inc_a no-revive"]);
+  });
+
+  test("a terminal listing with `revive: false` (the CLI's --dry-run) revives nothing; the param only narrows", async () => {
+    const calls: Calls = [];
+    const r = fakeRemediation(calls);
+    await act(
+      "incident.proposals",
+      { id: "inc_a", revive: false },
+      { remediation: r, kind: "cli" },
+    );
+    await act("incident.proposals", { id: "inc_a", revive: false }, { remediation: r, kind: "ui" });
+    expect(calls).toEqual(["proposals inc_a no-revive", "proposals inc_a no-revive"]);
+    for (const bad of [true, "false", 0, null]) {
+      const e = await rpcError(
+        act("incident.proposals", { id: "inc_a", revive: bad }, { remediation: r, kind: "ui" }),
+      );
+      expect(e.rpcCode).toBe(-32602);
+      expect(e.message).toBe("incident.proposals: revive may only be false");
+    }
+    expect(calls).toHaveLength(2);
   });
 
   test("a remediation refusal is a params error `<CODE>: <message>`; other errors propagate", async () => {
@@ -562,6 +598,7 @@ describe("IC5a: remediate, undo, proposals and the advisory switch", () => {
     const r = fakeRemediation([]);
     for (const [method, params] of [
       ["incident.remediate", { id: "a", proposalId: "prp_0123456789abcdef" }],
+      ["incident.dryRun", { id: "a", proposalId: "prp_0123456789abcdef" }],
       ["incident.undo", { actionId: "act_0123456789abcdef" }],
     ] as const) {
       for (const clientId of [undefined, ""]) {
@@ -583,6 +620,12 @@ describe("IC5a: remediate, undo, proposals and the advisory switch", () => {
         { id: "a", proposalId: "prp_0123456789abcdef", amount: 1 },
         /unknown parameter/,
       ],
+      ["incident.dryRun", { id: "a" }, /proposalId must be a non-empty string/],
+      [
+        "incident.dryRun",
+        { id: "a", proposalId: "prp_0123456789abcdef", x: 1 },
+        /unknown parameter/,
+      ],
       ["incident.undo", {}, /actionId must be a non-empty string/],
       ["incident.undo", { actionId: "" }, /actionId/],
       ["incident.undo", { actionId: "a", id: "b" }, /unknown parameter "id"/],
@@ -601,7 +644,7 @@ describe("IC5a: remediate, undo, proposals and the advisory switch", () => {
     const rust = await Bun.file(
       fileURLToPath(new URL("../../../ui/src-tauri/src/gateway_bridge.rs", import.meta.url)),
     ).text();
-    for (const m of ["remediate", "undo", "advisory", "advisorySet"]) {
+    for (const m of ["remediate", "dryRun", "undo", "advisory", "advisorySet"]) {
       expect(rust.split(`"incident.${m}"`).length - 1, m).toBe(1);
       // Named once, inside the incident negative list (each entry asserted `!is_method_allowed`).
       const pinFn = rust.indexOf("fn allowlist_incident_reads_only()");
