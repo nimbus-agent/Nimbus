@@ -11,9 +11,10 @@ SonarCloud (rebranded "SonarQube Cloud") provides static analysis, security hots
 The scan runs inside the reusable [`_test-suite.yml`](../.github/workflows/_test-suite.yml) workflow, which is invoked by both `pr-quality-ts` (PRs) and `ci-ts` (pushes to `main` / `develop`) in [`ci.yml`](../.github/workflows/ci.yml). The relevant step:
 
 ```yaml
-- name: SonarQube Cloud analysis        # uploads the analysis (advisory)
+- name: SonarQube Cloud analysis        # uploads the analysis
+  id: sonar-scan
   if: runner.os == 'Linux' && env.SONAR_TOKEN != ''
-  continue-on-error: true               # a scanner infra blip is not a build failure
+  continue-on-error: true               # the gate step below decides
   uses: SonarSource/sonarqube-scan-action@…  # SHA-pinned
   env:
     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -30,11 +31,12 @@ Coverage is fed in from two sources, both produced earlier in the same job:
 - `coverage/lcov.info` — written by `bun test --coverage --coverage-reporter=lcov` for `gateway`, `cli`, and `scripts`.
 - `packages/ui/coverage/lcov.info` — written by `bunx vitest run --coverage`. The job rewrites `SF:src/` → `SF:packages/ui/src/` so SonarCloud resolves paths from the repo root rather than the UI sub-project root.
 
-`sonar.qualitygate.wait=true` in [`sonar-project.properties`](../sonar-project.properties) forces the scanner to wait for the Compute Engine task and gate verdict to be computed before the job moves on. The scan-upload step itself is `continue-on-error: true` (a scanner network/infra failure should be a rerun, not a hard block); the **`SonarQube quality gate (enforced)`** step that follows is what actually fails the build. It reads the analysis the scan produced, queries the `api/qualitygates/project_status` Web API, and:
+`sonar.qualitygate.wait=true` in [`sonar-project.properties`](../sonar-project.properties) forces the scanner to wait for the Compute Engine task and gate verdict to be computed before the job moves on. The scan-upload step itself is `continue-on-error: true`, so its outcome reaches the **`SonarQube quality gate (enforced)`** step that follows, which is what actually fails the build. It reads the analysis the scan produced, queries the `api/qualitygates/project_status` Web API, and:
 
 - **fails the job** (`exit 1`) on a definitive gate verdict of `ERROR` — this is what blocks a PR that introduces a new bug / vulnerability / unreviewed security hotspot / sub-80%-coverage new code;
 - **passes** on `OK`;
-- **warns and passes** (fail-open) when the scan produced no report, the CE task failed, or the verdict is indeterminate — so genuine scanner infra failures don't block contributors.
+- **fails the job** when the scan produced no report (or a report with no `ceTaskUrl`): the scanner crashed or did not upload, so nothing was scored. Fail-closed since 2026-11: before that this case passed, and from 2026-11-18 every scan ran out of memory (the JS/TS analysis heap, now set by `sonar.javascript.node.maxspace`) while every job stayed green. A network or SonarCloud failure here is a rerun;
+- **warns and passes** (fail-open) when the upload happened but SonarCloud's Compute Engine task failed or timed out, or the verdict is indeterminate.
 
 Because the step lives inside the `unit` job of `_test-suite.yml`, its failure fails the `pr-quality-ts` check (and `ci-ts` on push) directly — no separate required-check name to wire into branch rulesets.
 

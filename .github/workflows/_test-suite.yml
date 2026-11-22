@@ -612,11 +612,14 @@ jobs:
         # deprecated and delegates to sonarqube-scan-action. We invoke the new
         # action directly so its SHA pin is visible (the repo enforces
         # sha_pinning_required=true, which blocks transitively-unpinned actions).
+        id: sonar-scan
         if: runner.os == 'Linux' && env.SONAR_TOKEN != ''
-        # The scan UPLOAD is advisory: a scanner infra failure (network blip, the
-        # autoscan-conflict exit 3) must not fail the build here. The actual gate
-        # is enforced by the dedicated step below, which reads the resulting
-        # analysis and fails only on a *definitive* gate verdict of ERROR.
+        # continue-on-error so the step's outcome reaches the gate step below,
+        # which decides. A scan that crashes or exits without uploading (the
+        # analysis running out of memory, the autoscan-conflict exit 3, a network
+        # failure) leaves no report-task.txt, and the gate step FAILS the job on
+        # that: a scan that did not run is not a pass. A transient failure is a
+        # rerun.
         continue-on-error: true
         uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9 # v8.3.0
         env:
@@ -631,25 +634,30 @@ jobs:
         # Engine task, then queries the project_status API.
         #   - gate ERROR            -> fail the job (blocks the PR / push check)
         #   - gate OK               -> pass
-        #   - no report / CE failed -> warn + pass (fail-OPEN on scanner infra so a
-        #                              network blip is a rerun, not a hard block)
+        #   - no report             -> fail the job (fail-CLOSED: the scanner crashed
+        #                              or did not upload, so nothing was scored;
+        #                              until 2026-11 this passed, and an out-of-memory
+        #                              scan went unnoticed for days)
+        #   - CE failed / timed out / indeterminate verdict -> warn + pass (fail-OPEN
+        #                              on SonarCloud's server side; the upload happened)
         # Kept as our own curl step (matching the autoscan step's style) rather
         # than a new pinned action, so the fail-open/fail-closed policy is explicit.
         if: runner.os == 'Linux' && env.SONAR_TOKEN != ''
         shell: bash
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SCAN_OUTCOME: ${{ steps.sonar-scan.outcome }}
         run: |
           set -euo pipefail
           report=".scannerwork/report-task.txt"
           if [[ ! -f "$report" ]]; then
-            echo "::warning::No Sonar report-task.txt — the scan did not upload (infra failure or token absent). Skipping gate (fail-open)."
-            exit 0
+            echo "::error::No Sonar report-task.txt: the scan did not upload (scan step outcome: ${SCAN_OUTCOME:-unknown}), so nothing was scored. Read the 'SonarQube Cloud analysis' step log: an out-of-memory crash needs a larger sonar.javascript.node.maxspace in sonar-project.properties; a network or SonarCloud failure is a rerun."
+            exit 1
           fi
           ce_task_url=$(grep '^ceTaskUrl=' "$report" | cut -d= -f2-)
           if [[ -z "${ce_task_url:-}" ]]; then
-            echo "::warning::report-task.txt has no ceTaskUrl. Skipping gate (fail-open)."
-            exit 0
+            echo "::error::report-task.txt has no ceTaskUrl: the scan did not complete an upload, so nothing was scored."
+            exit 1
           fi
           auth=(-sS -H "Authorization: Bearer ${SONAR_TOKEN}")
           analysis_id=""
