@@ -120,7 +120,7 @@ conhost, it is only invisible, so both modes give identical conhost counts; enum
 
 Two distinct steps in `_test-suite.yml`, do not conflate them:
 
-- **"SonarQube Cloud analysis"** (the `sonar-scanner` upload) is `continue-on-error: true` — a transient scanner failure (e.g. exit 3) does not fail the build.
+- **"SonarQube Cloud analysis"** (the `sonar-scanner` upload) is `continue-on-error: true`, but a scan that uploads nothing (an out-of-memory crash, exit 3, a network failure) now FAILS the gate step below (no `report-task.txt` is fail-closed); a transient one is a rerun.
 - **"SonarQube quality gate (enforced)"** polls the `project_status` API and **`exit 1`s when the gate verdict is `ERROR`** — this **blocks the PR / push check**. New-code coverage, new smells/bugs/vulns, and unreviewed security hotspots can all flip the gate to ERROR.
 
 There is no local equivalent packaged (it needs `SONAR_TOKEN` + server-side analysis). If a PR's SonarCloud check is red, use the **`nimbus-sonar-gate`** agent — it queries the gate + issues + hotspots via the API and applies fix-not-exclude fixes.
