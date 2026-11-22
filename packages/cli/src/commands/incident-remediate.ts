@@ -332,7 +332,11 @@ async function runRemediate(
     sink.err(`${TTY_REFUSAL}\n`);
     return 2;
   }
-  const view = await c.call<ProposalsReply>("incident.proposals", { id: a.id });
+  // A dry run writes nothing back: its listing must not revive a denied or expired proposal or renew a TTL.
+  const view = await c.call<ProposalsReply>(
+    "incident.proposals",
+    a.dryRun === true ? { id: a.id, revive: false } : { id: a.id },
+  );
   if (a.pick === undefined) {
     sink.out(a.json ? `${JSON.stringify(view)}\n` : `${formatProposals(view)}\n`);
     return 0;

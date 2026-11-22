@@ -39,8 +39,12 @@ function argocdDestination(j: unknown): string | undefined {
 
 /** The auto-sync policy: `off`, or `on` with its prune setting. */
 function argocdAutoSync(j: unknown): { readonly on: boolean; readonly text: string } {
-  // `automated` is an object ({} when on with defaults): its presence is what turns auto-sync on.
+  // `automated` is an object ({} when on with defaults): its presence is what turns auto-sync on, unless it says
+  // `enabled: false` (Argo CD 3.x keeps the settings and turns auto-sync off). Read the same way as the dry run
+  // capture in `reversibility.ts`.
   if (!hasObject(j, ["spec", "syncPolicy", "automated"])) return { on: false, text: "off" };
+  if (boolAt(j, ["spec", "syncPolicy", "automated", "enabled"]) === false)
+    return { on: false, text: "off" };
   const prune = yesNo(boolAt(j, ["spec", "syncPolicy", "automated", "prune"])) ?? "no";
   return { on: true, text: `on (prune: ${prune})` };
 }

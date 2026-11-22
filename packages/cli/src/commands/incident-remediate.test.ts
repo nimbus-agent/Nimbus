@@ -325,6 +325,8 @@ describe("running", () => {
     );
     expect(code).toBe(0);
     expect(h.calls.map((c) => c.method)).toEqual(["session.declareKind", "incident.proposals"]);
+    // The owner listing keeps its reviving behaviour: no `revive` param.
+    expect(h.calls[1]?.params).toEqual({ id: REC });
     expect(h.out.join("")).toContain("1. [reversible]");
   });
 
@@ -554,6 +556,8 @@ describe("--dry-run (Phase 17)", () => {
     );
     expect(code).toBe(0);
     expect(h.calls.map((c) => c.method)).toEqual(["incident.proposals", "incident.dryRun"]);
+    // The dry run's listing revives nothing: no denied or expired proposal is reopened, no TTL renewed.
+    expect(h.calls[0]?.params).toEqual({ id: REC, revive: false });
     expect(h.calls[1]?.params).toEqual({ id: REC, proposalId: PRP });
     const text = h.out.join("");
     expect(text).toContain(

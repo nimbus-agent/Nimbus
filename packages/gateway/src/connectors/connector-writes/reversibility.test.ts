@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { predictOutcome } from "./dry-run-predict.ts";
 
 import { CONNECTOR_WRITE_ROWS } from "./index.ts";
 import {
@@ -162,6 +163,45 @@ describe("reversibility: the six reversible rows, each proven by a recorded befo
     expect(invert("argocd_app_rollback", { name: "web", id: 5 }, captured)).toBeUndefined();
     expect(invert("argocd_app_rollback", input, { currentHistoryId: "x5" })).toBeUndefined();
     expect(invert("argocd_app_rollback", { id: 3 }, captured)).toBeUndefined();
+  });
+
+  test("argocd_app_rollback: auto-sync is on while `automated` is an object, unless it says `enabled: false`", () => {
+    const history = { history: [{ id: 2, revision: "bbb" }] };
+    const autoSyncOf = (automated: unknown): string | undefined =>
+      capture(
+        "argocd_app_rollback",
+        { metadata: { name: "web" }, spec: { syncPolicy: { automated } }, status: history },
+        { name: "web", id: 2 },
+      )?.["autoSync"];
+    expect(autoSyncOf({})).toBe("on");
+    expect(autoSyncOf({ enabled: true, prune: true })).toBe("on");
+    expect(autoSyncOf({ enabled: null })).toBe("on");
+    expect(autoSyncOf({ enabled: false, prune: true })).toBe("off");
+    expect(autoSyncOf(null)).toBe("off");
+    expect(autoSyncOf([])).toBe("off");
+    // Capture to prediction: an explicitly disabled policy predicts the rollback; an enabled one is uncertain.
+    const reply = (automated: unknown) => ({
+      metadata: { name: "web" },
+      spec: { syncPolicy: { automated } },
+      status: {
+        history: [
+          { id: 1, revision: "aaa" },
+          { id: 2, revision: "bbb" },
+        ],
+      },
+    });
+    const input = { name: "web", id: 1 };
+    const predict = (automated: unknown) =>
+      predictOutcome(
+        "argocd_app_rollback",
+        input,
+        capture("argocd_app_rollback", reply(automated), input),
+      );
+    expect(predict({ enabled: false })).toEqual({
+      verdict: "would_change",
+      text: "the application moves from history 2 back to the revision of history 1",
+    });
+    expect(predict({ enabled: true }).verdict).toBe("uncertain");
   });
 
   test("a capture refuses a reply without the value (no guess)", () => {

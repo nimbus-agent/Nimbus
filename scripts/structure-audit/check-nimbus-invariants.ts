@@ -1327,7 +1327,7 @@ const D46C_DRY_RUN_SIG =
 const D46C_DRY_RUN_FORBIDDEN_RE =
   /\bgateWithin\s*\(|\bapprovalPhase\s*\(|\bdispatchBoundPhase\s*\(|\.execute\s*\(|\bconnectors\.dispatch\s*\(/g;
 
-/** The body of `readBeforeOnly` in comment-free source: from its signature to the method's closing brace. */
+/** The body of `readBeforeOnly` in comment- and string-free source: from its signature to the method's closing brace. */
 function d46cDryRunBody(code: string): { start: number; body: string } | undefined {
   const start = code.indexOf(D46C_DRY_RUN_SIG);
   if (start === -1) return undefined;
@@ -1377,12 +1377,14 @@ export function checkIncidentRemediationConfinement(files: readonly FileEntry[])
       }
     }
     if (f.relPath === D46C_DRY_RUN_EXECUTOR) {
-      const span = d46cDryRunBody(commentFree);
+      // Scanned with comments AND string contents blanked (length preserved), so a forbidden call spelled inside a
+      // string is not a call; the signature holds no string literal, so it is found the same way.
+      const span = d46cDryRunBody(code);
       if (span === undefined) {
-        add("remediation-dry-run-confined", f, commentFree, 0);
+        add("remediation-dry-run-confined", f, code, 0);
       } else {
         for (const m of span.body.matchAll(D46C_DRY_RUN_FORBIDDEN_RE)) {
-          add("remediation-dry-run-confined", f, commentFree, span.start + (m.index ?? 0));
+          add("remediation-dry-run-confined", f, code, span.start + (m.index ?? 0));
         }
       }
     }

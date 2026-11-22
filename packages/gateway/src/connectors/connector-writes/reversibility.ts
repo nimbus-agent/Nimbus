@@ -65,11 +65,16 @@ const ECS_CAPTURES: BeforeCaptures = {
 /** How many of the newest history ids the dry run's capture keeps (well under the 512-character value cap). */
 const ARGO_HISTORY_IDS_KEPT = 30;
 
-/** Whether `spec.syncPolicy.automated` is an object: its presence is what turns Argo CD auto-sync on. */
+/**
+ * Whether Argo CD auto-sync is on: `spec.syncPolicy.automated` is an object whose `enabled` is not `false`. Its
+ * presence turns auto-sync on; Argo CD 3.x also accepts `automated: { enabled: false }`, which keeps the settings and
+ * turns it off. `{}`, `enabled: true` and `enabled: null` stay on.
+ */
 function argoAutoSyncOn(j: unknown): boolean {
   const automated = (j as { spec?: { syncPolicy?: { automated?: unknown } } } | null)?.spec
     ?.syncPolicy?.automated;
-  return automated !== null && typeof automated === "object" && !Array.isArray(automated);
+  if (automated === null || typeof automated !== "object" || Array.isArray(automated)) return false;
+  return (automated as { enabled?: unknown }).enabled !== false;
 }
 
 /**

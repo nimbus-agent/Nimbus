@@ -600,6 +600,16 @@ function parseStep(method: string, p: Record<string, unknown>): number {
   return raw;
 }
 
+/** `incident.proposals`'s optional `revive`: absent means "as the caller kind allows"; only `false` is accepted. */
+function parseReviveOptOut(p: Record<string, unknown>): boolean {
+  const raw = p["revive"];
+  if (raw === undefined) return true;
+  if (raw !== false) {
+    throw new IncidentRpcError(-32602, "incident.proposals: revive may only be false");
+  }
+  return false;
+}
+
 function parseProposalId(method: string, p: Record<string, unknown>): string {
   const raw = p["proposalId"];
   if (typeof raw !== "string" || raw === "" || raw.length > 64) {
@@ -660,9 +670,12 @@ export async function dispatchIncidentRpc(
     },
     "incident.proposals": async (raw) => {
       requireOwnerKind(caller.kind);
-      const id = parseId("incident.proposals", requireKeys("incident.proposals", raw, ["id"]));
-      // Only the owner's terminal listing revives a denied or expired proposal; the desktop's read does not.
-      const revive = caller.kind === "cli";
+      const p = requireKeys("incident.proposals", raw, ["id", "revive"]);
+      const id = parseId("incident.proposals", p);
+      // Only the owner's terminal listing revives a denied or expired proposal; the desktop's read does not, and
+      // a terminal caller can opt out with `revive: false` (the CLI's `--dry-run`). The param only narrows.
+      const allowsRevive = parseReviveOptOut(p);
+      const revive = caller.kind === "cli" && allowsRevive;
       return remediationCall(() => remediationOf(ctx).proposals(id, { revive }));
     },
     "incident.remediate": async (raw) => {

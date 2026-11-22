@@ -7724,6 +7724,12 @@ describe("D46(c) - an engine-proposed action is built in one module (Phase 10 IC
     }
     // A comment naming them is not a call; a missing method is itself a violation.
     expect(rules(withBody("// this.gateWithin(action) is never called here"))).toEqual([]);
+    // So is a string naming one; a real call beside such a string still fails.
+    expect(rules(withBody('const note = "this.execute(action)";'))).toEqual([]);
+    expect(rules(withBody("const note = `this.gateWithin(action)`;"))).toEqual([]);
+    expect(
+      rules(withBody('const note = "this.execute(action)"; return this.execute(action);')),
+    ).toEqual(["remediation-dry-run-confined"]);
     expect(
       rules([...GOOD.filter((f) => f.relPath !== EXECUTOR), file(EXECUTOR, "class T {}\n")]),
     ).toEqual(["remediation-dry-run-confined"]);

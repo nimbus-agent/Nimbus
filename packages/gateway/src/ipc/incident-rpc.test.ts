@@ -544,6 +544,26 @@ describe("IC5a: remediate, undo, proposals and the advisory switch", () => {
     expect(calls).toEqual(["proposals inc_a", "proposals inc_a no-revive"]);
   });
 
+  test("a terminal listing with `revive: false` (the CLI's --dry-run) revives nothing; the param only narrows", async () => {
+    const calls: Calls = [];
+    const r = fakeRemediation(calls);
+    await act(
+      "incident.proposals",
+      { id: "inc_a", revive: false },
+      { remediation: r, kind: "cli" },
+    );
+    await act("incident.proposals", { id: "inc_a", revive: false }, { remediation: r, kind: "ui" });
+    expect(calls).toEqual(["proposals inc_a no-revive", "proposals inc_a no-revive"]);
+    for (const bad of [true, "false", 0, null]) {
+      const e = await rpcError(
+        act("incident.proposals", { id: "inc_a", revive: bad }, { remediation: r, kind: "ui" }),
+      );
+      expect(e.rpcCode).toBe(-32602);
+      expect(e.message).toBe("incident.proposals: revive may only be false");
+    }
+    expect(calls).toHaveLength(2);
+  });
+
   test("a remediation refusal is a params error `<CODE>: <message>`; other errors propagate", async () => {
     const r = fakeRemediation([]);
     const e = await rpcError(
