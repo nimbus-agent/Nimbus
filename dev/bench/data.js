@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795365293199,
+  "lastUpdate": 1795365687923,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "b472f67988de1f7ef16577e47da57f7c42f7e7db",
-          "message": "feat(http): resolve a forge file coordinate to a path in the reader's checkout (#1447)\n\n## Summary\n\nAdds `GET /v1/items/resolve-file` — a bearer-authed loopback read that\nmaps a forge file coordinate (`service`, `repo`, `refAndPath`) to a\nrepo-relative path in the reader's own checkout.\n\n**This route already has a caller in production.** `nimbus-web-clipper`\nshipped Phase C7.1 — three agent lanes on a GitHub/GitLab/Bitbucket\nsource-file page (*what breaks if this changes*, *who knows this file*,\n*who owns this*) — against a route no gateway has ever served. The\nclient reads the resulting 404 as \"gateway too old\", withholds the lanes\nand stays silent, so the feature is not broken, it is **inert on every\ngateway that exists**. This is the read that makes it work. No client\nchange and no re-pairing.\n\nThe resolution itself already existed: `resolveFileByRemote` is\nuntouched. This is the HTTP read in front of it, mirroring\n`handleItemsResolve` next door.\n\nTwo decisions carry the weight:\n\n- **The response names `path` field by field and never `repoRoot`.**\n`ResolveFileResult` also carries `repoRoot` — the reader's local\nfilesystem path — and `fileEntityId`. This route is reachable by any\nholder of a clip token, so the projection is written as an explicit\ntwo-field object rather than a spread, and a test pins\n`Object.keys(body)` to exactly `[\"ok\", \"path\"]` so a field added later\ncannot leak unnamed.\n- **A blank coordinate is a 400, not a pass-through.** An empty\n`service` would otherwise build `\":acme/web\"`, match no workspace, and\nanswer `remote_not_tracked` — telling the caller they have no checkout\nof a repository they never named.\n\nThe coordinate crosses the wire **unsplit** by design: a branch name may\ncontain slashes, so only the side holding the file list can tell where\nthe ref ends.\n\nUnder the existing `resolve` scope (it resolves; it runs nothing), **no\negress row** (nothing leaves the machine), and **no version floor** —\nthe route's presence *is* the capability signal the client probes, which\ncannot drift the way a floor constant needs raising. Additive:\n`agents-rpc.ts` keeps its `-32602`. No schema change, no new invariant.\n\n## Related Issue\n\nNo issue — this closes the gateway half of `nimbus-web-clipper`'s Phase\nC7.1, which shipped client-complete and gateway-blocked.\n\n## Linked Discussion\n\nN/A\n\n## Type of Change\n\n- [ ] Bug fix (non-breaking change that fixes an issue)\n- [x] New feature (non-breaking change that adds functionality)\n- [ ] Breaking change (fix or feature that changes existing behaviour)\n- [ ] Refactor (no behaviour change)\n- [x] Test improvement\n- [ ] Documentation only\n- [ ] CI / tooling\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes (Biome — format + lint)\n- [x] All existing tests pass (`bun test`) — 16394 pass / 57 skip / 0\nfail\n- [x] New behaviour is covered by tests — 18 tests in\n`items-resolve-file-route.test.ts`\n- [x] No `any` types introduced — `unknown` is used for external data\n- [x] No credentials, tokens, or secret values appear in logs, IPC\nmessages, config, or test fixtures\n- [x] Platform-specific code is behind the `PlatformServices`\nabstraction — N/A, no OS-dependent code added\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable\n- [x] If this PR touches `docs/README.md`, a screenshot is attached —\nN/A, `docs/README.md` untouched\n\n## Coverage (if engine/ or vault/ was changed)\n\nN/A — neither `engine/` nor `vault/` was modified. Changes are confined\nto `packages/gateway/src/ipc/`, one comment in\n`packages/gateway/src/egress/`, and docs.\n\n## Testing\n\nFull gateway suite on the final tree: **16394 pass, 57 skip, 0 fail**\n(16451 across 1175 files).\n\n\n`packages/gateway/test/integration/http/items-resolve-file-route.test.ts`\nboots a real `startReadOnlyHttpServer` on port 0 against a real migrated\nSQLite DB, seeding the graph rows the route walks (`workspace\n--tracks_remote--> repo`, plus `source_file` entities). 18 tests:\n\n| Area | What is pinned |\n| --- | --- |\n| Hit | `{ ok: true, path }` and an **exact** key set — the disclosure\nguard |\n| Misses | `remote_not_tracked` and `file_not_indexed` asserted\nseparately, never collapsed |\n| Coordinates | Slashy branch names; a deep GitLab subgroup in the\n`repo` param; a space and `+` in the filename |\n| Traversal | `main/../../secret.txt` is an ordinary miss, not an error\n|\n| Egress | `egress_ledger` count unchanged across the request (a delta,\nnot a count of zero) |\n| Gates | 401 (bad token **and** no header), 403 with the\n`LEGACY_SCOPES` gap body, 400 per coordinate (blank **and** absent), 404\nwhen the clips surface is unmounted |\n\nThe encoding test puts the space and `+` in the **filename**, not the\nref: the resolver tries every ref/path split, so a mangled ref would\nstill leave a matching candidate and the test would pass while decoding\nwas broken.\n\n## Notes for Reviewers\n\n**The one thing worth your attention** is a bound this PR documents\nrather than changes. The `tracks_remote` edge the route walks is written\nonly from `parseRemoteUrl`, which accepts exactly three hosts\n(`repo-remote.ts:9-13`) and requires a two-segment `owner/name` path\n(`:70`). So a **self-hosted forge** — GitHub Enterprise, self-hosted\nGitLab/Bitbucket — and any **GitLab subgroup** project can never produce\na `repo` entity. A reader on a GHE blob page who genuinely has the\ncheckout is told `remote_not_tracked`.\n\nThe route is correct — it faithfully reports what the graph knows — but\nnothing said so, and the browser client recognises self-hosted forges\nand sends `service: \"github\"` regardless of host, so it *will* reach\nthis and get that answer. The bound is now stated in the spec's §4.5 and\nin the CHANGELOG entry. Widening `parseRemoteUrl` to self-hosted hosts\nis a separate feature with its own config surface; it is deliberately\n**not** in this PR.\n\nTwo smaller notes:\n\n- `tryBearerAuthedGet` was previously split out of the `fetch` handler\nfor Sonar S3776 (scored 17). This adds one branch to it. Deliberately\nnot restructured.\n- The route is **not** in `HTTP_ROUTES` / `openapi/v1.yaml`, matching\nevery other clip-scoped bearer read (`/v1/items/resolve`, the four\n`/v1/egress` reads, `/v1/agents`, the brief routes). That list is\ndocumented as the OpenAPI-checked public surface, not every served\nroute.\n\nThe design spec and its review ship in the branch under\n`docs/superpowers/specs/`, and the implementation plan under\n`docs/superpowers/plans/`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01AMxZTcMwFnhsoLb9QE2uER\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **New Features**\n- Added an authenticated `GET /v1/items/resolve-file` endpoint for\nresolving tracked Forge repository coordinates to local,\nrepository-relative file paths.\n- Supports GitHub, GitLab, and Bitbucket repositories with standard\n`owner/name` paths.\n- Successful responses expose only the resolved path; failures provide\nstructured resolution reasons.\n- Requests require the `resolve` permission and validate required\ncoordinates, encoding, and traversal rules.\n  - Resolution is local-only and makes no outbound requests.\n\n- **Documentation**\n- Documented the endpoint, authentication, response behavior, supported\nrepositories, and limitations.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-05T04:41:38Z",
-          "tree_id": "c3a561cceb7c8b340e644c138e00e2bd720b0759",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/b472f67988de1f7ef16577e47da57f7c42f7e7db"
-        },
-        "date": 1788583841215,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 246.0222060500033,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 245.99545580000012,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 226.94259594999932,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "40aa01056f348d881b559447306fa925af09d677",
+          "message": "feat(gateway): the remediation approval prompt shows the blast radius, and the listing prints each undo command (Phase 17 one-tap rollback) (#2077)\n\nPhase 17 row \"One-tap rollback (blast-radius preview inline) + undo the\ncopilot's own action\", the part that was still missing after IC5a/IC5b.\n\n## What was missing\n\nIC5a/IC5b already derive a rollback proposal with a blast radius and run\nit through the remediation executor, and `nimbus incident undo <act_id>`\nalready reverses a reversible action once. But the blast radius was only\nin the `nimbus incident remediate <id>` listing, not in the executor's\napproval prompt, so `nimbus oncall pushed <id> --remediate` approved a\nrollback with no blast radius on screen at all.\n\n## What this changes\n\n- **The blast radius is in the executor's own prompt** on every door\nthat reaches the remediation executor (`incident remediate --pick`,\n`oncall pushed --remediate`, `incident undo`), right after the\nreversibility line:\n  ```\n  Proposed by: the incident engine\n  Reversibility: reversible - nimbus incident undo can reverse it\n  Blast radius: service payments, environment prod\n  Depends on it: checkout\n  ```\nOther forms: `Depends on it: nothing declared (depends_on)`, a truncated\nlist, an unbound record's `unknown` line, `not recorded`, and for an\nundo `Blast radius (as recorded when the action ran): ...`.\n- **It is display data that the gateway sets** (`engineProposal.blast`).\nOnly `incident/remediation.ts` `buildRemediationAction` builds an engine\nproposal (static D46(c), unchanged). It takes the blast radius from the\nderivation that just proved the proposal is still offered, or from the\nstored evidence for an undo.\n- **No provider text reaches the prompt this way.** A name reaches the\nprompt only if it is a plain configuration id (`BLAST_NAME_RE`,\n`^[A-Za-z0-9._:/@+-]{1,128}$`, at most 20 dependents). Otherwise the\nprompt says `not shown - a name in it is not a plain configuration id;\ncheck depends_on before approving`, never silence and never \"not\nrecorded\". `assertEngineProposal` refuses any other shape before any\naudit row.\n- **No gate decision reads it.** It changes no tool, input, credential,\nconfirm text or approval.\n- **The undo command is printed for you.** `nimbus incident remediate\n<id>` now prints the exact `nimbus incident undo <act_id>` beside each\nof that record's actions that can still be undone.\n\n## What is deliberately not built (stated in the docs)\n\n- **No undo without an id.** Antigravity review round 1 found three\nproblems with it: `updated_at_ms` moves on an undo retry and on the\nstale sweep, so \"the latest\" is unstable; it would skip an irreversible\nlatest action and reverse an older one instead; and it crosses records.\nA stable executed-at time needs a migration, so this stays open on the\nroadmap row with the reason.\n- **No one-keystroke Wave 4 rollback.** The Argo CD rollback and its\ninverse are Wave 4 and keep their typed confirmation (D41).\n- **The blast radius is the declared `depends_on` graph only**, not live\ntraffic.\n\nNo migration, IPC method, allowlist change, new invariant or static-rule\nnumber. I57 (b)'s text is extended in `docs/SECURITY-INVARIANTS.md`,\nwith a new enforcement pin (3b) in `security-invariants.test.ts`.\n\n## Verification\n\n- `bun run preflight:fast` passed.\n- 7,562 tests passed across\n`packages/gateway/src/{engine,incident,runbook}`,\n`ipc/incident-rpc.test.ts` and `packages/cli/src/commands`.\n- Red-proof: removing the blast wiring fails 4 remediation tests.\n- Antigravity reviewed the spec and code in 2 rounds (round 1: changes\nrequested, which led to the reduced scope above; round 2: only spec\nwording and missing tests, now addressed).\n\n## Docs\n\nUpdated in this PR: `docs/SECURITY-INVARIANTS.md` (I57 (b)),\n`docs/architecture.md`, `docs/cli-reference.md` and `docs/roadmap.md`\n(the row stays open with a progress note).\n\nThe shared status docs are batched for the round's last PR (owner rule).\nTheir proposed text is in the handoff file: CLAUDE.md/GEMINI.md, top of\nCHANGELOG, docs/README.md.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCk6NpLauKU2yYCwva\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Remediation approval prompts now show the affected service,\nenvironment, and dependent services when available, including when the\nlist is truncated. They indicate when blast-radius details are missing\nor unverified.\n  * Undo prompts show the blast radius recorded when the action ran.\n* Remediation history now includes an undo command with the action ID\nfor actions that can still be undone.\n* **Documentation**\n* Updated incident command references and product documentation to\ndescribe blast-radius details and undo commands.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-22T16:32:16Z",
+          "tree_id": "22190cdf93cd951879a06378b3694f73155da6e2",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/40aa01056f348d881b559447306fa925af09d677"
+        },
+        "date": 1795365684023,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 170.01887719999687,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 172.4333159499998,
             "unit": "ms"
           }
         ]
