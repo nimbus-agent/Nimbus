@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795365687923,
+  "lastUpdate": 1795370794197,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "3f7e7b62668387cf61b40ff0a3ddcc6bf6cf69e9",
-          "message": "feat(multimodal): cloud byte-fetch for Photos, Drive and OneDrive (S2 PR 3 of 4) (#1448)\n\nAdds the cloud arm to the media-understanding pass. Until now the pass\ncould\nonly reach files under `[[filesystem.roots]]`, so multimodal\nunderstanding was\nstructurally cut off from the ~90 connectors that are the rest of the\nproduct:\nthe recorded call in Drive, the screenshot in a OneDrive folder and the\nphoto\nlibrary were all invisible to it.\n\nScope: `google_photos`, `google_drive`, `onedrive`. Still **no remote\nmodel and\nno cloud STT** — understanding remains local, and this PR only changes\nwhere the\nbytes come from.\n\nDesign: `docs/superpowers/specs/2026-09-02-s2-multimodal-io-design.md`\nsections 16\nand 17. Plan:\n`docs/superpowers/plans/2026-09-04-multimodal-pr3-cloud-arm.md`.\n\n## What it does\n\n- Resolves a cloud artifact to the URL its bytes live at, re-resolving\nrather\nthan trusting the index: a Photos `baseUrl` expires in about an hour and\n  OneDrive's download URL is never indexed at all.\n- Fetches bytes under a per-run byte budget, evaluated **per chunk** so\nan\noverrun aborts the transfer rather than paying for the whole artifact\nfirst.\n- Appends one `sync`-class `egress_ledger` row **before every outbound\nrequest**,\nfail-closed: an append failure aborts the request, so a zero-row window\nmeans\n  nothing left the machine rather than something left unrecorded.\n- Understands the bytes locally, exactly as it already did for local\nfiles.\n\nDefault-off is unchanged: `[multimodal] enabled` and the per-root\n`media_index`\nboth still default to false.\n\n## Four spec claims that were wrong, corrected here\n\nEach was checked against code rather than reasoned about:\n\n1. Section 12.5 said every connector gaining `fetchBytes` is a change in\n`nimbus-mcp-servers`. False for all three services - their sync lives in\nthis\nrepo and calls the provider API directly, so this is a single-repo\nchange.\n2. Section 5.2 routed the fetch through `fetch-host-boundary.ts`, which\nis\nexact-match with no fallback. These download hosts rotate, so it would\nmiss.\n   Replaced by a narrower rule, below.\n3. Section 5.4's \"the only file this subsystem writes\" stops being true\nonce a\n   cloud download streams to disk before transcoding.\n4. Section 4.2 claimed deleting a source item deletes its derived\nunderstanding\nrow. Nothing read `derivedFrom` anywhere - the claim had been inert\nsince PR 1.\n   Now implemented as an orphan sweep at pass start.\n\n## The credential rule\n\nA credential is attached only to a URL this codebase constructed itself.\n\n- `google_drive` - we build `files/{id}?alt=media` against a fixed host,\nso the\n  bearer rides on it.\n- `google_photos` and `onedrive` - the download URL is provider-returned\nand\npre-signed, so it is fetched with **no** `Authorization` header at all.\n\nA hostile or compromised provider response can therefore name any host\nit likes\nand learn nothing. Redirects are followed manually so every hop is\nre-validated\nagainst the SSRF check, and the cross-origin header allow-list drops\n`Authorization`, `Cookie` and `Proxy-Authorization` - the set WHATWG\n`fetch`\nstrips, which hand-rolled redirect handling would otherwise have\nsilently lost.\n\n## What the whole-branch review caught\n\nFourteen task reviews each saw one diff. The whole-branch review saw all\nof them\nand found a **Critical** none of them could: the resolver's own\nround-trip made a\ncredentialed request to Google or Microsoft and appended **no ledger\nrow**. Every\nPhotos and OneDrive candidate made two outbound requests with only the\nsecond\nrecorded, and a candidate failing at resolve produced zero rows for a\nrequest\nthat really went out - so `nimbus prove` could have reported `sync: 0`\nafter real\ncredentialed traffic. That is the exact property invariant I29 exists to\nmake\nimpossible, and it was an undisclosed exclusion rather than a stated\none.\n\nClosed by appending before the round-trip, fail-closed, with the\nappender\nenumeration re-derived across 15 sites - including `nimbus prove`'s own\nuser-facing label, which had been under-reporting to the operator.\n\n## Honest state - the acceptance run has NOT been performed\n\n**No leg of this arm has contacted a real provider.** The manual\nend-to-end run\nneeds a local `whisper-cli`, a vision-capable Ollama model and a real\ncloud\nartifact under the owner's own credentials, none of which an automated\nrun can\nsupply.\n\nTwo properties are therefore unverified and cannot be verified by\nreading:\n\n- whether Drive's 302 to `googleusercontent.com` still serves bytes\nafter the\n  bearer is correctly stripped;\n- whether Photos' `=w2048-h2048` and `=dv` rendition suffixes behave as\nassumed.\n\nBoth fail closed as `fetch_miss` rather than dangerously. **\"PR 3\nshipped\" must\nnot be read as \"PR 3 has fetched a byte.\"** `CLAUDE.md`'s Phase 14\nacceptance\nclaim stays open until someone runs it.\n\n## Known bounds, stated rather than glossed\n\n- An OAuth **token refresh** performed while resolving a credential is\nitself an\noutbound request that appends no row. Pre-existing and repo-wide rather\nthan\n  specific to this arm, now stated in `docs/SECURITY-INVARIANTS.md`.\n- `over_byte_cap` now covers two different bounds - the per-artifact cap\nand the\nper-run budget - documented in the CLI reference so an operator does not\nreach\n  for the wrong knob.\n- `if-range` is deliberately **not** in the cross-origin allow-list.\nNothing\nissues a `Range` request today; the coupling is documented so the next\nauthor\n  does not assume resume works.\n- Photos and OneDrive now produce roughly double the `sync` rows,\nbecause there\n  genuinely are two requests per artifact.\n\n## Verification\n\n- Full suite: **20,954 pass, 0 fail, 69 skip** across 1,444 files\n- `typecheck` clean; `typecheck:tests` ok, 0 new\n- `preflight:fast` 28/28; `audit:coverage-floor` ok; `audit:invariants`,\n  `audit:doc-refs`, `audit:status-drift` all pass\n- `test:connector-boot`: 94 connectors, 0 failed\n\nEvery new test in the final wave was red-proved by reverting the fix\nrather than\nby observing green.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01EkD84tDHvSD3HqUNRgSr7L\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n- **New Features**\n- Added cloud-media support for Google Photos, Google Drive, and\nOneDrive.\n- Added configurable fetch budgets and rendition preferences through the\nCLI and configuration.\n- Added resumable processing with reporting for budget limits, rate\nlimits, skipped items, and fetched cloud bytes.\n- Added direct processing for cloud images and secure downloads for\naudio/video.\n  - Added rendition details to generated understanding results.\n\n- **Documentation**\n- Expanded CLI, security, architecture, and roadmap documentation for\ncloud-media behavior, egress tracking, and privacy boundaries.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-05T06:31:35Z",
-          "tree_id": "d7b48f3c17839392987e75babbde97932b31e55a",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/3f7e7b62668387cf61b40ff0a3ddcc6bf6cf69e9"
-        },
-        "date": 1788590649900,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 311.1196836000039,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 309.7343996000003,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 172.4333159499998,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "96bc6a590677cea94205c0017ed0da64d6797a74",
+          "message": "feat(gateway): remediation dry run, read the target and predict the outcome without running it (Phase 17) (#2079)\n\nPhase 17's \"Confidence + evidence + dry-run remediation\" row. IC5a\nalready shipped the confidence, the evidence and the blast radius; this\nadds the dry run.\n\n## What it does\n\n`nimbus incident remediate <id> --pick N --dry-run [--json]` (IPC\n`incident.dryRun { id, proposalId }`) runs ONLY the proposal's row's\nbefore-state reads:\n- **What runs:** `ToolExecutor.readBeforeOnly`, on a remediation\nexecutor built for that one call (`dryRun: true`). A real run's executor\nnever carries the flag, and a test pins that.\n- **The reads:** each one is gated, audited, I29-ledgered and\nincident-linked, and refused rather than prompted when policy would need\napproval.\n- **The write:** never gated, never prompted for, never dispatched.\nNothing is claimed and nothing is written to `incident_proposal`.\n- **The reply:** the reader's display fields, plus a prediction from\n`connectors/connector-writes/dry-run-predict.ts` (`would_change`,\n`no_change`, `uncertain` or `none`), computed from the captured machine\nvalues. Those values are never returned.\n\n| Tool | Prediction |\n| --- | --- |\n| LaunchDarkly toggle, Flagsmith set | the `on` / `enabled` value before\nand after; a Flagsmith call that also sets a value is `uncertain` |\n| EC2 stop / start | `running` to `stopping` (or `stopped` to\n`pending`); a settled state is no change; anything else is uncertain |\n| ECS update | the task definition before and after |\n| Argo CD rollback | from the current history id to the target's\nrevision. **The capture gained `autoSync` and the retained\n`historyIds`**, so auto-sync on, or a target no longer retained, reads\n`uncertain` (Argo would refuse it) |\n| PagerDuty / JSM ack and close | the current state only, no prediction\n(their readers have no captures) |\n\nThe rest of the change:\n- **Advisory mode** refuses the dry run first, like `remediate`.\n- **Error codes:** a running proposal is `ERR_PROPOSAL_BUSY`; expired\nand stale ones get their usual codes.\n- **The listing** says, per proposal, whether `--dry-run` predicts,\nshows the state only, or reads nothing.\n- **Exit codes:** the CLI exits `1` when the read was refused or\nunavailable.\n- **Every label** says `Predicted from a live read; the provider was not\nasked to simulate the change.`\n\n## Security\n\n- **I57 (b):** its text gains the dry-run paragraph and stated bounds,\nand enforcement #5 now covers the dry run. A new test, 9, pins that\nadvisory comes first, that nothing is claimed or executed, and that\nthere is exactly one `dryRun: true` caller.\n- **Static D46(c):** it gains the clause `remediation-dry-run-confined`:\n- a `.readBeforeOnly(…)` call appears only in `incident/remediation.ts`;\n- the method's own body in `engine/executor.ts` holds no\n`gateWithin(…)`, `approvalPhase(…)`, `dispatchBoundPhase(…)`,\n`.execute(…)` or `connectors.dispatch(…)`;\n  - a missing body is itself a violation.\n- **Not changed:** no migration, no new invariant number, no HITL type.\n- **Allowlist:** `incident.dryRun` is pinned NOT renderer-callable in\n`gateway_bridge.rs`. It is LAN-forbidden through the `incident`\nnamespace and owner-kind only.\n- **The prediction table** lives in `connectors/connector-writes/`\nbecause it names write tool ids (static D20).\n\n## Stated bounds\n\n- **No provider simulation:** this is a prediction from a live read. No\ninstalled connector (0.15.0) exposes a dry-run tool for any proposable\nwrite, so an Argo CD rollback `dryRun` and an EC2 `DryRun` each need a\nconnectors release with a read-classified tool. The roadmap row stays\nopen for that remainder.\n- **Point in time:** the read is a moment, and the real `remediate`\nreads again before its prompt.\n- **The listing step:** `incident.dryRun` writes nothing. The CLI\nresolves `--pick` from a listing first, which stores newly derived\nproposals like any listing, since the dry run names a stored id. With\n`revive: false` it reopens nothing and renews no TTL.\n\n## Review\n\n- **Spec:** Antigravity round 1 requested changes (9 findings). All are\nresolved: 7 as suggested, and 2 differently with stated reasons (the\nrule stays under I57 (b)'s D46(c); the listing kind is computed in\n`remediation.ts`, not `proposals.ts`).\n- **Code:** round 2 is reviewing.\n- **CodeRabbit:** four threads, all fixed:\n- `incident.proposals` takes an optional `revive: false` that only\nnarrows, and `--dry-run` sends it, so a dry run reopens no proposal and\nrenews no TTL;\n- Argo CD `automated: { enabled: false }` reads as auto-sync off in the\ncapture and in the before-state display;\n  - the D46(c) dry-run scan ignores string contents;\n- the cli-reference example says the read and the prediction are\nconditional.\n- **CI fixes:** `readBeforeOnly` gets a before-state refusal as a value\nthrough a shared non-throwing helper, so `gate()` stays the one consumer\nof `BeforeStateRefusedError`, as the B2a pin requires. The Tauri\nlockfile bumps `url` to 2.5.9 for RUSTSEC-2026-0592, which went red\nrepo-wide on 2026-11-22.\n- **Parallel stream:** R1 (#2077) owns proposal-shape changes. This PR\ntouches `proposals.ts` only in its `DRY_RUN_LINE` constant text.\n\n## Docs\n\n`docs/SECURITY-INVARIANTS.md`, `docs/architecture.md`,\n`docs/cli-reference.md`, `docs/roadmap.md` (a progress note), and the\n`nimbus-ipc` skill are updated. The hot shared docs (the\nCLAUDE.md/GEMINI.md status paragraph, the top of the CHANGELOG,\ndocs/README.md) are batched into this round's last PR (owner rule);\ntheir text is in the handoff notes.\n\n## Verification\n\n- **Local:** `bun scripts/preflight.ts --fast --no-bail` PASSED. Touched\nsuites: 598 + 33 (I57) + 865 (static) tests, all passing.\n- **Not run locally:** branch coverage. `bunfig` disables collection, so\nCI's Linux floor is the check.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCk6NpLauKU2yYCwva\n\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added `--dry-run` to incident remediation. Select a proposal with\n`--pick` to read its current state and, where supported, predict the\noutcome without running the proposed action. Dry runs work without a\nterminal and support JSON output.\n* Proposal listings indicate whether an outcome can be predicted, only\ncurrent state can be shown, or no read is available. Predictions cover\nsupported feature-flag and infrastructure changes; Argo CD rollback\npredictions account for auto-sync and retained history, and may be\nuncertain.\n* Dry runs do not revive proposals, renew their time to live, or change\nproposal state. Refused or unavailable reads return a nonzero exit\nstatus.\n* **Documentation**\n* Updated CLI, security, and architecture documentation with dry-run\nbehavior and limitations.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-22T17:59:19Z",
+          "tree_id": "0c0f0a01c7a3c7d4229111704f3071d661dd6190",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/96bc6a590677cea94205c0017ed0da64d6797a74"
+        },
+        "date": 1795370790563,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 182.14723219999942,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 178.15487495000016,
             "unit": "ms"
           }
         ]
