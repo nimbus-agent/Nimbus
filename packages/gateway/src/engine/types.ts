@@ -109,10 +109,30 @@ export type RunbookStepRef =
       readonly reversibility: "reversible" | "irreversible" | "unknown";
     };
 
-/** What an engine-proposed action's prompt shows: which stored proposal it is and its declared reversibility. */
+/**
+ * What a rollback touches, from the owner's configured `depends_on` only (Phase 17 one-tap rollback): the record's
+ * bound service, the deploy's environment and the services that depend on it (at most 20, sorted). DISPLAY data.
+ */
+export type EngineProposalBlast =
+  | {
+      readonly service: string | null;
+      readonly environment: string | null;
+      readonly dependents: readonly string[];
+      readonly dependentsTruncated: boolean;
+      /** True for an undo: the blast radius as recorded when the action ran, not as derived now. */
+      readonly recorded: boolean;
+    }
+  /** The evidence held a blast radius, but a name in it is not a plain configuration id: shown as such. */
+  | { readonly unverified: true; readonly recorded: boolean };
+
+/**
+ * What an engine-proposed action's prompt shows: which stored proposal it is, its declared reversibility and
+ * (when the builder could derive it) its blast radius.
+ */
 export type EngineProposal = {
   readonly proposalId: string;
   readonly reversibility: "reversible" | "irreversible" | "unknown";
+  readonly blast?: EngineProposalBlast;
 };
 
 /**

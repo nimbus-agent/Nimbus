@@ -32,6 +32,7 @@ import type {
   ConfirmedApprovalRequest,
   ConfirmedApprovalResult,
   ConsentChannel,
+  EngineProposalBlast,
   PlannedAction,
 } from "./types.ts";
 
@@ -734,5 +735,101 @@ describe("IC5a: an engine-proposed action names its proposer and its reversibili
       payload: { ...PLAIN.payload, engineProposal: PROPOSAL("reversible") },
     });
     expect(h.prompts[0]).not.toContain("Proposed by");
+  });
+});
+
+describe("Phase 17 one-tap rollback: the blast radius in the executor's own prompt", () => {
+  const blast = (over: Partial<EngineProposalBlast> = {}): EngineProposalBlast => ({
+    service: "checkout",
+    environment: "production",
+    dependents: ["api", "web"],
+    dependentsTruncated: false,
+    recorded: false,
+    ...over,
+  });
+  const withBlast = (b: EngineProposalBlast | undefined): PlannedAction => ({
+    ...linked(PLAIN),
+    engineProposal:
+      b === undefined
+        ? { proposalId: "prp_0123456789abcdef", reversibility: "reversible" }
+        : { proposalId: "prp_0123456789abcdef", reversibility: "reversible", blast: b },
+  });
+  const linesAfterReversibility = async (b: EngineProposalBlast | undefined): Promise<string[]> => {
+    const h = harness();
+    await h.exec.execute(withBlast(b));
+    const lines = (h.prompts[0] ?? "").split("\n");
+    const at = lines.findIndex((l) => l.startsWith("Reversibility:"));
+    return lines.slice(at + 1, at + 3);
+  };
+
+  test("a bound service with dependents names the service, the environment and every dependent", async () => {
+    expect(await linesAfterReversibility(blast())).toEqual([
+      "Blast radius: service checkout, environment production",
+      "Depends on it: api, web",
+    ]);
+  });
+
+  test("no dependents, a truncated list, an unknown environment, an undo and an unbound record each read plainly", async () => {
+    expect((await linesAfterReversibility(blast({ dependents: [] })))[1]).toBe(
+      "Depends on it: nothing declared (depends_on)",
+    );
+    expect(
+      (await linesAfterReversibility(blast({ dependents: ["a"], dependentsTruncated: true })))[1],
+    ).toBe("Depends on it: a (first 1; more depend on it)");
+    // An empty list that says it is truncated never reads as "nothing declared".
+    expect(
+      (await linesAfterReversibility(blast({ dependents: [], dependentsTruncated: true })))[1],
+    ).toBe("Depends on it: list incomplete (dependents not shown)");
+    expect((await linesAfterReversibility(blast({ environment: null })))[0]).toBe(
+      "Blast radius: service checkout, environment unknown",
+    );
+    expect((await linesAfterReversibility(blast({ recorded: true })))[0]).toBe(
+      "Blast radius (as recorded when the action ran): service checkout, environment production",
+    );
+    expect((await linesAfterReversibility(blast({ service: null })))[0]).toBe(
+      "Blast radius: unknown - the incident is bound to no service, so Nimbus cannot tell what depends on it",
+    );
+  });
+
+  test("an unverified blast says it is not shown (never reads as no blast radius)", async () => {
+    expect((await linesAfterReversibility({ unverified: true, recorded: false }))[0]).toBe(
+      "Blast radius: not shown - a name in it is not a plain configuration id; check depends_on before approving",
+    );
+  });
+
+  test("the recorded label rides on the unbound and unverified forms too", async () => {
+    expect((await linesAfterReversibility(blast({ service: null, recorded: true })))[0]).toBe(
+      "Blast radius (as recorded when the action ran): unknown - the incident is bound to no service, so Nimbus cannot tell what depends on it",
+    );
+    expect((await linesAfterReversibility({ unverified: true, recorded: true }))[0]).toBe(
+      "Blast radius (as recorded when the action ran): not shown - a name in it is not a plain configuration id; check depends_on before approving",
+    );
+  });
+
+  test("an engine proposal with no blast field says it was not recorded", async () => {
+    expect((await linesAfterReversibility(undefined))[0]).toBe("Blast radius: not recorded");
+  });
+
+  test("a blast of the wrong shape, or a name that is not a configuration id, throws before any row", async () => {
+    const bad: unknown[] = [
+      { ...blast(), extra: 1 },
+      { ...blast(), service: "check\u001b[31mout" },
+      { ...blast(), dependents: ["web\u202e"] },
+      { ...blast(), dependents: Array.from({ length: 21 }, (_, i) => `s${String(i)}`) },
+      { ...blast(), dependentsTruncated: "no" },
+      { service: "checkout" },
+      { unverified: false, recorded: false },
+      { unverified: true },
+      { unverified: true, recorded: false, service: "x" },
+    ];
+    for (const b of bad) {
+      const h = harness();
+      await expect(h.exec.execute(withBlast(b as unknown as EngineProposalBlast))).rejects.toThrow(
+        IncidentLinkError,
+      );
+      expect(h.audits).toHaveLength(0);
+      expect(h.prompts).toHaveLength(0);
+      expect(h.dispatched).toHaveLength(0);
+    }
   });
 });

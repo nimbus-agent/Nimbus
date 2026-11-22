@@ -188,6 +188,14 @@ function evidenceLines(p: ProposalLike): string[] {
   return out;
 }
 
+/** An earlier entry's undo state: the exact command, so the owner never has to find the action id (Phase 17 one-tap rollback). */
+function undoText(p: ProposalLike): string {
+  if (p.undoStatus === "undone") return ", undone";
+  if (p.undoable && p.actionId !== null)
+    return `, undo it with: nimbus incident undo ${clean(p.actionId)}`;
+  return "";
+}
+
 /** The proposals of one record as the owner reads them; the reversibility label comes FIRST on every entry. */
 export function formatProposals(r: ProposalsReply): string {
   const lines: string[] = [
@@ -211,14 +219,8 @@ export function formatProposals(r: ProposalsReply): string {
     lines.push("", "Earlier:");
     for (const p of past) {
       const ran = p.actionId === null ? "" : `, action ${clean(p.actionId)}`;
-      const undo =
-        p.undoStatus === "undone"
-          ? ", undone"
-          : p.undoable
-            ? ", can be undone: nimbus incident undo"
-            : "";
       lines.push(
-        `  - ${clean(p.kind)} ${clean(p.toolId)} ${inputText(p.input)} [${clean(p.status)}]${ran}${undo}`,
+        `  - ${clean(p.kind)} ${clean(p.toolId)} ${inputText(p.input)} [${clean(p.status)}]${ran}${undoText(p)}`,
       );
     }
   }
