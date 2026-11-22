@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795030974345,
+  "lastUpdate": 1795365293199,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "4d6168588220e5a56db4f78cc4b728f6cfdc9705",
-          "message": "chore: release main (#1446)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.9.0</summary>\n\n##\n[7.9.0](https://github.com/nimbus-agent/Nimbus/compare/v7.8.2...v7.9.0)\n(2026-09-04)\n\n\n### Features\n\n* **multimodal:** image understanding and sampled frame captions (S2 PR\n2 of 4) ([#1438](https://github.com/nimbus-agent/Nimbus/issues/1438))\n([a24300a](https://github.com/nimbus-agent/Nimbus/commit/a24300a76e03d90a1cbe44833330a3b2a22dee35))\n\n\n### Bug Fixes\n\n* **ci:** retry a status-less transport failure in the dependency audit\n([#1441](https://github.com/nimbus-agent/Nimbus/issues/1441))\n([4b1948b](https://github.com/nimbus-agent/Nimbus/commit/4b1948b79b57a7b66865dea4f7134306d0efbce9))\n* **ci:** the sdk release-train tagPattern never matched a real tag, and\nthat only warned\n([#1445](https://github.com/nimbus-agent/Nimbus/issues/1445))\n([19a371c](https://github.com/nimbus-agent/Nimbus/commit/19a371c3d9e6251a208e2c20655204b44d59e6cc))\n* **llm:** a provider named __proto__ vanished from the availability map\n([#1442](https://github.com/nimbus-agent/Nimbus/issues/1442))\n([c16855a](https://github.com/nimbus-agent/Nimbus/commit/c16855a7d09ba90cb129173852bfa281092ba114))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-09-04T11:59:19Z",
-          "tree_id": "25c4ed7a7266b550cd5c530570e549d9b7ba25c0",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/4d6168588220e5a56db4f78cc4b728f6cfdc9705"
-        },
-        "date": 1788523808211,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 218.39620065000236,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 224.18166304999323,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 167.03724529999744,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8712b19944ff4b0d373f87a5c86560db3592ca57",
+          "message": "feat(gateway): nimbus cost waste, orphaned and idle cloud resources from the indexed FinOps recommendations (Phase 10 cost garbage collection, slice G4a) (#2078)\n\nPhase 10 Stretch row **Cloud cost \"garbage collection\"**, slice G4a.\n\n`nimbus cost waste [--service <id>] [--kind\n<unattached|idle|orphaned_snapshot|empty_environment>] [--json]` (IPC\n`cost.waste`) lists the orphaned and idle cloud resources among the\nrecommendations the FinOps vendor already made, which today are the\nVantage sync's indexed `cost_recommendation` rows. It shows estimated\nmonthly savings per kind and per currency. It reads the local index\nonly: no network, no connector, no model, no egress row.\n\n## What it does\n- **Classification:** `finops/cost-waste.ts` `classifyWaste` is a pure\nkeyword table, `WASTE_RULES` plus `NOT_WASTE_WORDS`, over the vendor's\ntype, category and description. Rightsizing, reservations, savings plans\nand commitments are counted as \"other\" and not listed.\n- **Query:** `finops/cost-waste-query.ts` `queryCostWaste` reads every\nrecommendation row once and totals savings per kind and **per\ncurrency**: never across currencies, and a figure with no currency gets\nits own bucket. A missing estimate is counted, never treated as zero.\nCandidates sort by currency code (by code unit), then saving, then title\nand id. A documentation link is kept only when it is `http(s)`. At most\n100 are listed, and the rest are counted.\n- **Statuses:**\n  - `no_data`, exit 1: no FinOps row of any kind is indexed.\n- `no_waste_found` and `waste`, exit 0: every such answer carries a\nfixed note that the report sees only vendor recommendations, so an empty\nlist does not mean there is no waste.\n- Notes name a set synced more than 24 hours ago, and cost rows indexed\nwith no recommendations.\n- **CLI:** `cli/commands/cost-waste.ts`, plus the `costRunner` routing\nin `cost.ts`. Vendor strings are passed through `stripTerminalText`\n(control and direction controls) and cut to 200 characters. Each\ncandidate shows its index id. The command deletes, queues and proposes\nnothing.\n\n## What it does not touch\n- **Schema:** no migration, no new invariant or static rule. `finops/**`\nis already confined by D48, and no HITL type or egress class is added.\n- **Exposure:** the whole `cost` namespace stays LAN-forbidden (pinned\nfor `cost.waste`). It is not on the desktop allowlist, which stays at\n140; a test pins that the Tauri bridge names no `cost.*` method. The\ndemo gateway answers `no_data`.\n\n## Stated bounds (the row stays open)\n- **No resource ids:** the index holds no resource ids and no cloud\ninventory, and the connectors expose no read or delete tool for volumes,\nsnapshots or IPs. The row's \"queue for deletion behind a single HITL\nclick\" half therefore needs a connectors release, new Wave 4 rows and an\nowner ruling.\n- **Unverified classifier:** it is a heuristic over vendor strings, not\nchecked against a live account. Savings are the vendor's estimates.\n\n## Review\n- **Antigravity:** reviewed the spec and code over rounds 1 to 3. Its\nfixes are applied: the `none` status renamed to `no_waste_found` with a\nscope note, null-currency buckets, no cross-currency comparison, URL\nscheme filtering, terminal hardening, the index id shown, and a routing\ntest.\n- **Local:** `bun run preflight:fast` passed, and so did 256 tests\nacross the touched suites.\n\n## Docs\n`docs/cli-reference.md`, `docs/architecture.md` and the roadmap row's\nprogress note are in this PR. Per the owner's batch rule, the shared\nstatus docs (the CLAUDE.md/GEMINI.md status paragraph, the top of\n`docs/CHANGELOG.md` and `docs/README.md`) are batched into the round's\nlast docs PR, and their text is prepared.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrCk6NpLauKU2yYCwva\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added `nimbus cost waste` to report likely unattached, idle, orphaned\nsnapshot, and empty-environment recommendations from indexed FinOps\ndata.\n* View estimated monthly savings by kind and currency, filter by service\nor kind, and review data-quality gaps. Reports support text and JSON\noutput and list up to 100 candidates.\n* The report is read-only; it does not scan cloud inventory, delete\nresources, or queue cleanup.\n* **Documentation**\n* Added CLI usage details and documented report statuses, limitations,\nand data scope.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-22T16:26:01Z",
+          "tree_id": "7c7891586588d914d516ac4bbbe55af8e871b1e1",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/8712b19944ff4b0d373f87a5c86560db3592ca57"
+        },
+        "date": 1795365287678,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 228.32632775000238,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 226.94259594999932,
             "unit": "ms"
           }
         ]
