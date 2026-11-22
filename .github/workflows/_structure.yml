@@ -17,7 +17,7 @@ name: Structure audit
 # Wired into ci.yml as `pr-quality-structure` (PR side) and `ci-structure`
 # (push side). Failures block PRs — the D8 any-count ratchet and the D10/D11
 # nimbus-invariant checks are the static-time complement to runtime
-# enforcement in `security-invariants.test.ts`.
+# enforcement in `security-invariants/`.
 on:
   workflow_call:
     inputs:

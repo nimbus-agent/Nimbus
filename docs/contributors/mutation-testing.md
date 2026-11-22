@@ -55,7 +55,7 @@ runs one fixed test command per mutant. That command runs only
 flagship added to pin executor.ts to 100% line+branch). executor.ts's *behavioural*
 suite actually spans ~8 files (also `hitl-obsidian`, several `ipc/*-rpc`, and
 `security-invariants`); running all of them per mutant is impractical with the
-command runner, and `security-invariants.test.ts` makes source-text assertions that
+command runner, and `security-invariants/` makes source-text assertions that
 break under in-place instrumentation (so it is excluded from scope entirely). Treat
 35.21% as a **fixed-scope ratchet starting point** for this exact command — not a
 quality verdict. A complete executor.ts score awaits the perTest bun-runner (once

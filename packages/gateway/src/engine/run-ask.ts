@@ -809,7 +809,7 @@ export type AgentWriteExecutorParams = Omit<ExecutorBuildParams, "localIndex"> &
  * (no delegation, the before-state runner), so the two doors cannot drift. The action it runs
  * carries `origin: "agent"` and the gateway-set proposer (`ipc/capture-rpc.ts`).
  *
- * The census in `security-invariants.test.ts` (I55, "the model door and the ask turn have no
+ * The census in `i55-standing-rule.test.ts` (I55, "the model door and the ask turn have no
  * standing rules") slices this file by function ORDER, from `buildModelWriteExecutor` to
  * `buildWorkflowWriteExecutor`: keep both where they are, with these builders between them.
  */

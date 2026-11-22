@@ -926,7 +926,7 @@ export function acceptCapture(
     appendAuditEntry(deps.db, {
       actionType: "capture.accept",
       // I4: no consent gate ran — the owner's own command is the decision. `approved` is
-      // reserved for rows a gate earned (security-invariants.test.ts APPROVED_ROW_IS_EARNED).
+      // reserved for rows a gate earned (i04-hitl-status.test.ts APPROVED_ROW_IS_EARNED).
       hitlStatus: "not_required",
       actionJson: JSON.stringify({ captureId: id, kind: row.kind, nativeRef, outcome: "accepted" }),
       timestamp: now,

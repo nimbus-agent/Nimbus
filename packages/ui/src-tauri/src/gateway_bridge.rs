@@ -624,7 +624,7 @@ mod tests {
     // judgement, so a compromised renderer must not be able to ask for it, drop it or read it.
     #[test]
     fn allowlist_connector_writes_never_renderer() {
-        // The names are built, not written whole: a source guard in security-invariants.test.ts
+        // The names are built, not written whole: a source guard in i07-tauri-allowlist.test.ts
         // forbids the quoted literals anywhere in this file, so the allowlist cannot grow them unseen.
         for m in ["writesEnable", "writesDisable", "writesStatus"] {
             assert!(!is_method_allowed(&format!("connector.{m}")));
@@ -956,7 +956,7 @@ mod tests {
         assert!(is_method_allowed("captures.list"));
         assert!(is_method_allowed("captures.get"));
         // One assert per name (not an array of string literals), so the source-level twin in
-        // security-invariants.test.ts can grep for an allowlist ENTRY line without matching these.
+        // i07-tauri-allowlist.test.ts can grep for an allowlist ENTRY line without matching these.
         assert!(!is_method_allowed("captures.accept"));
         assert!(!is_method_allowed("captures.reject"));
         assert!(!is_method_allowed("captures.revoke"));

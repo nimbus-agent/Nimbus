@@ -10,7 +10,7 @@
  *   - schema   → `CURRENT_SCHEMA_VERSION` in packages/gateway/src/index/local-index.ts
  *               (cross-checked against the highest `v<N>-*.ts` migration file)
  *   - invariant→ the highest `I<N>` referenced in
- *               packages/gateway/src/security-invariants.test.ts
+ *               packages/gateway/src/security-invariants/ (one `*.test.ts` per invariant)
  *
  * The check is intentionally narrow: it only matches the unambiguous *ceiling*
  * phrasings ("invariants through I<N>", "schema V<N>", the SECURITY-INVARIANTS
@@ -92,7 +92,7 @@ const CEILING_RANGE_SURFACES: readonly string[] = [
 
 /**
  * The highest static rule `D<N>` the auditor implements. Derived from the enforcement site for the
- * same reason the invariant ceiling is derived from `security-invariants.test.ts`: a rule that is
+ * same reason the invariant ceiling is derived from the `security-invariants/` test files: a rule that is
  * documented but not implemented is the drift this gate exists to catch, so the code must be the
  * source and the prose the thing checked against it.
  */
@@ -170,10 +170,28 @@ function canonicalSchema(repoRoot: string): { value: number; errors: string[] } 
 
 function canonicalInvariant(repoRoot: string): { value: number; errors: string[] } {
   const errors: string[] = [];
-  const test = read(repoRoot, "packages/gateway/src/security-invariants.test.ts");
+  const dirRel = "packages/gateway/src/security-invariants";
+  if (existsSync(join(repoRoot, `${dirRel}.test.ts`))) {
+    errors.push(
+      `${dirRel}.test.ts still exists: the invariant tests live one file per invariant in ${dirRel}/`,
+    );
+  }
+  const dirAbs = join(repoRoot, dirRel);
+  const files = existsSync(dirAbs)
+    ? readdirSync(dirAbs)
+        .filter((f) => f.endsWith(".test.ts"))
+        .sort()
+    : [];
+  if (files.length === 0) {
+    errors.push(`no *.test.ts files under ${dirRel}/`);
+    return { value: -1, errors };
+  }
+  const test = files.map((f) => read(repoRoot, `${dirRel}/${f}`)).join("\n");
   const value = maxCapture(test, /\bI(\d{1,2})\b/g);
   if (value === undefined) {
-    errors.push("could not find any I<N> reference in security-invariants.test.ts");
+    errors.push(
+      "could not find any I<N> reference under packages/gateway/src/security-invariants/",
+    );
     return { value: -1, errors };
   }
   return { value, errors };

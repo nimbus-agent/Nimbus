@@ -543,7 +543,7 @@ describe("provider selection (§ 19.3 truth table)", () => {
    * adapter, whose `isAvailable` is Vault key PRESENCE only and makes no request. Skipping the
    * probe meant a keyless/rotated-out vendor reached `understand()` unconditionally, which in
    * production is exactly where `wrapLedgeredVlm` appends its egress row BEFORE delegating — see
-   * `security-invariants.test.ts`'s I37 describe block for the ledger-level proof. This test
+   * `i37-media-grant.test.ts`'s I37 describe block for the ledger-level proof. This test
    * proves the GATE side: an unavailable remote provider refuses before `understand()` runs, the
    * same as the local arm always has, and the reason is one the user can act on
    * (`not_configured`), not `no_local_model` — the artifact WAS granted and the vendor IS enabled;

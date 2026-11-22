@@ -43,7 +43,8 @@
 /packages/gateway/src/util/timing-safe-compare.ts                   @asafgolombek
 
 # The invariant enforcement test itself
-/packages/gateway/src/security-invariants.test.ts                   @asafgolombek
+/packages/gateway/src/security-invariants/                           @asafgolombek
+/packages/gateway/test/helpers/security-invariants.ts              @asafgolombek
 
 # Static-audit complements to the runtime invariant tests
 /scripts/structure-audit/check-nimbus-invariants.ts                 @asafgolombek

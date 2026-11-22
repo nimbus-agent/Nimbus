@@ -13,7 +13,7 @@ description: >
 
 ## Why This Skill Exists
 
-The B1 internal security audit (Phase 4, 2026-04-25) found that `wrapToolOutput` had been **defined in code but had zero production callers** for a meaningful window. Documentation continued to claim prompt-injection defense was active. The defense is now wired across seven production FILES (nine call sites — `agent.ts` and `mesh.ts` each call it twice, on the success and error arms) and protected by an enforcement test in [`packages/gateway/src/security-invariants.test.ts`](../../packages/gateway/src/security-invariants.test.ts), but the gap can be reintroduced silently every time a new agent surface is added.
+The B1 internal security audit (Phase 4, 2026-04-25) found that `wrapToolOutput` had been **defined in code but had zero production callers** for a meaningful window. Documentation continued to claim prompt-injection defense was active. The defense is now wired across seven production FILES (nine call sites — `agent.ts` and `mesh.ts` each call it twice, on the success and error arms) and protected by an enforcement test in [`packages/gateway/src/security-invariants/i11-tool-output-envelope.test.ts`](../../packages/gateway/src/security-invariants/i11-tool-output-envelope.test.ts), but the gap can be reintroduced silently every time a new agent surface is added.
 
 This skill is the rule a contributor consults **before** adding such a surface.
 
@@ -37,9 +37,9 @@ If your new code hands a tool result to the LLM and does not call `wrapToolOutpu
 | [`packages/gateway/src/engine/agent.ts`](../../packages/gateway/src/engine/agent.ts) `wrapToolForLlm` (lines 25–76) | Tool-definition decorator applied to each Mastra-registered tool when the agent is built. Replaces the tool's `execute` so its return value flows through `wrapToolOutput` before reaching the LLM. Every `searchLocalIndex` / `fetchMoreIndexResults` / etc. result is wrapped here. |
 | [`packages/gateway/src/connectors/lazy-mesh/mesh.ts:478`](../../packages/gateway/src/connectors/lazy-mesh/mesh.ts) | Lazy-mesh dispatcher `listTools()` (lines 478–532) — wraps every MCP tool result that is exposed via Mastra to the LLM |
 | [`packages/gateway/src/engine/user-mcp-agent-tools.ts`](../../packages/gateway/src/engine/user-mcp-agent-tools.ts) | User-MCP `--model` tools: results go through the injected `wrapToolForLlm`; the server-supplied DESCRIPTION is delimited by `wrapToolDescription` (`<tool_description server="…">`, closers escaped by `escapeEnvelopeClosers`, capped before the closer) and the INPUT SCHEMA is rebuilt by [`user-mcp-input-schema.ts`](../../packages/gateway/src/engine/user-mcp-input-schema.ts)'s `sanitiseUserMcpInputSchema` (structural-keyword allowlist; `examples`/`default`/`$comment`/`$ref` dropped). Bounds: `enum`/`const` values, property names and `pattern` (≤ 500 chars) reach the model verbatim, so raw schema text is bounded by the 32 KiB rebuilt-size cap, not the 1000-char description cap; `format` survives only as a known format name and `required` only for declared properties. |
-| [`packages/gateway/src/security-invariants.test.ts`](../../packages/gateway/src/security-invariants.test.ts) | Enforcement test — fails if a known wiring site stops calling `wrapToolOutput` |
+| [`packages/gateway/src/security-invariants/i11-tool-output-envelope.test.ts`](../../packages/gateway/src/security-invariants/i11-tool-output-envelope.test.ts) | Enforcement test — fails if a known wiring site stops calling `wrapToolOutput` |
 
-If you add a third LLM-facing path, **you also add a wiring assertion in `security-invariants.test.ts`** so the next regression fails CI immediately.
+If you add a third LLM-facing path, **you also add a wiring assertion in `i11-tool-output-envelope.test.ts`** so the next regression fails CI immediately.
 
 ## Anatomy of the Envelope
 
@@ -76,7 +76,7 @@ When registering a new agent tool or extending a sub-agent worker:
 - [ ] The agent surface that exposes this tool to the LLM calls `wrapToolOutput({ service, tool }, raw)` immediately before returning to the model — same shape as `engine/agent.ts:38`.
 - [ ] `service` and `tool` are well-known identifiers (matching connector ids and MCP tool ids), not free-form strings derived from user input.
 - [ ] If the result type is `Promise<string>` already (rare — you are bypassing JSON), audit whether you are losing the body-escape protection. The default path (`Promise<unknown>` → `wrapToolOutput`) is preferred.
-- [ ] An enforcement assertion exists in [`packages/gateway/src/security-invariants.test.ts`](../../packages/gateway/src/security-invariants.test.ts) for the new wiring site (typically a grep against the source file).
+- [ ] An enforcement assertion exists in [`packages/gateway/src/security-invariants/i11-tool-output-envelope.test.ts`](../../packages/gateway/src/security-invariants/i11-tool-output-envelope.test.ts) for the new wiring site (typically a grep against the source file).
 - [ ] [`docs/SECURITY-INVARIANTS.md`](../../docs/SECURITY-INVARIANTS.md) §I11 names the new wiring site (file:line).
 
 ## Anti-Patterns
@@ -93,7 +93,7 @@ When registering a new agent tool or extending a sub-agent worker:
 
 1. Find the LLM-facing site in your new code.
 2. Call `wrapToolOutput({ service, tool }, raw)` there.
-3. Add a wiring grep to `security-invariants.test.ts`.
+3. Add a wiring grep to `i11-tool-output-envelope.test.ts`.
 4. Update [`docs/SECURITY-INVARIANTS.md`](../../docs/SECURITY-INVARIANTS.md) §I11 with the new file:line.
 5. All four happen in the **same commit**.
 

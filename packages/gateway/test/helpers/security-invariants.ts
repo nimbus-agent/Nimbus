@@ -1,5 +1,5 @@
 /**
- * Shared helpers for the invariant enforcement tests (`src/security-invariants.test.ts`).
+ * Shared helpers for the invariant enforcement tests (`src/security-invariants/`).
  *
  * They live under `test/`, not `src/`, on purpose: `readDirFiles` and `grepRepo` scan
  * `packages/gateway/src` for production TypeScript and skip only `*.test.ts`, so a helper file

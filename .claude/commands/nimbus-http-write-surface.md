@@ -28,7 +28,7 @@ This skill is the rule a contributor consults **before** adding any HTTP `POST` 
 | [`packages/gateway/src/ipc/http-server.ts`](../../packages/gateway/src/ipc/http-server.ts) | Where POST requests are routed to `dispatchWriteRoute`; opens **at most one** writable `Database` handle (the read handle stays `SQLITE_OPEN_READONLY`) |
 | [`packages/gateway/src/ipc/http-auth.ts`](../../packages/gateway/src/ipc/http-auth.ts) | `requireBearer` + `tokenFingerprint` — reads the expected token from the `http_api.deployment_token` vault key; constant-time compare via `constantTimeStringEqual` (invariant `I10`) |
 | [`packages/gateway/src/ipc/http-rate-limit.ts`](../../packages/gateway/src/ipc/http-rate-limit.ts) | Per-token sliding-window rate limiter (default 60 req/min); surfaces `X-RateLimit-*` headers |
-| [`packages/gateway/src/security-invariants.test.ts`](../../packages/gateway/src/security-invariants.test.ts) | Three I13 sub-assertions — see "Enforcement" below |
+| [`packages/gateway/src/security-invariants/i13-http-write-routes.test.ts`](../../packages/gateway/src/security-invariants/i13-http-write-routes.test.ts) | Three I13 sub-assertions — see "Enforcement" below |
 | [`packages/gateway/openapi/v1.yaml`](../../packages/gateway/openapi/v1.yaml) | Hand-authored OpenAPI schema; **the schema must list every allowlisted write route** — see "OpenAPI drift" below |
 
 ## The Allowlist
@@ -73,11 +73,11 @@ The deployment/SCIM/policy rows are the static-bearer routes; the teams-events r
 
 ## Enforcement (the I13 test triple)
 
-[`security-invariants.test.ts`](../../packages/gateway/src/security-invariants.test.ts) carries three assertions:
+[`i13-http-write-routes.test.ts`](../../packages/gateway/src/security-invariants/i13-http-write-routes.test.ts) carries three assertions:
 
 1. **`http-server.ts` imports `dispatchWriteRoute`** from `./http-write-routes.ts`. A second dispatcher cannot exist; the import is the proof.
 2. **`http-server.ts` opens at most one writable `Database` handle** — counted by source-grep. Any second writable handle is a structural regression because it bypasses the dispatcher.
-3. **`WRITE_ROUTE_ALLOWLIST.length === 14`** and contains exactly the deployment route + the three `/scim/v2/Users` routes + the admin-policy route + the teams-events route + the two `/v1/clips` routes + the four `/v1/briefs` routes + the agent-invoke route + the item-fetch route (grep `toHaveLength(14)` in `security-invariants.test.ts` — the assertion moves as the file grows). Adding an entry **requires updating this assertion in the same commit** — the count is the integrity check, not just decoration.
+3. **`WRITE_ROUTE_ALLOWLIST.length === 14`** and contains exactly the deployment route + the three `/scim/v2/Users` routes + the admin-policy route + the teams-events route + the two `/v1/clips` routes + the four `/v1/briefs` routes + the agent-invoke route + the item-fetch route (grep `toHaveLength(14)` in `i13-http-write-routes.test.ts` — the assertion moves as the file grows). Adding an entry **requires updating this assertion in the same commit** — the count is the integrity check, not just decoration.
 
 ## Request Flow
 
@@ -113,7 +113,7 @@ When a new POST/PUT/DELETE genuinely needs to live on the HTTP API (not the IPC 
 
 - [ ] Confirm the action is **not** in the forbidden categories above. If destructive, it must go through `ToolExecutor` first and only become an HTTP surface for already-approved automation flows (CI annotation patterns).
 - [ ] Add `"<METHOD> <PATH>"` to `WRITE_ROUTE_ALLOWLIST` in `http-write-routes.ts`.
-- [ ] **Bump the `length` assertion** in `security-invariants.test.ts` (`expect(WRITE_ROUTE_ALLOWLIST.length).toBe(N)`). The count *is* the integrity check.
+- [ ] **Bump the `length` assertion** in `i13-http-write-routes.test.ts` (`expect(WRITE_ROUTE_ALLOWLIST.length).toBe(N)`). The count *is* the integrity check.
 - [ ] Add an `if (key === "<METHOD> <PATH>")` branch in `dispatchWriteRoute` that calls the route's handler. Route handlers throw typed errors (e.g. `DeploymentRpcError`) so the dispatcher can map them to `400 invalid_<field>` audit rows.
 - [ ] Decide whether the handler writes its own success audit (current pattern for `dispatchDeploymentRpc`). If yes, **do not double-write** in the dispatcher.
 - [ ] Add the route to [`packages/gateway/openapi/v1.yaml`](../../packages/gateway/openapi/v1.yaml). If you forget, `bun run audit:openapi-drift` (CI gate from Phase 5 T4 PR 1) will fail — the OpenAPI schema is the single source of truth for the published API surface.

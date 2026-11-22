@@ -20,7 +20,7 @@ import type { CreateIpcServerOptions } from "./server/options.ts";
  * connection's consent channel, the consent round trip over the socket, and the gate's own
  * `audit_log` row. Only the engine is a stand-in: it asks the consent it is handed, exactly once,
  * with the origin the RPC gave it (the real engine's whitelist is covered by the I46 block in
- * `security-invariants.test.ts`).
+ * `i46-migration-accept.test.ts`).
  */
 
 const ROW: MigrationRow = {

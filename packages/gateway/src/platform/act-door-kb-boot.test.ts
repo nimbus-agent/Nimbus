@@ -1,6 +1,6 @@
 // B3 review fix 2: a KB configured at boot is refused on the MCP act door. `assemble.ts` loads
 // `[tribal]` once, BEFORE the capture gate, and hands the act door the same accessor as
-// `platform.tribalKbConfig` (pinned in security-invariants.test.ts, I28 block); this proves that
+// `platform.tribalKbConfig` (pinned in i28-mcp-capture-gate.test.ts, I28 block); this proves that
 // composition (the real loader, the real `tribalKbConfigOf`, the door's refusal) refuses.
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";

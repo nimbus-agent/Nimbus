@@ -627,7 +627,7 @@ accidentally by whichever item ships first.
   taxonomy change, not an append, and it lands as one commit carrying all six of: the
   `EGRESS_SOURCE_TYPES` member **with its reasoning written into that file's header the way `mcp`'s
   is**; the matching `COVERAGE_CLASSES` entry (the two lists are separate declarations and a
-  mismatch is silent — `security-invariants.test.ts` asserts they agree); the
+  mismatch is silent — `i29-egress-ledger.test.ts` asserts they agree); the
   `THIS_BINARY_COVERAGE` granularity; **the appender itself**; the D22 caller pin; and the
   enforcement test. A claimant whose appender is not landing in the same commit does **not** get a
   member — `session` with a reserved `method` remains the right answer for that case, because a

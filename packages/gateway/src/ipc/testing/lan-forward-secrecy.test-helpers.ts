@@ -1,6 +1,6 @@
 /**
  * Test-only scenarios for the LAN forward-secrecy acceptance criteria (FS-A1 to FS-A3), shared by
- * `lan-forward-secrecy.test.ts` and the invariant block in `security-invariants.test.ts` so the two
+ * `lan-forward-secrecy.test.ts` and the invariant block in `i56-lan-noise-session.test.ts` so the two
  * run the SAME code, not copies of it.
  */
 import { Database } from "bun:sqlite";

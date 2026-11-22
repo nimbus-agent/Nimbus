@@ -1300,7 +1300,7 @@ export function checkIncidentLinkMinting(files: readonly FileEntry[]): Violation
 //       about or dispatches the write. The body is found by the method's own signature; a missing body is
 //       itself a violation.
 // Stated bounds: a text scan, so a dynamically composed key or name evades it (the executor refuses an engine proposal
-// that is not beside a valid link, and `security-invariants.test.ts` pins the behaviour: never delegated, never
+// that is not beside a valid link, and `i57-incident-engine.test.ts` pins the behaviour: never delegated, never
 // standing-approved, refused in advisory mode, never offered to the model); a write verb spelled in a template
 // literal assembled from parts evades the table clause.
 const D46C_SRC = "packages/gateway/src/";
@@ -1974,7 +1974,7 @@ const D22_REGISTER_ROUTE_ALLOWED: readonly string[] = [
 // KNOWN LIMIT, stated because D22's existing weakness is exactly this: a regex over import
 // specifiers does not follow re-export chains. An emitter re-exported through `agents/_lib/` could
 // be imported from the excluded path and this rule would miss. That is closed by an assertion in
-// security-invariants.test.ts ("agents/_lib re-exports no emitter"), not by this regex — the same
+// i29-egress-ledger.test.ts ("agents/_lib re-exports no emitter"), not by this regex — the same
 // answer as the wrapper/façade limit above: address the capability, do not pretend the regex sees it.
 const D22_EMITTER_ALLOWED = "packages/gateway/src/ipc/agents-rpc.ts";
 const D22_EMITTER_DIR = "packages/gateway/src/agents/";
@@ -3301,7 +3301,7 @@ export function checkTrustTableConfinement(files: readonly FileEntry[]): Violati
 // import is caught; the import clauses read comment-stripped source (a specifier IS a string).
 // Test files and anything outside packages/gateway/src/ are not scanned. STATED BOUND, as D33(c): a
 // dynamically composed name or specifier evades a text scan, and (c) reads direct imports only —
-// the TRANSITIVE graph the role loads is pinned by I49's graph test in security-invariants.test.ts.
+// the TRANSITIVE graph the role loads is pinned by I49's graph test in i49-extension-eval.test.ts.
 const D38_EVAL_DIR = "packages/gateway/src/extensions/eval/";
 const D38_SPEC_BUILDER_RE = /\bbuildExtensionEvalSpawnSpec\b/g;
 const D38_SPEC_BUILDER_ALLOWED: readonly string[] = [
@@ -3514,7 +3514,7 @@ function createToolCallRe(commentFree: string): RegExp {
 //     `node:dgram` or `undici`.
 // Stated bounds: a text scan of DIRECT imports. An indirect path through an allowed module (`llm/`,
 // `index/`) is not followed; `synthesize.ts`, which the briefing imports, is no network path because no
-// runner is ever passed (a source pin in security-invariants.test.ts). Tied to no invariant: it makes
+// runner is ever passed (a source pin in i31-disclosure-integrity.test.ts). Tied to no invariant: it makes
 // OR-10-11 structural rather than conventional.
 const D45_DIR = "packages/gateway/src/briefing/";
 const D45_LIB_RE = /^packages\/gateway\/src\/agents\/_lib\/briefing[\w.-]*\.ts$/;
@@ -3650,7 +3650,7 @@ export function checkFinopsConfinement(files: readonly FileEntry[]): Violation[]
 // Scope is the whole directory at IC3 because it holds only inert code; the slice that adds an action-building
 // file carves it out in the same commit as its own rule (D46(c)). Stated bounds: a text scan of DIRECT imports;
 // an indirect path through an allowed module (`index/`, `agents/_lib/synthesize.ts`, `oncall-push/push-store.ts`)
-// is not followed, which is why the zero-egress and OR-10-8 pins in security-invariants.test.ts are the other half.
+// is not followed, which is why the zero-egress and OR-10-8 pins in i31-disclosure-integrity.test.ts are the other half.
 const D46A_DIR = "packages/gateway/src/incident/";
 const D46A_LIB_RE = /^packages\/gateway\/src\/agents\/_lib\/incident[\w.-]*\.ts$/;
 
@@ -3707,7 +3707,7 @@ export function checkIncidentConfinement(files: readonly FileEntry[]): Violation
 //     (the bundle layer, the prompt, the store and the RPC module name none), so the bundle layer cannot
 //     carry a schedule.
 // Stated bounds: a text scan, so a dynamically composed name evades it (as D33(c), D41 and D42 say); the
-// behavioural tests in `security-invariants.test.ts` (I59) are authoritative. Tied to I59.
+// behavioural tests in `i59-workflow-import.test.ts` (I59) are authoritative. Tied to I59.
 const D50_SRC = "packages/gateway/src/";
 const D50_STORE = `${D50_SRC}automation/workflow-import-store.ts`;
 const D50_DDL = `${D50_SRC}index/workflow-import-v101-sql.ts`;
@@ -3923,7 +3923,7 @@ export function checkComputerUseBindingConfinement(files: readonly FileEntry[]):
 // (f) the literal "tool.model.invoke" only by the door and `engine/executor.ts` (the I2 frozen set).
 // Test files are not scanned. Stated bounds: a text scan, so a dynamically composed name evades it, and
 // a second use inside an allow-listed file is exempt whole-file; the behavioural tests in
-// `security-invariants.test.ts` (I60) are authoritative. Tied to I60.
+// `i60-saved-tool-owner-turn.test.ts` (I60) are authoritative. Tied to I60.
 const D51_SRC = "packages/gateway/src/";
 const D51_DOOR = `${D51_SRC}toolgen/toolgen-model-door.ts`;
 const D51_ASSEMBLE = `${D51_SRC}platform/assemble.ts`;
@@ -5059,7 +5059,7 @@ function d43ExecutorPins(f: FileEntry, code: string, commentFree: string): Viola
 // packages/gateway/src/ are not scanned. STATED BOUND, as D33(c)/D41/D42: a dynamically composed
 // name evades a text scan, a second use inside an allow-listed file is exempt whole-file (the order
 // pins narrow that for the executor), and an alias is not followed. The order pins are TEXTUAL:
-// the behavioural tests in `security-invariants.test.ts` (I55) are authoritative.
+// the behavioural tests in `i55-standing-rule.test.ts` (I55) are authoritative.
 const D44_SRC = "packages/gateway/src/";
 const D44_EXECUTOR = `${D44_SRC}engine/executor.ts`;
 const D44_STEP = `${D44_SRC}engine/standing-rule-step.ts`;
@@ -5458,7 +5458,7 @@ export function checkPackLayerWriters(files: readonly FileEntry[]): Violation[] 
 // allow-listed file is exempt whole-file. That matters for `dispatchers.ts`: every dispatcher there
 // receives the `ServerCtx` that carries the engine, and a caller holding it could pass `accept` a
 // consent callback of its own (`async () => true`). The rule cannot see which function in that file
-// reads the option; an I44-block test in `security-invariants.test.ts` pins that exactly one place in
+// reads the option; an I44-block test in `i43-extension-spawn.test.ts` pins that exactly one place in
 // `dispatchers.ts` does — `tryDispatchMigrationRpc` — and that `accept` is called only by
 // `ipc/migration-rpc.ts`.
 const D34_TABLE_RE = sqlTableReferenceRe("connector_migration");

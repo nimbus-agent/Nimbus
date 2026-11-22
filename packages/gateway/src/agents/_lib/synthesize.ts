@@ -102,7 +102,7 @@ export type SynthesisOutcome = { markdown: string; provenance: SynthesisProvenan
  *
  * `switch (true)` with a `brief.kind === "…"` test per arm, not `switch (brief.kind)`: the I31
  * enforcement test ("the reserved registry is total over the brief union", in
- * `security-invariants.test.ts`) reads the set of dispatched kinds from exactly that comparison.
+ * `i31-disclosure-integrity.test.ts`) reads the set of dispatched kinds from exactly that comparison.
  * Changing the arms' shape means changing that scraper in the same commit.
  */
 function deterministicRender(brief: SynthInput, opts?: RenderOpts): string {

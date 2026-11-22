@@ -18,7 +18,7 @@ import { WRITE_ROUTE_ALLOWLIST } from "./http-write-routes.ts";
  * run from the repo root — which is what happens locally — and throws ENOENT under CI's sharded
  * runner, which runs from elsewhere. That is not a cosmetic difference: every scanner-backed test
  * below then fails on CI, so the completeness guard this file exists to provide would be dead in
- * the only place it has to work. `security-invariants.test.ts:47` and `entry-graph.test.ts:5` use
+ * the only place it has to work. `test/helpers/security-invariants.ts` (REPO_ROOT) and `entry-graph.test.ts:5` use
  * `import.meta.dir` for exactly this reason.
  */
 const SERVER_SRC = resolve(import.meta.dir, "http-server.ts");

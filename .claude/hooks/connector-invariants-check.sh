@@ -6,7 +6,7 @@
 # any failures back to the agent so it can self-correct before continuing.
 #
 # This is a static-time complement to the runtime tests in
-# packages/gateway/src/security-invariants.test.ts. The static check enforces:
+# packages/gateway/src/security-invariants/. The static check enforces:
 #   - Invariant I1: every spawn() under connectors/ uses extensionProcessEnv()
 #   - Vault-key allow-list: connector code touches only manifest-declared keys
 #

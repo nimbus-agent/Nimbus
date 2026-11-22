@@ -692,7 +692,7 @@ jobs:
 
   # Structure audit — D1/D2/D3 boundaries, D8 any-count ratchet, D10/D11
   # nimbus-invariants, release-please manifest drift. Static-time complement
-  # to runtime enforcement in `security-invariants.test.ts`.
+  # to runtime enforcement in `security-invariants/`.
   pr-quality-structure:
     name: PR quality — Structure audit
     if: github.event_name == 'pull_request'
