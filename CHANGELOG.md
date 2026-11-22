@@ -2,6 +2,15 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [11.11.0](https://github.com/nimbus-agent/Nimbus/compare/v11.10.0...v11.11.0) (2026-11-22)
+
+
+### Features
+
+* **gateway:** nimbus cost waste, orphaned and idle cloud resources from the indexed FinOps recommendations (Phase 10 cost garbage collection, slice G4a) ([#2078](https://github.com/nimbus-agent/Nimbus/issues/2078)) ([8712b19](https://github.com/nimbus-agent/Nimbus/commit/8712b19944ff4b0d373f87a5c86560db3592ca57))
+* **gateway:** remediation dry run, read the target and predict the outcome without running it (Phase 17) ([#2079](https://github.com/nimbus-agent/Nimbus/issues/2079)) ([96bc6a5](https://github.com/nimbus-agent/Nimbus/commit/96bc6a590677cea94205c0017ed0da64d6797a74))
+* **gateway:** the remediation approval prompt shows the blast radius, and the listing prints each undo command (Phase 17 one-tap rollback) ([#2077](https://github.com/nimbus-agent/Nimbus/issues/2077)) ([40aa010](https://github.com/nimbus-agent/Nimbus/commit/40aa01056f348d881b559447306fa925af09d677))
+
 ## [11.10.0](https://github.com/nimbus-agent/Nimbus/compare/v11.9.0...v11.10.0) (2026-11-18)
 
 
