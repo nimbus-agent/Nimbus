@@ -40,6 +40,23 @@ import {
   RULE_ANCHORS,
 } from "../../../scripts/structure-audit/check-nimbus-invariants.ts";
 import { stripComments, stripStringLiterals } from "../../../scripts/structure-audit/lib.ts";
+import {
+  baseInvariantWriteCtx,
+  censusCapabilities,
+  censusPrepareReply,
+  confirmableInput,
+  egressRows,
+  fakeVault,
+  freshEgressDb,
+  grepRepo,
+  REPO_ROOT,
+  reachRunner,
+  read,
+  readDirConcat,
+  readDirFiles,
+  SRC_ROOT,
+  writesUnderTest,
+} from "../test/helpers/security-invariants.ts";
 import type { ExpertBrief } from "./agents/_lib/findings.ts";
 import { listExtensions } from "./automation/extension-store.ts";
 import { CATALOG_AGENT_NAMES } from "./catalog/agent-catalog.ts";
@@ -80,10 +97,6 @@ import {
   COMMIT_CREDENTIAL_REFUSAL,
   COMMIT_PATH_REFUSAL,
 } from "./connectors/connector-writes/commit-paths.ts";
-import {
-  confirmTemplateKeys,
-  parseConfirmTemplate,
-} from "./connectors/connector-writes/confirm-template.ts";
 import { CONNECTOR_WRITE_ROWS } from "./connectors/connector-writes/index.ts";
 import {
   modelWriteRefusal,
@@ -148,7 +161,6 @@ const AGENT_PROPOSER: AgentProposer = {
 
 import { buildUserMcpAgentTools } from "./engine/user-mcp-agent-tools.ts";
 import type { ContinuityEntry } from "./extensions/continuity/continuity-table.ts";
-import type { ReachRunner } from "./extensions/extension-reach.ts";
 import { resolveExtensionManifestPath } from "./extensions/manifest.ts";
 import {
   createMigrationEngine,
@@ -176,7 +188,6 @@ import { runIndexedSchemaMigrations } from "./index/migrations/runner.ts";
 import { dispatchAgentsRpc } from "./ipc/agents-rpc.ts";
 import { ConsentCoordinatorImpl } from "./ipc/consent.ts";
 import { createStreamRegistry } from "./ipc/engine-ask-stream.ts";
-import { HttpWriteRateLimiter } from "./ipc/http-rate-limit.ts";
 import { dispatchIndexReembedRpc } from "./ipc/index-reembed-rpc.ts";
 import { legacyAllowedFor } from "./ipc/lan-legacy.ts";
 import { dispatchMigrationRpc } from "./ipc/migration-rpc.ts";
@@ -261,104 +272,6 @@ import { generateEd25519Keypair } from "./util/ed25519.ts";
 import { EphemeralVault } from "./vault/ephemeral.ts";
 import { createNimbusVault } from "./vault/factory.ts";
 import type { NimbusVault } from "./vault/nimbus-vault.ts";
-
-/** A runner with a live posture: healthy per-host on Linux unless told otherwise. */
-function reachRunner(
-  confine: () => string | null,
-  opts: {
-    platform?: "linux" | "darwin" | "win32";
-    fullyActive?: boolean;
-    reason?: string | null;
-  } = {},
-): ReachRunner {
-  const platform = opts.platform ?? "linux";
-  const scopes = { win32: "all_or_nothing", darwin: "per_port" } as const;
-  const scope = platform === "linux" ? undefined : scopes[platform];
-  return {
-    platform,
-    isFullyActive: () => opts.fullyActive ?? true,
-    degradedReason: () => opts.reason ?? null,
-    ...(scope === undefined ? {} : { networkScope: () => scope }),
-    canConfine: confine,
-  };
-}
-
-function baseInvariantWriteCtx() {
-  return {
-    writeDb: new Database(":memory:"),
-    expectedToken: "",
-    rateLimiter: new HttpWriteRateLimiter({ maxRequests: 60, windowMs: 60_000 }),
-    nowMs: () => 1000,
-    knownServices: () => [] as readonly string[],
-  };
-}
-
-/** Minimal in-memory vault fake (get/set/delete/listKeys) — mirrors clip-token-store.test.ts. */
-function fakeVault(seed: Record<string, string> = {}): NimbusVault {
-  const store = new Map(Object.entries(seed));
-  return {
-    get: async (k) => store.get(k) ?? null,
-    set: async (k, v) => void store.set(k, v),
-    delete: async (k) => void store.delete(k),
-    listKeys: async (prefix) =>
-      [...store.keys()].filter((k) => prefix === undefined || k.startsWith(prefix)),
-  };
-}
-
-const SRC_ROOT = import.meta.dir;
-const REPO_ROOT = resolve(SRC_ROOT, "..", "..", "..");
-
-async function read(relPathFromRepoRoot: string): Promise<string> {
-  return readFile(resolve(REPO_ROOT, relPathFromRepoRoot), "utf8");
-}
-
-/**
- * Concatenate the PRODUCTION TypeScript under a directory, recursively.
- *
- * Both qualifiers are load-bearing and both were missing. `readdir` without `recursive` cannot
- * see a subdirectory, so nesting a spawn file one level down removed it from every check built on
- * this helper; and including `*.test.ts` let test files count toward a production floor, so the
- * floor could be met by fixtures asserting that the production code is wrong.
- */
-async function readDirConcat(relDirFromRepoRoot: string): Promise<string> {
-  return (await readDirFiles(relDirFromRepoRoot)).map((f) => f.contents).join("\n");
-}
-
-/**
- * The same walk, but keeping each file separate.
- *
- * A concatenated blob forces any per-file exemption to be expressed as a per-SHAPE exemption, and
- * a shape exemption applies to every file in the scan. That is not hypothetical: exempting
- * `wrap-server-spec.ts`'s own env literal by its `{` shape also exempted every multi-line `env: {`
- * anywhere under lazy-mesh, including one spreading `process.env`.
- */
-async function readDirFiles(
-  relDirFromRepoRoot: string,
-): Promise<{ rel: string; contents: string }[]> {
-  const dir = resolve(REPO_ROOT, relDirFromRepoRoot);
-  const entries = await readdir(dir, { recursive: true });
-  const tsFiles = entries
-    .map((f) => f.replaceAll("\\", "/"))
-    .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"));
-  return Promise.all(
-    tsFiles.map(async (rel) => ({ rel, contents: await readFile(resolve(dir, rel), "utf8") })),
-  );
-}
-
-/**
- * Every PRODUCTION file (test files excluded, per `readDirFiles`) under `packages/gateway/src`
- * whose content matches `pattern`, as repo-root-relative paths sorted for a stable comparison. I39's
- * "recordToolEgress is the ONLY tool-class appender in the tree" test needs a repo-wide search
- * primitive, not a single-file read — a second appender planted anywhere else in the tree must be
- * visible to it.
- */
-async function grepRepo(pattern: RegExp): Promise<string[]> {
-  const files = await readDirFiles("packages/gateway/src");
-  return files
-    .filter((f) => pattern.test(f.contents))
-    .map((f) => `packages/gateway/src/${f.rel}`)
-    .sort();
-}
 
 describe("I1 — extensionProcessEnv is the only env source for spawned MCP children", () => {
   test("lazy-mesh/ contains no `{ ...process.env` spread", async () => {
@@ -3061,7 +2974,7 @@ describe("I21 — quorum counts only DISTINCT authenticated peers", () => {
 
 describe("I23 — ChatOps operational posts are bounded to originating / policy-notify channels", () => {
   test("(a) ReplyDispatcher derives the destination from a server-side ReplyTarget, not caller input", async () => {
-    const src = await readFile(resolve(import.meta.dir, "chatops/reply-dispatcher.ts"), "utf8");
+    const src = await readFile(resolve(SRC_ROOT, "chatops/reply-dispatcher.ts"), "utf8");
     expect(src).toMatch(/send\(target: ReplyTarget, text: string\)/);
     expect(src).toMatch(/target\.kind === "originating"/);
     expect(src).toMatch(/notifyChannelsFor\(target\.namespace\)/);
@@ -3098,7 +3011,7 @@ describe("I23 — ChatOps operational posts are bounded to originating / policy-
   const POST_TOOLS = /\b(?:slack_chat_post|teams_chat_post|slack_views_open)\b/;
 
   test("(b) no chatops module outside reply-dispatcher/transport references the connector post tools (D17)", async () => {
-    const files = (await productionTsUnder(resolve(import.meta.dir, "chatops"))).filter(
+    const files = (await productionTsUnder(resolve(SRC_ROOT, "chatops"))).filter(
       ({ rel }) => rel !== "reply-dispatcher.ts" && !rel.startsWith("transport/"),
     );
     const offenders: string[] = [];
@@ -3113,7 +3026,7 @@ describe("I23 — ChatOps operational posts are bounded to originating / policy-
   });
 
   test("(c) no tribal module references the connector post tools — suggestions only via the injected I23 send seam (D17)", async () => {
-    const files = await productionTsUnder(resolve(import.meta.dir, "tribal"));
+    const files = await productionTsUnder(resolve(SRC_ROOT, "tribal"));
     const offenders: string[] = [];
     for (const { rel, abs } of files) {
       if (POST_TOOLS.test(await readFile(abs, "utf8"))) offenders.push(rel);
@@ -3910,138 +3823,6 @@ code_execution=true
     }
   });
 });
-
-// ---- Per-write coverage helpers (ruling E1: they live in this test file, never in a non-test .ts).
-interface WriteUnderTest {
-  readonly label: string;
-  readonly action: PlannedAction;
-}
-
-/**
- * A wave 4 row needs an input its confirm text can be rendered from (Phase 9.7 D0a), so the tests
- * that drive every row through the executor give each placeholder a plain value. Other rows: `{}`.
- */
-function confirmableInput(row: ConnectorWriteRow): Record<string, unknown> {
-  if (row.confirm === undefined) return {};
-  const parsed = parseConfirmTemplate(row.confirm.template);
-  if (!parsed.ok) throw new Error(parsed.reason);
-  const input: Record<string, unknown> = {};
-  for (const name of confirmTemplateKeys(parsed.segments)) {
-    input[name] = name === "instanceIds" ? ["i-1"] : "x1";
-  }
-  // A multi-file commit (D1c) must also pass its row's input check: one small new file.
-  if (row.bound?.prepare.inputRefusal !== undefined && row.bound.prepare.settle === undefined) {
-    input["message"] = "m";
-    input["files"] = [{ path: "a.txt", content: "x" }];
-  }
-  // A plan-bound IaC row (D2) passes its own input check too: an absolute directory, a template.
-  if (row.bound?.prepare.settle === "iac-terraform") input["workingDirectory"] = "/srv/x1";
-  if (row.bound?.prepare.settle === "iac-cfn") input["templateBody"] = "Resources: {}";
-  // The Kubernetes apply (D3a) derives its typed target from a manifest the gateway parses: its
-  // input is three real keys, never a `target`.
-  if (row.bound?.prepare.settle === "k8s-manifest") {
-    return {
-      context: "x1",
-      namespace: "x1",
-      manifest: ["apiVersion: v1", "kind: ConfigMap", "metadata:", "  name: x1", ""].join("\n"),
-    };
-  }
-  return input;
-}
-
-/**
- * What a fake connector answers to a BOUND row's prepare read (D1c): a head and every file as new.
- * `undefined` for a row that is not bound.
- */
-function censusPrepareReply(
-  row: ConnectorWriteRow | undefined,
-  input: Record<string, unknown>,
-): unknown {
-  if (row?.bound === undefined) return undefined;
-  // A settled row (D2) takes its values from the settler, not from this reply.
-  if (row.bound.prepare.settle !== undefined) return {};
-  const files = (input["files"] as Array<{ path: string }>).map((f) => ({
-    path: f.path,
-    exists: false,
-    mode: "100644",
-  }));
-  return { headSha: "a".repeat(40), files };
-}
-
-/**
- * The capabilities a settled bound row (D2) needs on its dispatcher: a preflight that accepts and a
- * settler that binds a placeholder for each of the row's bound fields (the production settlers are
- * tested on their own). `undefined` for every other row, so they run on a dispatcher without them.
- */
-function censusCapabilities(row: ConnectorWriteRow | undefined):
-  | {
-      boundWriteCapabilities: {
-        preflight: () => Promise<{ ok: true; release: () => void }>;
-        settle: () => Promise<{
-          values: Record<string, string>;
-          fields: Array<{ label: string; value: string }>;
-          cleanup: () => Promise<void>;
-        }>;
-      };
-    }
-  | Record<string, never> {
-  if (row?.bound?.prepare.settle === undefined) return {};
-  const fields = row.bound.binds.map((b) => b.field);
-  return {
-    boundWriteCapabilities: {
-      preflight: async () => ({ ok: true, release: () => undefined }),
-      settle: async () => ({
-        values: Object.fromEntries(fields.map((f) => [f, `settled-${f}`])),
-        fields: [{ label: "Plan", value: "settled" }],
-        cleanup: async () => undefined,
-      }),
-    },
-  };
-}
-
-/** Every row (built the way its door builds it, ruling E2) plus the four gate-confined writes. */
-function writesUnderTest(): readonly WriteUnderTest[] {
-  const rows: WriteUnderTest[] = CONNECTOR_WRITE_ROWS.map((row) => {
-    const input = confirmableInput(row);
-    return {
-      label: row.toolId,
-      action:
-        row.transport === "mesh"
-          ? { type: row.actionType, payload: { mcpToolId: row.toolId, input } }
-          : { type: row.actionType, payload: input },
-    };
-  });
-  const confined = [
-    "slack.chat.post",
-    "teams.chat.post",
-    "notion.knowledge.write",
-    "confluence.knowledge.write",
-  ].map((t) => ({ label: t, action: { type: t, payload: {} } }));
-  return [...rows, ...confined];
-}
-
-let migratedTemplate: Uint8Array | undefined;
-
-/** A fully migrated in-memory database; migrated once, then cloned (a migration run per row is slow). */
-function freshEgressDb(): Database {
-  if (migratedTemplate === undefined) {
-    const seed = new Database(":memory:");
-    runIndexedSchemaMigrations(seed, CURRENT_SCHEMA_VERSION);
-    migratedTemplate = seed.serialize();
-    seed.close();
-  }
-  return Database.deserialize(migratedTemplate);
-}
-
-function egressRows(
-  db: Database,
-): Array<{ resultStatus: string; destination: string; hitlStatus: string }> {
-  return db
-    .query(
-      "SELECT result_status AS resultStatus, destination, hitl_status AS hitlStatus FROM egress_ledger ORDER BY id",
-    )
-    .all() as Array<{ resultStatus: string; destination: string; hitlStatus: string }>;
-}
 
 describe("I26 — every connector write row is confined to the local I2 path; federated gate rejects them", () => {
   test("answerFederatedInvoke is wired with the union write-or-prepare predicate in federation-rpc.ts", async () => {
@@ -5690,7 +5471,7 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     // — the same shape as D22's recorded wrapper/façade limit. That gap is closed by ASSERTION
     // here, not by trusting the import rule to cover something it structurally cannot.
     //
-    // Resolved from REPO_ROOT (which derives from import.meta.dir), never the process CWD: a
+    // Resolved from REPO_ROOT (which derives from this helper's own location), never the process CWD: a
     // CWD-relative read passes from the repo root and throws ENOENT under CI's sharded runner,
     // which is how a guard ends up dead in the only place it has to work.
     const libDir = resolve(REPO_ROOT, "packages/gateway/src/agents/_lib");
@@ -12059,18 +11840,12 @@ describe("I48 — a publisher statement from a registry counts only for that reg
   });
 
   test("source pin: publisher rows and rotation edges go through publisherStatementInScope", () => {
-    const src = readFileSync(
-      join(import.meta.dir, "extensions", "trust", "trust-blocks.ts"),
-      "utf8",
-    );
+    const src = readFileSync(join(SRC_ROOT, "extensions", "trust", "trust-blocks.ts"), "utf8");
     expect(src).toContain(
       'if (row.signerRole === "publisher") return publisherStatementInScope(row.sources, s.source);',
     );
     expect(src).toContain("ancestorsOf(rotationEdgesFor(db, s.publisherId, s.source), fp)");
-    const keys = readFileSync(
-      join(import.meta.dir, "extensions", "trust", "trust-keys.ts"),
-      "utf8",
-    );
+    const keys = readFileSync(join(SRC_ROOT, "extensions", "trust", "trust-keys.ts"), "utf8");
     expect(keys).toContain("rotationEdgesFor(db, ctx.publisherId, ctx.source)");
     expect(keys).not.toContain("readRotationEdges");
   });
@@ -14707,7 +14482,7 @@ describe("I53 / I28 - B3w: sent mail, Teams and forge Markdown cannot load remot
 });
 
 describe("I53 / I54 - D1c: a commit the model proposes is refused for a CI, hook or credential path and never carries the bound head", () => {
-  const SRC = join(import.meta.dir, "connectors", "connector-writes");
+  const SRC = join(SRC_ROOT, "connectors", "connector-writes");
   const COMMIT_FILES = [{ path: ".github/workflows/ci.yml", content: "on: push\n" }];
 
   test("modelWriteRefusal calls commitModelRefusal after the messaging check, and the agent door runs it (AD3b)", async () => {
@@ -14735,7 +14510,7 @@ describe("I53 / I54 - D1c: a commit the model proposes is refused for a CI, hook
 
   test("the offered schema drops the bound head: the door strips every bound field from the listing", async () => {
     const src = stripComments(
-      await readFile(join(import.meta.dir, "engine", "connector-write-agent-tools.ts"), "utf8"),
+      await readFile(join(SRC_ROOT, "engine", "connector-write-agent-tools.ts"), "utf8"),
     );
     expect(src).toMatch(
       /offeredInputSchema\(\s*entry\["inputSchema"\],[\s\S]{0,120}binds\.map\(\(b\) => b\.field\)/,
