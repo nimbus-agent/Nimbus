@@ -14,7 +14,12 @@ import { buildRecord } from "./__fixtures__/record-builder.ts";
 import type { DeploymentView } from "./incident-record-types.ts";
 import { upsertIncidentRecord } from "./incident-store.ts";
 import { getProposal, getProposalByAction, setAdvisory } from "./proposal-store.ts";
-import { createRemediation, type MakeExecutor, RemediationError } from "./remediation.ts";
+import {
+  blastForPrompt,
+  createRemediation,
+  type MakeExecutor,
+  RemediationError,
+} from "./remediation.ts";
 
 function must<T>(x: T | undefined): T {
   if (x === undefined) throw new Error("expected a value");
@@ -75,7 +80,12 @@ type Harness = {
 };
 
 function harness(
-  opts: { deployment?: boolean; now?: () => number; onPrompt?: () => void } = {},
+  opts: {
+    deployment?: boolean;
+    now?: () => number;
+    onPrompt?: () => void;
+    dependsOn?: () => ReadonlyMap<string, readonly string[]>;
+  } = {},
 ): Harness {
   const prompts: string[] = [];
   const confirms: string[] = [];
@@ -166,7 +176,7 @@ function harness(
     db,
     makeExecutor,
     bindingsFor: () => ({ argocdApps: ["pay-app"], deployEnvironments: ["prod"] }),
-    dependsOn: () => new Map([["checkout", ["payments"]]]),
+    dependsOn: opts.dependsOn ?? (() => new Map([["checkout", ["payments"]]])),
     now: opts.now ?? (() => NOW),
     newActionId: (() => {
       let n = 0;
@@ -245,7 +255,7 @@ describe("the bad-deploy rollback, end to end through the real gate", () => {
       true,
     );
     expect(writeRow.action_json).toContain(
-      `"engineProposal":{"proposalId":"${id}","reversibility":"reversible"}`,
+      `"engineProposal":{"proposalId":"${id}","reversibility":"reversible","blast":{`,
     );
     expect(writeRow.action_json).not.toContain('"origin"');
     expect(h.egress.length).toBeGreaterThanOrEqual(2);
@@ -270,7 +280,7 @@ describe("the bad-deploy rollback, end to end through the real gate", () => {
       code: "ERR_UNDO_REFUSED",
       message: "that action was already undone",
     });
-    expect(h.dispatched.length).toBe(before);
+    expect(h.dispatched).toHaveLength(before);
   });
 
   test("audit replay reads the proposal, the prompts, the decisions and the undo, byte-identical twice", async () => {
@@ -387,7 +397,7 @@ describe("denial, failure, busy, stale, expired", () => {
     ).rejects.toMatchObject({
       code: "ERR_PROPOSAL_STALE",
     });
-    expect(h.dispatched.length).toBe(n);
+    expect(h.dispatched).toHaveLength(n);
   });
 
   test("a proposal the record no longer offers is ERR_PROPOSAL_STALE and is marked superseded", async () => {
@@ -587,7 +597,7 @@ describe("advisory mode refuses BEFORE anything (I57 (b))", () => {
     await expect(h.svc.undo({ actionId: out.actionId, clientId: "a" })).rejects.toMatchObject({
       code: "ERR_ADVISORY_MODE",
     });
-    expect(h.dispatched.length).toBe(before);
+    expect(h.dispatched).toHaveLength(before);
     expect(h.svc.setAdvisory(false)).toBe(false);
     expect((await h.svc.undo({ actionId: out.actionId, clientId: "a" })).status).toBe("undone");
   });
@@ -608,7 +618,7 @@ describe("undo refusals carry the label", () => {
       code: "ERR_UNDO_REFUSED",
       message: "irreversible: a PagerDuty incident cannot be reopened through Nimbus",
     });
-    expect(h.dispatched.length).toBe(before);
+    expect(h.dispatched).toHaveLength(before);
     expect(getProposalByAction(db, out.actionId)?.undo_status).toBeNull();
   });
 
@@ -796,7 +806,7 @@ describe("the proposal a push carries (IC5b)", () => {
       clientId: "cli-1",
     });
     expect(out.status).toBe("executed");
-    expect(h.prompts.length).toBe(1);
+    expect(h.prompts).toHaveLength(1);
     expect(h.prompts[0]).toContain("Proposed by: the incident engine");
   });
 });
@@ -996,5 +1006,95 @@ describe("the dry run (Phase 17): the before-state reads only, never the write",
       notReady.dryRun({ ref: h.recordId, proposalId: id, clientId: "a" }),
     ).rejects.toMatchObject({ code: "ERR_REMEDIATION_UNAVAILABLE" });
     expect(h.dispatched).toEqual([]);
+  });
+});
+
+describe("Phase 17 one-tap rollback: the blast radius in the prompt", () => {
+  test("remediate shows the blast radius derived NOW: the bound service, its environment and its dependents", async () => {
+    const h = harness();
+    const id = pick(h, "rollback_deploy");
+    await h.svc.remediate({ ref: h.recordId, proposalId: id, clientId: "cli-1" });
+    const prompt = h.prompts[0] ?? "";
+    expect(prompt).toContain(
+      `Blast radius: service payments, environment ${DEPLOYMENT.environment ?? "unknown"}`,
+    );
+    expect(prompt).toContain("Depends on it: checkout");
+    expect(prompt).not.toContain("as recorded");
+  });
+
+  test("a depends_on change between listing and running shows the new dependents (the run re-derives before it claims)", async () => {
+    let graph = new Map<string, readonly string[]>([["checkout", ["payments"]]]);
+    const h = harness({ dependsOn: () => graph });
+    const id = pick(h, "rollback_deploy");
+    graph = new Map([
+      ["checkout", ["payments"]],
+      ["ledger", ["payments"]],
+    ]);
+    await h.svc.remediate({ ref: h.recordId, proposalId: id, clientId: "cli-1" });
+    expect(h.prompts[0]).toContain("Depends on it: checkout, ledger");
+  });
+
+  test("a configured name that is not a plain id reaches the prompt only as the unverified line", async () => {
+    const h = harness({ dependsOn: () => new Map([["web\u202Echeckout", ["payments"]]]) });
+    await h.svc.remediate({
+      ref: h.recordId,
+      proposalId: pick(h, "rollback_deploy"),
+      clientId: "cli-1",
+    });
+    const prompt = h.prompts[0] ?? "";
+    expect(prompt).toContain(
+      "Blast radius: not shown - a name in it is not a plain configuration id; check depends_on before approving",
+    );
+    expect(prompt).not.toContain("\u202E");
+  });
+
+  test("undo shows the blast radius as recorded when the action ran", async () => {
+    const h = harness();
+    const out = await h.svc.remediate({
+      ref: h.recordId,
+      proposalId: pick(h, "rollback_deploy"),
+      clientId: "cli-1",
+    });
+    await h.svc.undo({ actionId: out.actionId, clientId: "cli-1" });
+    expect(h.prompts[1]).toContain(
+      "Blast radius (as recorded when the action ran): service payments",
+    );
+  });
+});
+
+describe("blastForPrompt (the names a prompt may carry)", () => {
+  const ok = {
+    blast: {
+      service: "payments",
+      environment: "prod",
+      dependents: ["a"],
+      dependentsTruncated: false,
+    },
+  };
+  test("a well-formed evidence blast passes through, with the recorded flag", () => {
+    expect(blastForPrompt(ok, true)).toEqual({
+      service: "payments",
+      environment: "prod",
+      dependents: ["a"],
+      dependentsTruncated: false,
+      recorded: true,
+    });
+  });
+  test("no blast in the evidence gives undefined (the prompt says not recorded)", () => {
+    for (const e of [null, "x", {}]) expect(blastForPrompt(e, false)).toBeUndefined();
+  });
+  test("a blast that is not all configuration ids gives the unverified form, never a silent omission", () => {
+    const bad: unknown[] = [
+      { blast: null },
+      { blast: { ...ok.blast, service: "payments" } },
+      { blast: { ...ok.blast, environment: "prod\u202E" } },
+      { blast: { ...ok.blast, dependents: "a" } },
+      { blast: { ...ok.blast, dependents: ["bad name"] } },
+      { blast: { ...ok.blast, dependents: Array.from({ length: 21 }, (_, i) => `s${String(i)}`) } },
+      { blast: { ...ok.blast, dependentsTruncated: 1 } },
+    ];
+    for (const b of bad) {
+      expect(blastForPrompt(b, false)).toEqual({ unverified: true, recorded: false });
+    }
   });
 });

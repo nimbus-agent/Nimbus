@@ -595,6 +595,39 @@ function reversibilityPromptLine(p: EngineProposal): string {
     : "Reversibility: unknown - Nimbus does not know whether this can be undone";
 }
 
+/**
+ * Phase 17 one-tap rollback: what the action touches, from the owner's configured `depends_on`, in the
+ * executor's own prompt so every door (the terminal, a push, a ChatOps card) shows it. The names passed
+ * `assertEngineProposal` (`BLAST_NAME_RE`), so they carry no control text. DISPLAY only.
+ */
+function blastPromptLines(p: EngineProposal): string[] {
+  const b = p.blast;
+  if (b === undefined) return ["Blast radius: not recorded"];
+  const label = b.recorded ? "Blast radius (as recorded when the action ran)" : "Blast radius";
+  if ("unverified" in b) {
+    return [
+      `${label}: not shown - a name in it is not a plain configuration id; check depends_on before approving`,
+    ];
+  }
+  if (b.service === null) {
+    return [
+      `${label}: unknown - the incident is bound to no service, so Nimbus cannot tell what depends on it`,
+    ];
+  }
+  const first = `${label}: service ${b.service}, environment ${b.environment ?? "unknown"}`;
+  if (b.dependents.length === 0) {
+    // An empty list with the truncation flag (not produced by the derivation, accepted by the validators)
+    // must not read as "nothing depends on it".
+    return b.dependentsTruncated
+      ? [first, "Depends on it: list incomplete (dependents not shown)"]
+      : [first, "Depends on it: nothing declared (depends_on)"];
+  }
+  const more = b.dependentsTruncated
+    ? ` (first ${String(b.dependents.length)}; more depend on it)`
+    : "";
+  return [first, `Depends on it: ${b.dependents.join(", ")}${more}`];
+}
+
 function runbookStepPromptLines(r: RunbookStepRef): string[] {
   const first = `Proposed by: runbook ${r.runbook}, step ${String(r.step)}`;
   if (r.kind === "read") return [first];
@@ -609,12 +642,11 @@ function runbookStepPromptLines(r: RunbookStepRef): string[] {
   ];
 }
 
-function formatConsentPromptBody(
-  action: PlannedAction,
-  credentialFor?: PreviewCredentialResolver,
-  preview?: ConnectorWritePreview,
-  userMcpWriteDirs?: readonly string[],
-): string {
+/**
+ * Phase 1 of the prompt: the fixed header every prompt shape carries (type, the gateway-set origin, the
+ * incident engine's proposal with its reversibility and blast radius, a runbook step). Never payload text.
+ */
+function consentPromptHeaderLines(action: PlannedAction): string[] {
   const lines = [`Action requires your approval`, ``, `Type: ${action.type}`];
   // One fixed line on every prompt shape below; the origin is gateway-set, never payload text.
   if (isModelOrigin(action)) lines.push("Requested by: the model");
@@ -622,52 +654,69 @@ function formatConsentPromptBody(
   // IC5a (I57 (b)): the incident engine's proposal names itself and its declared reversibility, the
   // irreversible label first and in capitals. Gateway-set, never payload text.
   if (action.engineProposal !== undefined) {
-    lines.push("Proposed by: the incident engine", reversibilityPromptLine(action.engineProposal));
+    lines.push(
+      "Proposed by: the incident engine",
+      reversibilityPromptLine(action.engineProposal),
+      ...blastPromptLines(action.engineProposal),
+    );
   }
   // IC6 (I57 (c)): a step of an owner-authored runbook names the runbook and the step (the name is checked
   // against `RUNBOOK_NAME_RE` by the gate's link check, so it carries no control text). Gateway-set.
   if (action.runbookStep !== undefined) lines.push(...runbookStepPromptLines(action.runbookStep));
+  return lines;
+}
+
+/**
+ * Phase 2 of the prompt: a purpose-built, escaped rendering for the action shapes that have one, tried in this
+ * order; the first that applies is the whole body (a JSON Details line would only repeat it). `undefined` when
+ * none applies.
+ */
+function purposeBuiltPromptLines(
+  action: PlannedAction,
+  credentialFor?: PreviewCredentialResolver,
+  preview?: ConnectorWritePreview,
+): string[] | undefined {
+  // The pack prompt.
   const promptText = promptTextOf(action);
-  if (promptText !== undefined) {
-    // The pack prompt is a purpose-built, escaped rendering; a JSON Details line would only add noise.
-    lines.push("", promptText);
-    return lines.join("\n");
-  }
+  if (promptText !== undefined) return [promptText];
+  // Exactly which writes the model may then propose.
   const enableLines =
     action.type === "connector.writes.enable" ? enableWritesPromptLines(action.payload) : undefined;
-  if (enableLines !== undefined) {
-    // Purpose-built, escaped rendering of exactly which writes the model may then propose.
-    lines.push("", ...enableLines);
-    return lines.join("\n");
-  }
+  if (enableLines !== undefined) return enableLines;
+  // A registration that carries a WRITE directory (I15, AD5b): the resolved registration and the
+  // write block with its fixed warning. One with no write directory keeps the Details line.
   const addMcpLines =
     action.type === "connector.addMcp" ? addMcpWritePromptLines(action.payload) : undefined;
-  if (addMcpLines !== undefined) {
-    // A registration that carries a WRITE directory (I15, AD5b): the resolved registration and the
-    // write block with its fixed warning. One with no write directory keeps the Details line.
-    lines.push("", ...addMcpLines);
-    return lines.join("\n");
-  }
+  if (addMcpLines !== undefined) return addMcpLines;
   const evalLines = action.type === "extension.eval" ? evalPromptLines(action) : undefined;
-  if (evalLines !== undefined) {
-    // Purpose-built rendering; a JSON Details line would repeat it.
-    lines.push("", ...evalLines, "", "runs with no network and no credentials");
-    return lines.join("\n");
-  }
+  if (evalLines !== undefined) return [...evalLines, "", "runs with no network and no credentials"];
+  // The typed connector-write preview (a JSON Details line would show it raw).
   const typed = preview ?? buildConnectorWritePreview(action, credentialFor);
-  if (typed !== undefined) {
-    // Purpose-built, escaped rendering; a JSON Details line would repeat it (and show it raw).
-    lines.push("", ...renderConnectorWritePreviewLines(typed));
-    return lines.join("\n");
-  }
+  if (typed !== undefined) return renderConnectorWritePreviewLines(typed);
   if (isAgentOrigin(action)) {
     // I42: the owner approves the exact input that will be sent, invisible characters shown as
     // escapes; a one-line JSON `Details` would hide them in a long line.
     // AD5a: the server block (third-party code the owner registered) comes before the input.
-    if (action.userMcpCall !== undefined) lines.push("", ...userMcpCallLines(action.userMcpCall));
-    lines.push("", ...agentVerbatimInputLines(extractToolInput(action)));
+    const server =
+      action.userMcpCall === undefined ? [] : [...userMcpCallLines(action.userMcpCall), ""];
+    return [...server, ...agentVerbatimInputLines(extractToolInput(action))];
+  }
+  return undefined;
+}
+
+function formatConsentPromptBody(
+  action: PlannedAction,
+  credentialFor?: PreviewCredentialResolver,
+  preview?: ConnectorWritePreview,
+  userMcpWriteDirs?: readonly string[],
+): string {
+  const lines = consentPromptHeaderLines(action);
+  const purposeBuilt = purposeBuiltPromptLines(action, credentialFor, preview);
+  if (purposeBuilt !== undefined) {
+    lines.push("", ...purposeBuilt);
     return lines.join("\n");
   }
+  // Phase 3, the generic body.
   // I15 (AD5b): a model's or the owner's call to a user MCP server that holds a write directory
   // shows it, with the fixed warning, before the input. A server with none adds nothing here.
   if (userMcpWriteDirs !== undefined && userMcpWriteDirs.length > 0) {

@@ -243,7 +243,7 @@ describe("formatProposals", () => {
         ],
       }),
     );
-    expect(past).toContain(`[executed], action ${ACT}, can be undone: nimbus incident undo`);
+    expect(past).toContain(`[executed], action ${ACT}, undo it with: nimbus incident undo ${ACT}`);
     expect(past).toContain("[executed], action act_1111111111111111, undone");
     expect(past).toContain("[denied]");
   });

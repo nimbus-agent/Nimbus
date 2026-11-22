@@ -13,9 +13,13 @@ import { reversibilityClassOf } from "../connectors/connector-writes/reversibili
 import type { ConnectorWriteRow } from "../connectors/connector-writes/types.ts";
 import { mcpClientToolKey } from "../connectors/lazy-mesh/tool-map.ts";
 import type { BeforeOnlyOutcome } from "../engine/executor.ts";
-import { ENGINE_PROPOSAL_ID_RE } from "../engine/incident-link.ts";
+import {
+  BLAST_MAX_DEPENDENTS,
+  BLAST_NAME_RE,
+  ENGINE_PROPOSAL_ID_RE,
+} from "../engine/incident-link.ts";
 import { serviceOf } from "../engine/service-of.ts";
-import type { ActionResult, PlannedAction } from "../engine/types.ts";
+import type { ActionResult, EngineProposalBlast, PlannedAction } from "../engine/types.ts";
 import { resolveIncidentRef } from "./incident-id.ts";
 import { mintIncidentLink } from "./incident-link-mint.ts";
 import type { IncidentRecordV1 } from "./incident-record-types.ts";
@@ -180,7 +184,46 @@ export type UndoOutcome = {
 };
 
 const ACTION_ID_RE = /^act_[0-9a-f]{16}$/;
+
+function parseEvidence(json: string): unknown {
+  try {
+    return JSON.parse(json) as unknown;
+  } catch {
+    return null;
+  }
+}
 const FAIL_TEXT_MAX = 200;
+
+/**
+ * The blast radius a prompt may show, from a proposal's evidence (Phase 17 one-tap rollback). No blast in the
+ * evidence gives `undefined` (the prompt says it was not recorded). A blast whose names are not all
+ * configuration ids ({@link BLAST_NAME_RE}), or that is malformed, gives the `unverified` form, so the prompt
+ * says it is not shown rather than implying there is none. Never throws.
+ */
+export function blastForPrompt(
+  evidence: unknown,
+  recorded: boolean,
+): EngineProposalBlast | undefined {
+  if (evidence === null || typeof evidence !== "object") return undefined;
+  if (!Object.hasOwn(evidence, "blast")) return undefined;
+  const unverified = { unverified: true, recorded } as const;
+  const b = (evidence as { blast?: unknown }).blast;
+  if (b === null || typeof b !== "object") return unverified;
+  const { service, environment, dependents, dependentsTruncated } = b as Record<string, unknown>;
+  const name = (x: unknown): x is string => typeof x === "string" && BLAST_NAME_RE.test(x);
+  if (service !== null && !name(service)) return unverified;
+  if (environment !== null && environment !== undefined && !name(environment)) return unverified;
+  if (!Array.isArray(dependents) || dependents.length > BLAST_MAX_DEPENDENTS) return unverified;
+  if (!dependents.every(name)) return unverified;
+  if (typeof dependentsTruncated !== "boolean") return unverified;
+  return {
+    service,
+    environment: environment ?? null,
+    dependents: [...dependents],
+    dependentsTruncated,
+    recorded,
+  };
+}
 
 function failText(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err);
@@ -251,12 +294,7 @@ export function createRemediation(deps: RemediationDeps) {
   function view(p: ProposalRow): ProposalView {
     const row = rowOf(p.tool_id);
     const decl = row?.reversibility;
-    let evidence: ProposalEvidence | null = null;
-    try {
-      evidence = JSON.parse(p.evidence_json) as ProposalEvidence;
-    } catch {
-      evidence = null;
-    }
+    const evidence = parseEvidence(p.evidence_json) as ProposalEvidence | null;
     return {
       id: p.id,
       kind: p.kind,
@@ -345,12 +383,14 @@ export function createRemediation(deps: RemediationDeps) {
     proposalId: string,
     row: ConnectorWriteRow,
     input: unknown,
+    blast: EngineProposalBlast | undefined,
   ): PlannedAction {
+    const reversibility = reversibilityClassOf(row);
     return {
       type: row.actionType,
       payload: { mcpToolId: mcpClientToolKey(serviceOf(row.actionType), row.toolId), input },
       incident: mintIncidentLink(db, recordId),
-      engineProposal: { proposalId, reversibility: reversibilityClassOf(row) },
+      engineProposal: { proposalId, reversibility, ...(blast === undefined ? {} : { blast }) },
     };
   }
 
@@ -372,7 +412,7 @@ export function createRemediation(deps: RemediationDeps) {
     }
     const rec = requireRecord(p.ref);
     const stored0 = getProposal(db, p.proposalId);
-    if (stored0 === null || stored0.record_id !== rec.recordId) {
+    if (stored0?.record_id !== rec.recordId) {
       throw new RemediationError(
         "ERR_PROPOSAL_NOT_FOUND",
         "no proposal of this incident has that id",
@@ -392,8 +432,7 @@ export function createRemediation(deps: RemediationDeps) {
     const stored = getProposal(db, p.proposalId);
     if (
       draft === undefined ||
-      stored === null ||
-      stored.tool_id !== draft.toolId ||
+      stored?.tool_id !== draft.toolId ||
       stored.input_json !== JSON.stringify(draft.input)
     ) {
       if (stored?.status === "proposed") supersedeProposal(db, p.proposalId, now());
@@ -425,11 +464,14 @@ export function createRemediation(deps: RemediationDeps) {
     try {
       const row = rowOf(stored.tool_id);
       if (row === undefined) throw new Error("the write row for this proposal no longer exists");
+      // The blast radius comes from the derivation that just proved the proposal still offered, not from the
+      // stored row: the owner's `depends_on` may have changed since the proposal was first listed.
       const action = buildRemediationAction(
         rec.recordId,
         stored.id,
         row,
         JSON.parse(stored.input_json) as unknown,
+        blastForPrompt(draft.evidence, false),
       );
       const executor = deps.makeExecutor({
         clientId: p.clientId,
@@ -573,7 +615,14 @@ export function createRemediation(deps: RemediationDeps) {
       executor.readBeforeOnly === undefined
         ? { status: "no_reader" }
         : await executor.readBeforeOnly(
-            buildRemediationAction(rec.recordId, stored.id, row, input),
+            // The same action a real run builds, blast radius included (display only; a dry run shows no prompt).
+            buildRemediationAction(
+              rec.recordId,
+              stored.id,
+              row,
+              input,
+              blastForPrompt(draft.evidence, false),
+            ),
           );
     return {
       proposalId: stored.id,
@@ -643,7 +692,13 @@ export function createRemediation(deps: RemediationDeps) {
     inFlight.add(stored.id);
     try {
       const inverseId = proposalIdFor(stored.record_id, "undo", inverseRow.toolId, inverseInput);
-      const action = buildRemediationAction(stored.record_id, inverseId, inverseRow, inverseInput);
+      const action = buildRemediationAction(
+        stored.record_id,
+        inverseId,
+        inverseRow,
+        inverseInput,
+        blastForPrompt(parseEvidence(stored.evidence_json), true),
+      );
       const executor = deps.makeExecutor({
         clientId: p.clientId,
         onCaptured: () => {},

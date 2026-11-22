@@ -188,7 +188,7 @@ describe("checkLanMethodAllowed", () => {
     }
   });
 
-  test.each(["cost.anomalies", "cost.anything"])(
+  test.each(["cost.anomalies", "cost.waste", "cost.anything"])(
     "%s is not callable over LAN regardless of grant-write",
     (method) => {
       for (const writeAllowed of [true, false]) {
