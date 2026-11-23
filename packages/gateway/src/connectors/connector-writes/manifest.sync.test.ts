@@ -117,9 +117,9 @@ describe("connector write manifest", () => {
       const declared = reg.tags.includes("forwarder")
         ? own
         : withSchemaArgumentDeclarations(sources, fileCode, own);
-      // The two Terraform applies pass `z.object(applyShape)`, a const local to the registering
+      // The three Terraform applies pass `z.object(applyShape)`, a const local to the registering
       // function (D2): follow it too.
-      const shape = /^iac_terraform_(apply|destroy)$/.test(r.toolId)
+      const shape = /^iac_terraform_(apply|destroy|apply_refresh_only)$/.test(r.toolId)
         ? (fileCode.match(/const applyShape = \{[^}]*\}/)?.[0] ?? "")
         : "";
       const call = `${declared}

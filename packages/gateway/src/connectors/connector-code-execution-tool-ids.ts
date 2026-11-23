@@ -52,10 +52,12 @@ export const DIRECTORY_EVALUATION_TOOL_IDS: ReadonlySet<string> = new Set([
   // Prepare tools (connectors 0.9.0) that load the caller-named directory's providers too: the
   // destroy plan evaluates it like the plan, and `show -json` loads its provider schemas.
   "iac_terraform_destroy_plan",
+  "iac_terraform_plan_refresh_only",
   "iac_terraform_show_json",
   // Writes that evaluate it too — also refused by the I26 write predicate, which runs first.
   "iac_terraform_apply",
   "iac_terraform_destroy",
+  "iac_terraform_apply_refresh_only",
   "iac_pulumi_up",
 ]);
 

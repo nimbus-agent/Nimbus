@@ -79,6 +79,7 @@ describe("C0: the sends are never offered to the model (OR-W34-1)", () => {
         ...SENDS,
         "bitbucket_pr_merge",
         "iac_terraform_destroy",
+        "iac_terraform_apply_refresh_only",
         "iac_pulumi_up",
         "iac_cloudformation_changeset_discard",
         // The Phase 9.7 close (OR-97-1): the four cloud rows and the pod delete.
