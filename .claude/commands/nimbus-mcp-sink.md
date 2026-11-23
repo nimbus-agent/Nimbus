@@ -269,7 +269,7 @@ is clamped.
 | Path | Role |
 |---|---|
 | `packages/gateway/src/mcp-sink/capture-gate.ts` | `submitCapture` (the fixed order, with its named steps), `acceptCapture`, `rejectCapture`; re-exports the rest |
-| `packages/gateway/src/mcp-sink/capture-gate/` | `contract.ts` (deps, views, constants), `shared.ts`, `reads.ts` (list/get/state/mine/proposals/status), `submit-support.ts` (audited and unaudited refusals, step 9-10 write), `owner-verbs.ts` (`revokeCapture`, `purgeCapture`) |
+| `packages/gateway/src/mcp-sink/capture-gate/` | `contract.ts` (deps, views, constants), `shared.ts`, `reads.ts` (list/get/state/mine/proposals/status), `submit-support.ts` (audited and unaudited refusals, step 9-10 write; importable only by `capture-gate.ts`, pinned by `i28-capture-gate-confinement.test.ts`), `owner-verbs.ts` (`revokeCapture`, `purgeCapture`) |
 | `packages/gateway/src/mcp-sink/capture-act.ts` | `acceptAction`, expiry sweep, boot reconcile, error classification |
 | `packages/gateway/src/mcp-sink/capture-native.ts` | native-row write/revoke/status for decision/term/link |
 | `packages/gateway/src/mcp-sink/capture-store.ts` | the only file naming the `capture` table |
