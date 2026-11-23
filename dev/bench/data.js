@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795443438993,
+  "lastUpdate": 1795448035122,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "65bda8efd33ef84444f3e34adb79a18bfb65fddc",
-          "message": "docs: correct \"exactly one status check gates the merge\" — there are ten (#1477)\n\nCLAUDE.md and GEMINI.md both stated that `PR quality — required gates`\nis the only status check gating a merge. The _General_ ruleset\n(14784377) requires **ten**.\n\n## Why this is worth a PR\n\nThe error is the kind that costs a merge rather than a pedantic one. On\n#1475, `Dependency audit` and `Trivy vulnerability scan` were red, this\nfile said they could not be blocking, and the ruleset disagreed — both\nwere required and genuinely blocking.\n\nNeither was that PR's fault, which is what made the wrong prose actively\ndangerous: three advisories were published overnight, and the *same sha*\non `main` passed the Security workflow at `2026-09-08T18:19Z` and failed\nit at `2026-09-09T07:05Z`. Anyone trusting this file would have\nconcluded the red belonged to someone else and waited.\n\n## What changed\n\nThe true half is kept — the aggregator really does mean a gate added\n**inside** the PR-quality workflow needs no ruleset edit. The other nine\ncome from separate workflows (Security, CodeQL, CLA), are named\nindividually, and adding one there **is** a ruleset edit.\n\nRe-derive rather than trust the prose:\n\n```\ngh api repos/nimbus-agent/Nimbus/rulesets/14784377 \\\n  --jq \".rules[] | select(.type==\\\"required_status_checks\\\") | .parameters.required_status_checks[].context\"\n```\n\n## Second paragraph: a failing step hides every later step in the same\njob\n\nFound the expensive way in the same session. Both required jobs are step\nsequences that report only their first failure, so \"one gate is red\"\nroutinely means several are, serialised one CI round-trip apart:\n\n| Job | Steps | Cost on #1475 |\n|---|---|---|\n| `Dependency audit` | `bun audit` → `audit:advisories` →\n`audit:js-licenses` | each fix revealed the next — **three pushes** |\n| `Unit + Coverage` | `audit:coverage-floor` → `audit:coverage-scopes` →\nSonarQube gate | a floor failure meant **scopes never executed at all**\n|\n\nThat second one is the more dangerous shape: an unmeasured gate reads as\ngreen to anyone scanning the job list. `audit:coverage-scopes` had never\nrun against #1475 in either direction until the floor was fixed.\n\n## Type of Change\n\n- [x] Documentation only\n\n## Non-Negotiables Checklist\n\n- [x] Mirrors kept byte-identical, per CLAUDE.md's own rule for these\ntwo files (verified with `diff`)\n- [x] No code, no behaviour change\n- [x] Both documented commands were RUN before being written down — a\ndoc citing a dead command is the trap this repo already tracks\n\n## Testing\n\nGreen: `lint:markdown` (0 issues), `audit:doc-refs` (1479 refs across 81\ndocs, all resolve), `audit:status-drift`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_014PrC9o6EhyDeeHLK6PCh1M\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-09T19:46:35+03:00",
-          "tree_id": "abaa2fed3b2c58d5bf7fd52c667f8cbf332d82d8",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/65bda8efd33ef84444f3e34adb79a18bfb65fddc"
-        },
-        "date": 1788973152492,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 331.7204133000014,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 332.39772750000265,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 181.50238214999882,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8561b9b0c5bec41de30d1ed51666b2bfc3e5558f",
+          "message": "refactor(gateway): split ipc/http-write-routes.ts into the gate and route-family modules (no behaviour change) (#2104)\n\n## Why\nOwner's 500-line ruling (2026-11-23): `ipc/http-write-routes.ts` (I13)\nwas 1,698 lines. Pure move, zero behaviour change. No release note,\nroadmap row or CHANGELOG entry: internal refactor.\n\n## Layout\n- `ipc/http-write-routes.ts` (258): the gate. `dispatchWriteRoute` with\nits ordered steps (route match, auth, rate limit, body cap, then\nhandler) plus `resolveRoute`, `checkAuth`, `checkRateLimit`,\n`parseBody`, all left whole in one file; facade re-exports of\n`WRITE_ROUTE_ALLOWLIST`, `ROUTE_ITEMS_FETCH`, the surface types,\n`tokenFingerprint`.\n- `http-write-routes/allowlist.ts` (70): `ROUTE_*` literals +\n`WRITE_ROUTE_ALLOWLIST`.\n- `constants.ts` (115), `types.ts` (151), `responses.ts` (99),\n`resolvers.ts` (294): per-route resolvers.\n- Handlers: `deployment.ts` (98), `scim.ts` (66), `policy.ts` (63),\n`teams-events.ts` (45), `clips.ts` (102), `bearer-auth.ts` (64),\n`agents.ts` (108), `items-fetch.ts` (77), `briefs.ts` (291).\nNo checks were moved out of the ordered sequence; handlers and helpers\nonly. Nothing over 500.\n\n## Pins and rules repointed (exact paths, none widened)\n- `scripts/structure-audit/check-status-drift.ts` (+ its test) now read\n`http-write-routes/allowlist.ts`, which holds both the allow-list and\nthe `ROUTE_*` literals; still derives the same 14 routes. Red-proof:\nremoving `ROUTE_ITEMS_FETCH,` from the list makes `audit:status-drift`\nFAIL.\n- `i13-http-write-routes.test.ts`'s `dispatchWriteRoute` import pin\nreads `http-server.ts` and is untouched (facade keeps the export).\nRed-proof: the count assertion fails (1 fail) with that entry removed;\nreplacing `checkRateLimit(...)` in the dispatcher with a stub makes 7\nwrite-route tests fail.\n- Docs: SECURITY-INVARIANTS.md (I13 wiring, comment-location lines, I30\nwired-at, line table), nimbus-http-write-surface / nimbus-file-map /\nnimbus-security-invariants skills, CLAUDE.md + GEMINI.md I13 line,\nCODEOWNERS (new folder owned like the file).\n\n## Proof\ntypecheck pass; public export names unchanged (facade); tests covering\nthe file: 251 pass / 0 fail before and after (11 files);\n`check-nimbus-invariants` exit 0; `audit:doc-refs`,\n`audit:status-drift`, `audit:file-size` (baseline entry dropped) and\n`preflight:fast` pass. Moved code diffed as a line multiset against the\noriginal: only imports, formatting wraps and one added comment differ.\nIstanbul on a 7-file subset: every new module is at 100% lines except\ndeployment (91), policy (94); branches all >= 88%.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrGFPLqt8C3Ybzk2dHq\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Refactor**\n* Existing HTTP write operations remain available; authentication,\nvalidation, and rate-limit behavior are maintained.\n* **Documentation**\n* Updated security and route guidance to reflect the current\norganization of HTTP write operations.\n* **User Impact**\n  * No user-facing behavior changes are described in this release.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-23T15:23:22Z",
+          "tree_id": "26bbfbfda1c2aeb4f6be8266fa9c3209332e9b38",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/8561b9b0c5bec41de30d1ed51666b2bfc3e5558f"
+        },
+        "date": 1795448031780,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 182.43321649999888,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 180.88475645000253,
             "unit": "ms"
           }
         ]
