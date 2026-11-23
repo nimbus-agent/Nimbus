@@ -9,7 +9,7 @@ import { stripLineStructureChars } from "./text.ts";
  * The `--service` the owner asked for, as it appears inside an inline-code span in the PREAMBLE.
  *
  * Interpolating it raw was the odd one out on this brief: the entry title and href beside it are
- * both hardened. The value is owner-supplied and bounded (`ipc/agents-rpc.ts` trims it and caps
+ * both hardened. The value is owner-supplied and bounded (`ipc/agents-rpc/params-common.ts` trims it and caps
  * it at `MAX_SERVICE_LEN`), and `agents.changelog` is not on the Tauri allowlist, so the only
  * reachable case is an owner injecting into their own brief. But that validator rejects no
  * CONTROL character: a newline would end the preamble line and let the remainder render as a

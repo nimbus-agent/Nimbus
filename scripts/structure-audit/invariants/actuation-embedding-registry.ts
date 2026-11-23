@@ -250,7 +250,8 @@ export const D22_REGISTER_ROUTE_ALLOWED: readonly string[] = [
 // browser-reachable agent route as the surface that would hit it; this rule closes it before that
 // surface can.
 //
-// The property: only ipc/agents-rpc.ts may import an agent EMITTER module. Emitters are
+// The property: only ipc/agents-rpc.ts and the modules of its own folder, ipc/agents-rpc/, may
+// import an agent EMITTER module. Emitters are
 // `packages/gateway/src/agents/<name>.ts`; `agents/_lib/` is excluded because it holds types and
 // shared helpers (findings.ts, demo-symbol.ts) that federation/ and ipc/ legitimately consume.
 //
@@ -267,6 +268,9 @@ export const D22_REGISTER_ROUTE_ALLOWED: readonly string[] = [
 // i29-egress-ledger.test.ts ("agents/_lib re-exports no emitter"), not by this regex — the same
 // answer as the wrapper/façade limit above: address the capability, do not pretend the regex sees it.
 const D22_EMITTER_ALLOWED = "packages/gateway/src/ipc/agents-rpc.ts";
+// The door's own validator and handler modules (split out of agents-rpc.ts, which stays the one
+// dispatcher). They sit behind that dispatcher and are reachable only through it.
+const D22_EMITTER_ALLOWED_DIR = "packages/gateway/src/ipc/agents-rpc/";
 const D22_EMITTER_DIR = "packages/gateway/src/agents/";
 // SUBDIRECTORIES. All three patterns below carry `(?:\/[\w-]+)*` after the first path segment,
 // because `[\w-]` cannot cross a `/`: the earlier `[A-Za-z][\w-]*\.ts` form matched
@@ -302,7 +306,8 @@ export function checkAgentEmitterImportConfinement(files: readonly FileEntry[]):
     // An emitter importing a sibling emitter is internal to the agents package, not a second entry
     // point. The rule is about who can reach IN from outside.
     if (f.relPath.startsWith(D22_EMITTER_DIR)) continue;
-    if (f.relPath === D22_EMITTER_ALLOWED) continue;
+    if (f.relPath === D22_EMITTER_ALLOWED || f.relPath.startsWith(D22_EMITTER_ALLOWED_DIR))
+      continue;
     const strippedLines = stripComments(f.contents).split("\n");
     const originalLines = f.contents.split("\n");
     for (let i = 0; i < strippedLines.length; i++) {

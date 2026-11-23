@@ -195,7 +195,7 @@ export function selectAllActiveIncidents(db: Database): OncallIncident[] {
  * Active incidents on any of the given PagerDuty services, newest first.
  *
  * Backs the `--service` path, which is also the only shape an EXTERNAL caller may use — see
- * `ipc/agents-rpc.ts`'s `requireOncallParams`, where the owner-scoped zero-parameter shape is
+ * `ipc/agents-rpc/params-people.ts`'s `requireOncallParams`, where the owner-scoped zero-parameter shape is
  * refused over HTTP/MCP for the reason invariant `I36` refuses a federated file question.
  *
  * An EMPTY service list matches nothing rather than everything. An unbound `IN ()` is a SQL error

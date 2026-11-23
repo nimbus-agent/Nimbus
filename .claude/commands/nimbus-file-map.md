@@ -222,7 +222,7 @@ Everything else follows the standard triple. These break from it in a way worth 
 | File | Purpose |
 |---|---|
 | `packages/gateway/src/ipc/` | JSON-RPC 2.0 server (one file per namespace under `handlers/`) |
-| `packages/gateway/src/ipc/agents-rpc.ts` | `agents.expert` + `agents.impact`; rejects array payloads |
+| `packages/gateway/src/ipc/agents-rpc.ts` | `dispatchAgentsRpc`, the handler map and the fleet/external tables; the validators and handlers are in `ipc/agents-rpc/` (`file-param.ts` holds I36's `requireFileParam`) |
 | `packages/gateway/src/ipc/llm-rpc.ts` | `dispatchLlmRpc` — `llm.listModels` / `llm.getStatus` |
 | `packages/gateway/src/ipc/voice-rpc.ts` | `dispatchVoiceRpc` — `voice.*` |
 | `packages/gateway/src/ipc/updater-rpc.ts` | `dispatchUpdaterRpc` — `updater.getStatus/checkNow/applyUpdate/rollback` |

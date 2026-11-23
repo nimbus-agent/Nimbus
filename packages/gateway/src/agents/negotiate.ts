@@ -35,7 +35,7 @@ export { NEGOTIATE_EVIDENCE_LIMIT, OWNERSHIP_LIMIT, reduceLaneResults };
 const DEFAULT_SINCE_MS = 90 * 24 * 60 * 60 * 1000;
 /**
  * The agent's own window ceiling — a year, sized for an annual review cycle rather than
- * `catchup`'s "what happened while I was away" quarter. EXPORTED so `ipc/agents-rpc.ts`'s
+ * `catchup`'s "what happened while I was away" quarter. EXPORTED so `ipc/agents-rpc/params-people.ts`'s
  * `requireNegotiateParams` validates against this same literal instead of re-declaring it:
  * two copies drifting apart fails SILENTLY (the IPC accepts a window the agent then clamps),
  * which is exactly the silent-clamping bug the explicit IPC rejection exists to prevent.

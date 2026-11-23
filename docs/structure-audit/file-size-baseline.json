@@ -315,7 +315,6 @@
     "packages/gateway/src/index/oncall-handoff-query.test.ts": 595,
     "packages/gateway/src/index/oncall-handoff-query.ts": 950,
     "packages/gateway/src/ipc/agents-rpc.test.ts": 1607,
-    "packages/gateway/src/ipc/agents-rpc.ts": 1600,
     "packages/gateway/src/ipc/approvals-rpc.test.ts": 801,
     "packages/gateway/src/ipc/automation-rpc.edges.test.ts": 845,
     "packages/gateway/src/ipc/automation-rpc.run-grant.test.ts": 781,

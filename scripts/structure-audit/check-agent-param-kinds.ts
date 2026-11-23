@@ -9,17 +9,24 @@ import {
 import { EXTERNAL_AGENT_NAMES } from "../../packages/gateway/src/ipc/agents-rpc.ts";
 import { REPO_ROOT } from "./lib.ts";
 
-export const AGENTS_RPC_PATH = join(
-  REPO_ROOT,
-  "packages",
-  "gateway",
-  "src",
-  "ipc",
-  "agents-rpc.ts",
-);
+/**
+ * The modules that hold `agents.*`'s parameter validators, in the order they are read. The
+ * validators moved out of `ipc/agents-rpc.ts` (now the dispatcher and its tables); the walker
+ * below still reads ONE source string, so `readAgentsRpcValidatorSource` joins them.
+ */
+export const AGENTS_RPC_VALIDATOR_PATHS: readonly string[] = [
+  "file-param.ts",
+  "params-common.ts",
+  "params-people.ts",
+  "params-content.ts",
+].map((name) => join(REPO_ROOT, "packages", "gateway", "src", "ipc", "agents-rpc", name));
 
-/** A top-level `function require<Something>(` header, at column 0. */
-const VALIDATOR_HEADER_RE = /^function (require\w+)\(/;
+export function readAgentsRpcValidatorSource(): string {
+  return AGENTS_RPC_VALIDATOR_PATHS.map((p) => readFileSync(p, "utf8")).join("\n");
+}
+
+/** A top-level `function require<Something>(` header (exported or not), at column 0. */
+const VALIDATOR_HEADER_RE = /^(?:export )?function (require\w+)\(/;
 
 /** `typeof p.field !== "kind"` or `typeof p.field === "kind"`. */
 const DOT_TYPEOF_RE = /typeof\s+p\.(\w+)\s*(?:!==|===)\s*"(\w+)"/g;
@@ -285,8 +292,8 @@ export function checkAgentParamKinds(
         const snippet = `${agent}.${field}`;
         const detail =
           mapKind === undefined
-            ? `${snippet} is type-checked as "${kind}" in agents-rpc.ts but has no entry in AGENT_PARAM_KINDS`
-            : `${snippet} is type-checked as "${kind}" in agents-rpc.ts but AGENT_PARAM_KINDS declares "${mapKind}"`;
+            ? `${snippet} is type-checked as "${kind}" in ipc/agents-rpc/ but has no entry in AGENT_PARAM_KINDS`
+            : `${snippet} is type-checked as "${kind}" in ipc/agents-rpc/ but AGENT_PARAM_KINDS declares "${mapKind}"`;
         findings.push({ rule: "missing-in-map", snippet, detail });
       }
     }
@@ -297,7 +304,7 @@ export function checkAgentParamKinds(
     findings.push({
       rule: "uncovered-agent",
       snippet: agent,
-      detail: `${agent} is one of EXTERNAL_AGENT_NAMES but no parsed validator in agents-rpc.ts resolved to it — VALIDATOR_AGENT_OVERRIDES or the generic require<Agent>Params derivation likely needs a new entry, or the agent genuinely takes no params, in which case add it to an exempt list`,
+      detail: `${agent} is one of EXTERNAL_AGENT_NAMES but no parsed validator in ipc/agents-rpc/ resolved to it — VALIDATOR_AGENT_OVERRIDES or the generic require<Agent>Params derivation likely needs a new entry, or the agent genuinely takes no params, in which case add it to an exempt list`,
     });
   }
 
@@ -342,8 +349,8 @@ export function checkCatalogParams(
         const snippet = `${agent}.${field}`;
         const detail =
           param === undefined
-            ? `${snippet} is type-checked as "${kind}" in agents-rpc.ts but has no catalog param in catalog/agent-catalog.ts`
-            : `${snippet} is type-checked as "${kind}" in agents-rpc.ts but the catalog declares "${param.kind}"`;
+            ? `${snippet} is type-checked as "${kind}" in ipc/agents-rpc/ but has no catalog param in catalog/agent-catalog.ts`
+            : `${snippet} is type-checked as "${kind}" in ipc/agents-rpc/ but the catalog declares "${param.kind}"`;
         findings.push({ rule: "missing-in-catalog", snippet, detail });
       }
     }
@@ -375,8 +382,7 @@ export function report(findings: readonly ParamKindsFinding[]): number {
 }
 
 if (import.meta.main) {
-  const source = readFileSync(AGENTS_RPC_PATH, "utf8");
-  const parsed = parseValidatorFields(source);
+  const parsed = parseValidatorFields(readAgentsRpcValidatorSource());
   process.exit(
     report([
       ...checkAgentParamKinds(parsed),

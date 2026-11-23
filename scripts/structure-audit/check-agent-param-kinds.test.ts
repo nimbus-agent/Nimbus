@@ -1,15 +1,14 @@
 import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
 import { CATALOG_AGENT_NAMES } from "../../packages/gateway/src/catalog/agent-catalog.ts";
 import { AGENT_PARAM_KINDS } from "../../packages/gateway/src/ipc/agent-param-kinds.ts";
 import {
-  AGENTS_RPC_PATH,
   catalogParamsByAgent,
   checkAgentParamKinds,
   checkCatalogParams,
   HELPER_TO_KIND,
   type ParsedValidator,
   parseValidatorFields,
+  readAgentsRpcValidatorSource,
   VALIDATOR_AGENT_OVERRIDES,
   VALIDATOR_FLOOR,
 } from "./check-agent-param-kinds.ts";
@@ -66,7 +65,7 @@ test("THE GUARD IS NOT INERT: a realistic parse of the real file finds fields", 
   // The failure mode this test exists for: a parser that matches nothing passes every other
   // assertion in this file. Imports VALIDATOR_FLOOR rather than hardcoding 10, so this assertion
   // cannot silently drift from the constant the audit itself gates on.
-  const parsed = parseValidatorFields(readFileSync(AGENTS_RPC_PATH, "utf8"));
+  const parsed = parseValidatorFields(readAgentsRpcValidatorSource());
   expect(Object.keys(parsed).length).toBeGreaterThanOrEqual(VALIDATOR_FLOOR);
   expect(parsed["requireExpertParams"]?.fields).toMatchObject({ topicOrFile: "string" });
 });
@@ -114,7 +113,7 @@ test("exactly VALIDATOR_FLOOR validators is enough to compare, not indeterminate
 });
 
 test("parseValidatorFields maps requireFileParam to BOTH ghost and conflicts", () => {
-  const parsed = parseValidatorFields(readFileSync(AGENTS_RPC_PATH, "utf8"));
+  const parsed = parseValidatorFields(readAgentsRpcValidatorSource());
   const fileParam = parsed["requireFileParam"];
   expect(fileParam?.agent).toEqual(["ghost", "conflicts"]);
   expect(fileParam?.fields).toMatchObject({ file: "string" });
@@ -129,7 +128,7 @@ test("VALIDATOR_AGENT_OVERRIDES is exactly the four verified exceptions", () => 
     requireCatchupParams: ["catchup", "changelog"],
     requireWhyRefParams: ["why"],
   });
-  const parsed = parseValidatorFields(readFileSync(AGENTS_RPC_PATH, "utf8"));
+  const parsed = parseValidatorFields(readAgentsRpcValidatorSource());
   expect(parsed["requireCatchupParams"]?.agent).toEqual(["catchup", "changelog"]);
   expect(parsed["requireWhyRefParams"]?.agent).toBe("why");
 });
@@ -183,8 +182,8 @@ test("every optional* field helper agents-rpc.ts defines is one the walker reads
   // The blind spot the helper recognition closes reopens the moment a NEW helper is added without
   // being registered: the fields it validates would silently leave the comparison. Enumerated from
   // the real file, so this fails at the helper's introduction rather than never.
-  const source = readFileSync(AGENTS_RPC_PATH, "utf8");
-  const helpers = [...source.matchAll(/^function (optional\w+)\(/gm)].map((m) => m[1]);
+  const source = readAgentsRpcValidatorSource();
+  const helpers = [...source.matchAll(/^(?:export )?function (optional\w+)\(/gm)].map((m) => m[1]);
   expect(helpers.length).toBeGreaterThan(0);
   expect(helpers.sort()).toEqual(Object.keys(HELPER_TO_KIND).sort());
 });
@@ -206,7 +205,7 @@ test("fields validated through the shared helpers stay visible in the real file"
   // comparisons until agents-rpc.ts moved them into `optionalSinceMs`/`optionalBoundedString`, and
   // without the recognition every one of them would drop out of the comparison while the audit
   // still reported clean.
-  const parsed = parseValidatorFields(readFileSync(AGENTS_RPC_PATH, "utf8"));
+  const parsed = parseValidatorFields(readAgentsRpcValidatorSource());
   expect(parsed["requireCatchupParams"]?.fields).toEqual({ sinceMs: "number", service: "string" });
   expect(parsed["requireImpactParams"]?.fields).toMatchObject({ service: "string" });
   expect(parsed["requireHuddleParams"]?.fields).toMatchObject({ sinceMs: "number" });
@@ -219,7 +218,7 @@ test("checkAgentParamKinds against the real file reports no drift", () => {
   // The end-to-end property the red-prove step (task brief Step 4) exercises manually: the real
   // file, parsed for real, and compared against the real (unmodified) AGENT_PARAM_KINDS, is clean
   // — no missing-in-map drift, and (fix 4) no agent left uncovered.
-  const parsed = parseValidatorFields(readFileSync(AGENTS_RPC_PATH, "utf8"));
+  const parsed = parseValidatorFields(readAgentsRpcValidatorSource());
   expect(checkAgentParamKinds(parsed)).toEqual([]);
 });
 
@@ -299,7 +298,7 @@ test("checkCatalogParams below VALIDATOR_FLOOR is indeterminate", () => {
 });
 
 test("checkCatalogParams passes on the real tree", () => {
-  const parsed = parseValidatorFields(readFileSync(AGENTS_RPC_PATH, "utf8"));
+  const parsed = parseValidatorFields(readAgentsRpcValidatorSource());
   const catalog = catalogParamsByAgent();
   // Every agent the catalog describes, not only the twelve external ones.
   expect(Object.keys(catalog)).toHaveLength(17);
