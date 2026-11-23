@@ -19,7 +19,7 @@ function section(title: string, lines: readonly string[]): string {
   return [`## ${title}`, "", ...lines].join("\n");
 }
 
-function summary(inv: Investigation): string {
+export function summary(inv: Investigation): string {
   const t = inv.trigger;
   const lines = [
     `- Record: \`${plain(inv.recordId)}\` (version ${String(inv.version)})`,
@@ -46,7 +46,7 @@ function sentryRow(r: SentryIssueRow): string {
   return `- ${hardenedTitleLink(r.title, r.url)}: ${facts.join("; ")}`;
 }
 
-function sentry(inv: Investigation): string {
+export function sentry(inv: Investigation): string {
   const s = inv.sentry;
   if (s.status !== "ok") return section("Sentry error issues", ["_Not listed; see Gaps._"]);
   const lines =
@@ -57,7 +57,7 @@ function sentry(inv: Investigation): string {
   return section("Sentry error issues", lines);
 }
 
-function dataContext(inv: Investigation): string | null {
+export function dataContext(inv: Investigation): string | null {
   const d = inv.data;
   if (d === null) return null;
   const lines = [
@@ -71,7 +71,7 @@ function dataContext(inv: Investigation): string | null {
   return section("Data-quality context", lines);
 }
 
-function related(inv: Investigation): string {
+export function related(inv: Investigation): string {
   const r = inv.relatedOpen;
   if (r.items.length === 0) {
     return section("Other open records of this service", ["_None._"]);
@@ -90,7 +90,7 @@ const ACTION_WORD: Readonly<Record<string, string>> = {
   action_undone: "undone",
 };
 
-function actions(inv: Investigation): string {
+export function actions(inv: Investigation): string {
   if (inv.actions.length === 0) {
     return section("What Nimbus did", ["_No Nimbus action is linked to this record._"]);
   }
@@ -102,7 +102,7 @@ function actions(inv: Investigation): string {
   );
 }
 
-function leads(list: readonly Lead[]): string {
+export function leads(list: readonly Lead[]): string {
   if (list.length === 0) return section("Leads", ["_None found in the index._"]);
   return section(
     "Leads",
@@ -110,15 +110,19 @@ function leads(list: readonly Lead[]): string {
   );
 }
 
-function tail(inv: Investigation): string[] {
-  const gaps = inv.gaps.map((g) => `- ${g.detail}`);
+export function freshnessLines(inv: Investigation): string[] {
   const fresh = inv.freshness.map(
     (f) =>
       `- ${plain(f.service)}: ${f.connected ? (f.lastSyncMs === null ? "connected, never synced" : `last synced ${utcLabel(f.lastSyncMs)}`) : "not connected"}`,
   );
   fresh.push(`- Record assembled ${utcLabel(inv.recordAssembledAtMs)}`);
   fresh.push(`- Read at ${utcLabel(inv.asOfMs)}`);
-  return [section("Gaps", gaps), section("Data freshness", fresh)];
+  return fresh;
+}
+
+function tail(inv: Investigation): string[] {
+  const gaps = inv.gaps.map((g) => `- ${g.detail}`);
+  return [section("Gaps", gaps), section("Data freshness", freshnessLines(inv))];
 }
 
 export function renderInvestigation(inv: Investigation): string {

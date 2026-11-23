@@ -1,6 +1,13 @@
 import type { SynthInput } from "./brief-kinds.ts";
 import { BRIEFING_FRESHNESS_HEADING, renderBriefingFreshness } from "./briefing-render.ts";
 import {
+  INVESTIGATION_ACTIONS_HEADING,
+  INVESTIGATION_FRESHNESS_HEADING,
+  INVESTIGATION_LEADS_HEADING,
+  investigationFreshnessBlock,
+  investigationReservedBlocks,
+} from "./incident-investigation-render.ts";
+import {
   POSTMORTEM_DECISION_LOG_HEADING,
   POSTMORTEM_TIMELINE_HEADING,
   postmortemReservedBlocks,
@@ -64,6 +71,13 @@ export const RESERVED_HEADINGS_BY_KIND: Readonly<Record<SynthInput["kind"], read
     briefing: [GAPS_HEADING, BRIEFING_FRESHNESS_HEADING],
     incident: [GAPS_HEADING, INCIDENT_FRESHNESS_HEADING],
     incident_data: [GAPS_HEADING, INCIDENT_FRESHNESS_HEADING],
+    // IC9a: the actions Nimbus took and the candidate leads are disclosures a rewrite must not reword.
+    incident_investigation: [
+      INVESTIGATION_ACTIONS_HEADING,
+      INVESTIGATION_LEADS_HEADING,
+      GAPS_HEADING,
+      INVESTIGATION_FRESHNESS_HEADING,
+    ],
     // IC7a: the timeline and the decision log are the record of what happened and who decided; a rewrite
     // keeps neither's wording, so both are withheld and re-attached verbatim.
     incident_postmortem: [
@@ -135,6 +149,7 @@ export function isDisclosureOnlyHeading(heading: string): boolean {
 export function reservedBlocksFor(brief: SynthInput): readonly ReservedBlock[] {
   const blocks: ReservedBlock[] = [];
   if (brief.kind === "incident_postmortem") blocks.push(...postmortemReservedBlocks(brief));
+  if (brief.kind === "incident_investigation") blocks.push(...investigationReservedBlocks(brief));
   if (brief.kind === "negotiate") {
     blocks.push(
       {
@@ -156,6 +171,12 @@ export function reservedBlocksFor(brief: SynthInput): readonly ReservedBlock[] {
   }
   const gaps = renderGaps(brief.gaps).trim();
   if (gaps !== "") blocks.push({ heading: GAPS_HEADING, markdown: gaps });
+  if (brief.kind === "incident_investigation") {
+    blocks.push({
+      heading: INVESTIGATION_FRESHNESS_HEADING,
+      markdown: investigationFreshnessBlock(brief),
+    });
+  }
   if (brief.kind === "briefing") {
     const freshness = renderBriefingFreshness(brief.freshness);
     if (freshness !== "") blocks.push({ heading: BRIEFING_FRESHNESS_HEADING, markdown: freshness });

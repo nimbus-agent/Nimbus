@@ -127,9 +127,44 @@ async function investigateRecord(
   sink: IncidentSink,
 ): Promise<number> {
   await declareCliClientKind(c);
+  if (a.synthesize === true) return investigateSynthesized(c, a.id, a.json, sink);
   const r = await c.call<InvestigateReply>("incident.investigate", { id: a.id });
   if (a.json) sink.out(`${JSON.stringify(r)}\n`);
   else sink.out(`${cleanMarkdown(r.markdown).trimEnd()}\n`);
+  return 0;
+}
+
+type SynthesizedReply = {
+  markdown: string;
+  synthesis: { attempted: boolean; used?: boolean; reason?: string; model?: string };
+};
+
+/** The note under a model-assisted investigation: what the model did, or why this is the deterministic one. */
+function synthesisNote(s: SynthesizedReply["synthesis"]): string {
+  if (s.attempted === false) {
+    return `No model was used (${stripTerminalText(s.reason ?? "unavailable")}); this is the deterministic investigation.`;
+  }
+  if (s.used === true) {
+    return `Prose sections rewritten by ${stripTerminalText(s.model ?? "the model")}. Actions, leads, gaps and freshness are the index's own.`;
+  }
+  return `The model's rewrite was not used (${stripTerminalText(s.reason ?? "unknown")}); this is the deterministic investigation.`;
+}
+
+async function investigateSynthesized(
+  c: IncidentIpc,
+  id: string,
+  json: boolean,
+  sink: IncidentSink,
+): Promise<number> {
+  const r = await c.call<SynthesizedReply>("incident.investigateSynthesize", { id });
+  if (json)
+    sink.out(`${JSON.stringify(r)}
+`);
+  else
+    sink.out(`${cleanMarkdown(r.markdown).trimEnd()}
+
+${synthesisNote(r.synthesis)}
+`);
   return 0;
 }
 
@@ -260,6 +295,13 @@ export async function runIncidentCommand(args: string[]): Promise<void> {
   // A run or an undo blocks on the executor's prompt, which only a person answers: the long budget and a
   // consent choice that ignores NIMBUS_SCRIPT_CONSENT_SOURCE (as `nimbus approvals <id>`).
   const asksOwner = (a.verb === "remediate" && a.pick !== undefined) || a.verb === "undo";
+  // A synthesis waits on a model, as a run waits on the owner's answer: the long budget for both.
+  const asksModel = a.verb === "investigate" && a.synthesize === true;
+  const gatewayOptions = asksOwner
+    ? { consent: { kind: "human" as const }, requestTimeoutMs: BATCH_RPC_TIMEOUT_MS }
+    : asksModel
+      ? { requestTimeoutMs: BATCH_RPC_TIMEOUT_MS }
+      : undefined;
   const code = await withGatewayIpc(
     (c) =>
       runIncidentWith(
@@ -273,7 +315,7 @@ export async function runIncidentCommand(args: string[]): Promise<void> {
         { stdin: process.stdin.isTTY === true, stdout: process.stdout.isTTY === true },
       ),
     getCliPlatformPaths(),
-    asksOwner ? { consent: { kind: "human" }, requestTimeoutMs: BATCH_RPC_TIMEOUT_MS } : undefined,
+    gatewayOptions,
   );
   if (code !== 0) throw new CliExit(code);
 }

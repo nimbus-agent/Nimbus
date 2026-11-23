@@ -1,5 +1,6 @@
 import type { IncidentDataBrief } from "../../agents/_lib/incident-types.ts";
 import type { DataLane } from "../incident-record-types.ts";
+import { buildInvestigationBriefFixture } from "./investigation-brief.ts";
 import { buildPostmortemFixture } from "./postmortem-brief.ts";
 import { buildRecord } from "./record-builder.ts";
 
@@ -69,5 +70,6 @@ export function buildRecordKindFixtures() {
   return {
     incident_postmortem: buildPostmortemFixture(),
     incident_data: buildDataBriefFixture(),
+    incident_investigation: buildInvestigationBriefFixture(),
   } as const;
 }

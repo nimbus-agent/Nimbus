@@ -4,6 +4,7 @@ import { CostRpcError, dispatchCostRpc } from "../../cost-rpc.ts";
 import { dispatchIacDriftRpc, IacDriftRpcError } from "../../iac-drift-rpc.ts";
 import { dispatchIncidentRpc, IncidentRpcError, isOwnerKind } from "../../incident-rpc.ts";
 import { dispatchIncidentUpdateRpc } from "../../incident-update-rpc.ts";
+import { dispatchInvestigationRpc } from "../../investigation-rpc.ts";
 import { dispatchNotificationsRpc } from "../../notifications-rpc.ts";
 import { dispatchOncallHandoffRpc } from "../../oncall-handoff-rpc.ts";
 import { dispatchOncallNowRpc, OncallNowRpcError } from "../../oncall-now-rpc.ts";
@@ -146,6 +147,47 @@ export async function tryDispatchIncidentRpc(
       kind: ctx.getClientKind(clientId),
       clientId,
     });
+    if (out.kind === "hit") return out.value;
+  } catch (e) {
+    if (e instanceof IncidentRpcError) throw new RpcMethodError(e.rpcCode, e.message);
+    throw e;
+  }
+  return phase4RpcSkipped;
+}
+
+/**
+ * `incident.investigateSynthesize` (Phase 10 IC9a): the investigation of one record, offered to a model only
+ * when the owner asked (`nimbus incident investigate --synthesize`). Owner kinds only (`requireOwnerKind`,
+ * before anything is read); the incident namespace is LAN-forbidden (I5) and absent from the Tauri allowlist (I7).
+ */
+export async function tryDispatchInvestigationRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+  clientId: string,
+): Promise<unknown> {
+  if (method !== "incident.investigateSynthesize") return phase4RpcSkipped;
+  const incident = ctx.options.incidentRpcCtx;
+  const localIndex = ctx.options.localIndex;
+  if (incident === undefined || localIndex === undefined) return phase4RpcSkipped;
+  const db = localIndex.getDatabase();
+  try {
+    const out = await dispatchInvestigationRpc(
+      method,
+      params,
+      {
+        incident,
+        now: () => Date.now(),
+        runner: () =>
+          buildAgentSynthesisRunner({
+            configDir: ctx.options.configDir,
+            db,
+            router: ctx.options.llmRegistry?.llmRouter,
+            method: "agents.incident_investigation",
+          }),
+      },
+      { clientId, kind: ctx.getClientKind(clientId) },
+    );
     if (out.kind === "hit") return out.value;
   } catch (e) {
     if (e instanceof IncidentRpcError) throw new RpcMethodError(e.rpcCode, e.message);

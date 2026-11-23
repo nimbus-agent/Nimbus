@@ -51,6 +51,7 @@ export {
   tryDispatchIacDriftRpc,
   tryDispatchIncidentRpc,
   tryDispatchIncidentUpdateRpc,
+  tryDispatchInvestigationRpc,
   tryDispatchNotificationsRpc,
   tryDispatchOncallNowRpc,
   tryDispatchOncallPushRpc,
