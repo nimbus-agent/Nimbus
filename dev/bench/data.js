@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795451189357,
+  "lastUpdate": 1795451841873,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "483071d9cad7daff84ac006ab8a3ccf7396197cf",
-          "message": "chore: release main (#1485)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.17.0</summary>\n\n##\n[7.17.0](https://github.com/nimbus-agent/Nimbus/compare/v7.16.0...v7.17.0)\n(2026-09-10)\n\n\n### Features\n\n* **cli:** nimbus index health — index quality, not index size\n([#1483](https://github.com/nimbus-agent/Nimbus/issues/1483))\n([93ac016](https://github.com/nimbus-agent/Nimbus/commit/93ac016d5a564f633732c4ba8f2eb6beb4bdb049))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-09-10T10:35:01+03:00",
-          "tree_id": "6fe69c73b6ade8c9c8d0b95532fee3ff575d436f",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/483071d9cad7daff84ac006ab8a3ccf7396197cf"
-        },
-        "date": 1789026519579,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 337.2428958999997,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 337.7794343499994,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 178.87582179999626,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0d6a126f67b206abcf26f3705e84f8629d29e864",
+          "message": "fix(registry-action): run git from a fixed install path, never a PATH lookup (Sonar S4036) (#2112)\n\n## Why\n\nThe SonarCloud gate on `main` has been red since the 13:18 UTC analysis\non 2026-11-23: `new_security_rating` = 2 (B), from four\n`typescript:S4036` vulnerabilities (\"OS commands should not rely on PATH\nresolution\"), each an `execFileSync(\"git\", ...)` in the registry action:\n\n- `src/git-tree.ts` (the tree reader every mode uses)\n- `src/site-commit.ts` (the sign job's `gh-pages` commit and push)\n- `src/testing/registry-repo.ts`, twice (the test fixture)\n\nNothing in those files changed. The SonarCloud API shows what happened:\nthe same four findings existed since 2026-10-23 under other keys and had\nbeen marked Accepted by hand that day. The 13:18 analysis raised them\nagain as new issues with new keys (identical line hash and text range,\nempty changelog), together with about 160 other issues, and the 13:43\nanalysis closed the old Accepted copies as `FIXED`. So the earlier\nacceptance was lost when the issues were tracked again. The rule was not\nreclassified: S4036 has been a `VULNERABILITY` since 2022, and the\nproject has no S4036 hotspots. The new code period is\n`previous_version`, starting 2026-06-05, so the re-raised copies count\nas new code.\n\n## What\n\nFollowing the repo's fix-over-exclude preference, this fixes the code\ninstead of accepting the findings again. The fix uses the rule\n`provenance.ts` already applies to `gh` (`resolveGh`):\n\n- New `src/git-path.ts`: git runs from a fixed, root-owned install\nlocation (`/usr/bin/git` or `/usr/local/bin/git` on Linux; Homebrew,\nthen `/usr/bin/git` on macOS; the Git for Windows `cmd` and `bin` paths\non Windows). It is never looked up on `PATH`, which an earlier job step\nor a `GITHUB_PATH` write could have prepended to. This matters most in\n`sign`, which runs git against the registry's content boundary with the\njob's push credential in the checkout config. Git is required, so when\nno fixed location exists the error names every path tried. It does not\nfall back to `PATH`.\n- `git-tree.ts`, `site-commit.ts`, `testing/registry-repo.ts` and\n`git-tree.test.ts` now call `gitExecutable()` instead of `\"git\"`.\n- `src/git-path.test.ts` covers the table order, the not-found error and\nthe real resolution on the test host.\n- `dist/index.js` was rebuilt with the recorded Bun 1.3.14 (`bun run\nbuild`), and `check-action-dist-drift.ts` reports OK.\n\nEvery generated registry workflow (`registry-templates/workflows.ts`)\nruns on `ubuntu-24.04`, whose image installs git at `/usr/bin/git`.\n\nNo issue status was changed in SonarCloud. When this merges, the next\n`main` analysis should close the four issues as fixed and bring\n`new_security_rating` back to A.\n\nThe core docs (CLAUDE.md, GEMINI.md, the roadmap, architecture,\ndocs/README and the CLI reference) are unchanged. None of them describes\nhow the action finds git, and nothing a registry owner configures or\nsees changes on the supported runners.\n\nNot in scope: the same re-tracking also re-opened about 116 code smells\nwhose earlier dispositions were lost. They do not affect the gate\n(maintainability is A).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrGFPLqt8C3Ybzk2dHq\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Improvements**\n* Git-related registry action operations now use consistent executable\nlocations across Linux, macOS, and Windows.\n* When Git is unavailable at supported locations, the action reports\nwhich locations it checked. Unsupported platforms receive a clear error.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-23T16:26:17Z",
+          "tree_id": "dff144534d463284678077d911ea3bc4e015f5c9",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/0d6a126f67b206abcf26f3705e84f8629d29e864"
+        },
+        "date": 1795451837145,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 252.72047219999948,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 256.17451210000036,
             "unit": "ms"
           }
         ]
