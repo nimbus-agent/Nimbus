@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import { emitNegotiateBrief } from "../../../src/agents/negotiate.ts";
@@ -144,10 +144,15 @@ describe("nimbus negotiate (e2e, in-process)", () => {
     // Anchored to this file, not the CWD — mirrors premortem.e2e.test.ts/decisions.e2e.test.ts.
     // A CWD-relative read resolves when the suite starts at the repo root but throws ENOENT
     // under the sharded coverage runner, which starts elsewhere.
-    const src = readFileSync(
-      path.join(__dirname, "..", "..", "..", "src", "agents", "negotiate.ts"),
-      "utf8",
-    );
+    // The agent is the entry file plus every module under `_lib/negotiate/` (split from one file).
+    const agents = path.join(__dirname, "..", "..", "..", "src", "agents");
+    const libDir = path.join(agents, "_lib", "negotiate");
+    const src = [
+      path.join(agents, "negotiate.ts"),
+      ...readdirSync(libDir).map((f) => path.join(libDir, f)),
+    ]
+      .map((f) => readFileSync(f, "utf8"))
+      .join("\n");
     expect(src).not.toContain("ToolExecutor");
     expect(src).not.toContain("HITL_REQUIRED");
     expect(src).not.toContain("connectors.dispatch");

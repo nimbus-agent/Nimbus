@@ -63,7 +63,7 @@ export const LANE_EXEMPTIONS: readonly LaneExemption[] = [
       "nonGithubMergedPrCount reads merged_at IS NULL precisely to count merged non-GitHub PRs that carry no merge time; agents/standup.ts buildStandupBrief renders that count as a missing_connector gap ('merged pull request(s) of yours on a non-GitHub forge carry no merge time and so are not listed under merged').",
   },
   {
-    file: "packages/gateway/src/agents/negotiate.ts",
+    file: "packages/gateway/src/agents/_lib/negotiate/lanes-prs.ts",
     key: "additions",
     category: "disclosed",
     reads: 1,
@@ -71,7 +71,7 @@ export const LANE_EXEMPTIONS: readonly LaneExemption[] = [
       "PR size stats are written by GitHub alone; accumulateAuthoredPrStats tallies statsCoverage and agents/_lib/render/negotiate.ts renderNegotiateAuthoredPrs prints '(stats coverage N/M)' or 'stats: not available (no enriched PR in this window)'.",
   },
   {
-    file: "packages/gateway/src/agents/negotiate.ts",
+    file: "packages/gateway/src/agents/_lib/negotiate/lanes-prs.ts",
     key: "deletions",
     category: "disclosed",
     reads: 1,
@@ -79,7 +79,7 @@ export const LANE_EXEMPTIONS: readonly LaneExemption[] = [
       "PR size stats are written by GitHub alone; read only on rows counted in statsCoverage, which agents/_lib/render/negotiate.ts renderNegotiateAuthoredPrs prints as '(stats coverage N/M)'.",
   },
   {
-    file: "packages/gateway/src/agents/negotiate.ts",
+    file: "packages/gateway/src/agents/_lib/negotiate/lanes-prs.ts",
     key: "changed_files",
     category: "disclosed",
     reads: 1,

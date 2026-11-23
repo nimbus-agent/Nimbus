@@ -89,7 +89,6 @@
     "packages/gateway/src/agents/expert.ts": 613,
     "packages/gateway/src/agents/impact.test.ts": 699,
     "packages/gateway/src/agents/negotiate.test.ts": 1994,
-    "packages/gateway/src/agents/negotiate.ts": 1453,
     "packages/gateway/src/agents/oncall.ts": 559,
     "packages/gateway/src/agents/premortem.test.ts": 1603,
     "packages/gateway/src/agents/premortem.ts": 1088,
