@@ -88,7 +88,7 @@ function truncateUtf8Bytes(text: string, maxBytes: number): string {
 
 /**
  * The `- **term**` bullet that opens each entry `renderGlossaryTermsSection`
- * (`agents/_lib/render.ts`) emits inside the `## Terms` reserved block. Scoped to THIS block only
+ * (`agents/_lib/render/glossary.ts`) emits inside the `## Terms` reserved block. Scoped to THIS block only
  * (matched by heading, below) — coupling to the renderer's exact bullet form is acceptable here
  * because this function exists specifically to shrink that one block; it is not a generic
  * markdown-entry heuristic applied blind.

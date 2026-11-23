@@ -80,7 +80,6 @@
     "packages/gateway/src/agents/_lib/oncall-render.test.ts": 565,
     "packages/gateway/src/agents/_lib/render.coverage.test.ts": 644,
     "packages/gateway/src/agents/_lib/render.test.ts": 810,
-    "packages/gateway/src/agents/_lib/render.ts": 1647,
     "packages/gateway/src/agents/_lib/reserved-sections.coverage.test.ts": 586,
     "packages/gateway/src/agents/_lib/synthesize.test.ts": 780,
     "packages/gateway/src/agents/_lib/synthesize.ts": 555,

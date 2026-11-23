@@ -184,7 +184,7 @@ Everything else follows the standard triple. These break from it in a way worth 
 | `packages/gateway/src/agents/impact.ts` | `nimbus impact <file-or-PR-url>` — 5-way reverse-dep blast radius |
 | `packages/gateway/src/agents/_lib/findings.ts` | `ExpertBrief` / `ExpertFinding` / `Evidence` types + ranking |
 | `packages/gateway/src/agents/_lib/gap-notes.ts` | Gap-note detectors (empty index, missing connector/entity/relation) |
-| `packages/gateway/src/agents/_lib/render.ts` | Deterministic Markdown fallback renderer |
+| `packages/gateway/src/agents/_lib/render.ts` | Deterministic Markdown fallback renderer (facade; one module per brief kind under `agents/_lib/render/`) |
 | `packages/gateway/src/agents/_lib/synthesize.ts` | LLM synthesis layer with deterministic fallback |
 | `packages/gateway/src/agents/why.ts` + `why-peek.ts` | `nimbus why <ref>` — six-lane provenance briefs over the relationship graph |
 | `packages/gateway/src/agents/glossary.ts` | `nimbus glossary [<term>]` — implicit-knowledge glossary; `glossary_term` + `glossary_pass_state` (V45/V46) |
