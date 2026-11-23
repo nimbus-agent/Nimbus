@@ -48,6 +48,8 @@
 
 # Static-audit complements to the runtime invariant tests
 /scripts/structure-audit/check-nimbus-invariants.ts                 @asafgolombek
+/scripts/structure-audit/invariants/                                @asafgolombek
+/scripts/structure-audit/invariants-source.ts                       @asafgolombek
 
 # CI workflows + release infrastructure
 /.github/workflows/                                                 @asafgolombek

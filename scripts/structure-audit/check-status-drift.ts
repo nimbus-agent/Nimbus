@@ -20,6 +20,7 @@
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { readInvariantsSource } from "./invariants-source.ts";
 
 export interface AuditResult {
   ok: boolean;
@@ -99,7 +100,8 @@ const CEILING_RANGE_SURFACES: readonly string[] = [
 export function canonicalStaticRule(repoRoot: string): number | undefined {
   const rel = "scripts/structure-audit/check-nimbus-invariants.ts";
   if (!existsSync(join(repoRoot, rel))) return undefined;
-  return maxCapture(read(repoRoot, rel), /\bD(\d+)\b/g);
+  // The rules live in invariants/ beside the entry point, so read the whole auditor.
+  return maxCapture(readInvariantsSource(repoRoot), /\bD(\d+)\b/g);
 }
 
 /**

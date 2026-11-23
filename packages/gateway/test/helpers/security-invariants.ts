@@ -11,6 +11,10 @@ import { Database } from "bun:sqlite";
 import { readdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import {
+  INVARIANTS_ENTRY_REL,
+  readInvariantsSource,
+} from "../../../../scripts/structure-audit/invariants-source.ts";
+import {
   confirmTemplateKeys,
   parseConfirmTemplate,
 } from "../../src/connectors/connector-writes/confirm-template.ts";
@@ -69,6 +73,9 @@ export const REPO_ROOT = resolve(import.meta.dir, "../../../..");
 export const SRC_ROOT = resolve(REPO_ROOT, "packages/gateway/src");
 
 export async function read(relPathFromRepoRoot: string): Promise<string> {
+  // The static auditor is one entry point plus the modules under invariants/; a pin on what it
+  // names reads all of them.
+  if (relPathFromRepoRoot === INVARIANTS_ENTRY_REL) return readInvariantsSource(REPO_ROOT);
   return readFile(resolve(REPO_ROOT, relPathFromRepoRoot), "utf8");
 }
 
