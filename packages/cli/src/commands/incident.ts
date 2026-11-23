@@ -213,12 +213,18 @@ async function showRecord(
   return 0;
 }
 
+/** No terminal: the default when the caller passes none. */
+const NO_TTY: { readonly stdin: boolean; readonly stdout: boolean } = Object.freeze({
+  stdin: false,
+  stdout: false,
+});
+
 export async function runIncidentWith(
   c: IncidentIpc,
   a: IncidentArgs,
   sink: IncidentSink,
   nowMs: number = Date.now(),
-  tty: { readonly stdin: boolean; readonly stdout: boolean } = { stdin: false, stdout: false },
+  tty: { readonly stdin: boolean; readonly stdout: boolean } = NO_TTY,
 ): Promise<number> {
   try {
     if (a.verb === "remediate" || a.verb === "undo" || a.verb === "advisory") {

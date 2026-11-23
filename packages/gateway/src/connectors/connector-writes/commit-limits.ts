@@ -71,7 +71,10 @@ const UNSHOWABLE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Cs}]/u;
 
 /** NTFS and HFS+ fold trailing dots and spaces and case, and NTFS knows the short name `GIT~1`. */
 function isGitSpelling(segment: string): boolean {
-  const folded = segment.replace(/[. ]+$/u, "").toLowerCase();
+  // Trailing dots and spaces cut by a loop: the former `/[. ]+$/u` backtracked quadratically.
+  let end = segment.length;
+  while (end > 0 && (segment[end - 1] === "." || segment[end - 1] === " ")) end -= 1;
+  const folded = segment.slice(0, end).toLowerCase();
   return folded === "" || folded === ".git" || folded === "git~1";
 }
 

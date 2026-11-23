@@ -62,6 +62,7 @@ import {
   writeRequestJson,
   writeRootKey,
 } from "../lib/maintain-shared.ts";
+import { compareCodeUnits } from "./scaffold-openapi/names.ts";
 import { trustOwnerNextSteps, trustReadme } from "./trust-templates/readme.ts";
 import { trustCheckWorkflow, trustSignWorkflow } from "./trust-templates/workflows.ts";
 
@@ -348,7 +349,7 @@ function readSourceDir(dir: string, sub: string, skipped: FeedSkip[]): FeedSourc
   const root = join(dir, sub);
   if (!existsSync(root)) return [];
   const out: FeedSourceFile[] = [];
-  for (const name of readdirSync(root).sort()) {
+  for (const name of readdirSync(root).sort(compareCodeUnits)) {
     if (!name.endsWith(".json")) continue;
     const path = `${sub}${name}`;
     try {

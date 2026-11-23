@@ -91,6 +91,7 @@ function defaultRecordAudio(durationMs: number): Promise<string> {
         if (code === 0) resolve(outPath);
         else reject(new Error(`ffmpeg exited with ${code}`));
       },
+      reject,
     );
   });
 }

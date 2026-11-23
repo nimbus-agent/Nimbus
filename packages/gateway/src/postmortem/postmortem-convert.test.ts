@@ -4,6 +4,8 @@ import { renderIncidentPostmortem } from "../agents/_lib/incident-postmortem-ren
 import { buildPostmortemFixture } from "../incident/__fixtures__/postmortem-brief.ts";
 import {
   cleanTitle,
+  matchHeading,
+  matchItem,
   NOTION_MAX_BLOCKS,
   type PostmortemConvertError,
   splitTitleAndBody,
@@ -218,5 +220,41 @@ describe("splitTitleAndBody and cleanTitle", () => {
     expect(codeOf(() => cleanTitle("   "))).toBe("ERR_POSTMORTEM_PUSH_TITLE");
     expect(codeOf(() => cleanTitle("x".repeat(201)))).toBe("ERR_POSTMORTEM_PUSH_TITLE");
     expect(cleanTitle("x".repeat(200))).toHaveLength(200);
+  });
+});
+
+describe("matchHeading and matchItem equal the former regexes", () => {
+  const formerHeading = /^(#{1,6})[ \t]+(.+?)[ \t#]*$/;
+  const formerTitle = /^#[ \t]+(.+?)[ \t#]*$/;
+  const formerItem = /^[ \t]*[-*+][ \t]+(.*)$/;
+  const asHeading = (m: RegExpExecArray | null) =>
+    m === null ? null : { level: (m[1] as string).length, text: m[2] as string };
+
+  test("every line of up to 7 characters over hashes, blanks, list markers, text and line terminators", () => {
+    const alphabet = ["#", " ", "\t", "a", "-", "*", "\r", "\u2028"];
+    let level = [""];
+    for (let len = 1; len <= 7; len += 1) {
+      level = level.flatMap((p) => alphabet.map((c) => p + c));
+      for (const line of level) {
+        const t = formerTitle.exec(line);
+        const got = [matchHeading(line, 6), matchHeading(line, 1)?.text ?? null, matchItem(line)];
+        const want = [
+          asHeading(formerHeading.exec(line)),
+          t === null ? null : (t[1] as string),
+          formerItem.exec(line)?.[1] ?? null,
+        ];
+        if (JSON.stringify(got) !== JSON.stringify(want)) expect([line, got]).toEqual([line, want]);
+      }
+    }
+    expect(matchHeading("####### x", 6)).toBeNull();
+    expect(matchHeading("###### x ##", 6)).toEqual({ level: 6, text: "x" });
+  });
+
+  test("long blank runs stay linear", () => {
+    const long = `# a${" ".repeat(100_000)}b\r`;
+    const t0 = performance.now();
+    expect(matchHeading(long, 6)).toBeNull();
+    expect(matchItem(`- ${" ".repeat(100_000)}\r`)).toBeNull();
+    expect(performance.now() - t0).toBeLessThan(1000);
   });
 });

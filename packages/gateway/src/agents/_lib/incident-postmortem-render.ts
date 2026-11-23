@@ -56,7 +56,7 @@ const TEMPLATE_BAD_CHAR_RE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
 
 function lineOf(text: string, index: number): number {
   let line = 1;
-  for (let i = 0; i < index; i += 1) if (text.charCodeAt(i) === 10) line += 1;
+  for (let i = 0; i < index; i += 1) if (text.codePointAt(i) === 10) line += 1;
   return line;
 }
 

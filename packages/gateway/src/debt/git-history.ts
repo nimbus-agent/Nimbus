@@ -169,7 +169,7 @@ export function parseLog(out: string, truncated: boolean): ParsedLog {
   let i = 0;
   while (i < tokens.length) {
     const t = tokens[i] as string;
-    const header = t.charCodeAt(0) === HEADER_MARK ? HEADER_BODY_RE.exec(t.slice(1)) : null;
+    const header = t.codePointAt(0) === HEADER_MARK ? HEADER_BODY_RE.exec(t.slice(1)) : null;
     if (header !== null) {
       current = Number(header[1]) * 1000;
       commitTimes.push(current);

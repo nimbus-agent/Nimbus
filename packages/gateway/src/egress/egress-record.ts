@@ -79,7 +79,7 @@ export interface EgressAgent {
 function clampAgentLabel(label: string | null): string | null {
   if (label === null || label.length <= AGENT_LABEL_SUMMARY_UNITS) return label;
   const cut = label.slice(0, AGENT_LABEL_SUMMARY_UNITS);
-  const last = cut.charCodeAt(cut.length - 1);
+  const last = cut.codePointAt(cut.length - 1) ?? 0;
   return last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut;
 }
 

@@ -259,7 +259,7 @@ async function runOnLocalPort(
     // (before it is set) leaves it undefined here — nothing to clear, and unregister/stop still run.
     if (abortTimer !== undefined) clearTimeout(abortTimer);
     unregisterListener();
-    server.stop();
+    void server.stop();
   }
 }
 

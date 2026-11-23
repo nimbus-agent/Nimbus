@@ -326,3 +326,40 @@ describe("commitSizeRefusal", () => {
     expect(commitSizeRefusal(cyclic)).toBe(COMMIT_INPUT_REFUSALS.inputTooLarge);
   });
 });
+
+describe("isSafeCommitPathGateway: the trailing-dot loop equals the former regex", () => {
+  // The function as it stood with `/[. ]+$/u`, kept here as the reference the loop must equal.
+  const formerIsSafe = (path: string): boolean => {
+    if (path.length < 1 || path.length > 1024) return false;
+    if (path.startsWith("/") || path.endsWith("/") || path.includes("//") || path.includes("\\")) {
+      return false;
+    }
+    if (/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Cs}]/u.test(path)) return false;
+    if (path.normalize("NFC") !== path) return false;
+    return path.split("/").every((seg) => {
+      const folded = seg.replace(/[. ]+$/u, "").toLowerCase();
+      return (
+        seg !== "." && seg !== ".." && folded !== "" && folded !== ".git" && folded !== "git~1"
+      );
+    });
+  };
+
+  test("every path of up to 6 characters over a dot, a space, a slash and the .git letters", () => {
+    const alphabet = [".", " ", "/", "g", "I", "t", "~", "1"];
+    let level = [""];
+    for (let len = 1; len <= 6; len += 1) {
+      level = level.flatMap((p) => alphabet.map((c) => p + c));
+      for (const path of level)
+        expect([path, isSafeCommitPathGateway(path)]).toEqual([path, formerIsSafe(path)]);
+    }
+  });
+
+  test("a long run of dots and spaces is linear", () => {
+    const seg = `${". ".repeat(50_000)}x`;
+    const t0 = performance.now();
+    expect(isSafeCommitPathGateway(`a/${seg.slice(0, 1000)}`)).toBe(
+      formerIsSafe(`a/${seg.slice(0, 1000)}`),
+    );
+    expect(performance.now() - t0).toBeLessThan(1000);
+  });
+});

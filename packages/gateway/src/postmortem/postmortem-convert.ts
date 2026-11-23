@@ -115,8 +115,41 @@ function assertNoImage(line: string): void {
   }
 }
 
-const HEADING_RE = /^(#{1,6})[ \t]+(.+?)[ \t#]*$/;
-const ITEM_RE = /^[ \t]*[-*+][ \t]+(.*)$/;
+/** What a JS `.` does not match: the former heading and item patterns refused a line holding one. */
+const LINE_TERMINATOR_RE = /[\n\r\u2028\u2029]/;
+const isBlank = (c: string): boolean => c === " " || c === "\t";
+
+/**
+ * `/^(#{1,max})[ \t]+(.+?)[ \t#]*$/` in one linear pass (the regex backtracked quadratically): the
+ * same lines match, with the same level and text, including the degenerate ones (text of blanks
+ * and hashes only).
+ */
+export function matchHeading(line: string, max: number): { level: number; text: string } | null {
+  let h = 0;
+  while (line.charAt(h) === "#") h += 1;
+  if (h < 1 || h > max || !isBlank(line.charAt(h)) || LINE_TERMINATOR_RE.test(line)) return null;
+  let s = h;
+  while (isBlank(line.charAt(s))) s += 1;
+  // Nothing after the blanks: the lazy group takes the last blank, which needs two or more.
+  if (s === line.length) return s - h >= 2 ? { level: h, text: line.charAt(s - 1) } : null;
+  let e = line.length;
+  while (e > s && (isBlank(line.charAt(e - 1)) || line.charAt(e - 1) === "#")) e -= 1;
+  // Only hashes and blanks after the blanks: the lazy group still takes one character.
+  return { level: h, text: line.slice(s, Math.max(e, s + 1)) };
+}
+
+/** `/^[ \t]*[-*+][ \t]+(.*)$/` in one linear pass: a list item's text, or null. */
+export function matchItem(line: string): string | null {
+  let i = 0;
+  while (isBlank(line.charAt(i))) i += 1;
+  const marker = line.charAt(i);
+  if ((marker !== "-" && marker !== "*" && marker !== "+") || !isBlank(line.charAt(i + 1))) {
+    return null;
+  }
+  i += 1;
+  while (isBlank(line.charAt(i))) i += 1;
+  return LINE_TERMINATOR_RE.test(line) ? null : line.slice(i);
+}
 const FENCE_RE = /^[ \t]*```/;
 
 function parseBlocks(markdown: string): Block[] {
@@ -144,18 +177,14 @@ function parseBlocks(markdown: string): Block[] {
       continue;
     }
     assertNoImage(line);
-    const heading = HEADING_RE.exec(line);
-    const item = ITEM_RE.exec(line);
+    const heading = matchHeading(line, 6);
+    const item = matchItem(line);
     if (heading !== null) {
       flushPara();
-      blocks.push({
-        kind: "heading",
-        level: (heading[1] as string).length,
-        spans: inlineSpans(heading[2] as string),
-      });
+      blocks.push({ kind: "heading", level: heading.level, spans: inlineSpans(heading.text) });
     } else if (item !== null) {
       flushPara();
-      blocks.push({ kind: "item", spans: inlineSpans(item[1] as string) });
+      blocks.push({ kind: "item", spans: inlineSpans(item) });
     } else if (line.trim() === "") {
       flushPara();
     } else {
@@ -315,7 +344,7 @@ export function splitTitleAndBody(
   const lines = markdown.replaceAll("\r\n", "\n").split("\n");
   let first = 0;
   while (first < lines.length && (lines[first] as string).trim() === "") first += 1;
-  const head = first < lines.length ? /^#[ \t]+(.+?)[ \t#]*$/.exec(lines[first] as string) : null;
+  const head = first < lines.length ? matchHeading(lines[first] as string, 1) : null;
   if (head === null && titleOverride === undefined) {
     throw new PostmortemConvertError(
       "ERR_POSTMORTEM_PUSH_TITLE",
@@ -323,6 +352,6 @@ export function splitTitleAndBody(
     );
   }
   const body = head === null ? lines.join("\n") : lines.slice(first + 1).join("\n");
-  const title = cleanTitle(titleOverride ?? unescapeMarkdown(head?.[1] ?? ""));
+  const title = cleanTitle(titleOverride ?? unescapeMarkdown(head?.text ?? ""));
   return { title, body };
 }

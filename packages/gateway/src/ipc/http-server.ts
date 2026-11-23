@@ -1667,11 +1667,8 @@ export function startReadOnlyHttpServer(
     port: actualPort,
     stop(): void {
       unregisterListener();
-      try {
-        server.stop();
-      } catch {
-        /* ignore */
-      }
+      // Called now, as before; a synchronous throw or a rejection of the returned promise is ignored.
+      Promise.try(() => server.stop()).catch(() => {});
       try {
         db.close();
       } catch {

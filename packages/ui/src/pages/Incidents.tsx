@@ -41,7 +41,7 @@ export function Incidents(): ReactNode {
             checked={openOnly}
             onChange={(e) => setOpenOnly(e.target.checked)}
           />
-          Open only
+          {"Open only"}
         </label>
         <IncidentFindings />
         {error !== null && list === null ? (

@@ -57,15 +57,15 @@ const EMPTY_FACTS: TriggerFacts = Object.freeze({
 
 /** ASCII-only lower-casing, to match SQLite's `lower()` exactly. */
 export function asciiLower(s: string): string {
-  return s.replace(/[A-Z]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 32));
+  return s.replace(/[A-Z]/g, (c) => c.toLowerCase());
 }
 
 /** Trim ASCII spaces only, to match SQLite's one-argument `trim()` exactly. */
 function trimSpaces(s: string): string {
   let a = 0;
   let b = s.length;
-  while (a < b && s.charCodeAt(a) === 32) a += 1;
-  while (b > a && s.charCodeAt(b - 1) === 32) b -= 1;
+  while (a < b && s.codePointAt(a) === 32) a += 1;
+  while (b > a && s.codePointAt(b - 1) === 32) b -= 1;
   return s.slice(a, b);
 }
 

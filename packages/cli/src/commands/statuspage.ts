@@ -95,15 +95,17 @@ export function parseStatuspageArgs(argv: readonly string[]): StatuspageArgs | u
   if (argv[0] !== "draft") return undefined;
   const values: ValueFlags = { services: [] };
   const flags: BooleanFlags = { force: false, titles: false, links: false, json: false };
-  for (let i = 1; i < argv.length; i += 1) {
+  let i = 1;
+  while (i < argv.length) {
     const boolKey = BOOLEAN_FLAGS.get(argv[i] as string);
     if (boolKey !== undefined) {
       flags[boolKey] = true;
+      i += 1;
       continue;
     }
     const read = readValueFlag(argv, i);
     if (read === undefined || !applyValueFlag(values, read)) return undefined;
-    i = read.last;
+    i = read.last + 1;
   }
   const { out, title, services } = values;
   return {

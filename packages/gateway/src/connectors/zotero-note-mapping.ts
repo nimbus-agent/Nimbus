@@ -133,8 +133,9 @@ function truncateTitle(text: string, max: number): string {
   if (text.length <= max) {
     return text;
   }
-  const last = text.charCodeAt(max - 1);
-  const end = last >= 0xd800 && last <= 0xdbff ? max - 1 : max;
+  // A code point above U+FFFF here means a pair starting at `max - 1`; a lone high surrogate reads as itself.
+  const last = text.codePointAt(max - 1) ?? 0;
+  const end = last > 0xffff || (last >= 0xd800 && last <= 0xdbff) ? max - 1 : max;
   return `${text.slice(0, end)}…`;
 }
 

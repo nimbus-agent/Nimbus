@@ -18,10 +18,30 @@ const NOTE =
 
 // An e-mail address reaching a cloud model adds nothing to "who is on call", so names that look like
 // one are reduced to the part before the @. The owner's own surfaces (`oncall.now`, `--json`) keep them.
-const EMAIL_LIKE = /([^\s@]+)@[^\s@]+/g;
+const NAME_END = /[\s@]/;
+const isNamePart = (c: string): boolean => c !== "" && !NAME_END.test(c);
 
-function withheld(s: string): string {
-  return s.replace(EMAIL_LIKE, "$1");
+/**
+ * `s.replace(/([^\s@]+)@[^\s@]+/g, "$1")` in one linear pass (the regex retried every start of a
+ * long run with no `@` after it): each `name@domain` keeps `name`, and the scan resumes after it.
+ */
+export function withheld(s: string): string {
+  let out = "";
+  let i = 0;
+  while (i < s.length) {
+    if (!isNamePart(s.charAt(i))) {
+      out += s.charAt(i);
+      i += 1;
+      continue;
+    }
+    let e = i;
+    while (isNamePart(s.charAt(e))) e += 1;
+    out += s.slice(i, e);
+    let f = e + 1;
+    while (s.charAt(e) === "@" && isNamePart(s.charAt(f))) f += 1;
+    i = f > e + 1 ? f : e;
+  }
+  return out;
 }
 
 type ToolShift = Omit<OncallShiftView, "userEmail">;
