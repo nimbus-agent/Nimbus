@@ -1,0 +1,6 @@
+# Commits that only moved code, for `git blame --ignore-revs-file .git-blame-ignore-revs`
+# (GitHub reads this file automatically; locally: git config blame.ignoreRevsFile .git-blame-ignore-revs).
+# Add a mechanical split here in the PR after it lands: its squash SHA exists only then.
+
+# test(gateway): split security-invariants.test.ts into one file per invariant (#2084)
+3486b079ef2345eed2a7dabc85c0a483584e82dc
