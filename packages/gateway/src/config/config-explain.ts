@@ -34,6 +34,7 @@ import {
   UNPARSED_SECTION_HEADER,
 } from "./layered-merge.ts";
 import { loadNimbusMcpSinkFromConfigDir } from "./mcp-sink-toml.ts";
+import { loadNimbusMemoryFromConfigDir } from "./memory-toml.ts";
 import {
   loadNimbusAgentsFromConfigDir,
   loadNimbusAuditFromConfigDir,
@@ -117,6 +118,7 @@ export const SECTION_LOADERS: Readonly<Record<string, (configDir: string) => unk
   lan: loadNimbusLanFromConfigDir,
   llm: loadNimbusLlmFromConfigDir,
   mcp_sink: loadNimbusMcpSinkFromConfigDir,
+  memory: loadNimbusMemoryFromConfigDir,
   "metrics.dora": loadNimbusDoraFromConfigDir,
   multimodal: loadMultimodalConfig,
   negotiate: loadNimbusNegotiateFromConfigDir,

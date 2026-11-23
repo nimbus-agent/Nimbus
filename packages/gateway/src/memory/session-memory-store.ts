@@ -3,6 +3,7 @@ import type { Database } from "bun:sqlite";
 import { dbRun } from "../db/write.ts";
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
 import { ensureSqliteVecForConnection } from "../index/sqlite-vec-load.ts";
+import type { EpisodicMemory } from "./episodic-memory.ts";
 
 export type SessionMemoryRole = "user" | "assistant" | "tool";
 
@@ -65,6 +66,12 @@ export const SESSION_RECALL_SQL = `
 `;
 
 export class SessionMemoryStore {
+  /**
+   * Long-term episodic memory (I61), attached at boot by `platform/assemble/episodic-boot.ts` and only when this
+   * is not a demo gateway. It is NOT fed from this store: `session_memory` is also written by `session.append`
+   * and the agent's `appendSessionMemory` tool, so its rows are not the owner's words by construction.
+   */
+  episodic?: EpisodicMemory;
   private readonly db: Database;
   private readonly dims: number;
   private readonly embedText: (text: string) => Promise<Float32Array | null>;

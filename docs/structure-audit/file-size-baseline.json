@@ -114,7 +114,7 @@
     "packages/gateway/src/computer-use/cu-gate.ts": 939,
     "packages/gateway/src/computer-use/cu-lanes/browser.test.ts": 1139,
     "packages/gateway/src/computer-use/cu-lanes/browser.ts": 582,
-    "packages/gateway/src/config/config-explain.ts": 573,
+    "packages/gateway/src/config/config-explain.ts": 571,
     "packages/gateway/src/config/fleet-toml.test.ts": 558,
     "packages/gateway/src/config/fleet-toml.ts": 557,
     "packages/gateway/src/config/nimbus-toml.test.ts": 2071,

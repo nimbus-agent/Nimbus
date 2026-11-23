@@ -1447,6 +1447,33 @@ CREATE TABLE IF NOT EXISTS incident_record_version (
 
 Why the shape: there is NO foreign key to `item` (an upstream deletion must not erase the record that says the incident existed, as for `item_history`); every list query orders `opened_at_ms DESC, id` and each index ends in `id`, so SQLite sorts NULL last with no temporary B-tree (the migration test asserts the plans); the retention predicate is written as two arms (`opened_at_ms IS NOT NULL AND opened_at_ms < ?` OR `opened_at_ms IS NULL AND assembled_at_ms < ?`), never a `COALESCE`, which defeats the index; the engine's refresh selection reads `incident_record_checked` once per status, since an `IN (...)` of two statuses needs a sort; version N's `record_json` is immutable once written, the version table keeps no Markdown (re-rendered by the same pure renderer), and the store deletes versions itself before the record because `PRAGMA foreign_keys` is set per connection and the cascade is only a backstop. A pushed brief is tied to a record by `pushed_brief.incident_id = incident_record.trigger_item_id` (the V64 primary key), so the push needs no schema change.
 
+## V107 — long-term episodic memory (Phase 10, owner ruling OR-S4-MEM, I61, 2026-11-23)
+
+Authoritative source: `packages/gateway/src/index/episodic-memory-v107-sql.ts`. Written and read ONLY by `memory/episodic-store.ts` (static D52(a)). No foreign key, no trigger, no backfill; re-runnable. Chains after V106.
+
+```sql
+CREATE TABLE IF NOT EXISTS episodic_pending_turn (   -- the owner's message and the final answer, until summarised
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT NOT NULL CHECK (length(session_id) BETWEEN 1 AND 200),
+  owner_text TEXT NOT NULL,
+  answer_text TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_episodic_pending_session ON episodic_pending_turn(session_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_episodic_pending_created ON episodic_pending_turn(created_at);
+CREATE TABLE IF NOT EXISTS episodic_memory (          -- one summary per ended session
+  id TEXT PRIMARY KEY,                                -- mem_ + 16 hex
+  session_id TEXT NOT NULL,
+  summary TEXT NOT NULL CHECK (length(summary) BETWEEN 1 AND 4000),
+  turn_count INTEGER NOT NULL CHECK (turn_count >= 1),
+  started_at INTEGER NOT NULL,
+  ended_at INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  embedding BLOB                                      -- 384 float32 from the LOCAL embedder, NULL when none
+);
+CREATE INDEX IF NOT EXISTS idx_episodic_memory_created ON episodic_memory(created_at);
+```
+
 ## V102 — the incident remediation proposals (Phase 10 IC5a, 2026-11-17)
 
 Authoritative source: `packages/gateway/src/index/incident-proposal-v102-sql.ts`. It follows V101, the signed workflow import (above), and adds the two tables below. Re-runnable (`CREATE ... IF NOT EXISTS` only); no backfill. NO foreign key to `incident_record`, by design: a pruned record must not erase the fact that Nimbus acted. An OWNER erasure (`connector remove`, `nimbus data delete`) deletes the proposals of the records it erases (`incident/incident-erasure.ts`); retention pruning keeps them. Written ONLY by `incident/proposal-store.ts` (static D46(c)).

@@ -4,6 +4,7 @@
 import { CO_OWNED_ENTITY_TYPES } from "../../../packages/gateway/src/graph/relationship-graph.ts";
 import type { FileEntry, Mode } from "./_shared.ts";
 import { checkFreeBusyConfinement } from "./free-busy.ts";
+import { checkEpisodicMemoryConfinement } from "./episodic-memory.ts";
 import {
   checkBrokeredFetchLiteralConfinement,
   checkGeneratedManifestConfinement,
@@ -88,6 +89,15 @@ export function reportRulesPart4(files: readonly FileEntry[], mode: Mode): numbe
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D13(b) (${e.rule}) federated free/busy answering escapes its gate: only 30-minute blocks may leave, built by federation/free-busy-gate.ts from federation/_lib/free-busy-read.ts; I17 (b) regression: ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkEpisodicMemoryConfinement(files);
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D52 long-term episodic memory left its confinement (rule ${e.rule}) - its tables only in memory/episodic-store.ts, a turn recorded only from the ask turn's own input and reply, the memory built and its model attached only at boot, no remote-embedder route or network primitive in its modules, and the owner-turn gate kept in engine/run-ask/episodic.ts; I61 regression: ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;

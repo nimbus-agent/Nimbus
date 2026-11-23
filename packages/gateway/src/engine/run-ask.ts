@@ -40,6 +40,7 @@ import type { ClassifiedIntent } from "./router.ts";
 import { classifyIntentForAskWithLocalFallback } from "./run-ask/classify.ts";
 import type { RunAskResult } from "./run-ask/empty-index.ts";
 import { countIndexedItems, emptyIndexGuidanceIfNeeded } from "./run-ask/empty-index.ts";
+import { recallBlockFor, recordEpisodicTurn } from "./run-ask/episodic.ts";
 import {
   conversationalExplainRoute,
   describePlan,
@@ -295,12 +296,8 @@ function bindComputerUseIfOwner(p: RunAskParams): void {
 }
 
 /**
- * The conversational answer path: prior turns + optional indexed context → the agent/router,
- * then persist the turn.
- *
- * Extracted so the two routes that reach it — the classifier's verdict and `--devil`, which
- * bypasses the classifier — cannot drift apart. A second inline copy for devil mode would be
- * one session-memory or local-context fix away from applying to only one of them.
+ * The conversational answer path: prior turns + optional indexed context → the agent/router, then
+ * persist the turn. One function for the classifier's verdict and `--devil`, so they cannot drift.
  */
 async function answerConversationally(
   p: RunAskParams,
@@ -317,11 +314,11 @@ async function answerConversationally(
     withdrawOfferedExecutors();
   }
   const sessionId = getAgentRequestSessionId();
-  // A time-travel turn neither reads nor writes session history: an earlier reply may describe events after T
-  // (evidence for the wrong instant), and this reply is about T, not about the session's present.
+  // A time-travel turn neither reads nor writes session history (an earlier reply may describe events after T).
   const priorTurns =
     atMs === undefined ? await loadRecentConversationHistory(p.sessionMemoryStore, sessionId) : [];
   partial.stage = "retrieval";
+  const memoryBlock = await recallBlockFor(p, atMs);
   const searchedFacts: PointInTimeFacts[] = [];
   const localContext = shouldBuildLocalContext(p)
     ? await buildLocalIndexedContext(p.localIndex, p.input, atMs, searchedFacts)
@@ -347,6 +344,7 @@ async function answerConversationally(
     ...(localContext === undefined
       ? {}
       : { localContext: localContext.text, localContextTruncation: localContext.truncation }),
+    ...(memoryBlock === undefined ? {} : { episodicRecall: memoryBlock }),
     ...(countLine === undefined ? {} : { indexCountLine: countLine }),
     ...(p.devil === true ? { devil: true } : {}),
     ...(atMs === undefined
@@ -381,6 +379,7 @@ async function answerConversationally(
 
   if (atMs === undefined) {
     await persistConversationTurn(p.sessionMemoryStore, sessionId, p.input, result.reply);
+    recordEpisodicTurn(p, sessionId, result.reply);
   }
 
   return {

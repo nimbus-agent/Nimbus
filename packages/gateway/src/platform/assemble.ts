@@ -216,6 +216,7 @@ import {
   settleOncallPushChatops,
   settleWatcherChatops,
 } from "./assemble/chatops-boot.ts";
+import { attachEpisodicMemory } from "./assemble/episodic-boot.ts";
 import { startExtensionObservation } from "./assemble/extension-observation.ts";
 import {
   asBroadcastParams,
@@ -588,10 +589,9 @@ export async function assemblePlatformServices(
   assignIfPresent(syncContext, "scheduleItemEmbedding", scheduleItemEmbedding);
 
   const sessionMemoryStore = maybeAttachSessionMemoryStore(db, rt, sessionToml, sidecarStops);
+  attachEpisodicMemory(sessionMemoryStore, { db, rt, llmRegistry, paths, sidecarStops });
 
-  // I22 — the tighten-only HITL overlay every ToolExecutor in this process consults, alongside
-  // I2's frozen set. Defined here, next to the gate it reads, so there is one instance rather than
-  // a closure rebuilt at each of the eleven executor construction sites.
+  // I22 - the tighten-only HITL overlay every ToolExecutor in this process consults, beside I2's frozen set.
   const policyHitl: ExecutorPolicyDep = {
     isHitlRequiredByPolicy: (actionType) =>
       isHitlRequiredByPolicy(policyGate.enforced(), actionType),
