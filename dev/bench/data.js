@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795463994692,
+  "lastUpdate": 1795465208597,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "f6e852a13fb81450a6952ce4817acffb1b3dcfbf",
-          "message": "feat(http): GET /v1/metrics/stats — the bucketed DORA series, plus the change-failure-rate attribution fix (#1493)\n\nAnswers [#1490](https://github.com/nimbus-agent/Nimbus/pull/1490),\nmerged this morning. Two commits, landing together because the design\nargues they must.\n\n```text\nGET /v1/metrics/stats?service=payment-service&metric=mttr&window_ms=7776000000&bucket_ms=604800000\n→ { \"metric\": \"mttr\", \"service\": \"…\", \"window\": {…}, \"bucket_ms\": …, \"points\": [ … ] }\n```\n\n## 1. The attribution fix, first — it changes numbers that already ship\n\n`changeFailureRate` selected its incident candidates through\n`selectResolvedIncidents`, which bounds on `i.modified_at` — for a\nresolved incident, effectively **resolution** time — while the\nattribution loop compares `opened_at_ms`. An incident opened inside the\nwindow moments after a deploy, but resolved after the window's upper\nedge, was never a candidate, and its deploy was reported **clean**.\n\nNot a corner case: `mttr` exists precisely because resolution lag runs\nto hours and days, so this is the normal shape near any upper edge.\n\nThe obvious fix — widen the lookup by `incidentWindowMinutes` — **does\nnot work**, and an implementer applying it would believe the hole\nclosed: the widening would be in resolution time, and an incident opened\na minute before the edge may resolve days later. The column had to\nchange, not the bound. So `selectAttributionIncidents` selects on\n`opened_at_ms` over `[start, until + incidentWindowMinutes]`.\n`selectResolvedIncidents` is untouched and still serves `mttr`, where\nwindowing on resolution time is correct — that is why this is a second\nfunction, not an edit to the shared one.\n\nTwo bounds, both deliberate and both tested: the **deploy selection is\nnot widened** (`deploys.length` is the denominator, so widening it would\nchange the number rather than correct it), and the upper bound extends\npast the edge by exactly `incidentWindowMinutes` and no further.\n\nIt also drops the `synced_at` fallback for attribution — that is our\n*indexing* time, so it blamed whichever deploy happened to precede the\nmoment we indexed the row. **One existing test asserted that fallback as\nintended behaviour; it is rewritten to the new contract rather than\ndeleted**, and keeps its three-deploy setup so it also proves no other\ndeploy inherits the blame.\n\n**Known residual, disclosed rather than fixed:** `status = 'resolved'`\nis still required, so a still-burning incident is invisible to\nattribution at any bound and a historical rate under-reports for that\nsecond, independent reason. Dropping that predicate would close it *and*\nraise reported failure rates — a separate decision, and I did not take\nit unilaterally.\n\n**Why it matters more for a series:** a `/v1/metrics/dora` window has\none upper edge, `now`, where the incident genuinely has not happened yet\nand no contract can do better. A series has N upper edges and every one\nis in the past, with the incident sitting in the index, readable, and\nignored. Every bucket `nimbus stats` printed already had this hole.\n\n## 2. The route\n\n**Public**, beside `/v1/metrics/dora` — a decision, and deliberately the\n**opposite** of `GET /v1/services/resolve` from an hour ago. Both\nreasons now sit at their `HTTP_ROUTE_AUTH` entries, because the next\nproposal will copy one:\n\n- *stats* is the same data, same config, same service, different\nresolution. `/v1/metrics/dora`'s own `since` already lets a caller walk\nnested windows and difference them, so the series reaches nothing new.\nScoping it while the scalar beside it stayed public would be a seam no\ncaller could explain.\n- *services/resolve* is scoped because it **claims** narrowness, and a\npublic mount would have let N cheap calls rebuild the grouping it exists\nnot to expose.\n\nPublic also means published: `HTTP_ROUTES` + a `paths:` entry with\n`StatsSeries`/`StatsPoint` schemas, which `audit:openapi-drift` enforces\nas a pair.\n\nTwo error decisions, both the design's open questions:\n\n- **Unknown service is refused (400), not answered softly** as\n`/v1/metrics/dora` does. A series whose bucket count and unit depend on\nconfig it lacks has nothing honest to place-hold, and N empty buckets\nread as thin data rather than a typo. The client's binding validation\nleans on *preflight*'s soft answer and is unaffected.\n- **Malformed `nimbus.toml` → `500 config_unreadable`, echoing no config\nvalue** — the same answer `/v1/services/resolve` gives, as the design\nasked. Config is loaded in the handler rather than the dispatcher's\nthunk so the parser's message cannot escape. `/v1/metrics/dora` beside\nit still 500s with that message intact: pre-existing, out of scope, and\nnamed in the comment so the difference reads as deliberate.\n\n## Verification\n\n- The attribution fix was written **test-first**: 6 new cases, 4 red\nbefore the change, and the 2 that passed from the start are the\nover-correction guards (denominator not widened; nothing attributed\nbeyond the incident window).\n- `audit:openapi-drift` **red-proved** by deleting the `HTTP_ROUTES`\nentry — it fails with `schema_without_handler`.\n- 10 integration tests against the real seeded fixture: buckets\ndisjoint, contiguous and spanning the window exactly; wire key sets of\nseries and point pinned; every advertised metric id served; reachable\nwith no bearer; malformed-config body contains neither the service id\nnor the offending value.\n- 2365 tests green across\n`ipc`/`metrics`/`test/integration/http`/`test/integration/metrics`; `bun\nrun preflight:fast` green.\n\n**No disclosure added to the wire.** The design left open whether the\nstill-burning residual should become a new `DoraGap`/`StatsGap` member;\nI did not add one — that union is consumed by two other repos, and\ndocumentation carries the residual instead. Easy to add later if you\nwant it on the wire.\n\nNo migration, no invariant, no new egress class.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01QHGHyesmwAiDZEDrZBTYu1\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **New Features**\n* Added a public `GET /v1/metrics/stats` endpoint for bucketed metric\ntime series.\n* Added support for four DORA metrics plus `pr-merges` and\n`incidents-opened`.\n* Added validation for service, metric, time-window, and bucket\nparameters, with sanitized configuration errors.\n\n* **Bug Fixes**\n* Corrected change-failure-rate attribution to use incident opening\ntimes while preserving existing MTTR behavior.\n\n* **Documentation**\n* Updated API and changelog documentation with the expanded metric set\nand parameter requirements.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-11T13:04:26+03:00",
-          "tree_id": "010c5d90bb34e9ed7ec841119740e835d90d8caf",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/f6e852a13fb81450a6952ce4817acffb1b3dcfbf"
-        },
-        "date": 1789121829849,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 326.1170104499968,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 322.7522248500045,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 180.16538860000037,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f5da0fdbdced4a2cbdcc791411921b6093e5c22b",
+          "message": "fix(gateway): brief-source state race, agents read gate, and five follow-ups from the file splits (#2119)\n\nClears seven follow-ups found during the file-size splits. Two are real\nbugs, one is a third bug found while deciding item 4, and one item is\ndeliberately not done.\n\n## Items\n\n1. **Brief-source state race (bug).** `runBriefSourceRoute` checked\n`collecting`, handed control back through an async return, then called\n`addSource` with no re-check, and neither `addSource` nor the controller\nchecks state. A run started in that gap got a source after leaving\n`collecting`. A synchronous re-check right before the mutation now\nanswers the same 409 `invalid_state` and audits it. Test: a controller\nwhose `get` flips the run to `running` on a microtask queued before the\nroute resumes; expects 409, an audited rejection and zero sources.\nRed-proved by reverting `briefs.ts`.\n2. **Agents reads leaked without the invoker (bug).** `GET /v1/agents`\nand `GET /v1/agents/runs/{id}` were gated on `agentRuns` only, while the\nsurface is mounted only when `agentRuns` and `agentInvoke` are both\nwired (`buildAgentsSeam`). With runs and no invoker they disclosed agent\nnames and the gateway version. Both now answer the documented\n`agents_disabled` 404 unless both are wired. Test covers the leak (no\n`agents`/`version` in the body) and the normal case; three existing\ntests wired only `agentRuns` and now wire the invoker too. Red-proved by\nreverting `run-reads.ts`.\n3. **`userMcpWriteLines` reads `process.platform`: NOT done.** The\nexecutor has no platform: it would have to travel `PlatformServices` ->\n`RunAskParams` (and its pick list) -> `ToolExecutorExtras` -> executor\n-> `formatConsentPrompt` -> `formatConsentPromptBody`, through two\n`gateway-main.ts` sites and the dispatcher builders, well over the\n20-line limit, and `executor.ts` is at its baseline (1957). Note\n`user-mcp-call-block.ts` already defaults its `platform` parameter to\n`process.platform` the same way, so the pattern is shared, not local.\nShape for a follow-up: add `platform?: string` to `ToolExecutorExtras`,\nset it where `userMcpWriteGrants` is set, pass it as a parameter to the\ntwo consent-display functions, and make `userMcpCallLines`' default go\naway.\n4. **Tribal recall: a malformed metadata row broke the whole pass (bug,\ndecided on evidence).** SQLite's `json_extract` raises on malformed\nJSON, so the channel filter in `vectorSearchChunks` threw for the whole\nquery: with one malformed row in the index the capture failed with\n`Capture of cl-1 failed: malformed JSON` (reproduced). The filter is now\n`CASE WHEN json_valid(i.metadata) THEN json_extract(...) END IN (...)`\n(a CASE is lazy; an `AND` is not guaranteed to be), so a malformed row\nnever matches. The per-row JS `try/catch` around the hydrate-step parse\nSTAYS: SQLite stops parsing at a NUL byte, so valid JSON followed by a\nNUL passes `json_valid` while `JSON.parse` rejects it (review); that row\nis skipped and the rest continue. Tests: a malformed row and a\ntrailing-NUL row beside a good one; red-proved by reverting\n`vec-store.ts` (malformed JSON) and by removing the `try/catch` (NUL).\n5. **`check-pr-message-parses` hint.** It said \"Edit the PR description\nand this check re-runs\"; `ci.yml` triggers on `opened, synchronize,\nreopened, labeled` (no `edited`), and a re-run replays the old event\nbody. Only the hint changed (a push or a label re-checks it). Adding\n`edited` would re-run every job on any title edit, so the trigger is\nuntouched. No test pinned the text.\n6. **I13 count-assertion row.** `docs/SECURITY-INVARIANTS.md` cited\n`ipc/http-server.ts:323` (a 338-line file whose line 323 has no such\nassertion). The row now points at\n`security-invariants/i13-http-write-routes.test.ts:41`\n(`toHaveLength(14)`), and the writable-handle half of the old claim has\nits own row at `http-server.ts:161` (`openI13WriteHandle`); the prose\nparagraph is corrected the same way. `audit:doc-refs` passes.\n7. **Stale index-lane census.** `audit:lane-census --check` does not\nfail on a stale file by design: `--check` is read-only (it writes\nnothing) and gates only on `evaluateLaneGate` violations (dead reads,\npartial coverage, exemption counts), while the committed JSON is a\nreport whose own header says it is regenerated without `--check`. A\nstaleness check would also fail every PR that adds a read, which the\nartifact's content-stable, no-timestamp design avoids. Regenerated as\nits own commit (451 -> 499 reads).\n\n## Docs\n\nCLAUDE.md, GEMINI.md, roadmap, architecture, docs/README and\ncli-reference are unchanged: no claim there changes (no new invariant,\nIPC method, migration or command; item 2 and 4 restore documented\nbehaviour).\n\n## Verification\n\n`typecheck`, `typecheck:tests`, the touched suites (`src/ipc`,\n`src/platform/assemble`, `src/search`), `security-invariants` (683\npass), `check-nimbus-invariants`, `audit:file-size`,\n`audit:split-privacy`, `audit:doc-refs`, `preflight:fast`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrGFPLqt8C3Ybzk2dHq\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* Agent endpoints now return a consistent unavailable response unless\nboth required agent services are configured.\n* Adding a source to a brief now returns a conflict if the run is no\nlonger accepting sources, preventing the source from being added in an\ninvalid state.\n* Malformed metadata no longer causes search queries to fail, and\nmalformed messages are excluded from recall drafts.\n* **Documentation**\n* Updated security and structure-audit references to reflect current\ntest and code locations.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-23T20:06:13Z",
+          "tree_id": "0819c36ecb96b8140c58c20d3e7ae43a01c55aae",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/f5da0fdbdced4a2cbdcc791411921b6093e5c22b"
+        },
+        "date": 1795465205186,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 179.17584049999877,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 180.8503778000013,
             "unit": "ms"
           }
         ]
