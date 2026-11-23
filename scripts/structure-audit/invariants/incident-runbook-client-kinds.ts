@@ -288,7 +288,7 @@ export function checkRunConfinedConfinement(files: readonly FileEntry[]): Violat
     if (f.relPath.endsWith(".test.ts")) continue;
     if (D23_RUNCONFINED_ALLOWED.includes(f.relPath)) continue;
     // Whole-source match, so `runConfined\n(` is a call too; the line is where the callee starts.
-    const stripped = stripComments(f.contents);
+    const stripped = stripStringLiterals(stripComments(f.contents));
     const originalLines = f.contents.split("\n");
     for (const m of stripped.matchAll(D23_RUNCONFINED_RE)) {
       const line = stripped.slice(0, m.index).split("\n").length;

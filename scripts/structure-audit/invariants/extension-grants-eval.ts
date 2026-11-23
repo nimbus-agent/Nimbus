@@ -399,7 +399,6 @@ const D45_DIR = "packages/gateway/src/briefing/";
 const D45_LIB_RE = /^packages\/gateway\/src\/agents\/_lib\/briefing[\w.-]*\.ts$/;
 export const D45_FORBIDDEN_SEGMENT_RE = /(?:^|\/)(?:chatops|egress|federation|share)(?:\/|$)/;
 const D45_CONNECTORS_SEGMENT_RE = /(?:^|\/)connectors(?:\/|$)/;
-const D45_REQUIRE_RE = /\brequire\s*\(\s*["'`]([^"'`]+)["'`]\s*\)/g;
 const D45_NETWORK_MODULE_RE = /^(?:node:)?(?:http|https|http2|net|tls|dgram)$|^undici(?:\/|$)/;
 const D45_NETWORK_CALL_RE = /\bBun\s*\.\s*fetch\b|\bnew\s+WebSocket\b|\bXMLHttpRequest\b/g;
 // Any mention of the global `fetch` at all, not only a call: `const f = fetch`, `(fetch)`, `fetch.bind(...)`
@@ -408,11 +407,15 @@ const D45_FETCH_REF_RE = /(?<![.\w$])fetch(?![\w$])/g;
 // The global objects a `fetch` can be reached through, by any spelling (`globalThis["fetch"]` has its name
 // in a string, which is blanked): the briefing needs none of them.
 const D45_GLOBAL_OBJECT_RE = /(?<![.\w$])(?:globalThis|window|self)(?![\w$])/g;
-// `import "x";` (no `from`): runs the module for its effects, so it is an import like any other.
-const D45_SIDE_EFFECT_IMPORT_RE = /(?:^|[;{}])[ \t]*import\s*["']([^"']+)["']/gm;
 
-// `import(`...`)` with a template literal that has no `${}`: a literal specifier like any other.
-const CONFINEMENT_TEMPLATE_IMPORT_RE = /\bimport\s*\(\s*`((?:[^`$]|\$(?!\{))*)`\s*\)/g;
+const IMPORT_KEYWORD_RE = /(?<![.\w$])(?:import|export|require)\b/g;
+const IMPORT_FORMS: ReadonlyArray<readonly [RegExp, "static" | "specifier"]> = [
+  [/(?:import|export)\s+(type\s+)?([^;"']*?)\s*from\s*["']([^"']+)["']/y, "static"],
+  [/import\s*\(\s*["']([^"']+)["']\s*\)/y, "specifier"],
+  [/import\s*\(\s*`((?:[^`$]|\$(?!\{))*)`\s*\)/y, "specifier"],
+  [/import\s*["']([^"']+)["']/y, "specifier"],
+  [/require\s*\(\s*["'`]([^"'`]+)["'`]\s*\)/y, "specifier"],
+];
 
 /** What one confinement rule (D45, D48) scans and which rule ids it reports. */
 interface ConfinementSpec {
@@ -441,12 +444,6 @@ export function checkConfinement(files: readonly FileEntry[], spec: ConfinementS
     const commentFree = stripComments(f.contents);
     const code = stripStringLiterals(commentFree);
     const original = f.contents.split("\n");
-    // An import-shaped match counts only when its keyword survives string blanking: a
-    // `"require('node:http')"` in a message is text, not an import.
-    const live = (m: RegExpMatchArray): boolean => {
-      const at = (m.index ?? 0) + Math.max(0, m[0].search(/import|export|require/));
-      return code.charAt(at) === commentFree.charAt(at);
-    };
     const push = (rule: string, src: string, index: number | undefined): void => {
       const line = src.slice(0, index).split("\n").length;
       out.push({ rule, file: f.relPath, line, snippet: (original[line - 1] ?? "").trim() });
@@ -464,21 +461,21 @@ export function checkConfinement(files: readonly FileEntry[], spec: ConfinementS
       }
       if (D45_NETWORK_MODULE_RE.test(target)) push(spec.noNetworkRule, commentFree, index);
     };
-    for (const m of commentFree.matchAll(D39_STATIC_IMPORT_RE)) {
-      if (live(m)) specifier(m[3] ?? "", clauseHasValue(m[1] !== undefined, m[2] ?? ""), m.index);
-    }
-    for (const m of commentFree.matchAll(D39_DYNAMIC_IMPORT_RE)) {
-      if (live(m)) specifier(m[1] ?? "", true, m.index);
-    }
-    for (const m of commentFree.matchAll(CONFINEMENT_TEMPLATE_IMPORT_RE)) {
-      // `code` has string bodies blanked, so an `import(` that is only text inside a string is not there.
-      if (code.startsWith("import", m.index)) specifier(m[1] ?? "", true, m.index);
-    }
-    for (const m of commentFree.matchAll(D45_SIDE_EFFECT_IMPORT_RE)) {
-      if (live(m)) specifier(m[1] ?? "", true, m.index);
-    }
-    for (const m of commentFree.matchAll(D45_REQUIRE_RE)) {
-      if (live(m)) specifier(m[1] ?? "", true, m.index);
+    // Start only at an import keyword that survives string blanking (text inside a string or template
+    // is not an import, and cannot swallow a real one that follows it), then read the specifier from
+    // the comment-free text at exactly that offset.
+    for (const k of code.matchAll(IMPORT_KEYWORD_RE)) {
+      const at = k.index ?? 0;
+      for (const [re, kind] of IMPORT_FORMS) {
+        re.lastIndex = at;
+        const m = re.exec(commentFree);
+        if (m === null) continue;
+        if (kind === "static") {
+          specifier(m[3] ?? "", clauseHasValue(m[1] !== undefined, m[2] ?? ""), at);
+        } else {
+          specifier(m[1] ?? "", true, at);
+        }
+      }
     }
     for (const re of [D45_NETWORK_CALL_RE, D45_FETCH_REF_RE, D45_GLOBAL_OBJECT_RE]) {
       for (const m of code.matchAll(re)) push(spec.noNetworkRule, code, m.index);

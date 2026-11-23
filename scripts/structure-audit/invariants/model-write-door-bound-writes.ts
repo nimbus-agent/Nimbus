@@ -353,7 +353,8 @@ const D42_MUTATOR_RE = /\bPREPARE_TOOL_IDS\s*\.\s*(?:add|delete|clear)\s*\(/g;
 
 /**
  * The index of the `>` that closes the type-argument list opened at `open` (a `<`), or -1 when the
- * text is not one: only type-ish characters may appear, and `=>` is not a closer.
+ * text is not one: only identifiers, dots, commas, spaces, `[]`, `|`, `&`, string-literal types and nested `<>`
+ * may appear (no `?`, `:`, `(` or operator: that is a comparison or a ternary).
  */
 function d42TypeArgsEnd(code: string, open: number): number {
   let depth = 0;
@@ -363,7 +364,7 @@ function d42TypeArgsEnd(code: string, open: number): number {
     else if (ch === ">" && code.charAt(i - 1) !== "=") {
       depth--;
       if (depth === 0) return i;
-    } else if (!/[\w$.,\s[\]|&?:{}'"`]/.test(ch)) return -1;
+    } else if (!/[\w$.,\s[\]|&'"`]/.test(ch)) return -1;
   }
   return -1;
 }

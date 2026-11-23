@@ -35,12 +35,27 @@ ${extra}      const executor = buildAgentWriteExecutor({ clientId, consentCoordi
   // The other sites are not in the fixture, so only this file's consent-site finding is read.
   const site = (f: FileEntry): string[] =>
     checkAgentDoorCheckOrder([f])
-      .filter((v) => v.file === RPC && v.snippet.includes("channel built before it"))
+      .filter((v) => v.file === RPC && v.snippet.includes("consentCoordinator"))
       .map((v) => v.snippet);
 
   test("const passes", () => expect(site(rpc("const"))).toEqual([]));
   test("let (reassignable before the executor reads it) is refused", () => {
     expect(site(rpc("let", "      channel = coordinator;\n"))).toHaveLength(1);
+  });
+  test("a nested const that shadows an outer unwrapped let is refused", () => {
+    const shadow = file(
+      RPC,
+      `export function buildActDeps(w, coordinator, clientId) {
+  let channel = coordinator;
+  {
+    const channel = vetoingConsent(coordinator);
+    void channel;
+  }
+  channel = coordinator;
+  return buildAgentWriteExecutor({ clientId, consentCoordinator: channel });
+}`,
+    );
+    expect(site(shadow)).toHaveLength(1);
   });
 });
 
@@ -94,6 +109,16 @@ describe("5. D45 ignores an import example that is only text in a string", () =>
     expect(scan(`import http from "node:http";`)).toBeGreaterThan(0);
     expect(scan(`import "node:net";`)).toBeGreaterThan(0);
   });
+  test("an import example in a template does not swallow a real import after it", () => {
+    const v = checkBriefingConfinement([
+      file(
+        `${SRC}briefing/x.ts`,
+        'const example = `\nimport example\n`\nimport http from "node:http";',
+      ),
+    ]);
+    expect(v.map((x) => x.rule)).toContain("briefing-no-network");
+    expect(v[0]?.line).toBe(4);
+  });
 });
 
 describe("6. D23 runConfined call split from its parenthesis", () => {
@@ -108,6 +133,11 @@ describe("6. D23 runConfined call split from its parenthesis", () => {
     expect(
       checkRunConfinedConfinement([file(`${SRC}exec/exec-gate.ts`, "await runConfined\n(r);")]),
     ).toEqual([]);
+  });
+  test("text inside a template or string is not a call", () => {
+    expect(scan("const t = `runConfined\n(x)`;")).toEqual([]);
+    expect(scan('const t = "runConfined(x)";')).toEqual([]);
+    expect(scan(["const t = `$", "{runConfined(x)}`;"].join(""))).toHaveLength(1);
   });
 });
 
@@ -157,5 +187,14 @@ describe("9. D42 counts call arguments past a generic's commas", () => {
   });
   test("a comparison is not mistaken for a type list", () => {
     expect(seam("a, b, c, d, e, f, g, h < i, j > k")).toHaveLength(1);
+  });
+  test("a ternary inside a comparison does not swallow a real argument comma", () => {
+    const withBound = (args: string) =>
+      checkBoundWrites([file(`${SRC}x/y.ts`, `withBound(${args});`)]).filter(
+        (v) => v.rule === "bound-seam-not-production",
+      );
+    expect(withBound("a<b ? x:y, c>d, seam")).toHaveLength(1);
+    expect(withBound("make<A, B>(), handler")).toEqual([]);
+    expect(withBound("make(), handler")).toEqual([]);
   });
 });
