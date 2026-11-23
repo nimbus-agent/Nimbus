@@ -21,6 +21,7 @@ describe("platform/assemble family: counts and absences hold across every file",
   });
 
   test("I22: connectorAllowPredicate is imported and used once, in the policy boot", () => {
+    expect(count(/\bconnectorAllowPredicate\s*\(/g)).toBe(1);
     expect(count(/\bconnectorAllowPredicate\b/g)).toBe(2);
   });
 
