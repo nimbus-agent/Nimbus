@@ -3,6 +3,8 @@
  * `max_series` is how many named series a cost connector indexes before folding the rest into
  * `__other__` (default 500), `retain_days` is how long `cost_allocation` rows are kept (default 400), `anomaly_ratio` (1.05 to 100,
  * default 1.5) and `anomaly_min_amount` (0 to 1e9, default 10) are the cost anomaly detector's thresholds.
+ * `notify` (default false) raises a local OS notice when the detector finds a new anomaly, at most one per
+ * `notify_min_interval_minutes` (5 to 1440, default 360).
  *
  * A value out of range or malformed is a section fallback to THAT KEY's default, recorded through
  * `sectionFallbackSink` so `nimbus config explain` names it; it is never clamped.
@@ -12,7 +14,13 @@ import {
   type SectionFallbackSink,
   sectionFallbackSink,
 } from "./layered-config.ts";
-import { isTableHeader, parseIntDec, splitKeyValue, stripComment } from "./toml-primitives.ts";
+import {
+  isTableHeader,
+  parseBool,
+  parseIntDec,
+  splitKeyValue,
+  stripComment,
+} from "./toml-primitives.ts";
 
 export type NimbusFinopsToml = {
   readonly maxSeries: number;
@@ -21,6 +29,10 @@ export type NimbusFinopsToml = {
   readonly anomalyRatio: number;
   /** ... and exceeds that baseline by at least this much, in the series' own currency. */
   readonly anomalyMinAmount: number;
+  /** DEFAULT OFF: a local, counts-only OS notification when a new cost anomaly appears. */
+  readonly notify: boolean;
+  /** At most one cost notification in this many minutes. */
+  readonly notifyMinIntervalMinutes: number;
 };
 
 export const FINOPS_MAX_SERIES_MIN = 1;
@@ -33,11 +45,16 @@ export const FINOPS_ANOMALY_RATIO_MAX = 100;
 export const FINOPS_ANOMALY_MIN_AMOUNT_MIN = 0;
 export const FINOPS_ANOMALY_MIN_AMOUNT_MAX = 1_000_000_000;
 
+export const FINOPS_NOTIFY_INTERVAL_MIN = 5;
+export const FINOPS_NOTIFY_INTERVAL_MAX = 1440;
+
 export const DEFAULT_FINOPS_CONFIG: NimbusFinopsToml = Object.freeze({
   maxSeries: 500,
   retainDays: 400,
   anomalyRatio: 1.5,
   anomalyMinAmount: 10,
+  notify: false,
+  notifyMinIntervalMinutes: 360,
 });
 
 const DECIMAL = /^\d+(?:\.\d+)?$/;
@@ -87,6 +104,8 @@ export function parseNimbusTomlFinops(
   let retainDays = DEFAULT_FINOPS_CONFIG.retainDays;
   let anomalyRatio = DEFAULT_FINOPS_CONFIG.anomalyRatio;
   let anomalyMinAmount = DEFAULT_FINOPS_CONFIG.anomalyMinAmount;
+  let notify = DEFAULT_FINOPS_CONFIG.notify;
+  let notifyMinIntervalMinutes = DEFAULT_FINOPS_CONFIG.notifyMinIntervalMinutes;
   let inSection = false;
   for (const line of source.split(/\r?\n/)) {
     const trimmed = stripComment(line).trim();
@@ -134,9 +153,30 @@ export function parseNimbusTomlFinops(
         DEFAULT_FINOPS_CONFIG.anomalyMinAmount,
         report,
       );
+    } else if (kv.key === "notify") {
+      const b = parseBool(kv.valRaw);
+      if (b === undefined)
+        report(`[finops].notify must be true or false (got: ${kv.valRaw}); using false`);
+      notify = b ?? DEFAULT_FINOPS_CONFIG.notify;
+    } else if (kv.key === "notify_min_interval_minutes") {
+      notifyMinIntervalMinutes = intInRange(
+        kv.valRaw,
+        FINOPS_NOTIFY_INTERVAL_MIN,
+        FINOPS_NOTIFY_INTERVAL_MAX,
+        "[finops].notify_min_interval_minutes",
+        DEFAULT_FINOPS_CONFIG.notifyMinIntervalMinutes,
+        report,
+      );
     }
   }
-  return Object.freeze({ maxSeries, retainDays, anomalyRatio, anomalyMinAmount });
+  return Object.freeze({
+    maxSeries,
+    retainDays,
+    anomalyRatio,
+    anomalyMinAmount,
+    notify,
+    notifyMinIntervalMinutes,
+  });
 }
 
 /** `[finops]` over the layered snapshot (packs, base, active profile). */

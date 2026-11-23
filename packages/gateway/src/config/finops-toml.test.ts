@@ -22,6 +22,23 @@ function tmp(): string {
   return d;
 }
 
+describe("[finops] notify keys", () => {
+  test("notify defaults off and parses; a bad value falls back and is reported", () => {
+    const msgs: string[] = [];
+    const sink = (m: string): void => void msgs.push(m);
+    expect(
+      parseNimbusTomlFinops("[finops]\nnotify = true\nnotify_min_interval_minutes = 5\n"),
+    ).toEqual({ ...DEFAULT_FINOPS_CONFIG, notify: true, notifyMinIntervalMinutes: 5 });
+    const bad = parseNimbusTomlFinops(
+      "[finops]\nnotify = maybe\nnotify_min_interval_minutes = 4\n",
+      sink,
+    );
+    expect(bad.notify).toBe(false);
+    expect(bad.notifyMinIntervalMinutes).toBe(360);
+    expect(msgs).toHaveLength(2);
+  });
+});
+
 describe("[finops] config", () => {
   test("an absent section is the defaults: 500 series, 400 days", () => {
     expect(parseNimbusTomlFinops("")).toEqual(DEFAULT_FINOPS_CONFIG);
@@ -31,6 +48,8 @@ describe("[finops] config", () => {
       retainDays: 400,
       anomalyRatio: 1.5,
       anomalyMinAmount: 10,
+      notify: false,
+      notifyMinIntervalMinutes: 360,
     });
     expect(Object.isFrozen(DEFAULT_FINOPS_CONFIG)).toBe(true);
   });

@@ -1,0 +1,145 @@
+import { Database } from "bun:sqlite";
+import { describe, expect, test } from "bun:test";
+import { DEFAULT_FINOPS_CONFIG, type NimbusFinopsToml } from "../config/finops-toml.ts";
+import { costAnomalyNoticeText, createCostAnomalyNotice } from "./cost-anomaly-notice.ts";
+import type { CostAnomaly, CostAnomalyResult } from "./cost-anomaly-query.ts";
+
+const DAY = 86_400_000;
+
+function anomaly(key: string, dayMs: number): CostAnomaly {
+  return {
+    seriesKey: key,
+    name: "Secret Vendor Name",
+    dayMs,
+    amount: 999,
+    baselineMean: 10,
+    baselineDays: 7,
+    ratio: 99,
+    excess: 989,
+    currency: "USD",
+  };
+}
+
+function result(anomalies: CostAnomaly[]): CostAnomalyResult {
+  return {
+    status: anomalies.length > 0 ? "anomalies" : "ok",
+    asOfMs: 0,
+    service: null,
+    judgedDayMs: 0,
+    daysChecked: 1,
+    baseline: { days: 7, minDays: 5 },
+    thresholds: { ratio: 1.5, minAmount: 10 },
+    counts: {
+      series: 1,
+      judged: 1,
+      anomalies: anomalies.length,
+      insufficientHistory: 0,
+      noDayData: 0,
+      mixedCurrency: 0,
+    },
+    anomalies,
+    anomaliesTruncated: 0,
+    gaps: [],
+  };
+}
+
+function harness(cfg: Partial<NimbusFinopsToml>, found: () => CostAnomaly[]) {
+  let now = 1_000_000;
+  const sent: { title: string; body: string }[] = [];
+  const pass = createCostAnomalyNotice({
+    db: new Database(":memory:"),
+    config: () => ({ ...DEFAULT_FINOPS_CONFIG, notify: true, ...cfg }),
+    now: () => now,
+    notify: (title, body) => void sent.push({ title, body }),
+    query: () => result(found()),
+  });
+  return {
+    pass,
+    sent,
+    advance: (ms: number) => {
+      now += ms;
+    },
+  };
+}
+
+describe("costAnomalyNoticeText", () => {
+  test("counts and a service id only; an odd service id is dropped", () => {
+    expect(costAnomalyNoticeText(1, ["vantage"]).body).toContain("1 unusual cost jump on vantage");
+    expect(costAnomalyNoticeText(3, ["b", "a"]).body).toContain("3 unusual cost jumps on a, b");
+    expect(costAnomalyNoticeText(2, ["Bad Name!"]).body).not.toContain("Bad");
+  });
+});
+
+describe("createCostAnomalyNotice", () => {
+  test("off by default sends nothing and does not query", () => {
+    let queried = false;
+    const pass = createCostAnomalyNotice({
+      db: new Database(":memory:"),
+      config: () => DEFAULT_FINOPS_CONFIG,
+      now: () => 0,
+      notify: () => {
+        throw new Error("must not notify");
+      },
+      query: () => {
+        queried = true;
+        return result([]);
+      },
+    });
+    expect(pass()).toBe("off");
+    expect(queried).toBe(false);
+  });
+
+  test("one notice, no vendor text, and the same anomaly is not announced twice", () => {
+    const h = harness({}, () => [anomaly("vantage|a", DAY), anomaly("vantage|b", DAY)]);
+    expect(h.pass()).toBe("sent");
+    expect(h.sent).toHaveLength(1);
+    expect(h.sent[0]?.body).toContain("2 unusual cost jumps on vantage");
+    expect(h.sent[0]?.body).not.toContain("Secret");
+    expect(h.sent[0]?.body).not.toContain("999");
+    h.advance(24 * 3_600_000);
+    expect(h.pass()).toBe("none");
+    expect(h.sent).toHaveLength(1);
+  });
+
+  test("the rate limit holds a new anomaly back and announces it after the interval", () => {
+    let list = [anomaly("vantage|a", DAY)];
+    const h = harness({ notifyMinIntervalMinutes: 60 }, () => list);
+    expect(h.pass()).toBe("sent");
+    list = [anomaly("vantage|a", DAY), anomaly("vantage|b", 2 * DAY)];
+    h.advance(10 * 60_000);
+    expect(h.pass()).toBe("limited");
+    expect(h.sent).toHaveLength(1);
+    h.advance(60 * 60_000);
+    expect(h.pass()).toBe("sent");
+    expect(h.sent).toHaveLength(2);
+    expect(h.sent[1]?.body).toContain("1 unusual cost jump");
+  });
+
+  test("a throwing query or a rejecting notify is reported, never thrown", async () => {
+    const failures: unknown[] = [];
+    const base = {
+      db: new Database(":memory:"),
+      config: () => ({ ...DEFAULT_FINOPS_CONFIG, notify: true }),
+      now: () => 0,
+      onFailure: (e: unknown) => void failures.push(e),
+    };
+    const throwing = createCostAnomalyNotice({
+      ...base,
+      notify: () => undefined,
+      query: () => {
+        throw new Error("db");
+      },
+    });
+    expect(throwing()).toBe("none");
+    expect(failures).toHaveLength(1);
+    const rejecting = createCostAnomalyNotice({
+      ...base,
+      notify: () => Promise.reject(new Error("toast")),
+      query: () => result([anomaly("vantage|a", DAY)]),
+    });
+    expect(rejecting()).toBe("sent");
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(failures).toHaveLength(2);
+  });
+});

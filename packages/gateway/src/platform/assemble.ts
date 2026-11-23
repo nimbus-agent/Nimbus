@@ -44,7 +44,6 @@ import {
 } from "../computer-use/cu-lanes/terminal-shells.ts";
 import { startCuSnapshotRetention } from "../computer-use/cu-snapshot-retention.ts";
 import { loadNimbusFilesystemRootsFromConfigDir } from "../config/filesystem-toml.ts";
-import { loadNimbusFinopsFromConfigDir } from "../config/finops-toml.ts";
 import { loadNimbusIncidentPredictFromConfigDir } from "../config/incident-predict-toml.ts";
 import { loadNimbusIncidentFromConfigDir } from "../config/incident-toml.ts";
 import { loadNimbusIndexFromConfigDir } from "../config/index-toml.ts";
@@ -108,7 +107,6 @@ import { createTrustBlockEnforcer } from "../extensions/trust/trust-block-enforc
 import { prepareTrustAtBoot, startTrustFeedForBoot } from "../extensions/trust/trust-feed-boot.ts";
 import { freshenTrustFeed } from "../extensions/trust/trust-freshen.ts";
 import { verifyExtensionsBestEffort } from "../extensions/verify-extensions.ts";
-import { startFinopsRetention } from "../finops/cost-retention.ts";
 import { checkFleetJob } from "../fleet/fleet-job-check.ts";
 import { createGlossaryLlm } from "../glossary/glossary-llm-adapter.ts";
 import type { IacDriftRunner } from "../iac-drift/drift-runner.ts";
@@ -222,6 +220,7 @@ import {
   bindFederationBroadcasts,
   bootFederationIntoIpcOpts,
 } from "./assemble/federation-boot.ts";
+import { startFinopsSidecars } from "./assemble/finops-sidecars.ts";
 import { assembleFleetRuntime, fleetRpcCtxFor } from "./assemble/fleet-boot.ts";
 import {
   collectSidecarsFromEnv,
@@ -1335,13 +1334,8 @@ export async function assemblePlatformServices(
   });
   sidecarStops.push(() => cuSnapshotRetention.stop());
 
-  // FinOps cost-row retention (Phase 10 FO2, OR-FO-5): the same daily sidecar shape, driven by
-  // `[finops] retain_days` (400). Deletes `cost_allocation` rows past the window through the item
-  // store's delete chokepoint; recommendations are not pruned by age. Static rule D48.
-  const finopsRetention = startFinopsRetention(db, {
-    retainDays: loadNimbusFinopsFromConfigDir(paths.configDir).retainDays,
-  });
-  sidecarStops.push(() => finopsRetention.stop());
+  // FinOps sidecars (FO2 retention, OR-FO-5; the cost anomaly notice, off unless `[finops] notify`). Static rule D48.
+  startFinopsSidecars({ db, paths, notifications, logger: syncLogger, sidecarStops });
 
   const shareHttpSink = loadNimbusShareHttpSink(paths.configDir);
   ipcOpts.shareRpcCtx = {
