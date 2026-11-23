@@ -192,7 +192,6 @@
     "packages/gateway/src/connectors/lazy-mesh/mesh-first-party-listing.test.ts": 690,
     "packages/gateway/src/connectors/lazy-mesh/mesh-obsidian-grant.test.ts": 509,
     "packages/gateway/src/connectors/lazy-mesh/mesh.test.ts": 697,
-    "packages/gateway/src/connectors/lazy-mesh/mesh.ts": 1806,
     "packages/gateway/src/connectors/lazy-mesh/phase3-config.test.ts": 3487,
     "packages/gateway/src/connectors/linear-sync.test.ts": 883,
     "packages/gateway/src/connectors/linear-sync.ts": 526,

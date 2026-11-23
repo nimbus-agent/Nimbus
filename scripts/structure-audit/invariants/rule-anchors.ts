@@ -194,7 +194,7 @@ export const RULE_ANCHORS: readonly string[] = [
   // D49(g), (h) (Phase 28 AD5a) -- the sites the new clauses read by name.
   "packages/gateway/src/engine/types.ts",
   "packages/gateway/src/engine/user-mcp-call-block.ts",
-  "packages/gateway/src/connectors/lazy-mesh/mesh.ts",
+  "packages/gateway/src/connectors/lazy-mesh/mesh/user-mcp-layer.ts",
   "packages/gateway/src/ipc/connector-rpc.ts",
   "packages/gateway/src/ipc/connector-rpc-handlers/model-writes.ts",
   "packages/gateway/src/ipc/connector-rpc-handlers/removal.ts",

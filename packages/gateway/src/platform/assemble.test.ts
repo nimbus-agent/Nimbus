@@ -913,10 +913,10 @@ describe("assemblePlatformServices — in-process assembly", () => {
     const paths = makePaths();
     rmSync(paths.configDir, { recursive: true, force: true });
     mkdirSync(paths.configDir, { recursive: true });
-
-    const ensureNames = Object.getOwnPropertyNames(LazyConnectorMesh.prototype).filter(
-      (name) => name.startsWith("ensure") && name.endsWith("Running"),
-    );
+    const chain = (p: object): object[] => (p ? [p, ...chain(Object.getPrototypeOf(p))] : []);
+    const ensureNames = chain(LazyConnectorMesh.prototype)
+      .flatMap((p) => Object.getOwnPropertyNames(p))
+      .filter((name) => name.startsWith("ensure") && name.endsWith("Running"));
     expect(ensureNames.length).toBeGreaterThan(10);
     const started: string[] = [];
     const spies = ensureNames.map((name) =>

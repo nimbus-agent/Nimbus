@@ -7,6 +7,7 @@ import { checkWrapServerSpecInvariant } from "../../../../scripts/structure-audi
 import { stripComments } from "../../../../scripts/structure-audit/lib.ts";
 import { REPO_ROOT, read } from "../../test/helpers/security-invariants.ts";
 
+const MESH = "packages/gateway/src/connectors/lazy-mesh/mesh/";
 describe("I15 — SandboxRunner is intrinsic to every extension spawn", () => {
   test("sandbox-runner.ts exports SandboxRunner + createSandboxRunner", async () => {
     const src = await read("packages/gateway/src/platform/sandbox/sandbox-runner.ts");
@@ -317,7 +318,7 @@ describe("I15 — SandboxRunner is intrinsic to every extension spawn", () => {
     // Phase 28 AD5b-2: the owner's write grant of a user MCP server.
     describe("a user MCP write grant (Phase 28 AD5b-2)", () => {
       test("the spawn manifest gets a write path ONLY from the prepared grant, and every spawn decision awaits the preparation first", async () => {
-        const mesh = stripComments(await read("packages/gateway/src/connectors/lazy-mesh/mesh.ts"));
+        const mesh = stripComments(await read(`${MESH}user-mcp-layer.ts`));
         // The two places a user MCP client is ever created, each behind the preparation.
         const calls = [...mesh.matchAll(/ensureUserMcpClient\(/g)];
         expect(calls).toHaveLength(2);
@@ -511,12 +512,11 @@ describe("I15 — SandboxRunner is intrinsic to every extension spawn", () => {
     });
 
     test("the Windows revoke before a grant is the fail-closed one, never the best-effort release", async () => {
-      const mesh = stripComments(await read("packages/gateway/src/connectors/lazy-mesh/mesh.ts"));
+      const mesh = stripComments(await read(`${MESH}obsidian-layer.ts`));
       expect(mesh).toMatch(
         /appContainerGrantRevokerFor\(platform, manifestForFirstParty\("obsidian"\)\.id\)/,
       );
-      // A declared file is `file-write-data` on a literal on macOS (never file-write*), and a
-      // non-inheritable ACE on Windows; macOS reads the declared kind, never the disk.
+      // Declared file: `file-write-data` on a literal on macOS, a non-inheritable ACE on Windows.
       const darwin = stripComments(await read("packages/gateway/src/platform/sandbox/darwin.ts"));
       expect(darwin).toMatch(/\.map\(\(p\) => `\(allow file-write-data \(literal "\$\{p\}"\)\)`\)/);
       expect(darwin).toMatch(/writeFiles: writeFilesOf\(policy\)/);

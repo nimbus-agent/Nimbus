@@ -237,7 +237,7 @@ CREATE INDEX idx_audit_log_session_id ON audit_log(session_id);
 -- Tool-call audit log (Phase 5 T6 PR 2 — V29 migration)
 -- Forensic complement to invariant I11 (the <tool_output> envelope on the
 -- LLM-facing path). Written at both wrapToolOutput sites (engine/agent.ts
--- wrapToolForLlm + connectors/lazy-mesh/mesh.ts listTools) via writeToolCallLog
+-- wrapToolForLlm + connectors/lazy-mesh/mesh/tool-audit.ts, called by mesh.ts listTools) via writeToolCallLog
 -- in db/tool-call-log.ts (best-effort — never breaks the LLM-facing path).
 -- Envelopes >64 KiB are truncated with a "...[truncated, N bytes total]" marker.
 -- Read surface: audit.toolCalls IPC (read-only, IPC-only — NOT LAN-callable per

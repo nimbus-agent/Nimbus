@@ -321,6 +321,8 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   // `ipc/http-server/options.ts`: the HTTP server options type, split out of `http-server.ts`
   // (2026-11); types only, under the guardian header at the top of the file.
   { kind: "exact", path: "packages/gateway/src/ipc/http-server/options.ts" },
+  // `lazy-mesh/mesh/ctor-args.ts`: the mesh options and constructor-argument types, split out of `mesh.ts`.
+  { kind: "exact", path: "packages/gateway/src/connectors/lazy-mesh/mesh/ctor-args.ts" },
   // `ipc/server/server.ts`: the JSON-RPC server's socket-listener / connection-lifecycle / error
   // shell (its 645-line `server.test.ts` already drives the dispatch + handler logic to ~83% line;
   // the residual uncovered lines are unix-socket `listen`/`close` callbacks and connection-error
