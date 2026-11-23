@@ -306,7 +306,8 @@ export function checkAgentEmitterImportConfinement(files: readonly FileEntry[]):
     // An emitter importing a sibling emitter is internal to the agents package, not a second entry
     // point. The rule is about who can reach IN from outside.
     if (f.relPath.startsWith(D22_EMITTER_DIR)) continue;
-    if (f.relPath === D22_EMITTER_ALLOWED || f.relPath.startsWith(D22_EMITTER_ALLOWED_DIR)) continue;
+    if (f.relPath === D22_EMITTER_ALLOWED || f.relPath.startsWith(D22_EMITTER_ALLOWED_DIR))
+      continue;
     const strippedLines = stripComments(f.contents).split("\n");
     const originalLines = f.contents.split("\n");
     for (let i = 0; i < strippedLines.length; i++) {
