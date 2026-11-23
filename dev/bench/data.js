@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795429023983,
+  "lastUpdate": 1795431706790,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "6f28a8015c829355615820bd01301a112cc923d0",
-          "message": "chore: release main (#1463)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.12.0</summary>\n\n##\n[7.12.0](https://github.com/nimbus-agent/Nimbus/compare/v7.11.0...v7.12.0)\n(2026-09-07)\n\n\n### Features\n\n* **fleet:** overnight sub-agent fleets on local compute — S2 PR 1 of 2\n([#1458](https://github.com/nimbus-agent/Nimbus/issues/1458))\n([d47d52e](https://github.com/nimbus-agent/Nimbus/commit/d47d52e220b56293e94628c091bac662404eb816))\n\n\n### Bug Fixes\n\n* **fleet:** close the five follow-ups from the overnight-fleet merge\n([#1462](https://github.com/nimbus-agent/Nimbus/issues/1462))\n([bf0559b](https://github.com/nimbus-agent/Nimbus/commit/bf0559b56c52ab79c9c48e94fd1d2ce1e649aa67))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-09-07T16:24:19Z",
-          "tree_id": "cf62471046f52ae74d73f03c82e43ae8bae9b79c",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/6f28a8015c829355615820bd01301a112cc923d0"
-        },
-        "date": 1788798926969,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 321.7720899000036,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 328.50468954999997,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 195.03575399999863,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "19d5af4dfd00038beb13901dccd73798a57a25c6",
+          "message": "refactor(gateway): split ipc/server/dispatchers.ts into per-namespace-group modules (no behaviour change) (#2089)\n\n## Why\nOwner ruling (2026-11-23): files stay under 500 lines.\n`ipc/server/dispatchers.ts` was 2,956 lines. This is a pure move, no\nbehaviour change.\n\n## Layout (`packages/gateway/src/ipc/server/`)\n`dispatchers.ts` (86 lines) is now a re-exporting facade, so its ~54\nimporters are unchanged. The code is in `dispatchers/`:\n\n| module | lines | holds |\n| --- | --- | --- |\n| core-rpcs | 392 | llm, agents, voice, updater, audit, security,\nfederation, teamvault, hitl, identity (+ SCIM token) |\n| index-rpcs | 201 | metrics, preflight, deployment, reindex, reembed,\nrebody |\n| media-rpcs | 226 | media pass deps, remote VLM check, media RPC |\n| local-surface-rpcs | 426 | index demo symbol, tour, locality, catalog,\ndemo, regraph, filesystem, profile, data, LAN, policy, chatops |\n| tribal-compute-rpcs | 214 | tribal, exec, toolgen, computer, fleet |\n| ops-rpcs | 332 | oncall now, statuspage, cost, briefing, incident,\npostmortem, incident update, oncall push, notifications, iac drift |\n| capture-rpcs | 94 | capture, approvals, standing |\n| migration-rpcs | 44 | `tryDispatchMigrationRpc` alone |\n| share-rpcs | 227 | share, egress, glossary, decisions, premortem,\nownership, admin, clip |\n| phase4-router | 250 | the phase-4 chain: the ordered groups and\n`tryDispatchPhase4Rpc` / `tryDispatchSessionRpc` |\n| automation-rpcs | 300 | auto-update, extension gate executor, owner\ngate, evidence/eval deps, workflow import, automation |\n| platform-rpcs | 379 | people, connector, diagnostics (+ access\nassert), trust, registry, pack |\n\nRouting order is untouched: the chain bodies (`dispatchPhase4*Group`,\n`PHASE4_PLATFORM_DISPATCHERS`) moved verbatim and call the same\nfunctions in the same order; the demo gate, LAN check, kind checks and\nHITL wiring are inside the same functions as before. Two private helpers\nused across modules (`buildExtensionGateExecutor`,\n`extensionEvidenceDepsFor`) gained `export`. `tryDispatchMigrationRpc`\nhas its own module so D34(c)'s whole-file exemption is now exactly that\none function's file. No function over 500 lines; all modules under 500.\n\n## Proof\n1. `bun run typecheck` and `bun run typecheck:tests` pass (0 new).\n2. Public surface: `Object.keys` of the original and the facade are\nidentical (69 names, same set).\n3. JUnit before/after over `ipc/server`, the whole `security-invariants`\nfolder, the other dispatcher importers' tests, and\n`scripts/structure-audit`: 3,838 tests, 0 failures, `(classname, name)`\nlists identical (the i43 test keeps its old title for that reason).\n4. By-path readers updated to the module that now holds the code, with\nthe same assertions: i02, i15, i18, i22, i28, i35, i43, i47, i55, i58,\ni59 invariant tests; `connector-rpc-model-writes`,\n`media-policy-wiring`, `migration-boot`, `connector-dispatcher-census`\ntests; static rule D34(c) allow-list and the platform-branching\nallow-list (path strings only); doc refs in `SECURITY-INVARIANTS.md`,\n`architecture.md` and two `.claude/commands` skills. `bun run\naudit:invariants` passes.\n5. `bun run preflight:fast` passes.\n\nNot done: `audit:file-size --update`, because #2085 had not landed on\n`origin/main` when this was opened. Rebase and run it before merge.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrGFPLqt8C3Ybzk2dHq\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Refactor**\n* Reorganized gateway RPC routing into focused areas covering\nautomation, media, operations, platform services, and other\ncapabilities. Existing RPC functionality and routing order are\npreserved.\n* **Documentation**\n* Updated architecture and security references to reflect the revised\nRPC routing structure.\n* **Tests**\n* Updated routing and security checks for the new structure, and added\ncoverage for operations RPC dispatch behavior.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-23T10:51:25Z",
+          "tree_id": "b40181c3c9341b37fb8078d8fa4c6c0a0c3f458b",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/19d5af4dfd00038beb13901dccd73798a57a25c6"
+        },
+        "date": 1795431703014,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 176.7769050500001,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 174.17478690000044,
             "unit": "ms"
           }
         ]
