@@ -145,7 +145,7 @@ The comment at `ipc/lan-rpc.ts:17` documents the `FORBIDDEN_OVER_LAN` set inline
 
 **Defense:** `DEFAULT_NIMBUS_LAN_TOML.bind = "127.0.0.1"`. Wide-area exposure is an explicit opt-in (`[lan] bind = "0.0.0.0"`), not the default.
 
-**Wired at:** `packages/gateway/src/config/nimbus-toml.ts` (default), enforced by `_test-suite.yml` config defaults test.
+**Wired at:** `packages/gateway/src/config/nimbus-toml/lan.ts` (default; re-exported by the `config/nimbus-toml.ts` facade), enforced by `_test-suite.yml` config defaults test.
 
 **Anti-pattern:** changing the default to `"0.0.0.0"`, or auto-binding to all interfaces when an env var is set. S3-F7 / chain C3 was a `0.0.0.0` default that turned LAN access into unintended internet exposure on public Wi-Fi.
 
@@ -2003,7 +2003,7 @@ Concretely, in order. `installPack` resolves the request (a bundled id, or a loc
 
 **Anti-pattern:** sealing any new record under `DH(static, static)`; adding a second caller of `sealBoxFrame`/`openBoxFrame`/`nacl.box`; reading the peer's protocol anywhere but the row (a capability announcement in mDNS or the first frame is a hint an attacker can suppress, so the rule is about what is REMEMBERED); making `LanPeerMatch.protoVersion` or `sendFederatedOverWire`'s `link` optional; a second writer of `proto_version` (or one that lowers it); sending a payload in Noise message 1; passing `generateEphemeral` from production code; replying to a refused v1 first frame.
 
-**Wiring:** `ipc/lan-server.ts` (`dispatchFrame`, `handleV2Handshake`, `handleV2Record`, the frame caps by wire mode, the handshake deadline), `ipc/lan-client.ts` (`exchangeV2`, `sendFederatedOverWire`, `LanLink`), `ipc/lan-session.ts` (the drivers, `Session`), `ipc/lan-noise.ts` (the engine), `ipc/lan-legacy.ts` (`legacyAllowedFor`, the v1 handlers and client), `ipc/lan-wire.ts` (shared framing), `federation/lan-link.ts` (`lanLinkFor`), `federation/federation-server.ts` (`isKnownPeer` forwards `proto_version`, `onPeerNegotiated`, `minProtocol`), `index/local-index.ts` (`markLanPeerProto`, `setLanMinProtocol`), `config/nimbus-toml.ts` (`[lan] min_protocol`), `platform/assemble.ts`.
+**Wiring:** `ipc/lan-server.ts` (`dispatchFrame`, `handleV2Handshake`, `handleV2Record`, the frame caps by wire mode, the handshake deadline), `ipc/lan-client.ts` (`exchangeV2`, `sendFederatedOverWire`, `LanLink`), `ipc/lan-session.ts` (the drivers, `Session`), `ipc/lan-noise.ts` (the engine), `ipc/lan-legacy.ts` (`legacyAllowedFor`, the v1 handlers and client), `ipc/lan-wire.ts` (shared framing), `federation/lan-link.ts` (`lanLinkFor`), `federation/federation-server.ts` (`isKnownPeer` forwards `proto_version`, `onPeerNegotiated`, `minProtocol`), `index/local-index.ts` (`markLanPeerProto`, `setLanMinProtocol`), `config/nimbus-toml/lan.ts` (`[lan] min_protocol`), `platform/assemble.ts`.
 
 **Static rule D47** (`scripts/structure-audit/check-nimbus-invariants.ts` `checkLanBoxPathConfinement`, rule id `lan-box-path-confined`): in a non-test file of `packages/gateway/src/` other than `ipc/lan-crypto.ts` and `ipc/lan-legacy.ts`, the identifiers `sealBoxFrame` and `openBoxFrame` and the calls `nacl.box(` / `nacl.box.open(` are violations (matched as words after comments and string literals are stripped, so an aliased import is caught; `nacl.box.keyPair` is not a seal; `*.test.ts` and `*.test-helpers.ts` are not scanned); `ipc/lan-legacy.ts` is a rule anchor. STATED BOUND, as D33(c): a dynamically composed call evades a text scan, a second use inside an allowed file is exempt whole-file, and a `box` imported by name and called bare is not matched. Slice FS3 deletes `lan-legacy.ts` and the allowance with it.
 
@@ -2135,7 +2135,7 @@ Test 9 (Phase 17) pins the dry run: advisory refuses it before `requireReady`; i
 
 - `packages/gateway/src/toolgen/toolgen-model-door.ts` (`listModelOfferableTools`, `invokeForModel`, `buildModelGeneratedTools`, `modelInvokeAction`, `pinReadVerified`), `toolgen/toolgen-agent-tools.ts` `buildGeneratedTools` (now builds from the door's filtered list only).
 - `packages/gateway/src/engine/run-ask.ts` (`offerConnectorWriteExecutorIfOwner` sets `toolgenModelAsk`; `withdrawOfferedExecutors` clears it), `engine/agent-request-context.ts`, `engine/agent.ts` (offers only when the approval is present), `engine/executor.ts` (`tool.model.invoke` in `HITL_REQUIRED_BACKING`, `isOwnerOnlyActionType`, `usesPromptText`).
-- `packages/gateway/src/platform/assemble.ts` (`toolgenModelDoor`, `spawnSaved` with the pin), `gateway-main.ts` (omitted on a demo root), `policy/types.ts` (`toolgen_model_access`), `config/nimbus-toml.ts` (`model_tools`), `toolgen/toolgen-invoke-gate.ts` (`approvalAuditId` on the `tool.invoke` row).
+- `packages/gateway/src/platform/assemble.ts` (`toolgenModelDoor`, `spawnSaved` with the pin), `gateway-main.ts` (omitted on a demo root), `policy/types.ts` (`toolgen_model_access`), `config/nimbus-toml/tool-generation.ts` (`model_tools`), `toolgen/toolgen-invoke-gate.ts` (`approvalAuditId` on the `tool.invoke` row).
 
 **Anti-patterns:**
 

@@ -48,7 +48,7 @@ Each live invariant (I1–I60) has a production wiring site + an enforcement tes
 - **I3** — HITL gate consults `action.type` only, never `payload.mcpToolId` · same
 - **I4** — `hitlStatus` set only by the consent gate (`approved` / `rejected` / `not_required`, plus `standing_approved`, produced only from I55's check inside `approvalPhase`); each prompted decision records its `answerSource` · same
 - **I5** — `checkLanMethodAllowed` intrinsic to `LanServer` · `ipc/lan-server.ts`
-- **I6** — LAN (local-network) bind defaults to `127.0.0.1` · `config/nimbus-toml.ts`
+- **I6** — LAN (local-network) bind defaults to `127.0.0.1` · `config/nimbus-toml/lan.ts`
 - **I7** — Tauri `ALLOWED_METHODS` excludes RCE-class (remote-code-execution) methods · `ui/src-tauri/src/gateway_bridge.rs`
 - **I8** — restrictive renderer CSP (no `unsafe-inline`/`unsafe-eval`) · `ui/src-tauri/tauri.conf.json`
 - **I9** — bound-param SQL; identifiers via `escapeIdentifier` · `db/write.ts`, `db/repair.ts`, `people/person-store.ts`

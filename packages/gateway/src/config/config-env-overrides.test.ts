@@ -58,7 +58,11 @@ describe("CONFIG_ENV_OVERRIDES", () => {
         (f) => f.endsWith(".ts") && !f.endsWith(".test.ts") && f !== "config-env-overrides.ts",
       )
       .map((f) => join(here, f));
-    const found = namedEnvVars([...files, ...OVERRIDING_FILES]);
+    // The per-section loaders of `nimbus-toml.ts` live one folder down.
+    const sectionFiles = readdirSync(join(here, "nimbus-toml"))
+      .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"))
+      .map((f) => join(here, "nimbus-toml", f));
+    const found = namedEnvVars([...files, ...sectionFiles, ...OVERRIDING_FILES]);
     for (const v of found) {
       if (NOT_CONFIG_KEYS.has(v) || v.startsWith("NIMBUS_OAUTH_")) found.delete(v);
     }

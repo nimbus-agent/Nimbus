@@ -420,6 +420,10 @@ describe("section fallbacks", () => {
       ...readdirSync(import.meta.dir)
         .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"))
         .map((f) => join(import.meta.dir, f)),
+      // The per-section loaders of `nimbus-toml.ts` live one folder down.
+      ...readdirSync(join(import.meta.dir, "nimbus-toml"))
+        .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"))
+        .map((f) => join(import.meta.dir, "nimbus-toml", f)),
       join(import.meta.dir, "..", "multimodal", "multimodal-config.ts"),
     ];
     const idRes = [
