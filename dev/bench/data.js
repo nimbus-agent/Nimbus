@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795452471555,
+  "lastUpdate": 1795453328157,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "2f75719c9797d8e06baa8e0109ebddafaf82ceaa",
-          "message": "chore: release main (#1488)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.18.0</summary>\n\n##\n[7.18.0](https://github.com/nimbus-agent/Nimbus/compare/v7.17.0...v7.18.0)\n(2026-09-11)\n\n\n### Features\n\n* **toolgen:** runtime tool generation PR 3 of 3 — persistence + signing\n([#1487](https://github.com/nimbus-agent/Nimbus/issues/1487))\n([52644ce](https://github.com/nimbus-agent/Nimbus/commit/52644cef588e44f3d82621a4589ca682787bafba))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-09-11T08:08:43+03:00",
-          "tree_id": "2ab058928aa1c461c02d66db626c47bd28c4ff71",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/2f75719c9797d8e06baa8e0109ebddafaf82ceaa"
-        },
-        "date": 1789104044821,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 313.9431744999976,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 313.904605250006,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 180.71212839999936,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "240d0cde87322aa76988e36f48e3c9d43de10d92",
+          "message": "fix(scripts): a split folder's modules are importable only through their facade (#2115)\n\n## The hole\nThe 500-line campaign split big files into a thin facade `X.ts` plus a\nfolder `X/`. TypeScript has no cross-file private, so what was\nmodule-private in `X.ts` had to be exported from its new module, and any\nmodule can now import it and skip the checks the facade ran first.\nConfirmed on main:\n- `extensions/install-from-local/plan-install.ts` exports\n`installApprovedPlan`: calling it skips `requireInstallApproval` (the\nowner's consent) and `assertNotBlocked` (I48).\n- `ipc/http-write-routes/*.ts` export every route handler\n(`runDeploymentRoute`, `runScimRoute`, `runPolicyRoute`): they rely on\n`dispatchWriteRoute`'s `checkAuth` and rate limit (I13).\n\nNo module outside a facade imports into a split folder today, so this\nadds the guard before anyone does.\n\n## The rule\nA module inside a split folder may be imported only by (1) its facade,\n(2) modules in the same folder, (3) tests (`*.test.ts(x)`, anything\nunder a `test/` directory). Everyone else goes through the facade.\n\nPlacement: its own structure-audit gate, `bun run audit:split-privacy`\n(`scripts/structure-audit/check-split-folder-privacy.ts`), wired into\n`preflight-gates.ts` (fast tier) and `_structure.yml`. Not a numbered D\nrule: it is structural and ties to no single invariant, so no D-range\nceiling or `SECURITY-INVARIANTS.md` entry moves.\n\nPairs are derived: a folder `D/` with a sibling `D.ts` or `D.tsx`.\nExplicit table for non-sibling facades: `agents/negotiate.ts` with\n`agents/_lib/negotiate/`, and `check-nimbus-invariants.ts` with\n`scripts/structure-audit/invariants/`. 18 pairs now. A stale table row\nfails the gate.\n\nSpellings matched: relative `./x/y` and `../x/y`, with or without\nextension, `import`, side-effect `import \"...\"`, `export ... from`,\n`export *`, dynamic `import()`, `require()`, multi-line statements.\n`import type` and `export type ... from` are allowed (a type is erased\nand cannot execute, so it cannot skip a check). An inline `import { type\nX }` counts as a value import and is refused.\n\nExemptions, by exact folder path, each a derived pair that is not a\nsplit:\n- `packages/gateway/src/config`: a 114-file module folder beside an\nunrelated 110-line `config.ts`.\n- `packages/gateway/src/index`: the local-index module folder beside the\nexecutable entry `index.ts`.\n(`platform/host-activity/` was inspected and holds the rule, so it is\npoliced.)\n\n## Importers repointed\nNone: the real tree has 0 violations. The two open PRs (#2111, #2113)\nare left to their own agents. A private name no outside importer needed:\nnone.\n\n## Red-proofs\nA temporary file importing `installApprovedPlan` from\n`./install-from-local/plan-install.ts` and another importing\n`runDeploymentRoute` from `./http-write-routes/deployment.ts` both\nfailed the gate with 2 violations (exit 1); removed, 0.\n\n## Tests\n`check-split-folder-privacy.test.ts`: every spelling refused, type\nimports allowed, facade, sibling and test importers allowed, foreign\nimporter refused, explicit pair, exemption by exact path, stale table.\n`preflight:fast`, `typecheck`, `typecheck:tests`, `audit:file-size` and\n`audit:status-drift` pass.\n\n## Docs\nCLAUDE.md and GEMINI.md gain one bullet next to the file-size rule;\n`.claude/commands/nimbus-commands.md` lists the script. Roadmap,\narchitecture, docs/README and cli-reference are unchanged: no product\nbehaviour, IPC method or CLI command changed.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrGFPLqt8C3Ybzk2dHq\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-23T16:47:55Z",
+          "tree_id": "9594d78fcacc6e563db50dd49016b8ef87556684",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/240d0cde87322aa76988e36f48e3c9d43de10d92"
+        },
+        "date": 1795453324092,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 182.17023930000104,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 179.57636529999982,
             "unit": "ms"
           }
         ]
