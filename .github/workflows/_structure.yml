@@ -59,6 +59,9 @@ jobs:
       - name: D8 — any-count (manual ratchet)
         run: bun scripts/structure-audit/count-any-usage.ts --check
 
+      - name: File size — new files under 500 lines, larger ones never grow
+        run: bun run audit:file-size
+
       - name: D10/D11 — Nimbus invariants (binary)
         run: bun run audit:invariants
 
