@@ -175,10 +175,12 @@ const D50_IDENTIFIERS: readonly {
   },
 ];
 const D50_LITERAL_RE = /(["'`])workflow\.(?:import|export)\1/g;
+const D50_EXPORT_LITERAL_RE = /(["'`])workflow\.export\1/g;
+// Files allowed the `workflow.import` literal ONLY (a `workflow.export` there is still flagged):
+// `usesPromptText`, split out of the executor, names the types whose prompt is a prompt text.
+const D50_IMPORT_ONLY_ALLOWED: readonly string[] = [`${D50_SRC}engine/executor/action-types.ts`];
 const D50_LITERAL_ALLOWED: readonly string[] = [
   `${D50_SRC}engine/executor.ts`,
-  // `usesPromptText`, split out of the executor (it names the types whose prompt is a prompt text).
-  `${D50_SRC}engine/executor/action-types.ts`,
   D50_IMPORT,
   D50_RPC,
   `${D50_SRC}connectors/proposable-actions.ts`,
@@ -218,8 +220,10 @@ export function checkWorkflowImportConfinement(files: readonly FileEntry[]): Vio
     }
     // (b) the method literals
     if (!D50_LITERAL_ALLOWED.includes(f.relPath)) {
-      for (const m of code.matchAll(D50_LITERAL_RE))
-        push("workflow-import-entry-confined", m.index);
+      const literalRe = D50_IMPORT_ONLY_ALLOWED.includes(f.relPath)
+        ? D50_EXPORT_LITERAL_RE
+        : D50_LITERAL_RE;
+      for (const m of code.matchAll(literalRe)) push("workflow-import-entry-confined", m.index);
     }
     // (d) the rule and learning path never reads provenance
     if (D50_RULE_PATH.includes(f.relPath)) {
