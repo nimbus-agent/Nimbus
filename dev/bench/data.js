@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795441196772,
+  "lastUpdate": 1795441708834,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "2cc6fcf0870629919ee83110681a44503f2a674d",
-          "message": "fix(deps): unbreak main — move the override pins #1469 outgrew, and restore the docs build (#1474)\n\n## Summary\n\n**main is red and has been since #1469 merged.** Its last green CI run\n(`330dba68`) predates that commit; run `34249458842` on `main` is\ncurrently failing Structure audit, Static on both ubuntu and macOS, and\nUnit + Coverage. Every open PR inherits both failures — #1470 among\nthem.\n\nThis fixes both, forward.\n\n## What #1469 did\n\nIt bumped 21 declared ranges. Two of those bumps landed on packages the\nroot `overrides` block pins, and one changed the docs toolchain in a way\nthe build could not survive.\n\n### 1. `audit:override-drift` — the bumps were inert\n\nRoot `overrides` pinned `sharp` 0.35.3, `@mastra/core` 1.61.0 and\n`@mastra/mcp` 1.17.1, while the workspaces declared `^0.35.4`, `^1.64.0`\nand `^1.17.3`. The override outranks the declaration, so **nothing\ninstalled changed** — the manifest moved and the tree did not. That is\nprecisely the failure mode the gate's own comment describes:\n\n> A root `overrides` pin outranks every declared range, so a divergence\nis invisible in CI without this: the Dependabot PR that bumps the\ndeclared range merges green and changes nothing installed.\n\nPins moved up to the declared versions — which are also the current\npublished versions of all three — so the upgrades are now real rather\nthan only claimed.\n\n### 2. The docs build could not resolve satteri's native binding\n\n#1469 took `@astrojs/starlight` 0.41.7 → 0.42.0 and `astro` 7.2.10 →\n7.3.1, which collapsed `satteri` from two resolved versions to `0.10.5`.\nAfter that the build fails with `Cannot find native binding … Cannot\nfind module '@bruits/satteri-<platform>'`.\n\nWorth being precise about the cause, because the error message\nmisdirects: the binding **is** installed and **is** correctly nested\nbeside satteri in the bun store. The failure is a resolution path — the\nrequiring module is\n`packages/docs/dist/.prerender/chunks/TabItem_*.mjs`, a built artifact,\nand walking up from `dist/` never reaches the store. Declaring `satteri`\ndirectly in `packages/docs` puts it somewhere the built chunk can\nresolve.\n\n## Testing\n\n- `bun run preflight:fast` — green, including `audit:override-drift`,\nwhich was the failing gate.\n- **Clean** docs rebuild with `packages/docs/dist` deleted first — exits\n0, zero native-binding errors. (A dirty rebuild would prove nothing\nhere.)\n- `bun test packages/gateway packages/cli scripts` — **21641 pass, 69\nskip, 0 fail** across 1474 files.\n\nThat last one is the one that matters: `@mastra/core` 1.61 → 1.64 is a\nthree-minor upgrade of the package the engine agent is built on, and it\nwas previously masked by the override. It is now genuinely installed and\ngenuinely exercised, rather than assumed safe.\n\n## Type of Change\n\n- [x] Bug fix (non-breaking change which fixes an issue)\n\nNot marked breaking: no user-facing surface changes. Three transitive\npins move to versions the manifests already declared.\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes\n- [x] All existing tests pass\n- [x] New behaviour is covered by tests — no new behaviour; existing\nsuite covers the upgrade\n- [x] No `any` types introduced\n- [x] No credentials, tokens, or secret values in logs, IPC, config, or\nfixtures\n- [x] Platform-specific code is behind `PlatformServices` — untouched\n- [x] The HITL consent gate has not been weakened\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JgDJ5WpWXev49wxWBpUGrC\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Chores**\n  * Updated project maintenance configuration and supporting tooling.\n  * No changes to exported functionality or user-facing behavior.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-08T17:24:31Z",
-          "tree_id": "3595e741e51ff740b2753eb18042347747f5b4bb",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/2cc6fcf0870629919ee83110681a44503f2a674d"
-        },
-        "date": 1788888987613,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 317.18148659999935,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 320.0983571000059,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 252.4084774500021,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "11822d33318db5915bc35dcf911551578bd34cb8",
+          "message": "refactor(gateway): split ipc/agents-rpc.ts into validator and handler modules (no behaviour change) (#2103)\n\n## Why\nOwner ruling (2026-11-23): files stay under 500 lines and a file already\nover 500 never grows. `packages/gateway/src/ipc/agents-rpc.ts` was 1,600\nlines. This is a pure move: zero behaviour change.\n\n## New layout\n| File | Lines | Holds |\n| --- | ---: | --- |\n| `ipc/agents-rpc.ts` (facade, still the one dispatcher) | 322 |\n`AGENTS_RPC_HANDLERS`, `EXTERNAL_EXCLUDED_AGENT_METHODS`,\n`FLEET_ELIGIBILITY`, `resolve*AgentMethod`, `EXTERNAL_AGENT_NAMES`,\n`dispatchAgentsRpc` (the I29 append stays here); re-exports\n`AgentsRpcError` and `AgentsRpcContext` |\n| `ipc/agents-rpc/_shared.ts` | 127 | error class, context type,\n`newSessionId`, `federatedAgentBase`, `agentServiceConfigs` |\n| `ipc/agents-rpc/limits.ts` | 11 | bounds shared by more than one\nvalidator |\n| `ipc/agents-rpc/file-param.ts` | 111 | `requireFileParam` and\n`parseNamespaces` (**I36**, moved verbatim) |\n| `ipc/agents-rpc/params-common.ts` | 237 | `optional*` helpers, expert,\nimpact, catchup, huddle validators |\n| `ipc/agents-rpc/params-people.ts` | 275 | standup, oncall, janitor,\npreflight, negotiate, ownership validators |\n| `ipc/agents-rpc/params-content.ts` | 184 | why, glossary, decisions,\npremortem validators |\n| `ipc/agents-rpc/handlers-core.ts` | 180 | expert, impact, catchup,\nchangelog, oncall, standup handlers |\n| `ipc/agents-rpc/handlers-federated.ts` | 34 | ghost, conflicts,\nhuddle, janitor, preflight handlers |\n| `ipc/agents-rpc/handlers-content.ts` | 209 | why, whyPeek, glossary,\ndecisions, negotiate, ownership, premortem handlers |\n\nEvery file is under 500 lines; nothing is left over the limit. No order\nof any check was changed: `requireFileParam` is byte-for-byte what it\nwas (one signature now uses a local `FileParam` alias so the one-line\nheader the param-kinds audit needs survives the added `export`), and\n`handleGhost` / `handleConflicts` still call it first.\n\n## Invariant and rule changes (paths only, no new behaviour)\n- Static D22(d): emitter imports are now allowed in `ipc/agents-rpc.ts`\nand in the `ipc/agents-rpc/` folder (the handlers import the emitters).\nA new test (`check-agent-emitter-folder.test.ts`) pins that the folder\nis allowed and sibling paths under `ipc/` are still flagged.\n- `audit:agent-param-kinds` reads the four validator modules\n(`readAgentsRpcValidatorSource`); its header regexes accept `export\nfunction`. Parse result is identical to the pre-split parse of the old\nfile (20 validators, same fields).\n- I31 pins (`requireStandupParams` / `handleStandup` source slices)\npoint at `params-people.ts` and `handlers-core.ts`.\n- I36 pointers in CLAUDE.md, GEMINI.md and `docs/SECURITY-INVARIANTS.md`\nnow name `ipc/agents-rpc/file-param.ts`; the D22(d) paragraph,\n`nimbus-file-map`, `nimbus-ipc` and `architecture.md` name the folder; a\nfew source comments naming moved validators repoint.\n- Baseline: `agents-rpc.ts` 1600 -> 322 (`audit:file-size --update`).\n\nNo release note, roadmap row or CHANGELOG entry: an internal refactor\nneeds none.\n\n## Proof\n1. `bun run typecheck` and `bun run typecheck:tests` pass (469\nbaselined, 0 new).\n2. Public surface: `Object.keys(await import(\".../agents-rpc.ts\"))` is\nidentical before and after (`AgentsRpcError`, `EXTERNAL_AGENT_NAMES`,\n`FLEET_ELIGIBILITY`, `dispatchAgentsRpc`, `resolveExternalAgentMethod`,\n`resolveFleetAgentMethod`); the types `AgentsRpcContext`, `AgentMethod`,\n`FleetEligibility` still export; every importer typechecks. No test\nmocks the module.\n3. Tests: 36 files covering the module (ipc/agents-rpc*, agent-runs,\nI29/I31/I36/I38, catalog, fleet, chatops, packs, oncall-push, two e2e\nscenarios, check-agent-param-kinds, check-nimbus-invariants): JUnit\nbefore 1,422 pass / 0 fail, after 1,423 pass / 0 fail. The (name,\nstatus) lists are identical; the one extra entry is the new D22(d)\nfolder test.\n4. Gates that scan by path: `audit:invariants`, `audit:doc-refs`,\n`audit:agent-param-kinds`, `audit:file-size` all pass.\n5. `bun run preflight:fast` passes.\n\n## Coverage (Istanbul preloads, as CI)\nMeasured from the agents-rpc, agent-runs, I36/I38, catalog and e2e tests\nonly (CI runs the whole gateway package, so this is a lower bound):\n\n| Module | Lines | Branches |\n| --- | ---: | ---: |\n| agents-rpc.ts | 21/21 | 17/18 |\n| _shared.ts | 16/16 | 11/12 |\n| file-param.ts | 38/38 | 39/39 |\n| params-common.ts | 82/82 | 88/88 |\n| params-people.ts | 71/71 | 72/72 |\n| params-content.ts | 66/66 | 98/98 |\n| handlers-core.ts | 34/34 | 43/43 |\n| handlers-content.ts | 27/27 | 29/30 |\n| handlers-federated.ts | 10/10 | n/a |\n\nAll above the 85% / 80% floors; no new tests were needed for coverage.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrGFPLqt8C3Ybzk2dHq\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-23T13:39:35Z",
+          "tree_id": "7a7ba097c9fd2a5157facff4f810fe1eb97ed020",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/11822d33318db5915bc35dcf911551578bd34cb8"
+        },
+        "date": 1795441704232,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 213.8508074000012,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 211.43825324999816,
             "unit": "ms"
           }
         ]
