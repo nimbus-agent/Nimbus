@@ -195,13 +195,25 @@ describe("bootChatopsIntoAssembly", () => {
     expect(existsSync(join(root, "mock-chatops-sink.ndjson"))).toBe(false);
   });
 
-  test("with the sink unset or empty the real bot-credentialed transport is built, never the file sink", async () => {
+  test("with the sink unset or empty a post goes to the real bot-credentialed transport, never the file sink", async () => {
+    const withChannel = {
+      ...policyGate,
+      enforced: () => ({
+        ...policyGate.enforced(),
+        chatops: {
+          channels: new Map([
+            ["C0123456789", { namespace: "eng", unmapped: "refuse", notify: ["C0123456789"] }],
+          ]),
+          ownership: new Map(),
+        },
+      }),
+    } as unknown as typeof policyGate;
     for (const unset of [undefined, ""]) {
       processEnvSet(SINK_ENV, unset);
-      const b = await boot();
-      expect(b).toBeDefined();
-      // The sink would have written this file for any post.
-      expect(await b?.postWatcherNotice("eng", "n")).toBe(0);
+      const b = await boot({ policyGate: withChannel }, { slackEnabled: true });
+      // The post reaches a destination (one notify channel) and so runs the transport. The real one
+      // has no bot credentials in this empty vault, so it fails; the sink would have succeeded.
+      await expect(b?.postWatcherNotice("eng", "n")).rejects.toThrow();
       expect(existsSync(join(root, "mock-chatops-sink.ndjson"))).toBe(false);
     }
   });

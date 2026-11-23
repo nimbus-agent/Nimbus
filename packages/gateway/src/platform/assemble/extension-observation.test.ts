@@ -51,7 +51,10 @@ function windowFile(entries: Array<{ o: string; h: string; p: number; n: number 
 
 async function until(cond: () => boolean): Promise<void> {
   const start = Date.now();
-  while (!cond() && Date.now() - start < 5000) await new Promise((r) => setTimeout(r, 10));
+  while (!cond()) {
+    if (Date.now() - start >= 5000) throw new Error("until: condition not met within 5s");
+    await new Promise((r) => setTimeout(r, 10));
+  }
 }
 
 function observationCount(): number {
