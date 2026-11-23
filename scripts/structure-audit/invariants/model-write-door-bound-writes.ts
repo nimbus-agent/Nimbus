@@ -351,6 +351,33 @@ const D42_NAMES: ReadonlyArray<readonly [RegExp, readonly string[]]> = [
 ];
 const D42_MUTATOR_RE = /\bPREPARE_TOOL_IDS\s*\.\s*(?:add|delete|clear)\s*\(/g;
 
+/**
+ * The index of the `>` that closes the type-argument list opened at `open` (a `<`), or -1 when the
+ * text is not one: only identifiers, dots, commas, spaces, `[]`, `|`, `&`, string-literal types and nested `<>`
+ * may appear, plus a function type `(x?: A) => B`: `(`, `)` and `=>` anywhere, `:` and `?:` only
+ * inside its parentheses. A bare `?` or `:` (a ternary) or any other operator means a comparison.
+ */
+function d42TypeArgsEnd(code: string, open: number): number {
+  let depth = 0;
+  let parens = 0;
+  for (let i = open; i < code.length; i++) {
+    const ch = code.charAt(i);
+    if (ch === "<") depth++;
+    else if (ch === ">" && code.charAt(i - 1) !== "=") {
+      // A function type has no bare `>` inside its parentheses: `(value>0 ? 1 : 0)` is a comparison.
+      if (parens > 0) return -1;
+      depth--;
+      if (depth === 0) return i;
+    } else if (ch === "(") parens++;
+    else if (ch === ")") {
+      if (--parens < 0) return -1;
+    } else if (ch === "=" && code.charAt(i + 1) === ">") i++;
+    else if (parens > 0 && (ch === ":" || (ch === "?" && code.charAt(i + 1) === ":"))) continue;
+    else if (!/[\w$.,\s[\]|&'"`]/.test(ch)) return -1;
+  }
+  return -1;
+}
+
 /** The top-level arguments of the call whose `(` is at `open` in `code` (strings already blanked). */
 function d42CallArgs(code: string, open: number): string[] {
   const args: string[] = [];
@@ -358,6 +385,15 @@ function d42CallArgs(code: string, open: number): string[] {
   let start = open + 1;
   for (let i = open; i < code.length; i++) {
     const ch = code.charAt(i);
+    if (ch === "<" && /[\w$]/.test(code.charAt(i - 1))) {
+      // `f<A, B>(x)`: a `<` glued to an identifier that closes as a type-argument list is not an
+      // argument separator context. A comparison (`a < b`) has a space or never closes this way.
+      const end = d42TypeArgsEnd(code, i);
+      if (end > i) {
+        i = end;
+        continue;
+      }
+    }
     if (ch === "(" || ch === "[" || ch === "{") depth++;
     else if (ch === ")" || ch === "]" || ch === "}") {
       depth--;

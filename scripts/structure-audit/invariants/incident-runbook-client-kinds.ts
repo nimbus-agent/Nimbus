@@ -280,24 +280,24 @@ const D23_RUNCONFINED_ALLOWED = [
   "packages/gateway/src/exec/exec-gate.ts",
   "packages/gateway/src/exec/exec-run.ts",
 ];
-const D23_RUNCONFINED_RE = /\brunConfined\s*\(/;
+const D23_RUNCONFINED_RE = /\brunConfined\s*\(/g;
 
 export function checkRunConfinedConfinement(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];
   for (const f of files) {
     if (f.relPath.endsWith(".test.ts")) continue;
     if (D23_RUNCONFINED_ALLOWED.includes(f.relPath)) continue;
-    const strippedLines = stripComments(f.contents).split("\n");
+    // Whole-source match, so `runConfined\n(` is a call too; the line is where the callee starts.
+    const stripped = stripStringLiterals(stripComments(f.contents));
     const originalLines = f.contents.split("\n");
-    for (let i = 0; i < strippedLines.length; i++) {
-      if (D23_RUNCONFINED_RE.test(strippedLines[i] ?? "")) {
-        out.push({
-          rule: "D23-runconfined-callsite",
-          file: f.relPath,
-          line: i + 1,
-          snippet: (originalLines[i] ?? "").trim(),
-        });
-      }
+    for (const m of stripped.matchAll(D23_RUNCONFINED_RE)) {
+      const line = stripped.slice(0, m.index).split("\n").length;
+      out.push({
+        rule: "D23-runconfined-callsite",
+        file: f.relPath,
+        line,
+        snippet: (originalLines[line - 1] ?? "").trim(),
+      });
     }
   }
   return out;

@@ -193,7 +193,7 @@ export function checkCaptureGateCallers(files: readonly FileEntry[]): Violation[
 //     and carry that statement's exemption onto the value import after it. The last alternative
 //     takes both a dynamic `import("…")` and a side-effect `import "…"`, which has no `from` clause.
 const D32_GATE_MODULE_RE =
-  /\b(?:import|export)\b(?:(?!\bfrom\s*["']|\b(?:import|export)\b)[^;])*?\bfrom\s*["'][^"']*capture-gate(?:\.ts)?["']|\bimport\s*\(?\s*["'][^"']*capture-gate(?:\.ts)?["']/g;
+  /\b(?:import|export)\b(?:(?!\bfrom\s*["']|\b(?:import|export)\b)[^;])*?\bfrom\s*["'](?:[^"']*\/)?capture-gate(?:\.ts)?["']|\bimport\s*\(?\s*["'](?:[^"']*\/)?capture-gate(?:\.ts)?["']/g;
 
 export function checkCaptureGateImporters(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];
@@ -404,7 +404,7 @@ export function checkBrokeredFetchLiteralConfinement(files: readonly FileEntry[]
 // boundary, exactly as D29(c) says of the `toolgen.` Vault-key prefix.
 const D29_MANIFEST_DEFINITION_FILE = "packages/gateway/src/toolgen/toolgen-stub.ts";
 const D29_MANIFEST_DEFINITION_RE = /\bfunction\s+buildGeneratedManifest\s*\(/;
-const D29_MANIFEST_NETWORK_RE = /\bnetwork\s*:\s*\[\s*(?!\])/;
+const D29_MANIFEST_NETWORK_RE = /\bnetwork\s*:\s*\[(?!\s*\])/;
 
 export function checkGeneratedManifestConfinement(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];

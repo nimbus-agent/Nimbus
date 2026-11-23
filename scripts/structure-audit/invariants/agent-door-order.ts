@@ -143,9 +143,19 @@ function d49VetoSite(file: FileEntry | undefined, path: string): Violation[] {
   // The variable the executor receives as its consent argument ...
   const arg = /consentCoordinator\s*:\s*([\w$]+)/.exec(body.slice(builder.open, builder.close));
   if (arg?.[1] === undefined) return [at("the executor must be given a consentCoordinator")];
-  // ... must be declared before the executor is built, and `vetoingConsent(` must sit INSIDE its
-  // initializer expression (a bare call elsewhere wraps nothing).
-  const decl = new RegExp(String.raw`(?:const|let)\s+${escapeRegex(arg[1])}\s*=`).exec(body);
+  // ... must be declared with `const` (a `let` could be reassigned before the executor reads it)
+  // before the executor is built, and `vetoingConsent(` must sit INSIDE its initializer expression (a bare call elsewhere wraps nothing).
+  // Exactly ONE declaration of the name in the function (a nested `const` could shadow an outer
+  // `let` that is what the executor really receives) and no assignment to it besides that one.
+  const name = escapeRegex(arg[1]);
+  const declared =
+    body.match(new RegExp(String.raw`\b(?:const|let|var)\s+${name}(?![\w$])`, "g")) ?? [];
+  const assignOp = String.raw`(?:[-+*/%&|^]|\*\*|<<|>>>?|&&|\|\||\?\?)?=(?![=>])`;
+  const assigned = body.match(new RegExp(String.raw`(?<![\w$.])${name}\s*${assignOp}`, "g")) ?? [];
+  if (declared.length !== 1 || assigned.length !== 1) {
+    return [at("the executor's consentCoordinator must be one `const` that is never reassigned")];
+  }
+  const decl = new RegExp(String.raw`\bconst\s+${name}(?![\w$])\s*=`).exec(body);
   if (decl === null || decl.index > builder.open) {
     return [
       at(
