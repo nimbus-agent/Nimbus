@@ -27,6 +27,7 @@ import {
   tryDispatchNotificationsRpc,
   tryDispatchOncallNowRpc,
   tryDispatchPostmortemRpc,
+  tryDispatchPrereviewRpc,
   tryDispatchStatuspageRpc,
 } from "./ops-rpcs.ts";
 
@@ -430,6 +431,44 @@ describe("tryDispatchInvestigationRpc", () => {
     const failing = ctxOf({ db, options: wiring(db), kind: boom });
     await expect(
       tryDispatchInvestigationRpc(failing, "incident.investigateSynthesize", { id: "x" }, "c1"),
+    ).rejects.toThrow("boom");
+  });
+});
+
+describe("tryDispatchPrereviewRpc", () => {
+  test("other methods and a missing index are skipped", async () => {
+    expect(await tryDispatchPrereviewRpc(ctxOf(), "incident.list", {}, "c1")).toBe(
+      phase4RpcSkipped,
+    );
+    expect(await tryDispatchPrereviewRpc(ctxOf({ noIndex: true }), "prreview.run", {}, "c1")).toBe(
+      phase4RpcSkipped,
+    );
+  });
+
+  test("a non-owner kind and a URL that is not indexed are domain errors with their codes", async () => {
+    const forbidden = await rpcError(
+      tryDispatchPrereviewRpc(
+        ctxOf({ kind: "mcp" }),
+        "prreview.run",
+        { url: "https://x/pull/1" },
+        "c1",
+      ),
+    );
+    expect(forbidden.message).toContain("ERR_PREREVIEW_FORBIDDEN_CLIENT");
+    const missing = await rpcError(
+      tryDispatchPrereviewRpc(
+        ctxOf({ kind: "cli" }),
+        "prreview.run",
+        { url: "https://github.com/o/r/pull/1" },
+        "c1",
+      ),
+    );
+    expect(missing.message).toContain("ERR_PREREVIEW");
+  });
+
+  test("any other error is re-thrown as it is", async () => {
+    await expect(
+      tryDispatchPrereviewRpc(ctxOf({ kind: boom }), "prreview.run", {}, "c1"),
     ).rejects.toThrow("boom");
   });
 });

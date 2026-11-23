@@ -1,7 +1,14 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 
 import type { IPCClient } from "../ipc-client/index.ts";
-import { type PreReviewSink, parsePreReviewArgs, runPreReviewWith } from "./pre-review.ts";
+import { CliExit } from "../lib/cli-exit.ts";
+import {
+  PRE_REVIEW_USAGE,
+  type PreReviewSink,
+  parsePreReviewArgs,
+  runPreReviewCommand,
+  runPreReviewWith,
+} from "./pre-review.ts";
 
 function sink(): PreReviewSink & { stdout: string; stderr: string } {
   const s = {
@@ -100,5 +107,33 @@ describe("runPreReviewWith", () => {
     );
     expect(code).toBe(1);
     expect(s.stderr).toBe("ERR_PREREVIEW_UNRESOLVED: not indexed\n");
+  });
+});
+
+describe("runPreReviewCommand", () => {
+  test("a missing URL prints the usage and exits 2 before any connection", async () => {
+    const spy = spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      const e = await runPreReviewCommand([]).catch((x: unknown) => x);
+      expect(e).toBeInstanceOf(CliExit);
+      expect((e as CliExit).code).toBe(2);
+      expect(spy).toHaveBeenCalledWith(`${PRE_REVIEW_USAGE}\n`);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe("runPreReviewWith, non-Error failures", () => {
+  test("a thrown string is printed", async () => {
+    const s = sink();
+    const c: Pick<IPCClient, "call"> = {
+      call: (async (method: string) => {
+        if (method === "prreview.run") throw "plain failure";
+        return { ok: true };
+      }) as IPCClient["call"],
+    };
+    expect(await runPreReviewWith(c, { url: "u", json: false }, s)).toBe(1);
+    expect(s.stderr).toBe("plain failure\n");
   });
 });
