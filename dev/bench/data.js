@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795438454314,
+  "lastUpdate": 1795439197116,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "4c54be81e5363246037c5ccdd1928ff706611776",
-          "message": "feat(fleet): add the overnight-fleet change digest (PR 2a) (#1467)\n\n## Summary\n\n`nimbus fleet digest [--since <duration>] [--json]` — a local,\ndeterministic Markdown report of what moved between each overnight fleet\njob's newest brief and its predecessor. This is **PR 2a** of the\novernight-fleet row; PR 2b (subject enumeration) is not shipped.\n\nThe row's remaining \"PR 2\" was split on the dependency: enumeration\nwithout a digest produces more briefs than anyone reads, which the\nroadmap row itself calls strictly worse than today. So the digest lands\nfirst, and 2b arrives into a system that can already absorb its output.\n\n**No schema migration** (V60 already carried every column), **no new\ninvariant**, **no new egress class**, and **no model call at any point**\n— the last is what keeps the digest outside I38 by construction rather\nthan by check. An LLM-written digest is a stated non-goal: the surface's\nwhole value is being mechanically true.\n\n## Design decisions worth a reviewer's attention\n\n- **Comparison runs on `findings_json`, never `brief_markdown`.** A\nsynthesised brief differs run to run on an unchanged index, so diffing\nthe human-readable column would report \"changed\" on essentially every\ncomparison — the same renderer-versus-rewrite split I31 draws for\ndisclosure, applied to comparison.\n- **The extractor map is compiler-enforced total over the eligible\nagents.** `EligibleAgentMethod` is derived from `FLEET_ELIGIBILITY` via\n`satisfies` rather than restated beside it, so flipping a twelfth agent\nto `\"eligible\"` fails the build (`TS2741`, naming that agent) until its\nextractor exists. The one change to PR 1 code is that type position; all\nfifteen entries and their reasoning comments are byte-identical.\n- **A key encodes identity only.** `ghost` keys on `peerId` alone, never\n`peerId:rank` — a mutable confidence band folded into a key reports a\n`medium → high` shift as one resolution plus one arrival.\n- **The predecessor is the newest brief BEFORE the window**, not the\nimmediately preceding one. The naive rule silently narrows a 24-hour\ndigest to the last inter-run gap for any sub-daily job.\n- **Five outcomes, all disclosed**, each rendered even as an explicit\nzero: a job digest, or `first observation` / `not summarizable` / `no\nbrief in window` / `agent changed`. The job set is the UNION of\nconfigured jobs and jobs with briefs in the window — walking config\nalone drops overnight work when a job block is deleted in the morning;\nwalking briefs alone drops the \"configured but never ran\" fact.\n- **`digest_min_delta`** (per job, default 1, refused below 1) bounds\nnumeric movement only. A finding appearing or resolving is never\nsuppressed, and a metric withheld by the threshold is counted and named\nrather than silently dropped.\n\n## Security surface\n\n`fleet.digest` joins the existing `fleet` namespace, which is\n**LAN-forbidden by prefix** and **absent from the Tauri allowlist (I7)**\n— both inherited, no production change to either. The digest returns\nsynthesised answers over the private index, so a paired peer must never\nread them. Tests prove the inheritance rather than assuming it:\n`lan-rpc.test.ts` names `fleet.digest` in the namespace-denial list, and\n`gateway_bridge.rs`'s `allowlist_excludes_fleet_namespace` is a prefix\nassertion that covers it automatically.\n\n## Type of Change\n\n- [x] New feature (non-breaking change which adds functionality)\n- [x] Test improvement\n\nNot marked breaking: everything here is additive. `digest_min_delta` is\na new key, and the `fleet.digest` method is new.\n\n## Testing\n\nFull suite green on the integrated tree: **21,612 pass / 0 fail / 69\nskip** across 1,472 files. `bun run typecheck` clean. Full `bun run\npreflight` green on every gate except `audit:coverage-floor` — see\nbelow.\n\nEleven tasks, each reviewed; six fix rounds; one whole-branch review.\nEvery behavioural change is red-proved by reverting it and confirming\nthe covering test fails — including three cases where the plan's own\npredicted failure did not reproduce and the real one was found instead.\n\n**One defect worth calling out** because it was invisible until there\nwas rendered output to look at: finding keys embed titles from indexed\ncontent (`conflicts` keys on `peerId:collisionType:service:title`), so a\nPR titled `Fix | the parser` broke its table row, and a title containing\na newline forged a `## heading` outright. `mdSafe` now collapses line\nbreaks and escapes pipes at every dynamic interpolation site.\n\n## Known: `audit:coverage-floor` is red, and not on this branch's files\n\n6 violations across 4 files — `ipc/server/socket-listeners.ts`,\n`platform/linux.ts`, `platform/sandbox/win32-reap.ts`,\n`platform/sandbox/win32.ts`. **All four have zero commits on this\nbranch**, whose production surface is 8 files, none of them these.\n\nI believe this is a local-Windows measurement artifact:\n`platform/linux.ts` and `socket-listeners.ts` are the *active arm* on a\nLinux runner (`exclusions.ts` says so in as many words), and the two\nsandbox files carry `skipIf(process.platform === \"win32\")` tests that\nexecute only on Linux. The gate is CI-Linux-authoritative, so I expect\nCI to differ — **but I could not prove that from a Windows machine.** If\nCI agrees with my box, this blocks on pre-existing debt rather than on\nanything here.\n\nThe one violation this feature *did* introduce\n(`fleet-digest-extractors.ts` at 73.97% branch) was fixed to 83.6%.\n\n## Known residual\n\n`digest_min_delta`'s refusal names the offending job only when `name`\nprecedes it in the `[[fleet.job]]` block — the inline range check fires\nbefore `flush()` guarantees a name. It still refuses (fail-closed), just\nnamelessly in that ordering. A follow-up could defer the check to\n`flush()`, mirroring what the file already does for `interval_seconds`.\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes\n- [x] All existing tests pass\n- [x] New behaviour is covered by tests\n- [x] No `any` types introduced\n- [x] No credentials, tokens, or secret values in logs, IPC, config, or\nfixtures\n- [x] Platform-specific code is behind `PlatformServices` — untouched by\nthis branch\n- [x] The HITL consent gate has not been weakened\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JgDJ5WpWXev49wxWBpUGrC\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added `nimbus fleet digest` to compare recent fleet job briefs and\nreport changed, unchanged, and non-comparable results.\n* Supports configurable time windows with `--since` and structured\noutput with `--json`.\n* Added configurable minimum metric-change thresholds through\n`digest_min_delta`.\n\n* **Documentation**\n* Updated CLI help, reference documentation, architecture notes,\nchangelog, roadmap, and project status to describe the fleet digest.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-08T15:54:38Z",
-          "tree_id": "60865a39dfcc0afd9b6555609d5fc56763564c63",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/4c54be81e5363246037c5ccdd1928ff706611776"
-        },
-        "date": 1788883709965,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 312.0718620000018,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 313.76101450001005,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 183.64215254999763,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4048a14d42c9c83ea16a5268752da8c0f4ca7508",
+          "message": "fix(scripts): harden nine static invariant rules found in the #2090 review (#2093)\n\nNine weaknesses CodeRabbit found in the static invariant rules when\n#2090 moved them into modules. All nine were real. Tests are in the new\n`scripts/structure-audit/invariants/hardening.test.ts`; each failed\nbefore its fix (red-proof: the rule files and `lib.ts` were reverted to\n`main`, the tests run, then the fix re-applied). The auditor still exits\n0 on the real tree; `bun test scripts/structure-audit` 1801 pass;\n`preflight:fast` and `typecheck` pass; `audit:file-size` OK (no baseline\nfile grew; `lib.ts` is 373 lines, new test file under 500).\n\n## 1. D49 consent pin accepted `let`\n- Defect: `(?:const|let)` let a reassignable binding stand as the\nexecutor's consent channel.\n- Fix: `agent-door-order.ts` accepts only `const`.\n- Test: a `let channel = vetoingConsent(...)` reassigned before the\nexecutor is refused; `const` passes.\n- Red-proof: the `let` case failed before.\n\n## 2 and 4. Line numbers wrong after a multi-line template\n- Defect: `stripStringLiterals` blanked every character of a string or\ntemplate body to a space, newlines included, so any scanner counting\nlines on its output (D49 `d49ScanNames`, D45/D48 `checkConfinement`'s\nnetwork scan, and about 17 other `src.slice(0, index).split(\"\\n\")` sites\nin the other invariant modules) reported a line too early and the wrong\nsnippet.\n- Fix: one fix at the root, in `lib.ts`: blanking now keeps `\\n` (length\nis still preserved), so every extracted scanner is correct. This is the\naudit-them-all item: patching each site would have left the next one\nopen.\n- Tests: `createAgentDoor` after a 3-line template is on line 4 (item\n2); a `fetch(` after a 3-line template is on line 4 (item 4; the import\nbranches already counted on comment-free text, only the `code` scans\nwere wrong).\n- Red-proof: both failed with `lib.ts` reverted.\n\n## 3. `createToolCallRe` alias with `$`\n- Defect: a local alias such as `make$Tool` went into a RegExp unescaped\n(`$` became an anchor, so the call was never matched).\n- Fix: every name and namespace goes through `escapeRegex`.\n- Test: `make$Tool(` matches; an ordinary alias, `createTool(` and an\nunrelated name behave as before.\n- Red-proof: failed before.\n\n## 5. Import example inside a string reported as a network import\n- Defect: the D45/D48 import branches read the specifier from\ncomment-free text without checking that the keyword is code.\n- Fix: a `live(m)` check requires the keyword's character to survive\nstring blanking, for the static, dynamic, side-effect and `require`\nbranches (the template branch already did this).\n- Test: text such as `\"do not require('node:http') here\"` is not\nflagged; a real `require`, `await import(...)`, `import x from` and\n`import \"node:net\"` still fail.\n- Red-proof: failed before.\n\n## 6. D23 `runConfined\\n(` evaded the scan\n- Defect: the source was split by line, so a call split across lines was\nmissed.\n- Fix: whole-source matching; the reported line is where the callee\nstarts; exempt files unchanged.\n- Test: split call is reported at its callee line; the exempt gate file\npasses.\n- Red-proof: failed before.\n\n## 7. D32(c) matched `test-capture-gate.ts`\n- Defect: `[^\"']*capture-gate` matched any module name ending in\n`capture-gate`.\n- Fix: the path prefix must end in `/` (`(?:[^\"']*\\/)?capture-gate`), in\nboth alternatives.\n- Test: `./test-capture-gate.ts` is not flagged; `capture-gate`,\n`capture-gate.ts`, a re-export and a dynamic import still are.\n- Red-proof: failed before.\n\n## 8. D29(b) `network: [ ]` reported nonempty\n- Defect: `\\[\\s*(?!\\])` backtracked so `[ ]` read as nonempty.\n- Fix: `\\[(?!\\s*\\])`.\n- Test (on the one definition file the rule scans): `[ ]`, `[]` and a\nnewline-only array are empty; `[ \"a\" ]`, `[\"a\"]` and a multi-line\nnonempty array are reported.\n- Red-proof: failed before.\n\n## 9. D42 `d42CallArgs` counted commas in type arguments\n- Defect: `identity<A, B>(v)` at depth 1 added a separator, so an\n8-argument `new ToolExecutor(...)` read as 9.\n- Fix: no parser (the auditor does not import one here); a `<` glued to\nan identifier that closes as a type-argument list (only type-ish\ncharacters, `=>` not a closer) is skipped. A comparison with spaces, or\none that does not close that way, is unaffected.\n- Test: 8-argument calls with `identity<A, B>(h)` and nested `Map<A, B>`\npass; real 9-argument calls (with and without a generic) are refused; `h\n< i, j > k` is still counted as two arguments.\n- Stated bound: `a<b, c>d` written with no spaces would be read as a\ntype list; no such code exists and the real tree is clean.\n- Red-proof: failed before.\n\n## Docs\nCLAUDE.md, GEMINI.md, roadmap, architecture, docs/README and\ncli-reference are unchanged: this tightens the auditor's own\nimplementation and adds tests; no rule number, invariant, count, command\nor behaviour a user sees changes.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrGFPLqt8C3Ybzk2dHq\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* Improved automated project checks for consent setup, import and\nnetwork access patterns, multiline calls, generic arguments, and empty\nnetwork settings.\n* Improved handling of escaped names and source text so checks report\nviolations more accurately, including their locations.\n* Tightened matching for capture-gate modules and ensured checks\ndistinguish real code from string and comment contents.\n\n* **Tests**\n  * Added regression coverage for check behavior and edge cases.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-23T12:47:26Z",
+          "tree_id": "5fbdae23147a701cca6ac75c778a7280f26e67a7",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/4048a14d42c9c83ea16a5268752da8c0f4ca7508"
+        },
+        "date": 1795439193941,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 183.32242170000097,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 182.32566419999858,
             "unit": "ms"
           }
         ]
