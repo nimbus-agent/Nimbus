@@ -3,7 +3,7 @@ import type { Logger } from "pino";
 import { loadNimbusFinopsFromConfigDir } from "../../config/finops-toml.ts";
 import { createCostAnomalyNotice } from "../../finops/cost-anomaly-notice.ts";
 import { startFinopsRetention } from "../../finops/cost-retention.ts";
-import { showIgnoringFailure } from "../notifications/notifications-runtime.ts";
+import { showWithOutcome } from "../notifications/notifications-runtime.ts";
 import type { PlatformPaths } from "../paths.ts";
 import type { NotificationService } from "../types.ts";
 
@@ -23,6 +23,8 @@ export function startFinopsSidecars(args: {
   readonly logger: Logger;
   readonly sidecarStops: Array<() => void>;
   readonly intervalMs?: number;
+  /** Test seam: the clock the notice reads. */
+  readonly now?: () => number;
 }): void {
   const retention = startFinopsRetention(args.db, {
     retainDays: loadNimbusFinopsFromConfigDir(args.paths.configDir).retainDays,
@@ -32,8 +34,9 @@ export function startFinopsSidecars(args: {
   const pass = createCostAnomalyNotice({
     db: args.db,
     config: () => loadNimbusFinopsFromConfigDir(args.paths.configDir),
-    now: Date.now,
-    notify: (title, body) => showIgnoringFailure(args.notifications, title, body),
+    now: args.now ?? Date.now,
+    notify: async (title, body) =>
+      (await showWithOutcome(args.notifications, title, body)) === "delivered",
     onFailure: (err) => args.logger.warn({ err }, "cost anomaly notice failed"),
   });
   pass();

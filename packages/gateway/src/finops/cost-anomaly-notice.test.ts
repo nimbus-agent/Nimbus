@@ -115,6 +115,51 @@ describe("createCostAnomalyNotice", () => {
     expect(h.sent[1]?.body).toContain("1 unusual cost jump");
   });
 
+  test("a notice that was not accepted leaves the anomaly eligible for the next pass", async () => {
+    const results = [false, true];
+    let calls = 0;
+    const pass = createCostAnomalyNotice({
+      db: new Database(":memory:"),
+      config: () => ({ ...DEFAULT_FINOPS_CONFIG, notify: true }),
+      now: () => 0,
+      notify: () => Promise.resolve(results[calls++] ?? true),
+      query: () => result([anomaly("vantage|a", DAY)]),
+    });
+    expect(pass()).toBe("sent");
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(pass()).toBe("sent");
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(pass()).toBe("none");
+    expect(calls).toBe(2);
+  });
+
+  test("the default query on an empty index finds nothing; the announced set stays bounded", () => {
+    const real = createCostAnomalyNotice({
+      db: (() => {
+        const d = new Database(":memory:");
+        d.run("CREATE TABLE item (id TEXT, service TEXT, type TEXT, metadata TEXT)");
+        return d;
+      })(),
+      config: () => ({ ...DEFAULT_FINOPS_CONFIG, notify: true }),
+      now: () => 0,
+      notify: () => undefined,
+      onFailure: () => undefined,
+    });
+    expect(real()).toBe("none");
+    const many = Array.from({ length: 2100 }, (_, i) => anomaly(`vantage|s${String(i)}`, DAY));
+    const h = harness({ notifyMinIntervalMinutes: 5 }, () => many);
+    expect(h.pass()).toBe("sent");
+    h.advance(10 * 60_000);
+    // the oldest keys were evicted to bound memory, so some are announced again
+    expect(h.pass()).toBe("sent");
+    // a series key with no separator and no service still yields a notice without a service name
+    const odd = harness({}, () => [anomaly("", DAY)]);
+    expect(odd.pass()).toBe("sent");
+    expect(odd.sent[0]?.body).not.toContain(" on ");
+  });
+
   test("a throwing query or a rejecting notify is reported, never thrown", async () => {
     const failures: unknown[] = [];
     const base = {

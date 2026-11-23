@@ -14,8 +14,14 @@ export interface CostAnomalyNoticeDeps {
   readonly db: Database;
   readonly config: () => NimbusFinopsToml;
   readonly now: () => number;
-  /** The OS notification; a rejection or throw is swallowed here. */
-  readonly notify: (title: string, body: string) => void | Promise<void>;
+  /**
+   * The OS notification. A promise resolving to `false` (or rejecting) means it was NOT accepted: the anomalies stay
+   * eligible for a later pass. Any other result counts as delivered.
+   */
+  readonly notify: (
+    title: string,
+    body: string,
+  ) => undefined | boolean | Promise<boolean | undefined>;
   readonly onFailure?: (err: unknown) => void;
   /** Test seam: replaces the index query. */
   readonly query?: typeof queryCostAnomalies;
@@ -65,8 +71,10 @@ export function createCostAnomalyNotice(
       if (lastAt !== undefined && at - lastAt < cfg.notifyMinIntervalMinutes * 60_000) {
         return "limited";
       }
+      const prevAt = lastAt;
+      const keys = fresh.map((a) => `${a.seriesKey}#${String(a.dayMs)}`);
       lastAt = at;
-      for (const a of fresh) seen.add(`${a.seriesKey}#${String(a.dayMs)}`);
+      for (const k of keys) seen.add(k);
       if (seen.size > SEEN_CAP) {
         for (const k of seen) {
           seen.delete(k);
@@ -77,7 +85,19 @@ export function createCostAnomalyNotice(
       const { title, body } = costAnomalyNoticeText(fresh.length, [
         ...new Set(fresh.map((a) => serviceOfKey(a.seriesKey))),
       ]);
-      void Promise.resolve(deps.notify(title, body)).catch((err: unknown) => deps.onFailure?.(err));
+      const undo = (): void => {
+        for (const k of keys) seen.delete(k);
+        if (lastAt === at) lastAt = prevAt;
+      };
+      void Promise.resolve(deps.notify(title, body)).then(
+        (ok) => {
+          if (ok === false) undo();
+        },
+        (err: unknown) => {
+          undo();
+          deps.onFailure?.(err);
+        },
+      );
       return "sent";
     } catch (err) {
       deps.onFailure?.(err);
