@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795453328157,
+  "lastUpdate": 1795456989372,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "6c56cb21ed74b70354d0a2959b0bf0978cbd8931",
-          "message": "docs(spec): propose GET /v1/services — repo-to-service resolution for clients (#1489)\n\n## Summary\n\nProposes `GET /v1/services` — a read over the service ids in\n`[metrics.dora.*]` / `[ci.service.*]` and the repo URNs bound to them.\n**Design only, no implementation**, following the shape of #1464.\n\n**This is not a blocker.** The consumer already ships and works without\nit; the proposal is about removing a gesture, not unblocking a feature.\n\n## Why a client wants it\n\nThe `nimbus-web-clipper` extension just shipped a deploy-readiness panel\nthat calls `GET /v1/preflight/deploy`. That route needs a `service`, and\nthe client has no way to learn which service a repository is: a service\nis a `[metrics.dora.<id>]` block carrying `repos = [...]`, and while the\ngateway holds the reverse map internally\n(`buildServiceIdentityResolver`) and assembles `knownServices`\n(`resolveKnownServices`), both are reachable only from the I13 write\ndispatcher. No GET exposes either.\n\nSo the client stores a **local binding**: the user types a service id\nonce per repository, seeded with a guess, and it is validated by asking\npreflight — an id the gateway does not know comes back reporting\n`unknown_service` on every check, so an unknown id is refused rather\nthan saved. That works. It costs a gesture per repo, and it can drift\nfrom `nimbus.toml` when a service is renamed.\n\nWith this read, repo→service resolves with no gesture, and the local\nbinding survives as an override for repos the config does not claim.\n\n## What the spec settles, and what it leaves to you\n\nSettled by reading the source: where the config is already loaded, what\n`resolveKnownServices` already returns, that `HTTP_ROUTE_AUTH` is total\nover the surface so **either** mounting option needs an entry there, and\nthat `loadNimbusServiceConfigsFromConfigDir` **throws** on a malformed\n`nimbus.toml` — a path whose message would be public under the\npublic-table option and can embed config values.\n\nLeft open, deliberately, because they are yours to decide:\n\n- **Public table or scoped.** `dispatchReadOnlyDataGet` is public by\nconstruction, which is exactly why `handleItemsResolve` and its siblings\nmount separately. Service *ids* are already probe-confirmable\nunauthenticated via preflight, and repo *names* already appear in `GET\n/v1/items`' projection — so the new disclosure is the **grouping**, not\nthe values. Whether that warrants a scope is a judgment about your\nthreat model, not ours.\n- Whether the IPC verb gains a matching shape.\n- Response shape details, naming, and pagination.\n\n## If you say no\n\nThe client keeps its local binding and nothing regresses. A \"no\" with a\nreason is genuinely useful to us — it tells the next surface not to ask\nagain.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01SdWmqLJUG2mXevhr31o9dG\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n- **Documentation**\n- Expanded the service-resolution proposal with incompatibilities\nbetween bare URN resolution and item-based matching, including CircleCI\nbehavior, deployment-type effects, and result-shape considerations.\n- Added coverage for repository-only queries, service identity\nreferences, overlapping repository claims, first-claimant resolution,\nlist-form responses, and ambiguity disclosure.\n- Updated the design review to record the resolved correction and\ndocument testing for repository queries, matcher selection, and multiple\nclaimants.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-11T07:21:22Z",
-          "tree_id": "0a437b0407dfd8b0b141377a481ddb33dd87a931",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/6c56cb21ed74b70354d0a2959b0bf0978cbd8931"
-        },
-        "date": 1789111836887,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 222.5030180499998,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 228.69427684999752,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 179.57636529999982,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0274b7af97105d8314d188b2715481b59681e420",
+          "message": "refactor(gateway): split engine/run-ask.ts into context, explain and turn helpers (no behaviour change) (#2116)\n\n## Why\n\nOwner ruling 2026-11-23: files stay under 500 lines and a file already\nover 500 never grows. `engine/run-ask.ts` was 1,840 lines. This is the\ngate-file variant of the split: pure refactor, zero behaviour change, no\nrelease note, roadmap row or CHANGELOG entry (an internal refactor needs\nnone).\n\n## Layout\n\n| File | Lines | Holds |\n| --- | --- | --- |\n| `engine/run-ask.ts` | 885 | `RunAskParams`, every executor builder and\nprivate maker, the offer/withdraw/bind steps, `answerConversationally`,\nplan dispatch, `runAskInner`, `runAsk` |\n| `engine/run-ask/local-context.ts` | 354 | indexed-context assembly for\nthe model |\n| `engine/run-ask/explain.ts` | 270 | explain-record types and shaping |\n| `engine/run-ask/classify.ts` | 102 | intent classification with the\nlocal fallback |\n| `engine/run-ask/candidate-pool.ts` | 118 | candidate pool and\ndiscarded tail |\n| `engine/run-ask/empty-index.ts` | 91 | empty-index guidance and item\ncount |\n| `engine/run-ask/turn-helpers.ts` | 59 | result summary, session\nhistory read and write |\n| `engine/run-ask/context-item.ts` | 26 | context item type and text\nhelpers |\n| `engine/run-ask/result.ts`, `log.ts` | 7, 6 | result type, logger |\n\n## What stayed whole, and why\n\n`run-ask.ts` stays at 885 lines and is listed in the file-size baseline\nat that exact count. It holds the whole of what decides an offer or a\nrefusal: `newWorkflowWriteExecutor` (the only `standingRules:` and the\nonly `unattended:`, static D44(d) and (e)), `newDoorExecutor`,\n`buildOwnerPushExecutor`, `buildRemediationExecutor`,\n`buildIacDriftExecutor`, the offer, withdraw and computer-use binding\nsteps (I53, I60, I35), and `runAsk` itself. The private makers are not\nexported. Nothing moved is a check of an ordered gate sequence.\n\n## Pins and rules\n\nNo test pin and no static rule was repointed or widened: every text they\nread still lives in `run-ask.ts`. `check-nimbus-invariants.ts` exits 0\nand `audit:split-privacy` reports 0 violations, so `engine/run-ask/` is\nimportable only by `run-ask.ts`, its siblings and tests. Two doc\ncomments that named `run-ask.ts` for moved code now name the new path.\n\n## New exports (none existed on main except the three kept)\n\nAll are pure shaping, reads or a log. `persistConversationTurn` and\n`recordExplainSafely` write, but only session memory and the explain\nrecord, behind the folder privacy gate; neither is a gate step.\n`run-ask.ts` still exports every name it did before\n(`resolveLocalContextItemLimit` and the `RunAskResult` type through\nre-exports).\n\n## Proof\n\n1. `typecheck` and `typecheck:tests` pass.\n2. Public surface identical (re-exports).\n3. 331 test files: before 6152 pass, 3 fail; after 6154 pass, 1 fail.\nThe three before-failures are D46 static-tree tests that pass after; the\none after-failure is the file-size baseline test, fixed by the baseline\ncommit.\n4. `audit:file-size`, `audit:status-drift`, `audit:doc-refs`,\n`audit:split-privacy`, `preflight:fast` pass.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrGFPLqt8C3Ybzk2dHq\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* Ask requests now receive demo-specific guidance when the index is\nempty.\n* When local handling is preferred, certain classifier availability or\ncredential issues can fall back to an unknown intent instead of stopping\nthe request.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Sonnet 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-23T17:52:04Z",
+          "tree_id": "fe1459a769125db7c6ccacc6ff65accdec970e06",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/0274b7af97105d8314d188b2715481b59681e420"
+        },
+        "date": 1795456984355,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 260.90227825000255,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 259.52745389999325,
             "unit": "ms"
           }
         ]
