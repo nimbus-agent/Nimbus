@@ -206,5 +206,6 @@ describe("9. D42 counts call arguments past a generic's commas", () => {
     expect(withBound("make(), handler")).toEqual([]);
     expect(withBound("make<() => A, B>(), handler")).toEqual([]);
     expect(withBound("make<(x?: A, y: B) => C, D>(), handler")).toEqual([]);
+    expect(withBound("limit<(value>0 ? 1 : 0), handler, seam")).toHaveLength(1);
   });
 });

@@ -364,6 +364,8 @@ function d42TypeArgsEnd(code: string, open: number): number {
     const ch = code.charAt(i);
     if (ch === "<") depth++;
     else if (ch === ">" && code.charAt(i - 1) !== "=") {
+      // A function type has no bare `>` inside its parentheses: `(value>0 ? 1 : 0)` is a comparison.
+      if (parens > 0) return -1;
       depth--;
       if (depth === 0) return i;
     } else if (ch === "(") parens++;
