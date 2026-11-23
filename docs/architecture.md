@@ -3273,7 +3273,7 @@ is refused, and an edit that changes nothing returns the original bytes). `apply
 writes: it repeats the plan's link check (the file and every directory up to the scope's root, not followed),
 re-reads each file, refuses one that changed since the plan, copies it to `<file>.nimbus-bak-<UTC time>`,
 writes a temporary file and renames it over the target (five tries on `EPERM`/`EBUSY`/`EACCES`, then the temporary
-file is removed and the target left as it was). `status.ts` re-runs the plan and compares; it never writes.
+file is removed and the target left as it was). `removal.ts` plans `nimbus agent uninstall` over the same files install would plan (the same link checks and scope rules) and removes only what a kit wrote: a block whose body still matches its hash (an edited block is refused, never deleted), the kit's own JSON keys (a foreign `nimbus` server entry is left), and a Nimbus-named file (`nimbus.rules`, `nimbus.mdc`) that holds nothing else afterwards is deleted through `apply.ts` (`FileEdit.remove`, after its backup). `status.ts` re-runs the plan and compares; it never writes.
 `steer-table.ts` holds the seven steered commands and the three owner commands, and `hook.ts` is the Claude Code
 `PreToolUse` hook (pure, imports only the steer table, fails open). The gateway is not involved: install and the
 hook work while it is stopped, and `scripts/agent-kits/steer-table.test.ts` holds every steered action type to a

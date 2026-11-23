@@ -13,7 +13,8 @@
  *    (Between that last read and the rename itself there is no lock: a program that saves in
  *    that instant loses its save to the backup. Stated on the kit page.)
  *  - a link at the file or at a directory above it is refused here too, not only when planning;
- *  - nothing is ever deleted except that temporary file.
+ *  - nothing is ever deleted except that temporary file and, in an uninstall, a Nimbus-named file
+ *    (`edit.remove`) that held nothing but the kit's part; it is backed up first like any other.
  */
 import { randomBytes } from "node:crypto";
 import {
@@ -92,6 +93,8 @@ export interface AppliedFile {
   readonly path: string;
   /** Where the file as it was is kept; undefined when the kit created the file. */
   readonly backup: string | undefined;
+  /** True when the file was deleted (an uninstall of a file that held only the kit's part). */
+  readonly deleted?: boolean;
 }
 
 export interface ApplyResult {
@@ -185,6 +188,22 @@ async function replace(fs: ApplyFs, edit: FileEdit, asPlanned: () => boolean): P
   }
 }
 
+/** An uninstall's delete: the backup already exists, and a file another program holds stays. */
+function deleteTarget(fs: ApplyFs, edit: FileEdit): void {
+  try {
+    fs.remove(edit.path);
+  } catch (e) {
+    if (BUSY_CODES.has(errorCode(e) ?? "")) {
+      throw new KitRefusal(
+        `${edit.path} is in use by another program; it was left in place. Close the agent and run the command again`,
+      );
+    }
+    throw new KitRefusal(
+      `${edit.path} could not be deleted (${reasonOf(e)}); it was left in place`,
+    );
+  }
+}
+
 async function applyOne(fs: ApplyFs, edit: FileEdit, stamp: string): Promise<AppliedFile> {
   if (edit.refusal !== undefined) throw new KitRefusal(edit.refusal);
   // Step 1: what the plan checked is checked again. A link can appear, and the file can change,
@@ -194,6 +213,10 @@ async function applyOne(fs: ApplyFs, edit: FileEdit, stamp: string): Promise<App
   if (!asPlanned()) throw new KitRefusal(CHANGED(edit.path));
   fs.mkdirp(dirname(edit.path));
   const backup = backUp(fs, edit, stamp);
+  if (edit.remove === true) {
+    deleteTarget(fs, edit);
+    return { path: edit.path, backup, deleted: true };
+  }
   await replace(fs, edit, asPlanned);
   return { path: edit.path, backup };
 }

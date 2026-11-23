@@ -44,7 +44,9 @@ command you have to run yourself. Then it asks you to type `yes`. Nothing is wri
 - Nimbus never starts another vendor's program to change its settings. Where an agent keeps a setting in a file it
   manages itself, install prints the one command for you to run.
 - `--dry-run` prints the plan and stops. `--yes` skips the question; use it only after reading a dry run.
-- There is no uninstall command. Each section below lists what to delete.
+- `nimbus agent uninstall <kit>` takes a kit out the same way: it shows every file with a diff, copies each to a
+  `.nimbus-bak-<time>` file, asks you to type `yes` and removes only what the kit wrote (see *Removing a kit* below).
+  The manual steps under each kit say the same by hand.
 
 The command every entry runs is the same: `nimbus mcp-server --stdio --agent <kit>`. Only the file and the JSON or
 TOML around it differ per agent. The `--agent` value is the
@@ -142,6 +144,24 @@ reason; add the entry by hand.
 
 To remove: delete the `nimbus` key under `servers` (or `mcpServers`), and the Nimbus block from
 `copilot-instructions.md`.
+
+## Removing a kit
+
+`nimbus agent uninstall <kit> [--scope user|project] [--dry-run] [--yes]` mirrors install and removes nothing install
+did not write:
+
+- A Nimbus block (between the `nimbus agent kit` marker lines) is removed only while its body still matches the hash
+  its marker carries. A block you edited is **refused**, not deleted: the command stops, names the file and changes
+  nothing. Delete the block yourself, or run `install` again to restore it and then `uninstall`.
+- In a JSON file only Nimbus's own keys go: the `nimbus` server entry when its arguments are the kit's, the kit's hook
+  handler (a hook group that also holds your handlers keeps them) and the kit's deny rules. A server entry Nimbus did
+  not write is left, and a rule written exactly like one of the kit's is removed even if you wrote it first.
+- `rules/nimbus.rules` and `.cursor/rules/nimbus.mdc` are deleted when nothing else is left in them; every other file
+  is kept, even if it ends up empty or as `{}`. Each changed or deleted file is copied to `<file>.nimbus-bak-<UTC time>` first.
+- For Claude Code at user scope the server is a command you ran, so removing it is one too:
+  `claude mcp remove --scope user nimbus`.
+
+Afterwards `nimbus agent status` reads the kit as not installed.
 
 ## Status
 

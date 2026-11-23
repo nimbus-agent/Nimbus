@@ -110,7 +110,8 @@ describe("parseAgentArgs", () => {
     [["hook"]],
     [["hook", "cursor"]],
     [["hook", "claude-code", "extra"]],
-    [["uninstall", "codex"]],
+    [["uninstall"]],
+    [["remove", "codex"]],
   ])("usage error: %j", (argv) => {
     expect(parseAgentArgs(argv)).toBeUndefined();
   });

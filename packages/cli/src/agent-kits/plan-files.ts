@@ -152,6 +152,35 @@ export function upsertBlock(
   return nl === CRLF ? out.replaceAll(LF, CRLF) : out;
 }
 
+/**
+ * `existing` with this kit's block taken out: the reverse of `upsertBlock` (the blank line that
+ * separated the block from the text above it goes too, and a file that held nothing else comes out
+ * empty). Undefined when there is no block. A block whose body no longer matches its hash was
+ * edited by hand and is REFUSED: removing it would delete the owner's lines.
+ */
+export function removeBlock(
+  existing: string,
+  kit: string,
+  style: BlockStyle,
+  path: string,
+): string | undefined {
+  const nl = newlineOf(existing);
+  const text = normaliseNewlines(existing);
+  const found = findBlock(text, kit, style);
+  if (found === undefined) return undefined;
+  if (!found.hashMatches) {
+    throw new KitRefusal(
+      `${path} holds the Nimbus block for ${kit}, but it was edited after Nimbus wrote it, so Nimbus will not remove it. Delete it by hand (from the "nimbus agent kit ${kit}" marker line to its closing marker), or run nimbus agent install ${kit} to restore it first`,
+    );
+  }
+  const head = withoutTrailingNewlines(text.slice(0, found.start));
+  const rest = text.slice(found.end).replace(/^\n+/, "");
+  let out: string;
+  if (rest.trim() === "") out = head === "" ? "" : `${head}${LF}`;
+  else out = head === "" ? rest : `${head}${LF}${LF}${rest}`;
+  return nl === CRLF ? out.replaceAll(LF, CRLF) : out;
+}
+
 /** `text` without this kit's block (newline-normalised): what the rest of the file says. */
 export function withoutBlock(text: string, kit: string, style: BlockStyle): string {
   const flat = normaliseNewlines(text);

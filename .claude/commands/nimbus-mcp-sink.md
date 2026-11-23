@@ -360,7 +360,7 @@ comes from the call's `ctx.clientInfo`, per request in the modern era. No tool m
 
 ## Agent kits (AD7b)
 
-`nimbus agent install|status` (`packages/cli/src/commands/agent.ts`, `packages/cli/src/agent-kits/`) writes the
+`nimbus agent install|uninstall|status` (`packages/cli/src/commands/agent.ts`, `packages/cli/src/agent-kits/`) writes the
 server entry `nimbus mcp-server --stdio --agent <kit>` and steering into an agent's own configuration. CLI only.
 Steering is guidance, never a boundary. When a connector write's action type is renamed or stops being
 model-offerable, `scripts/agent-kits/steer-table.test.ts` fails: fix `steer-table.ts`, bump
