@@ -29,7 +29,6 @@
     "packages/cli/src/commands/extension-registry-cmds.test.ts": 661,
     "packages/cli/src/commands/extension-update.test.ts": 506,
     "packages/cli/src/commands/extension.test.ts": 4064,
-    "packages/cli/src/commands/extension.ts": 1879,
     "packages/cli/src/commands/fleet.test.ts": 911,
     "packages/cli/src/commands/fleet.ts": 557,
     "packages/cli/src/commands/glossary.test.ts": 851,
