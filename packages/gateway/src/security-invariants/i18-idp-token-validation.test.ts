@@ -42,12 +42,12 @@ describe("I18 — IdP token validation is intrinsic + tokens are Vault-only", ()
   test("the OVER-THE-WIRE federation path is given an identity guard, not just local IPC", async () => {
     // The gap this closes. `ctx.identity` reaches a federated gate from exactly two producers:
     // `ipc/server/dispatchers.ts` (local IPC) and `federation/federation-server.ts` (the LAN wire,
-    // fed by `buildFederationLanServer`'s options in `platform/assemble.ts`). Only the first wired
+    // fed by `buildFederationLanServer`'s options in `platform/assemble/federation-boot.ts`). Only the first wired
     // it. So `undefined?.enabled === true` was false on every peer-facing answer and the check
     // never ran — a deprovisioned operator's gateway kept serving `federation.query`,
     // `auditExport`, `invoke` and `preflight` instead of failing closed. The guard fired only for
     // the owner querying their own machine, which is the one case it is not needed for.
-    const assemble = await read("packages/gateway/src/platform/assemble.ts");
+    const assemble = await read("packages/gateway/src/platform/assemble/federation-boot.ts");
     // The LAN server's options object must carry it...
     expect(assemble).toMatch(/identityGuard:\s*\{\s*\n\s*enabled:\s*true,/);
     // ...and it must be LATE-BOUND. Identity boots after federation, so a captured store/issuer

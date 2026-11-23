@@ -20,6 +20,7 @@
  */
 import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import { readdirSync } from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
 import pino from "pino";
@@ -188,7 +189,17 @@ describe("a rejecting notifier never becomes an unhandled rejection", () => {
 
 describe("assemble.ts wiring", () => {
   test("every producer callback goes through showIgnoringFailure; the only bare show is the consent hop", async () => {
-    const src = await Bun.file(join(import.meta.dir, "..", "assemble.ts")).text();
+    // The producers are built across `assemble.ts` and the `assemble/` modules it delegates to, and
+    // the counts below are over all of them (one bare show; two `(t, b)` callbacks).
+    const platformDir = join(import.meta.dir, "..");
+    const modules = readdirSync(join(platformDir, "assemble")).filter(
+      (f) => f.endsWith(".ts") && !f.endsWith(".test.ts"),
+    );
+    const parts = [
+      await Bun.file(join(platformDir, "assemble.ts")).text(),
+      ...(await Promise.all(modules.map((f) => Bun.file(join(platformDir, "assemble", f)).text()))),
+    ];
+    const src = parts.join("\n");
     expect(src).toMatch(
       /notify: \(title, body\) => showIgnoringFailure\(notifications, title, body\)/,
     );

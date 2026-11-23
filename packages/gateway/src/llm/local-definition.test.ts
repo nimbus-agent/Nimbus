@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
 /**
@@ -26,9 +27,19 @@ const FILES: ReadonlyArray<{ label: string; path: string }> = [
     label: "packages/gateway/src/platform/assemble.ts",
     path: join(HERE, "..", "platform", "assemble.ts"),
   },
+  // `assemble.ts` delegates its boot helpers to `platform/assemble/`; the vendor table and the
+  // registry builder this file is about live there, so every module of it is scanned.
+  ...readdirSync(join(HERE, "..", "platform", "assemble"))
+    .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"))
+    .sort()
+    .map((f) => ({
+      label: `packages/gateway/src/platform/assemble/${f}`,
+      path: join(HERE, "..", "platform", "assemble", f),
+    })),
 ];
 
-const ASSEMBLE = "packages/gateway/src/platform/assemble.ts";
+const LLM_VENDORS = "packages/gateway/src/platform/assemble/llm-vendors.ts";
+const LLM_REGISTRY = "packages/gateway/src/platform/assemble/llm-registry.ts";
 
 async function readTarget(label: string): Promise<string> {
   const target = FILES.find((f) => f.label === label);
@@ -94,7 +105,7 @@ describe("local-ness has exactly one definition", () => {
   test("the allow-listed literal pair is still exactly the runtime registry", async () => {
     // Guards the allowance above: if `KNOWN_LOCAL_RUNTIMES` is renamed or reshaped, the
     // `replaceAll` silently stops matching and the scan quietly widens instead of failing.
-    const src = await readTarget(ASSEMBLE);
+    const src = await readTarget(LLM_VENDORS);
     expect(src).toContain(ALLOWED_RUNTIME_REGISTRY);
   });
 
@@ -185,6 +196,6 @@ describe("local-ness has exactly one definition", () => {
     ).toBe(false);
     expect(PROVIDER_ID_MEMBERSHIP.test("KNOWN_LOCAL_RUNTIMES.has(route.runtime)")).toBe(false);
     // The scan targets resolve: a path typo must fail, not scan an empty string.
-    await expect(readTarget(ASSEMBLE)).resolves.toContain("buildLlmRegistryFromToml");
+    await expect(readTarget(LLM_REGISTRY)).resolves.toContain("buildLlmRegistryFromToml");
   });
 });

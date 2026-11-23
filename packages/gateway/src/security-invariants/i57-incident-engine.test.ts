@@ -133,7 +133,7 @@ describe("I57 (a) - assembling an incident record is inert: it reads the local i
   });
 
   test("4: the hook triggers the engine before the push, and the engine's construction names no egress, executor, connectors, vault or llm", async () => {
-    const src = await read("packages/gateway/src/platform/assemble.ts");
+    const src = await read("packages/gateway/src/platform/assemble/scheduler-mesh.ts");
     const at = src.indexOf("incidentEngine.trigger(serviceId)");
     const push = src.indexOf("oncallPush.trigger(serviceId)");
     expect(at).toBeGreaterThan(0);
@@ -971,7 +971,7 @@ describe("I57 (a) IC9b - the incident update draft and the scribe are inert; the
   });
 
   test("2: the scribe is built only off a demo gateway and is told AFTER the incident.assembled event", async () => {
-    const src = await read("packages/gateway/src/platform/assemble.ts");
+    const src = await read("packages/gateway/src/platform/assemble/scheduler-mesh.ts");
     expect(src).toMatch(
       /const incidentScribe = paths\.demo\s*\?\s*undefined\s*:\s*createIncidentScribe\(/,
     );

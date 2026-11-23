@@ -3,7 +3,12 @@ import { describe, expect, test } from "bun:test";
 import { readdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { stripComments } from "../../../../scripts/structure-audit/lib.ts";
-import { grepRepo, read, SRC_ROOT } from "../../test/helpers/security-invariants.ts";
+import {
+  grepRepo,
+  read,
+  readAssembleFamily,
+  SRC_ROOT,
+} from "../../test/helpers/security-invariants.ts";
 
 /** Every module specifier of whole import/export-from declarations (multiline too) and dynamic imports. */
 function moduleSpecifiers(src: string): string[] {
@@ -153,17 +158,28 @@ describe("I23 (d)-(g) — the ChatOps watcher notice has a construction-bound de
   test("(f) postWatcherNotice appears in production only in chatops-boot and assemble", async () => {
     expect(await grepRepo(/\bpostWatcherNotice\b/)).toEqual([
       "packages/gateway/src/chatops/chatops-boot.ts",
-      "packages/gateway/src/platform/assemble.ts",
+      "packages/gateway/src/platform/assemble/chatops-boot.ts",
     ]);
   });
 
   test("(f) assemble binds the poster to the CONFIG namespace in one place and settles the notifier once", async () => {
-    const src = stripComments(await read("packages/gateway/src/platform/assemble.ts"));
-    expect(src.match(/watcherChat\.settle\(/g)).toHaveLength(3);
-    expect(src).toContain("chatopsBoot.postWatcherNoticePinned(text)");
-    expect(src.match(/settleWatcherChatops\(watcherChat, chatopsBoot\)/g)).toHaveLength(1);
-    expect(src).toContain("chatopsBoot.postWatcherNotice(namespace, text)");
-    expect(src).toContain("demo: !syncEnabled");
+    const settle = stripComments(
+      await read("packages/gateway/src/platform/assemble/chatops-boot.ts"),
+    );
+    const root = stripComments(await read("packages/gateway/src/platform/assemble.ts"));
+    const scheduler = stripComments(
+      await read("packages/gateway/src/platform/assemble/scheduler-mesh.ts"),
+    );
+    const family = Object.values(await readAssembleFamily())
+      .map((text) => stripComments(text))
+      .join("\n");
+    expect(family.match(/watcherChat\.settle\(/g)).toHaveLength(3);
+    expect(settle.match(/watcherChat\.settle\(/g)).toHaveLength(3);
+    expect(settle).toContain("chatopsBoot.postWatcherNoticePinned(text)");
+    expect(family.match(/settleWatcherChatops\(watcherChat, chatopsBoot\)/g)).toHaveLength(1);
+    expect(root.match(/settleWatcherChatops\(watcherChat, chatopsBoot\)/g)).toHaveLength(1);
+    expect(settle).toContain("chatopsBoot.postWatcherNotice(namespace, text)");
+    expect(scheduler).toContain("demo: !syncEnabled");
   });
 
   test("(g) [watcher.chatops] is not pack-settable and its loader is read only by config/ and assemble", async () => {
@@ -172,7 +188,7 @@ describe("I23 (d)-(g) — the ChatOps watcher notice has a construction-bound de
     const readers = (await grepRepo(/loadNimbusWatcherChatopsFromConfigDir/)).filter(
       (f) => !f.startsWith("packages/gateway/src/config/"),
     );
-    expect(readers).toEqual(["packages/gateway/src/platform/assemble.ts"]);
+    expect(readers).toEqual(["packages/gateway/src/platform/assemble/scheduler-mesh.ts"]);
   });
 
   test("(h) the pinned watcher channel is named only by the chatops types, dispatcher, boot and assemble (static D17(d))", async () => {
@@ -185,6 +201,9 @@ describe("I23 (d)-(g) — the ChatOps watcher notice has a construction-bound de
       "packages/gateway/src/chatops/reply-dispatcher.ts",
       "packages/gateway/src/chatops/types.ts",
       "packages/gateway/src/platform/assemble.ts",
+      "packages/gateway/src/platform/assemble/chatops-boot.ts",
+      "packages/gateway/src/platform/assemble/scheduler-mesh-opts.ts",
+      "packages/gateway/src/platform/assemble/scheduler-mesh.ts",
     ]);
   });
 

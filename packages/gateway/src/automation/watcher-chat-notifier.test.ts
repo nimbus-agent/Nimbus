@@ -924,7 +924,10 @@ describe("containment", () => {
 
 describe("production wiring", () => {
   test("assemble builds the notifier from the config loader with demo: !syncEnabled", () => {
-    const src = readFileSync(join(import.meta.dir, "..", "platform", "assemble.ts"), "utf8");
+    const src = readFileSync(
+      join(import.meta.dir, "../platform/assemble/scheduler-mesh.ts"),
+      "utf8",
+    );
     const at = src.indexOf("const watcherChatopsCfg =");
     expect(at).toBeGreaterThan(0);
     const block = src.slice(at, at + 1000);
@@ -936,12 +939,9 @@ describe("production wiring", () => {
   });
 
   test("the test-only initialFailureTimes seam is gone from production source", () => {
-    expect(readFileSync(join(import.meta.dir, "watcher-chat-notifier.ts"), "utf8")).not.toContain(
-      "initialFailureTimes",
-    );
-    expect(
-      readFileSync(join(import.meta.dir, "..", "platform", "assemble.ts"), "utf8"),
-    ).not.toContain("initialFailureTimes");
+    for (const f of ["watcher-chat-notifier.ts", "../platform/assemble/scheduler-mesh.ts"]) {
+      expect(readFileSync(join(import.meta.dir, f), "utf8")).not.toContain("initialFailureTimes");
+    }
   });
 });
 

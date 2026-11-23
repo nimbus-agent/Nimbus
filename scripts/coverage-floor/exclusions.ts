@@ -71,6 +71,11 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   // and `ipc/server/options.ts`. The new federation glue block is inert by default
   // (federation.enabled = false); testing it requires a full subprocess boot.
   { kind: "exact", path: "packages/gateway/src/platform/assemble.ts" },
+  // The boot helpers `assemble.ts` delegates to (2026-11 split, no behaviour change). They are the
+  // same boot-assembly code, moved out of the file above, so the exemption moves with them; it is
+  // not a new one. Each is a boot step over a real SQLite, vault or sidecar and is exercised by the
+  // gateway boot tests and the invariant pins, which read these files.
+  { kind: "dirPrefix", prefix: "packages/gateway/src/platform/assemble/" },
   // `assemble-sync-registrations.ts` is boot glue: ~89 hardcoded `syncScheduler.register(...)`
   // calls whose line coverage depends on which connectors the integration/boot tests happen to
   // spawn — it flakes ±0.6% between identical runs, which a one-directional ratchet can't absorb.

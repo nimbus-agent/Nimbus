@@ -14,6 +14,7 @@ import {
   INVARIANTS_ENTRY_REL,
   readInvariantsSource,
 } from "../../../../scripts/structure-audit/invariants-source.ts";
+import { stripComments } from "../../../../scripts/structure-audit/lib.ts";
 import {
   confirmTemplateKeys,
   parseConfirmTemplate,
@@ -258,3 +259,38 @@ export function egressRows(
     )
     .all() as Array<{ resultStatus: string; destination: string; hitlStatus: string }>;
 }
+
+/**
+ * `platform/assemble.ts` (the composition root) and every module under `platform/assemble/` (the
+ * boot helpers it delegates to), keyed by repo-relative path. For a pin that says a name appears
+ * "nowhere else in assemble"; a pin about WHERE a piece of wiring lives reads that one module.
+ */
+export async function readAssembleFamily(): Promise<Record<string, string>> {
+  const dir = "packages/gateway/src/platform/assemble";
+  const names = (await readdir(resolve(REPO_ROOT, dir))).filter(
+    (f) => f.endsWith(".ts") && !f.endsWith(".test.ts"),
+  );
+  const out: Record<string, string> = {};
+  for (const rel of [
+    "packages/gateway/src/platform/assemble.ts",
+    ...names.map((n) => `${dir}/${n}`),
+  ]) {
+    out[rel] = await read(rel);
+  }
+  return out;
+}
+
+/** A `platform/` source file (`"assemble.ts"`, `"assemble/chatops-boot.ts"`) with its comments stripped. */
+export async function platformCode(relUnderPlatform: string): Promise<string> {
+  return stripComments(await read(`packages/gateway/src/platform/${relUnderPlatform}`));
+}
+
+/** The text from `signature` to the first closing brace at column 0, so a pin names ONE function. */
+export function functionBodyOf(text: string, signature: string): string {
+  const at = text.indexOf(signature);
+  if (at < 0) throw new Error(`function not found: ${signature}`);
+  return text.slice(at, text.indexOf("\n}\n", at));
+}
+
+/** The assembly's source for pins: `asm.code("assemble/x.ts")` reads a module, `asm.body(text, sig)` slices one function. */
+export const asm = { code: platformCode, body: functionBodyOf };

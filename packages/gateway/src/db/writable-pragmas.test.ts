@@ -104,7 +104,7 @@ describe("production writable handles wire the pragmas", () => {
   // nimbus.db; deleting a call here is exactly the regression #426 describes,
   // and it would otherwise fail silently.
   const SITES = [
-    "platform/assemble.ts",
+    "platform/assemble/index-boot.ts",
     "embedding/embedding-worker.ts",
     "ipc/http-server.ts",
   ] as const;

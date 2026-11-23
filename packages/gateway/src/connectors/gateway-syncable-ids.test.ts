@@ -36,14 +36,21 @@ describe("gateway syncable service ids", () => {
     // means either an unreachable id in the validator, or a registered
     // syncable that `connector.sync` still rejects — which is the bug this
     // module was added to fix.
-    const assemble = readFileSync(join(import.meta.dir, "..", "platform", "assemble.ts"), "utf8");
+    // The registrations are made in `platform/assemble/index-boot.ts`.
+    const assemble = readFileSync(
+      join(import.meta.dir, "..", "platform", "assemble", "index-boot.ts"),
+      "utf8",
+    );
     for (const id of GATEWAY_SYNCABLE_SERVICE_IDS) {
       expect(assemble).toContain(`ensureConnectorSchedulerRegistration("${id}"`);
     }
   });
 
   test("assemble.ts registers no non-catalog id that is missing from this list", () => {
-    const assemble = readFileSync(join(import.meta.dir, "..", "platform", "assemble.ts"), "utf8");
+    const assemble = readFileSync(
+      join(import.meta.dir, "..", "platform", "assemble", "index-boot.ts"),
+      "utf8",
+    );
     const registered = [
       ...assemble.matchAll(/ensureConnectorSchedulerRegistration\("([a-z_]+)"/g),
     ].map((m) => m[1] ?? "");
