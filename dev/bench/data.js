@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795450608216,
+  "lastUpdate": 1795451189357,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "93ac016d5a564f633732c4ba8f2eb6beb4bdb049",
-          "message": "feat(cli): nimbus index health — index quality, not index size (#1483)\n\nFirst of the v0.1.1 CLI batch. Reports index **quality**, as opposed to\n`diag.snapshot`'s size gauge: per-connector embedding coverage, stale\nconnectors, item types with sparse metadata, and a 0–100 confidence\nscore — so a user getting weak answers learns the index is why, before\nconcluding the product is.\n\nNew CLI-only `index.health` IPC method. **No schema migration, no\ninvariant, no egress class** — every figure is a `GROUP BY` over tables\nthat already exist.\n\n## The spec was wrong in two ways, and one of them would have thrown at\nruntime\n\nThe v0.1.1 trigger column said *\"engineering work only — index metrics\nalready collected\"*. Verified against the code before writing anything:\n\n| Spec claim | Reality |\n|---|---|\n| \"index metrics already collected\" | **Half true.** Staleness was\n(`lastSuccessfulSyncByConnector`). Per-connector coverage was **not** —\n`collectIndexMetrics` computes one global figure with no `GROUP BY\nservice`, right for a gauge and useless for triage. Sparse-metadata\nanalysis didn't exist at all. |\n| sparse fields are `url`, `modified_at`, `raw_meta` | **`raw_meta` has\nnever existed on the live table.** It's a column of the legacy `items`\ntable; the live table is `item` (V3) and its equivalent is `metadata`.\n`raw_meta` survives only as a `legacy_raw_meta` key inside that JSON,\nwritten once by the V3 backfill. |\n| \"missing `modified_at`\" | `item.modified_at` is **`NOT NULL`** — never\nmissing. `item-store.ts` writes `modifiedAt ?? createdAt ?? 0`, so the\ndetectable signal is the sentinel `0`. |\n\nA query written from that spec would have thrown against the real schema\n**and passed every unit test**, because the unit tests build a\nhand-written minimal table. Hence\n`test/integration/index/index-health-real-schema.test.ts`, which runs\nthe full migration chain and writes through the production\n`upsertIndexedItem` path.\n\n## Two defects only a live gateway could find\n\nRan the command against a real gateway on an isolated scratch data dir.\nBoth fixed in `30179a59`:\n\n1. **The feature was unreachable over a socket.**\n`ipc/server/dispatchers.ts` keeps its *own* minimum-necessary allow-list\nof which `index.*` methods reach the diagnostics handler —\n`db.*`/`diag.*` match by prefix, `index.*` is enumerated per method. A\n`case` inside `dispatchDiagnosticsRpc` doesn't enter it, and every unit\ntest calls that function directly, downstream of the gate. The first\nlive run printed `Method not found: index.health` with the whole suite\ngreen. Now pinned at the routing seam, asserting against the\n`diagnosticsRpcSkipped` **sentinel** — `expect(out).toBeDefined()`\npasses on the skip, i.e. a test that cannot fail.\n2. **The output was unusable.** The gateway registers a `sync_state` row\nfor *every* known connector at boot, so a real install rendered **97\nrows of which 90 were empty and never configured**. Zero-item connectors\nare now omitted behind a disclosed count and `--all`. `--json` still\ncarries all 97 — the filtering is render-only, so no machine consumer\nloses data.\n\nI've added this to the `nimbus-ipc` skill as step 6b; its checklist\npreviously said only \"register it in the handler map\", which is the\nincomplete instruction I followed.\n\n## Three honesty rules in the scoring, each tested\n\n- **An empty index reports `confidence: null`**, with\n`confidenceUnavailableReason: \"empty_index\"` — never `0`, which would\ntell a brand-new install its index scores zero out of a hundred.\n- **Freshness is weighted by items, not connector count**, so nine empty\nfresh connectors cannot mask one stale connector holding everything.\n- **Unknown sync state is stale, not fresh.** A service with items but\nno `sync_state` row is disclosed as `no_sync_record`, distinct from\n`never_synced` — different causes, different fixes.\n\nCoverage is weighted `0.6` against freshness `0.4` because they fail\ndifferently: an unembedded item cannot be retrieved at all; a stale one\nis retrievable and merely out of date.\n\n`nimbus doctor` warns below 60 (exactly 60 passes) via a **separate**\n`index.health` call rather than a `diag.snapshot` field — the desktop\npolls that snapshot, and several `GROUP BY` scans don't belong on a\npolled path. A gateway too old to serve the method leaves doctor silent\nrather than inventing a verdict.\n\n**Not renderer-exposed:** the desktop has no consumer and the Tauri\nallowlist is the audited surface, so an entry would cost a\ncount-assertion change for nothing.\n\n## Verification\n\n- Full `bun run preflight` — every static gate, `build`,\n`test:connector-boot`, whole `test:ci` suite green.\n- **Live gateway run** on an isolated scratch dir via `LOCALAPPDATA`\n(not `NIMBUS_CONFIG_DIR`, which moves only `configDir` and would have\nwritten the live index). Verified: 7 real connectors rendered,\n`--stale-days 30` correctly un-stales a 12-day-old connector, `--json`\ncomplete and valid, malformed `--stale-days` refused client-side before\nany IPC, `nimbus doctor` printing `[warn] Index confidence: 2/100`. The\nreal `nimbus.db` mtime is unchanged — it was never opened.\n- Two SQL correctness rules **red-proved by reverting the\nimplementation**, not by a green run: the `DISTINCT` subquery\n(multi-chunk items must count once — reverting gives 66.7% where 50% is\ncorrect) and the fail-closed `no_sync_record` rule.\n- `audit:coverage-floor` initially caught two of my own files (the\nrunner was at 0% — I'd tested the formatter and not the command). Wrote\ntests rather than excluding; both are now off the list. What remains is\nthe 7 pre-existing Windows-local violations, none in files this branch\ntouches.\n\nThe sparse-metadata section immediately found real problems on the live\nindex: `code_symbol` and `dependency` at 100% missing `url`.\n\n## Still open in the v0.1.1 batch\n\n`nimbus tail`, `explain last`, `changelog`, `standup`, `oncall` — one PR\neach. Given what the premise check turned up here, each is worth\nverifying against the code before building.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01RdPkde1eXT1gRZawg4eD1n\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n- **New Features**\n- Added the read-only `nimbus index health` command with human-readable\nor JSON reports.\n- Reports connector coverage, synchronization freshness, sparse\nmetadata, and confidence scores, with stale-threshold and\nempty-connector options.\n- `nimbus doctor` now warns about low index confidence while remaining\ncompatible with older gateways.\n- `nimbus tool create` can draft and validate JavaScript bodies and\ninput schemas, with approval, provenance, local/remote drafting\npolicies, and bearer credential binding.\n\n- **Documentation**\n- Updated CLI reference, changelog, roadmap, and project status\ndocumentation.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-10T10:07:56+03:00",
-          "tree_id": "49532589bc03d9bc2cc389850be034242013170c",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/93ac016d5a564f633732c4ba8f2eb6beb4bdb049"
-        },
-        "date": 1789024812640,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 333.3460536499944,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 335.1610111499955,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 177.93383115000432,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c0248d591c56423c5defe1b8f015b32c5d1d4a7b",
+          "message": "test(gateway): real tests for platform/assemble LLM, HTTP sidecar, fleet, tribal and status modules (#2110)\n\n## Summary\n\nBehavioural tests for seven `platform/assemble/` modules that were moved\nout of `assemble.ts` with its coverage exemption. Tests only, no source\nchange. The exemptions are removed in a follow-up PR once the three\nsibling PRs land.\n\nCoverage is from the merged Istanbul lcov of the full CI-style run\n(`audit:coverage-floor:build-lcov`), before and after. Floor is 85% line\nand 80% branch.\n\n| Module | Lines before | Lines after | Branches before | Branches after\n|\n| --- | --- | --- | --- | --- |\n| llm-registry | 97.7 | 100.0 | 93.0 | 95.3 |\n| llm-vendors | 88.6 | 100.0 | 88.0 | 100.0 |\n| http-sidecar-boot | 36.2 | 98.6 | 46.9 | 100.0 |\n| http-sidecar | 100.0 | 100.0 | 60.5 | 97.7 |\n| fleet-boot | 88.5 | 94.2 | 81.8 | 81.8 |\n| tribal-boot | 5.2 | 100.0 | 18.6 | 90.7 |\n| status-readers | 8.3 | 100.0 | 0.0 | 100.0 |\n\n## Test files\n\n- `status-readers.test.ts`: every reader against a real migrated index\n(peers, connector health, audit counts, hitl, identity grace, sync\nfreshness).\n- `http-sidecar.test.ts`: port parsing and real loopback servers started\nfrom the env variables.\n- `http-sidecar-boot.test.ts`: briefs, agents, resolve-fetchable and the\nhttp origin exception.\n- `http-sidecar-fetch.test.ts`: the targeted-fetch closure end to end\nover a real egress ledger.\n- `llm-vendors.test.ts`, `llm-registry.test.ts`: vendor resolution,\nadapters, dropped entries and Vault key reads. The existing\nroute-collision integration test still covers the rest.\n- `fleet-boot.test.ts`: the live `fleet.*` context.\n`assembleFleetRuntime` stays covered by `assemble-fleet.test.ts`; the\nI38 pins are untouched.\n- `tribal-boot.test.ts`, `tribal-boot-recall.test.ts`: the KB config,\nin-chat capture, drafting from indexed threads and bot self-filtering.\n\nNo `mock.module`; fakes are passed through the existing parameters. Each\nfile was checked by reverting a source line and watching it fail.\n\n## Notes\n\n- All modules reach the floor, with no seam needed. `fleet-boot` branch\ncoverage is unchanged at 81.8%, above the floor.\n- In `tribal-boot`, a source thread with malformed JSON metadata makes\nthe SQL channel filter raise before the JS fallback can run, so that\nfallback is unreachable; I did not change it.\n- The 16 gateway and 1 cli failures in the full run also occur on main\nand are not from these files.\n- CLAUDE.md, GEMINI.md, roadmap, architecture, docs/README and\ncli-reference need no change: tests only.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrGFPLqt8C3Ybzk2dHq\n\nCo-authored-by: Claude Sonnet 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-23T16:15:38Z",
+          "tree_id": "b7c331647f06981fb23d2fcdd6fd7b1b605b4df2",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/c0248d591c56423c5defe1b8f015b32c5d1d4a7b"
+        },
+        "date": 1795451185434,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 179.31054444999808,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 178.87582179999626,
             "unit": "ms"
           }
         ]
