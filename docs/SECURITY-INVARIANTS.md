@@ -2328,11 +2328,11 @@ Reverse-lookup table for inline comments migrated from source files during the 2
 | `@nimbus-dev/sdk/crypto/canonical-json.ts:4` (external repo) | I16 | Canonical JSON strips signature field before serialization for Ed25519 signing |
 | `@nimbus-dev/sdk/crypto/canonical-json.ts:56` (external repo) | I16 | Field order is deterministic (sorted by key); encoding is UTF-8 without BOM |
 | `@nimbus-dev/sdk/crypto/verify-signature.ts:4` (external repo) | I16 | SDK primitive for verifyManifestSignature; MIT-licensed for connector author use |
-| `scripts/structure-audit/check-nimbus-invariants.ts:6` | I1/I14/I15 | Static audit entry point: D1 (I1 spawn rule), D10 (I15 wrapServerSpec rule), D12 (I14 dbRun rule) |
-| `scripts/structure-audit/check-nimbus-invariants.ts:66` | I14 | D12 rule: direct db.run/db.exec outside DB_RUN_EXEC_ALLOW_LIST causes exit 1 |
-| `scripts/structure-audit/check-nimbus-invariants.ts:72` | I1 | D1 rule: spawn under connectors/ without extensionProcessEnv causes exit 1 |
-| `scripts/structure-audit/check-nimbus-invariants.ts:73` | I15 | D10 rule: ServerSpec under connectors/lazy-mesh/ without wrapServerSpec causes exit 1 |
-| `scripts/structure-audit/check-nimbus-invariants.ts:274` | I22 | D16 rule: `parsePolicyToml` imported outside `packages/gateway/src/policy/` causes exit 1 (enforcement must read EnforcedPolicy via policy-gate.ts) |
+| `scripts/structure-audit/check-nimbus-invariants.ts:166` | I1/I14/I15 | Static audit entry point (the rules live in `scripts/structure-audit/invariants/`): D1 (I1 spawn rule), D10 (I15 wrapServerSpec rule), D12 (I14 dbRun rule) |
+| `scripts/structure-audit/invariants/spawn-vault-db-identity.ts:231` | I14 | D12 rule: direct db.run/db.exec outside DB_RUN_EXEC_ALLOW_LIST causes exit 1 |
+| `scripts/structure-audit/invariants/spawn-vault-db-identity.ts:68` | I1 | D1 rule: spawn under connectors/ without extensionProcessEnv causes exit 1 |
+| `scripts/structure-audit/invariants/spawn-vault-db-identity.ts:153` | I15 | D10 rule: ServerSpec under connectors/lazy-mesh/ without wrapServerSpec causes exit 1 |
+| `scripts/structure-audit/invariants/policy-chatops-writes.ts:16` | I22 | D16 rule: `parsePolicyToml` imported outside `packages/gateway/src/policy/` causes exit 1 (enforcement must read EnforcedPolicy via policy-gate.ts) |
 | `packages/gateway/src/agents/impact.test.ts:71` | I10 | impact.test.ts verifies no timing-sensitive comparison uses === |
 | `packages/gateway/src/automation/graph-predicate.ts:149` | I2 | countItemsMatchingGraphPredicate does not leak item content or secrets; returns count only |
 | `packages/gateway/src/extensions/auto-update-apply.ts:4` | I10 | Explicit carve-out: hexEqualIgnoreCase uses === because hashes are public bytes (not secret) |

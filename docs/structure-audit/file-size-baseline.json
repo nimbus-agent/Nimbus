@@ -543,7 +543,6 @@
     "scripts/structure-audit/check-connector-hosts.ts": 822,
     "scripts/structure-audit/check-index-lane-coverage.ts": 684,
     "scripts/structure-audit/check-nimbus-invariants.test.ts": 8389,
-    "scripts/structure-audit/check-nimbus-invariants.ts": 7336,
     "scripts/structure-audit/check-release-staleness.ts": 624,
     "scripts/structure-audit/check-status-drift.ts": 589,
     "scripts/structure-audit/lane-census/read-sites.ts": 790,
