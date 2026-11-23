@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { countLines, isCounted, judge, LIMIT, lowered, measure } from "./check-file-size.ts";
 import { auditOutputPath } from "./lib.ts";
 
@@ -92,5 +93,18 @@ describe("the committed baseline", () => {
       files: Record<string, number>;
     };
     expect(judge(measure(), files)).toEqual({ tooLarge: [], grew: [], stale: [] });
+  });
+});
+
+describe("--init", () => {
+  test("refuses to replace an existing baseline (it would accept growth)", () => {
+    const before = readFileSync(auditOutputPath("file-size-baseline.json"), "utf8");
+    const run = Bun.spawnSync(["bun", join(import.meta.dir, "check-file-size.ts"), "--init"], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(run.exitCode).toBe(2);
+    expect(run.stderr.toString()).toContain("refuses to replace");
+    expect(readFileSync(auditOutputPath("file-size-baseline.json"), "utf8")).toBe(before);
   });
 });
