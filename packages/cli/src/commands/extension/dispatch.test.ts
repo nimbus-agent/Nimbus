@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { clearFixture, setFixture } from "../../../test/helpers/cli-mocks.ts";
 import { createStreamCapture } from "../../../test/helpers/stream-capture.ts";
+import { encodeBase64, generateEd25519Keypair, signManifest } from "../../lib/extension-signing.ts";
 import { runExtension } from "./dispatch.ts";
 
 /**
@@ -99,5 +103,57 @@ describe("runExtension routing: subcommands answered through the gateway", () =>
     gatewayWithReplies(() => ({ ok: true }));
     await runExtension([sub, "acme.notes"]);
     expect(methods).toContain(method);
+  });
+});
+
+describe("runExtension routing: the rest of the gateway-backed groups", () => {
+  test.each([
+    ["rehash", ["rehash", "acme.notes", "--yes"], "extension.rehash"],
+    ["credential", ["credential", "status", "acme.notes"], "extension.credential"],
+  ])("%s reaches its own module", async (_name, args, prefix) => {
+    gatewayWithReplies(() => ({ ok: true, credentials: [] }));
+    try {
+      await runExtension(args);
+    } catch {
+      // a reply shape the command does not accept still shows which RPC it asked for
+    }
+    expect(methods.some((m) => m.startsWith(prefix))).toBe(true);
+  });
+
+  test("approve is routed to its own module, which refuses a non-terminal; --network is not refused first", async () => {
+    gatewayWithReplies(() => ({ ok: true }));
+    for (const args of [
+      ["approve", "acme.notes"],
+      ["approve", "acme.notes", "--network", "none"],
+    ]) {
+      await expect(runExtension(args)).rejects.toThrow(/non-TTY mode/);
+    }
+  });
+});
+
+describe("runExtension routing: pack and publish exit codes", () => {
+  test("pack of a real extension directory writes the package and returns", async () => {
+    setFixture({});
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-dispatch-pack-"));
+    try {
+      mkdirSync(join(dir, "ext", "dist"), { recursive: true });
+      writeFileSync(join(dir, "ext", "dist", "index.js"), "export default 1;\n");
+      const { privkey, pubkey } = generateEd25519Keypair();
+      const manifest: Record<string, unknown> = {
+        id: "com.example.tool",
+        name: "Example Tool",
+        version: "1.0.0",
+        entry: "dist/index.js",
+        permissions: {},
+        publisher: { id: "example", key: encodeBase64(pubkey) },
+      };
+      manifest["signature"] = await signManifest(manifest, privkey);
+      writeFileSync(join(dir, "ext", "nimbus.extension.json"), JSON.stringify(manifest));
+      const out = join(dir, "package.tgz");
+      await runExtension(["pack", join(dir, "ext"), "--out", out]);
+      expect(existsSync(out)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
   });
 });
