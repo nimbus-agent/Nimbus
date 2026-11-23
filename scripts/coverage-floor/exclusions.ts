@@ -71,27 +71,6 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   // and `ipc/server/options.ts`. The new federation glue block is inert by default
   // (federation.enabled = false); testing it requires a full subprocess boot.
   { kind: "exact", path: "packages/gateway/src/platform/assemble.ts" },
-  // Each entry below is code moved out of `assemble.ts` (2026-11 split, no behaviour change), so
-  // the existing exemption moves with it; it is not a new one. New files added to
-  // `platform/assemble/` are NOT exempt and are held to the floor.
-  { kind: "exact", path: "packages/gateway/src/platform/assemble/boot-misc.ts" },
-  { kind: "exact", path: "packages/gateway/src/platform/assemble/chatops-boot.ts" },
-  { kind: "exact", path: "packages/gateway/src/platform/assemble/extension-observation.ts" },
-  { kind: "exact", path: "packages/gateway/src/platform/assemble/federation-boot.ts" },
-  { kind: "exact", path: "packages/gateway/src/platform/assemble/fleet-boot.ts" },
-  { kind: "exact", path: "packages/gateway/src/platform/assemble/http-sidecar-boot.ts" },
-  { kind: "exact", path: "packages/gateway/src/platform/assemble/http-sidecar.ts" },
-  { kind: "exact", path: "packages/gateway/src/platform/assemble/index-boot.ts" },
-  { kind: "exact", path: "packages/gateway/src/platform/assemble/llm-registry.ts" },
-  { kind: "exact", path: "packages/gateway/src/platform/assemble/llm-vendors.ts" },
-  { kind: "exact", path: "packages/gateway/src/platform/assemble/policy-identity-boot.ts" },
-  { kind: "exact", path: "packages/gateway/src/platform/assemble/scheduler-mesh-opts.ts" },
-  { kind: "exact", path: "packages/gateway/src/platform/assemble/scheduler-mesh.ts" },
-  { kind: "exact", path: "packages/gateway/src/platform/assemble/status-readers.ts" },
-  { kind: "exact", path: "packages/gateway/src/platform/assemble/stubs.ts" },
-  { kind: "exact", path: "packages/gateway/src/platform/assemble/team-credentials.ts" },
-  { kind: "exact", path: "packages/gateway/src/platform/assemble/tribal-boot.ts" },
-  { kind: "exact", path: "packages/gateway/src/platform/assemble/updater-boot.ts" },
   // `assemble-sync-registrations.ts` is boot glue: ~89 hardcoded `syncScheduler.register(...)`
   // calls whose line coverage depends on which connectors the integration/boot tests happen to
   // spawn — it flakes ±0.6% between identical runs, which a one-directional ratchet can't absorb.
@@ -323,6 +302,8 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   { kind: "exact", path: "packages/gateway/src/ipc/http-server/options.ts" },
   // `lazy-mesh/mesh/ctor-args.ts`: the mesh options and constructor-argument types, split out of `mesh.ts`.
   { kind: "exact", path: "packages/gateway/src/connectors/lazy-mesh/mesh/ctor-args.ts" },
+  // `platform/assemble/scheduler-mesh-opts.ts`: the scheduler-and-mesh option types, split out of `assemble.ts`.
+  { kind: "exact", path: "packages/gateway/src/platform/assemble/scheduler-mesh-opts.ts" },
   // `ipc/server/server.ts`: the JSON-RPC server's socket-listener / connection-lifecycle / error
   // shell (its 645-line `server.test.ts` already drives the dispatch + handler logic to ~83% line;
   // the residual uncovered lines are unix-socket `listen`/`close` callbacks and connection-error
