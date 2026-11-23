@@ -469,6 +469,7 @@ describe("scoped reads — the surface gate", () => {
       clipsVault: seededVault(),
       briefRuns: new BriefRunController({ nowMs: () => Date.now() }),
       agentRuns: new AgentRunController({ nowMs: () => Date.now() }),
+      agentInvoke: async () => ({ ok: true, runId: "x" }),
     });
     for (const route of SCOPED_ROUTES) {
       for (const token of [undefined, BOGUS_TOKEN]) {
@@ -494,6 +495,7 @@ describe("scoped reads — the surface gate", () => {
       clipsVault: seededVault(),
       briefRuns: new BriefRunController({ nowMs: () => Date.now() }),
       agentRuns: new AgentRunController({ nowMs: () => Date.now() }),
+      agentInvoke: async () => ({ ok: true, runId: "x" }),
     });
     for (const route of SCOPED_ROUTES) {
       const res = await call(base, route, FULL_TOKEN);
@@ -522,7 +524,12 @@ describe("run polls", () => {
       genId: () => briefIds.shift() ?? "run_extra",
     });
     const agentRuns = new AgentRunController({ nowMs, ttlMs: 1_000 });
-    const base = serve({ clipsVault: seededVault(), briefRuns, agentRuns });
+    const base = serve({
+      clipsVault: seededVault(),
+      briefRuns,
+      agentRuns,
+      agentInvoke: async () => ({ ok: true, runId: "x" }),
+    });
     const sources = [{ url: "https://example.com/a", title: "A" }];
     briefRuns.create({ brief: "live", sources, useIndex: false });
     const failed = briefRuns.create({ brief: "failed", sources, useIndex: false });

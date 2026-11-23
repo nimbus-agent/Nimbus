@@ -84,7 +84,9 @@ export async function handleAgentsList(
   req: Request,
   opts: ReadOnlyHttpServerOptions,
 ): Promise<Response> {
-  if (opts.agentRuns === undefined) return agentsDisabled();
+  // Both halves, like the write seam (`buildAgentsSeam`): with runs but no invoker the surface is
+  // not mounted, and answering here would leak the agent names and the gateway version.
+  if (opts.agentRuns === undefined || opts.agentInvoke === undefined) return agentsDisabled();
   const gate = await requireScopedSurface(req, opts, ROUTE_KEY_AGENTS_LIST, agentsDisabled);
   if (!gate.ok) return gate.response;
   // Derived from AGENTS_RPC_HANDLERS, so it cannot advertise a name that POST would then 404.
@@ -108,7 +110,7 @@ export async function handleAgentRunGet(
   opts: ReadOnlyHttpServerOptions,
 ): Promise<Response> {
   const runs = opts.agentRuns;
-  if (runs === undefined) return agentsDisabled();
+  if (runs === undefined || opts.agentInvoke === undefined) return agentsDisabled();
   const gate = await requireScopedSurface(req, opts, ROUTE_KEY_AGENT_RUN_GET, agentsDisabled);
   if (!gate.ok) return gate.response;
   // `failureReason`, NOT `error`: on every other route here `error` means an HTTP-level failure, so

@@ -138,12 +138,9 @@ export function bootTribalKnowledge(deps: {
       } | null;
       let channelId = "";
       if (row?.metadata != null) {
-        try {
-          const m = JSON.parse(row.metadata) as { channel?: unknown };
-          if (typeof m.channel === "string") channelId = m.channel;
-        } catch {
-          // non-JSON metadata → leave channelId empty (filtered out by the watch-set check)
-        }
+        // Valid JSON by construction: the SQL channel filter only admits `json_valid` metadata.
+        const m = JSON.parse(row.metadata) as { channel?: unknown };
+        if (typeof m.channel === "string") channelId = m.channel;
       }
       out.push({ itemId: h.itemId, channelId, url: row?.url ?? null, text: h.chunkText });
     }

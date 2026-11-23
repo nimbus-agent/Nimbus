@@ -1341,6 +1341,30 @@ test("POST /v1/briefs/{id}/sources feeds a declared source (200 accepted)", asyn
   expect(body.expected).toBe(1);
 });
 
+test("POST /v1/briefs/{id}/sources: a run started in the gap after the state check is 409 and gets no source", async () => {
+  // `get` returns the run still `collecting`, then flips it to `running` on a microtask that is
+  // queued BEFORE the async return of `requireBriefRunInState` resumes the route: exactly a
+  // concurrent `startRun` landing between the state check and the mutation.
+  class RacingController extends BriefRunController {
+    override get(id: string) {
+      const run = super.get(id);
+      if (run !== null) queueMicrotask(() => (run.status = "running"));
+      return run;
+    }
+  }
+  const controller = new RacingController({ nowMs: () => 1000 });
+  const run = seedRun(controller);
+  const ctx = briefCtx({ briefs: briefsSurface({ controller }) });
+  const res = await dispatchWriteRoute(
+    briefReq(`/v1/briefs/${run.id}/sources`, validSourceBody()),
+    ctx,
+  );
+  expect(res.status).toBe(409);
+  expect(await res.json()).toEqual({ error: "invalid_state" });
+  expect(run.sources.size).toBe(0);
+  expect(auditCount(ctx.writeDb, "brief.source_rejected")).toBe(1);
+});
+
 test("POST /v1/briefs/{id}/sources with an undeclared URL -> 400 field url", async () => {
   const controller = new BriefRunController({ nowMs: () => 1000 });
   const run = seedRun(controller);

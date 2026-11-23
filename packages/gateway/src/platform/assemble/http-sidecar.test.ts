@@ -132,12 +132,13 @@ describe("collectSidecarsFromEnv", () => {
     expect((await fetch(`http://127.0.0.1:${http}/v1/agents`)).status).toBe(404);
   });
 
-  test("the caller's seams reach the server: a wired agent run store mounts the agents surface", async () => {
+  test("the caller's seams reach the server: a wired agent run store and invoker mount the agents surface", async () => {
     const port = freePort();
     process.env["NIMBUS_HTTP_PORT"] = String(port);
     const vault = createMemoryVault();
     collectSidecarsFromEnv(db, paths, stops, {
       agentRuns: new AgentRunController({ nowMs: () => Date.now() }),
+      agentInvoke: async () => ({ ok: true, runId: "x" }),
       clipsVault: vault,
     });
     const res = await fetch(`http://127.0.0.1:${port}/v1/agents`);
