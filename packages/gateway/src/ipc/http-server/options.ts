@@ -1,3 +1,11 @@
+/**
+ * DECLARATION-ONLY. Do not add runtime logic to this file.
+ *
+ * It is coverage-exempt by exact path (`scripts/coverage-floor/exclusions.ts`) because a file with
+ * no executable statement emits no lcov record, reads as 0%, and can never rejoin the floor. The
+ * moment a function or constant lands here that exemption becomes a hole rather than an accounting
+ * fact: put such code in `_shared.ts` or `../http-server.ts`, which are gated normally.
+ */
 import type { AgentHttpInvoker } from "../../agent-runs/agent-http-invoke.ts";
 import type { AgentRunController } from "../../agent-runs/agent-run-store.ts";
 import type { BriefRunController } from "../../briefs/brief-run-store.ts";
