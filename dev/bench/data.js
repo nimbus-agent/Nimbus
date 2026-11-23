@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795465208597,
+  "lastUpdate": 1795465868543,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "5ddf170438287d082f3afcc55d5603ea4cd9b575",
-          "message": "chore: release main (#1492)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.19.0</summary>\n\n##\n[7.19.0](https://github.com/nimbus-agent/Nimbus/compare/v7.18.0...v7.19.0)\n(2026-09-11)\n\n\n### Features\n\n* **http:** GET /v1/metrics/stats — the bucketed DORA series, plus the\nchange-failure-rate attribution fix\n([#1493](https://github.com/nimbus-agent/Nimbus/issues/1493))\n([f6e852a](https://github.com/nimbus-agent/Nimbus/commit/f6e852a13fb81450a6952ce4817acffb1b3dcfbf))\n* **http:** GET /v1/services/resolve — repo-URN-to-service resolution\n([#1491](https://github.com/nimbus-agent/Nimbus/issues/1491))\n([7da3b84](https://github.com/nimbus-agent/Nimbus/commit/7da3b84dda806f712d1ca7753dc28da580a5eb67))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-09-11T10:25:53Z",
-          "tree_id": "1efe1ef4937593bb1e38d70f07032bf2aae6564c",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/5ddf170438287d082f3afcc55d5603ea4cd9b575"
-        },
-        "date": 1789123166882,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 329.1091442500052,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 332.2651244999943,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 180.8503778000013,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2d33891f9fade112808ecaaadc1b43261adaa94e",
+          "message": "feat(gateway): a Monte Carlo or Bigeye incident record is stored and shown as a separate Data Incident Brief (incident_data) (#2124)\n\nIncident engine, Phase 10 \"Automatic incident assembly\", data-platform\nalerts. Stream C2 of 3. Independent of #2122 (no shared files; based on\n`main`).\n\n## What\n- **A separate Data Incident Brief kind, `incident_data` (the 21st).** A\nrecord with a data lane (a Monte Carlo or Bigeye trigger) is assembled\nand stored as the Data Incident Brief instead of the general incident\nbrief. `incident/assemble.ts` picks the kind from `record.data`;\n`agents/_lib/incident-data-render.ts` renders the SAME stored record\ndata-first: Summary, Monitored models, Built from (one hop of lineage),\nJobs by name, Merged before the alert, then Service, Change, Concurrent,\nHistory, and the reserved `## Gaps` and `## Data freshness`. It is\ndeterministic, zone-free (UTC), and byte-identical across machines.\n- Jobs and merged changes are NAME matches (a model's last name segment\nas a whole word), and the brief says so. What the index does not hold\n(DAG-run logs, dbt test results, warehouse schema changes) stays a named\ngap and is never invented.\n- No record, hash, version or schema change: the factual core is\nuntouched, so an unchanged core still makes no new version. Only the\nstored Markdown of a data record differs.\n- `TOOL_NAME_BY_KIND` moved to `agents/_lib/brief-tool-names.ts` so\n`synthesize.ts` (a file-size baseline file) shrinks 555 to 527 instead\nof growing.\n\n## Stopped on an owner question: \"a PagerDuty event tagged `data`\nbecomes a data trigger\"\nThe roadmap row asks for this, but it is not settled by the row and I\ndid not invent it. **PagerDuty incidents carry no tag the index keeps**:\n`pagerduty-sync.ts` records status, severity, urgency, assignees and the\nPagerDuty service id, and the connector's list reply has no tags field.\nSo \"tagged `data`\" has no data to read today. Options:\n1. **Owner-declared binding (recommended).** A PagerDuty incident whose\nbound `[ci.service.<id>]` declares `data_models` (an existing key) is a\ndata trigger, and its data lane is built from those globs. No new\nconnector data, no new config key, deterministic, and the owner's own\nconfiguration is the tag. Small: the record gets a data lane and so\nbecomes the Data Incident Brief with no further change here.\n2. A new key, for example `[incident] data_services = [\"<pagerduty\nservice id>\", ...]`. More explicit, one more thing to configure.\n3. Index PagerDuty `teams` or the service name and match `data` in it.\nNeeds a connector change (other repo) and guesses at naming.\nThe brief kind in this PR is ready for whichever is chosen: it keys off\nthe data lane, not the trigger source.\n\n## Invariants\n- I57 (a): the assembler still calls no model (`synthesize(brief)` with\none argument), no network, no egress. The new renderer imports nothing\nfrom connectors, ChatOps, egress or federation.\n- I31: `RESERVED_HEADINGS_BY_KIND` and the all-kinds `omitReserved`\ncoverage table are total over the new kind (compile-time), `## Gaps` and\n`## Data freshness` are rebuilt from the brief by `reservedBlocksFor`,\nand the I31 dispatch scraper sees the new `brief.kind ===\n\"incident_data\"` arm.\n- No migration (schema stays V105 here), no new invariant, static rule,\nHITL type, egress class, IPC method or allowlist entry.\n\n## Stated bounds\n- Only Monte Carlo and Bigeye triggers get the data brief until the\nquestion above is settled.\n- A data record stored before this change keeps its stored general-brief\nMarkdown until its record next changes (a new version re-renders it).\nNothing re-renders history.\n- Name matching can miss a job named differently from its model and can\nmatch an unrelated one; it is labelled as a name match.\n- Reply shapes of the Monte Carlo and Bigeye connectors are as\ndocumented earlier (IC3), not checked against a live account.\n\n## Tests\n- `incident-data-render.test.ts`: section order, every fact, empty and\ncut lanes, a null data lane, hostile titles (no added heading or link),\n`omitReserved`, the I31 reserved blocks, `synthesize` with no runner.\n- `incident/assemble-data-brief.test.ts`: from the REAL Monte Carlo,\nBigeye, PagerDuty and JSM writers: data triggers store the data brief,\nthe others keep the general one.\n- The all-kinds coverage table and the registry-total pin now include\nthe kind.\n\n## For the batch-docs PR\n- **roadmap.md**, row \"Automatic incident assembly\", *Still open*\nsentence: replace \"a PagerDuty event tagged `data` is not treated as a\ndata trigger, and there is no separate Data Incident Brief\" with \"a\nPagerDuty event tagged `data` is not treated as a data trigger\n(PagerDuty incidents carry no tag the index keeps; an owner decision,\nsee the PR), and DAG-run logs, dbt test results and warehouse schema\ndeltas are not indexed. *(2026-11-23)* A separate Data Incident Brief\n(`incident_data`, the 21st kind) now renders a Monte Carlo or Bigeye\nrecord data-first.\"\n- **CHANGELOG draft:** `feat(gateway): a Monte Carlo or Bigeye incident\nrecord is stored and shown as a separate Data Incident Brief\n(incident_data, the 21st brief kind)`.\n- **CLAUDE.md / GEMINI.md sentence:** \"Phase 10 Data Incident Brief ✅\n2026-11-23 (no migration, invariant, HITL type or IPC method; I31 and\nI57 (a) unchanged): a Monte Carlo or Bigeye incident record is assembled\nas the 21st brief kind, `incident_data`, a deterministic data-first\nrender of the same stored record (monitored models, one hop of lineage,\njobs and merged changes by name match, the reserved gaps and freshness\nblocks); a PagerDuty incident tagged `data` is NOT yet a data trigger\n(no tag is indexed; owner decision).\"\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrGFPLqt8C3Ybzk2dHq\n\nCo-authored-by: Claude Sonnet 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-23T20:15:16Z",
+          "tree_id": "becbff8764edfa5e67ba7b246c79ecbc28e2bd80",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/2d33891f9fade112808ecaaadc1b43261adaa94e"
+        },
+        "date": 1795465864638,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 175.4953167999989,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 176.06136855000113,
             "unit": "ms"
           }
         ]
