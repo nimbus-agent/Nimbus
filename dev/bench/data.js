@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795451841873,
+  "lastUpdate": 1795452471555,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "52644cef588e44f3d82621a4589ca682787bafba",
-          "message": "feat(toolgen): runtime tool generation PR 3 of 3 — persistence + signing (#1487)\n\nCloses S2's runtime-tool-generation row. `nimbus tool save` promotes a\nlive generated tool to a durable one, bound by an Ed25519 signature to\nthe exact bytes the owner approved.\n\nDesign:\n`docs/superpowers/specs/2026-09-10-s2-toolgen-persistence-design.md` ·\nPlan: `docs/superpowers/plans/2026-09-10-s2-toolgen-persistence.md`\n\n## Two defects already shipped in `main`, fixed here\n\n**An ephemeral tool's credential was durable.** `toolgen.revoke` dropped\nthe live child and the on-disk script but never the Vault binding, and\nshutdown swept no key at all. A revoked tool left\n`toolgen.<toolId>.<hostSlug>` in the keychain indefinitely, keyed to a\ntool id nothing would ever call again. The capability was ephemeral by\nconstruction; the secret it was handed was not.\n\n**The broker sent unauthenticated requests.** `handleFetch` ended its\ncredential step with `if (binding !== null) applyCredential(...)`, so a\nnull binding fell through to an outbound request — to a host the owner\nhad been told would carry a credential. The file's own comment three\nlines above already argued this must not happen; the reasoning had been\napplied to the throw case and not the null case. Rare before this\nbranch, routine after, because credentials are now swept on every\nrestart. The two fixes ship together or the pair is worse than neither.\n\n## Why signing, stated narrowly\n\nThe parent spec justified signing by claiming that without it \"nothing\ndetects on-disk tampering between sessions.\" That is false —\n`runHashVerification` already re-hashes every enabled extension at\nstartup. The real argument is narrower:\n\n> Hash verification trusts the database. A signature trusts only the\nVault.\n\nThe expected hash lives in `nimbus.db`, so an attacker with filesystem\nwrite access rewrites artifact and hash together and the check reports\ngreen. Forging an Ed25519 signature needs the private seed in DPAPI /\nKeychain / libsecret.\n\n**Residual, stated in I40 rather than softened: this defends the\nfilesystem-write attacker, not the Vault-read attacker.** Anyone who can\nread the Vault can forge a signature, and I40 claims nothing against\nthem.\n\n## Design decisions worth knowing\n\n- **Machine-derived paths are not signed.** `requiredReadPaths()` is the\nBun binary's directory (plus its parent on macOS), so signing the\nconcrete sandbox manifest would make a Bun upgrade indistinguishable\nfrom tampering. The portable shape is signed; the concrete manifest is\nrebuilt at spawn and asserted against it. A regression test simulates\nthe upgrade.\n- **The row governs existence; disk-plus-signature governs content.** A\n`saved/<toolId>/` directory with no row is swept, never adopted — a\nvalid signature proves an artifact was approved *once*, not that it is\napproved *now*. Stated cost: losing the database sweeps every saved\ntool, which is correct, because what was lost is the record of approval.\n- **Persistence gets its own HITL approval.** At create the owner\napproved \"run this now\"; persistence is a new fact about the same bytes.\nReusing the create approval would be a privilege escalation requiring no\nprivilege.\n- **The approval persists; the secret does not.** A saved tool carries\nno credential across sessions and refuses credentialed hosts until the\nowner re-binds.\n- **`pubkey_rotated` is distinguished from `signature_mismatch`.**\nCryptography cannot tell them apart; only the boot pass holds the row's\nstored pubkey to compare. An owner told their tool was tampered with\nwhen their keychain was merely reset will not trust the next warning.\n\n## Disclosed, not fixed\n\n**A generated tool is never offered to the model.** `deps.toolgen` is\nnever wired into `createNimbusEngineAgent` — pre-existing on `main`\n(`gateway-main.ts` and main@`483071d9` both omit the key), so\n`buildGeneratedTools` never runs with real data. `nimbus tool\ncreate`/`save` work end to end and a saved tool is spawnable in-process,\nbut no CLI or IPC path invokes one.\n\nNot fixed here on purpose: wiring it activates a dormant capability —\nmodel-authored code becoming model-invocable — which deserves its own\nsecurity review, not a line in an unrelated branch. Disclosed in\n`docs/roadmap.md` and `docs/CHANGELOG.md` instead.\n\n`spawnSavedTool` is likewise implemented and tested but has no\nproduction caller, and I40 says so rather than inventing one to make the\nsentence true.\n\n## Verification\n\n- `bun test packages/gateway packages/cli scripts` — **22,535 pass / 70\nskip / 0 fail** across 1,511 files\n- `preflight:fast` — 34 gates, PASSED\n- `typecheck`, `typecheck:tests` (0 new), `lint`, `lint:markdown`,\n`audit:invariants`, `audit:status-drift`, `audit:doc-refs` — all exit 0\n- **Not verified locally: `audit:coverage-floor`.** `bunfig.toml`'s\n`[test] coverage = false` suppresses collection, so `test:coverage`\nexits 0 producing no lcov; the gate is CI-Linux-authoritative anyway.\nThe one in-scope file was fixed and confirmed via a scoped istanbul run.\nCI is the first end-to-end observation.\n\n## Process notes\n\nBuilt with subagent-driven development: 12 tasks, each with its own\nreview and fix loop, then a whole-branch review that found three\nCriticals no task-scoped review could see — two of them requirements\ndropped between spec and plan.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_018rxsSAxvmoVXew4KoXfFmT\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **New Features**\n* Added durable saving, listing, credential binding, verification,\nspawning, and revocation for generated tools.\n* Added owner approval and support for bearer, header, and basic\ncredentials.\n* Added persistence across gateway restarts with integrity checks,\norphan cleanup, and credential cleanup.\n  * Added schema support for persisted generated tools.\n\n* **Security**\n* Added fail-closed capability enforcement, signed artifact validation,\nand signing-key protection.\n\n* **Documentation**\n* Updated CLI, architecture, roadmap, changelog, and security\ndocumentation.\n\n* **Tests**\n* Expanded coverage for persistence, approval, verification, cleanup,\nrevocation, and restart workflows.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-11T04:37:41Z",
-          "tree_id": "de0d42fa70cf8c7faaabacd70d74b36e45682557",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/52644cef588e44f3d82621a4589ca682787bafba"
-        },
-        "date": 1789102153744,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 310.2054195000022,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 309.9598029499968,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 256.17451210000036,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f8cd5e333f63019353e5f1afe960713f3b722a2c",
+          "message": "refactor(gateway): split computer-use/cu-gate.ts around the two ordered gates (no behaviour change) (#2111)\n\n## Why\nOwner's 500-line ruling (2026-11-23): files stay under 500 lines and a\nfile over 500 never grows. `computer-use/cu-gate.ts` implements\ninvariant I35 and was 1,857 lines. This is a pure move: zero behaviour\nchange.\n\n## Layout\n| file | lines | holds |\n| --- | --- | --- |\n| `cu-gate.ts` | 939 | `openSession` and its pre-consent phases,\n`closeSession`, `runAction` and `runActionExclusive`,\n`approveThisAction`, both lane arms (so BOTH `performActuation` calls),\n`liveSessionLane`; re-exports the old public names |\n| `cu-gate/types.ts` | 173 | `CuGateError`, request and result types,\n`CuRunDeps`, the seam groups, `CuGateDeps` |\n| `cu-gate/kinds.ts` | 57 | action kinds, the per-lane kind table,\n`isCuActionKind` |\n| `cu-gate/live-sessions.ts` | 246 | the live-session map,\n`finalizeSession`, session audit and row sync, eviction |\n| `cu-gate/prepare-lane.ts` | 195 | per-lane launch-policy build and\nassertion, run before consent |\n| `cu-gate/action-audit.ts` | 252 | action audit row, outcome to\nHITL-status mapping, the single-`finally` audit record |\n| `cu-gate/browser-input.ts` | 78 | browser action input and target\ndescription |\n| `cu-gate/gate-helpers.test.ts` | 78 | tests for the gaps the split\nexposed |\n\n## What stayed whole, and why\n`openSession` and `runAction` are I35's ordered sequences, so they stay\nin `cu-gate.ts` with their named phases and both lane arms beside them\n(CLAUDE.md, \"A branch-count metric over a GATE\"). The single `finally`\nrecord (`ActionAuditState`) and `approveThisAction` (the one \"approve,\nthen re-check liveness\" function) were not separated or duplicated.\n`cu-gate.ts` is 939 lines: the allowed exception, baseline set to the\nexact count. `performActuation` is still called only from `cu-gate.ts`\n(2 call sites).\n\n## Pins and rules\n- Static D26(a) and D26(d)(c) name `cu-gate.ts` and are unchanged: it\nstill holds every `performActuation` call and the `liveSessionLane`\ndefinition. Red-proved: a `performActuation` call planted in\n`cu-gate/browser-input.ts` fails D26(a) and the I35 count test;\n`liveSessionLane` planted in `cu-gate/live-sessions.ts` fails D26(d).\n- `i35-computer-use-envelope.test.ts` (kept at 530 lines): the\n`CuRunDeps` slice now reads `cu-gate/types.ts`; the `buildLaunchPolicy`\nand `assertLaunchable` pins read `cu-gate/prepare-lane.ts`; the\n`browserLanePolicy` and `canConfine` negatives now cover the gate AND\nevery `cu-gate/` module. Red-proofs, each reverted: `openLane` added to\n`CuRunDeps` fails; `assertLaunchable` pair changed in `prepare-lane.ts`\nfails; `buildLaunchPolicy` call changed there fails; `canConfine` added\nto `live-sessions.ts` fails; `const line = appended.line` renamed in\n`cu-gate.ts` fails; `ctx.openDeps.requestApproval` swapped for\n`ctx.deps` fails; a `launch: prepared.launch` hand-off changed fails.\n- Docs: `docs/SECURITY-INVARIANTS.md` (I35 wiring site and\nenforcement-test text) and the `nimbus-file-map` skill now name the\n`cu-gate/` modules. CLAUDE.md and GEMINI.md still state a true claim and\nare unchanged.\n\n## Proof\n1. `bun run typecheck` and `bun run typecheck:tests` pass.\n2. Public surface: `Object.keys` of old and new `cu-gate.ts` identical\n(CuGateError, closeSession, isCuActionKind, liveSessionLane,\nopenSession, runAction); all type exports kept, importers typecheck.\n3. 613 tests across 27 files before and after: JUnit (name, status)\nlists identical (only line numbers in the I35 file moved); I35 plus\nstructure-audit plus security-invariants: 2,484 pass, 0 fail;\ncheck-nimbus-invariants exit 0.\n4. `audit:doc-refs`, `audit:status-drift`, `audit:file-size`,\n`preflight:fast` pass.\n5. Coverage (Istanbul preloads): cu-gate.ts 203/204 lines, 114/114\nbranches; action-audit 23/23, 39/39; browser-input 17/17, 28/30; kinds\n6/6; live-sessions 23/23; prepare-lane 43/43; types 2/2. Before the new\ntest file action-audit was 18/23 and browser-input 14/17 lines, so\n`gate-helpers.test.ts` was added.\n\nInternal refactor: no release note, roadmap row or CHANGELOG entry.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrGFPLqt8C3Ybzk2dHq\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Refactor**\n* Reorganized computer-use session and action handling while preserving\nthe existing workflow.\n* **Tests**\n* Expanded checks for action outcomes, browser inputs, session\ndecisions, and launch-policy handling.\n* **Documentation**\n* Updated computer-use security and architecture documentation to\nreflect the current workflow and checks.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Sonnet 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-23T16:38:21Z",
+          "tree_id": "2a77cd27f92487b136095bdf8ad98215d7f68dfb",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/f8cd5e333f63019353e5f1afe960713f3b722a2c"
+        },
+        "date": 1795452467615,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 180.5160755499992,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 180.71212839999936,
             "unit": "ms"
           }
         ]
