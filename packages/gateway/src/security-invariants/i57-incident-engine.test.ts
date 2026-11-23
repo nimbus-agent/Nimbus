@@ -623,7 +623,7 @@ describe("I57 (b) - an engine-proposed action reaches dispatch only as the local
     expect(lan).toContain('"incident"');
     const rpc = await read("packages/gateway/src/ipc/incident-rpc.ts");
     for (const m of ["proposals", "remediate", "dryRun", "undo", "advisory", "advisorySet"]) {
-      const at = rpc.indexOf(`"incident.${m}": async (raw) => {`);
+      const at = rpc.search(new RegExp(String.raw`"incident\.${m}": (?:async )?\(raw\) => \{`));
       expect(at, m).toBeGreaterThan(-1);
       expect(rpc.slice(at, at + 120), m).toContain("requireOwnerKind(caller.kind);");
     }
@@ -866,7 +866,7 @@ describe("I57 (c) - a runbook parameter interpolates only typed record fields, a
     }
     const rpc = await read("packages/gateway/src/ipc/incident-rpc.ts");
     for (const m of ["runbooks", "runbookRun", "runbookDone"]) {
-      const at = rpc.indexOf(`"incident.${m}": async (raw) => {`);
+      const at = rpc.search(new RegExp(String.raw`"incident\.${m}": (?:async )?\(raw\) => \{`));
       expect(at, m).toBeGreaterThan(-1);
       expect(rpc.slice(at, at + 120), m).toContain("requireOwnerKind(caller.kind);");
     }
