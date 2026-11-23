@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795420948193,
+  "lastUpdate": 1795423096655,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "b519c713d49df680cca1fb479329e1549702dc63",
-          "message": "docs: record the PR 4 acceptance run and narrow the live-vendor claim wherever it is restated (#1457)\n\nRecords the PR 4 acceptance run, then narrows the claim it retires\neverywhere that claim was restated — and fixes the count-and-range drift\nthe sweep turned up on the way.\n\n## The run\n\nPR 4's three vendor request shapes were written from each vendor's own\ndocumented image API and tested only against fakes, so every claim about\nthem proved the shape this code **sends** and none proved that a vendor\n**accepts** it. One does now.\n\nOn merged `main` at `580e8930`, built from source, against a real Gemini\nkey held in the Vault and a real 390,842-byte Google Drive PNG, in the\n`LOCALAPPDATA`-override sandbox — real config, real Vault, real outbound\ntraffic, throwaway index:\n\n- Gemini returned a caption for the granted image\n- **exactly one** `model`-class ledger row: `destination: gemini`,\n`method: multimodal.vlm.image`, `payload_summary`\n`{\"model\":\"gemini-3.5-flash\",\"imageBytes\":390842}` — the model name and\nthe byte **count**, never the prompt and never the bytes\n- the derived row carries `model: \"gemini/gemini-3.5-flash\"` and\n`isLocal: false`\n- `expectedBytes` rode the cloud-fetch row, as intended\n- `verifyEgressChain` ok over 65 rows\n\nThe remote caption is visibly better, which is the feature's whole\npremise: the local `qwen2.5vl:7b` called the artifact \"a knife\", while\nGemini identified a long pole weapon with a curved blade and named the\nscarf joint, the owner's-mark band and the pledge tag — on a file called\n`cell_nine_glaive_rack_14.png`.\n\n## It narrows the gap rather than closing it\n\nStill fixture-only: the Anthropic and OpenAI request bodies, every\n**failure** mode on all three — a 400 on a bad `media_type`, a 429, an\nauth refusal — the Google Photos leg, OneDrive entirely, and the TTY\nconfirmation path. That last one because `nimbus media allow-remote`\n**correctly refused a piped `y`** in non-TTY mode, so the run's grant\nwas created through the LAN-forbidden `media.allowRemote` IPC method\nwith approval obtained out of band. A slice is not verified because one\nthird of it is.\n\nOne defect surfaced and is filed rather than fixed: the grant preview\nprints `(size unknown)` for an artifact whose size the index holds,\nbecause Google Drive serialises `size` as a **string** and the CLI\npreview does not parse that form. Small, but it lands on the consent\nsurface, which exists so an owner can see what they are approving.\n\n## The restatements\n\nThe record alone would have left six other places asserting that no\nvendor had ever answered. Each now says what is true:\n\n- `CLAUDE.md` / `GEMINI.md` status paragraph — still byte-identical\napart from lines 1 and 24\n- `docs/roadmap.md`'s own \"Bounds, stated rather than glossed\"\nparagraph, plus a new `Last updated` head entry and the PR 2/3/4 entries\nthat log never got\n- `docs/CHANGELOG.md` — the 2026-09-05 entry is marked **superseded**,\nnot rewritten; a new dated 2026-09-06 entry carries the run\n- `docs/architecture.md`'s egress paragraph, which still said the vision\nappender \"ships ahead of any remote VlmProvider in production\" and that\nthe grant \"does not land before PR 4\"\n- `.claude/commands/nimbus-egress.md`, in both places it made that claim\n\n## Drift found while sweeping\n\nEvery one of these is a count or a range that had gone stale across\nseveral landings, so each now carries a \"derive it from the source, not\nfrom this sentence\" note:\n\n| Where | Said | Actually |\n|---|---|---|\n| `docs/architecture.md` | `[multimodal]` has FOUR keys | **seven** — PR\n3 added two, PR 4 one |\n| `docs/README.md` | \"Multimodal I/O, slice 1 of 4\" | all four shipped;\nits `media understand` comment also still promised nothing from a file\ncould reach a remote model |\n| 2 skills + `.github/SECURITY.md` | `I1–I35` | `I1–I37` |\n| 2 skills | `D10–D23` | `D10–D27` |\n| `nimbus-db-migrations.md` | latest **V55** | **V59**, four behind |\n| `nimbus-security-invariants.md` | titled I30 \"latest\" | seven\ninvariants ago |\n\n`architecture.md`'s directory tree also named neither `vlm/remote/`,\n`cloud-bytes.ts` nor the grant store.\n\n## Two real gaps, not drift\n\n`nimbus-commands.md` had **no S2 CLI section at all** — `nimbus exec`,\n`nimbus computer`, `nimbus media` — and `nimbus-file-map.md` had no rows\nfor `exec/`, `computer-use/` or `multimodal/`. So the two skills whose\nwhole job is \"where does X live\" and \"how do I run X\" could not point at\nthe subsystems holding I33, I35 and I37. Both added, every path verified\nagainst the tree.\n\n## Verification\n\nDocs only. No behaviour changed, no invariant moved, no schema touched.\n`bun run preflight:fast` green across all 34 gates, `audit:doc-refs` and\n`audit:status-drift` among them.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_011Y892sZiZTXXX7UpPZm33e\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n- **Documentation**\n- Expanded multimodal guidance for local transcription, media\ncaptioning, cloud artifact retrieval, and consent-controlled remote\nimage analysis.\n- Updated security invariant and migration references, including newer\nchecks and schema guidance.\n- Documented vendor allowlisting, confirmation behavior, provenance\ntracking, and remote-vision restrictions.\n\n- **Validation**\n- Recorded successful live Gemini image-analysis validation with ledger\nand integrity verification.\n- Documented remaining unverified providers and scenarios, plus a known\nartifact-size display issue.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-06T15:04:30Z",
-          "tree_id": "d97ff42243ade2c767c12ef433b65f5fe2958d0d",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/b519c713d49df680cca1fb479329e1549702dc63"
-        },
-        "date": 1788707866430,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 327.8885919499997,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 332.13739884999234,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 181.6846170499979,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6728f87ed565d5cd9beb1fded250221204a2b7f5",
+          "message": "refactor(gateway): split remote-content.ts into one module per format (no behaviour change) (#2088)\n\n## Why\nOwner ruling (2026-11-23): files stay under 500 lines.\n`remote-content.ts` (the B3r/B3w remote-content refusal) was 2,035\nlines. It is now a 112-line facade over one module per format. No logic\nchanged.\n\n## Layout (`connectors/connector-writes/remote-content/`)\n| file | lines | holds |\n| --- | --- | --- |\n| `../remote-content.ts` (facade) | 112 | header rules,\n`RemoteContentFormat`, `remoteContentIn` (the per-format dispatch,\nfail-closed catch), re-exports |\n| `shared.ts` | 124 | R2 external-URL rule, name forms and their cache,\n`STYLE`, `localIn` |\n| `elements.ts` | 127 | refused elements, attributes,\ncomment/declaration/CDATA rules |\n| `css.ts` | 231 | CSS scanner, `cssLoadsRemote`,\n`refusesStyleAttribute` |\n| `raw-text.ts` | 200 | raw-text elements, `<style>` views, `refusesCss`\n|\n| `svg.ts` | 92 | SVG, presentation URLs, XML declarations |\n| `html.ts` | 215 | tripwire, nested views, `refusesTags`, Outlook and\nTeams HTML |\n| `confluence.ts` | 331 | Confluence storage (macros, parameters, CDATA)\n|\n| `notion.ts` | 92 | Notion blocks and properties |\n| `markdown.ts` | 387 | Obsidian Markdown, fences, diagram loaders |\n| `forge.ts` | 112 | GitHub/GitLab/Linear Markdown |\n| `drive.ts` | 136 | Drive MIME and extension rules, Drive markup |\n\nSplit by format only. Each format's ordered check list\n(`outlookHtmlRemote`, `driveMarkupRemote`, ...) is moved whole. The\nmodule graph is acyclic. Four small leaf helpers (`STYLE`, `localIn`,\n`isAsciiLetterCode` into `shared.ts`/`raw-text.ts`;\n`refusesStyleAttribute` into `css.ts`; the SVG helpers into `svg.ts`)\nsit apart from their old neighbours only to keep it acyclic.\n\n## Proof\n1. `bun run typecheck` and `bun run typecheck:tests` pass (0 new\nbaselined errors).\n2. Public surface: `Object.keys` of the facade is identical before and\nafter (`CONFLUENCE_INERT_MACROS, cssLoadsRemote, driveContentFormats,\ndriveMimeTypeScans, remoteContentIn, urlIsExternal`); the types\n`RemoteContentFormat` and `DriveContentFormat` are still exported. The 3\nimporters are unchanged and typecheck.\n3. Verbatim move: the sorted multiset of non-blank source lines of the\n12 files, minus `export ` prefixes, equals the original's, plus only\nimport lines, module header comments and biome re-wraps of signatures.\n4. Tests (remote-content*, markup-tokens, text-normalise,\nmodel-write-refusals, model-write-source, capture-rpc, the whole\n`security-invariants` folder): JUnit before vs after, on `origin/main`\nin a clean worktree and on this branch, 2,926 vs 2,937 cases, 0\nfailures; the only difference is 11 added cases, the source pin in\n`markup-tokens.test.ts`. That pin read `remote-content.ts` by path; it\nnow also reads every file in `remote-content/` (same assertions, one\ncase per file), so no-`.replace(`/`RegExp(`/`<`-regex still covers all\nthe code.\n5. `bun run audit:invariants`, `audit:doc-refs` and `bun run\npreflight:fast` pass. No script or doc read the file by path except\n`docs/architecture.md` (one phrase updated);\n`scripts/structure-audit/check-nimbus-invariants.ts` is untouched.\n\nNo file is left over 500 lines. `file-size-baseline.json` does not exist\non `main` yet (#2085 is open), so there is no baseline entry to update;\nafter #2085 lands, `audit:file-size --update` drops this file's entry.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrGFPLqt8C3Ybzk2dHq\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Expanded remote-content detection for Confluence, Google Drive, Forge,\nOutlook, Teams, Notion, and Obsidian, covering external URLs, embedded\ncontent, and risky markup or styles.\n* **Refactor**\n* Organized detection by content format while retaining the existing\nentry point.\n* **Documentation**\n* Clarified how remote-content detection is organized; existing\ndetection rules remain unchanged.\n* **Tests**\n* Added source checks for the detection modules and adjusted\nmarkup-token test coverage.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-23T08:30:45Z",
+          "tree_id": "d4d00fd9df4afa914adf17d104e974a66194b522",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/6728f87ed565d5cd9beb1fded250221204a2b7f5"
+        },
+        "date": 1795423092674,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 175.06582684999813,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 176.0644997999945,
             "unit": "ms"
           }
         ]
