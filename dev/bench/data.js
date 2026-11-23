@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795449046825,
+  "lastUpdate": 1795449566508,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "aa3bca8911bec017713cd420ae7ed8a99823b656",
-          "message": "chore: release main (#1482)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.15.1</summary>\n\n##\n[7.15.1](https://github.com/nimbus-agent/Nimbus/compare/v7.15.0...v7.15.1)\n(2026-09-10)\n\n\n### Bug Fixes\n\n* close three documented gaps in completed phases (I16 reasons,\nconnector.startAuth, redaction fixtures)\n([#1480](https://github.com/nimbus-agent/Nimbus/issues/1480))\n([da5d239](https://github.com/nimbus-agent/Nimbus/commit/da5d2399eae49412d82d4f2be94be1b2c50c7d25))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-09-10T07:13:13+03:00",
-          "tree_id": "3871dd21baa274a358b717528974a30f92827c08",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/aa3bca8911bec017713cd420ae7ed8a99823b656"
-        },
-        "date": 1789014326911,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 321.4748014000026,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 320.608145250009,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 184.1314634999995,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "479cfc0650b109f55d0cde832bf702d7abf61aa6",
+          "message": "refactor(gateway): split lazy-mesh/iac-runner.ts around the profile builders (no behaviour change) (#2108)\n\n## Why\nOwner's 500-line ruling (2026-11-23).\n`connectors/lazy-mesh/iac-runner.ts` was 1,747 lines. It is named by\ninvariant I15 and static rule D43: the five per-run sandbox profiles\n(`plan`, `show`, `apply`, `cfn`, `kube`), the `wrapIacServerSpec` call\nand the Linux `pidfd_send_signal` ENOSYS wiring are \"built only in\n`iac-runner.ts`\". That confinement is kept: nothing that builds a\nprofile or a `ServerSpec` moved.\n\n## Layout (no behaviour change)\n| file | lines | holds |\n|---|---|---|\n| `lazy-mesh/iac-runner.ts` | 1,110 (was 1,747) | routing tables\n(`IAC_TOOL_PROFILE`, `KUBE_TOOL_PROFILE`),\n`buildIacProfile`/`kindGrants`/`kubeGrants`, `iacProfileId`\n(`com.nimbus.iac-`), `spawnIacChild`, the `IacRunner` class (the one the\none `wrapIacServerSpec` spawn call with its `extensionProcessEnv` env\ncall), `routeIacTools`, and re-exports of every moved public name |\n| `iac-runner/iac-child.ts` | 212 | `IacChild`, `iacChildFromProcess`,\n`callChildTool` (per-call budget, SIGTERM-to-SIGKILL grace timers),\nstop-grace constants |\n| `iac-runner/iac-grant-ledger.ts` | 139 | Windows persisted-grants\nledger and the `IacWindowsGrants` chain (serialised DACL rewrites) |\n| `iac-runner/iac-live-children.ts` | 134 | live-children record, boot\nsweep, `liveRecordRefusal` (fail closed) |\n| `iac-runner/iac-install-reads.ts` | 101 | `installReads`,\n`isSystemOwnedDir`, vetted-install-root rules |\n| `iac-runner/iac-runner-types.ts` | 76 | `IacRunnerDeps`, `IacHost`\n(types only) |\n| `iac-runner/iac-cloud-env.ts` | 41 | granted clouds' credential\nenvironment (a function now, was a private method) |\n| `iac-runner/iac-refusals.ts`, `iac-tree.ts` | 24, 22 | fixed refusal\ntexts; tree removal |\n| `iac-runner/iac-live-children.test.ts` | 121 | new tests (module was\n79% branch) |\n\n## What stayed whole and why\n`iac-runner.ts` stays over 500 names, and the `IacRunner` class that\nholds the single spawn call and the run-lock / budget logic. This is the\nallowed gate exception; baseline entry hand-set to 1,110 (shrunk from\n1,747). I did not widen D43(d) to move any of it.\n\n## Pins and rules: none repointed\nEvery pin still reads `iac-runner.ts`, and every claim they make is\nstill true there. Red-proofs (change made, pin fails, change reverted):\n- D43(d) `iac-spawn-confined`, `wrapIacServerSpec` mention appended to\n`iac-runner/iac-child.ts`: `check-nimbus-invariants` exit 1.\n- Same rule, `KUBE_TOOL_PROFILE` appended to `iac-live-children.ts`:\nexit 1.\n- Same rule, `\"com.nimbus.iac-x\"` appended to `iac-tree.ts`: exit 1.\n- Same rule, `{ iacProfile: true }` appended to `iac-child.ts`: exit 1.\n- I1 (`i01-child-env-scoping.test.ts`, pins the one `wrapIacServerSpec`\nspawn call and its `extensionProcessEnv` env): replaced with a plain env\nobject in `iac-runner.ts`: test fails.\n- I15 (`i15-sandbox-runner.test.ts`, pins the exact `write =` list of\nevery profile): `write = [...wd]` widened to `[...wd, \"/x\"]`: test\nfails.\n- D10/policy rules and the D20 allowlist naming `iac-runner.ts` are\nunaffected (the file keeps its path and its names).\n\nTo keep two scanners green without widening them: `spawnIacChild` stays\nin `iac-runner.ts` (I1's per-file `env:` scan), and a parameter `env` of\n`installReads` was renamed `installEnv` (I1's `env:` regex).\n`IacLiveChildren` takes a `(p) => this.removeTree(p)` closure so a test\nthat replaces the runner's private `removeTree` still works.\n\n## Proof\n1. `bun run typecheck`, `typecheck:tests` (469 baselined, 0 new): pass.\n2. Public surface: every name exported from `iac-runner.ts` is still\nexported from it (re-exports from `./iac-runner/*`); `typecheck` covers\nall importers (`mesh.ts`, `registry.ts`, `user-mcp-write-deps.ts`, the\ntests).\n3. Tests (lazy-mesh, registry, `test/integration/iac`,\n`security-invariants`, `scripts/structure-audit`; 3,504 tests, 159\nfiles): JUnit before/after compared by (classname, name, status): 3,498\nvs 3,498 cases, identical, except one I1 test that failed in the\n\"before\" run only because my untracked new files were present while the\nold file was stashed (it passes after). After: 3,486 pass, 18 skip, 0\nfail.\n4. `check-nimbus-invariants.ts` exit 0; `audit:file-size` OK;\n`audit:doc-refs` and `audit:status-drift` pass inside `preflight:fast`,\nwhich passes.\n5. Istanbul coverage (line/branch): iac-runner.ts 99/91, iac-child\n100/84, iac-cloud-env 100/100, iac-grant-ledger 100/91,\niac-install-reads 95/89, iac-live-children 100/96 (was 93/79, fixed with\nthe new test file), iac-refusals 100, iac-tree 100/100.\n\nDocs: no doc names a moved function, so none changed. No release note,\nroadmap row or CHANGELOG entry (internal refactor).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrGFPLqt8C3Ybzk2dHq\n\n---------\n\nCo-authored-by: Claude Sonnet 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-23T15:42:12Z",
+          "tree_id": "575d97a4ac20e5ead9060ce6fa94d927f23895d0",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/479cfc0650b109f55d0cde832bf702d7abf61aa6"
+        },
+        "date": 1795449561269,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 187.16091704999744,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 188.85182709999972,
             "unit": "ms"
           }
         ]
