@@ -6,7 +6,7 @@ import type { NegotiateBrief } from "./negotiate-types.ts";
 import { renderChangelog } from "./render.ts";
 
 // ALL SEVEN nullable lanes null. NegotiateBrief has seven (negotiate-types.ts:103-109),
-// each rendering its own "_could not be computed_" (render.ts:662,690,716,743,764,841,865).
+// each rendering its own "_could not be computed_" (render/negotiate.ts:72,108,134,157,179,231,254, via `negotiateNotComputedSection`).
 // A fixture covering only two would leave five lanes unguarded with every test green.
 function allNullLaneBrief(): NegotiateBrief {
   return {
@@ -67,7 +67,7 @@ describe("contractViolations", () => {
   });
 
   test("accepts a SUFFIXED heading", () => {
-    // render.ts:789 documents headings like "## Ownership — services: checkout". Exact
+    // render/negotiate.ts:203 documents headings like "## Ownership — services: checkout". Exact
     // heading equality would report a perfectly good section as missing and reject every
     // negotiate synthesis that has one.
     const md = ALL_SEVEN.replace("## Ownership", "## Ownership — services: checkout");

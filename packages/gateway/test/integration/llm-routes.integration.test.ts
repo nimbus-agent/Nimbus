@@ -159,6 +159,26 @@ base_url = "http://127.0.0.1:8099"
     expect(llamacpp[0]?.modelName).toBe("a.gguf");
   });
 
+  test("two llamacpp routes whose base_url differ only in MULTIPLE trailing slashes collide", async () => {
+    const { db, tomlPath } = writeConfig(`
+[llm.local.a]
+runtime = "llamacpp"
+model = "a.gguf"
+base_url = "http://127.0.0.1:8080/proxy/"
+
+[llm.local.b]
+runtime = "llamacpp"
+model = "b.gguf"
+base_url = "http://127.0.0.1:8080/proxy//"
+`);
+    const registry = await buildLlmRegistryFromToml(db, dirname(tomlPath), emptyVault());
+    const llamacpp = registry.llmRouter
+      .routes()
+      .filter((r) => r.provider.providerId === "llamacpp");
+    expect(llamacpp).toHaveLength(1);
+    expect(llamacpp[0]?.modelName).toBe("a.gguf");
+  });
+
   test("two entries deriving the SAME route id keep the first and name the drop", async () => {
     // A plausible failover config: the same model on two daemons. The route id is
     // (runtime, model), so both entries derive "ollama/qwen3:8b" — last-wins on the
