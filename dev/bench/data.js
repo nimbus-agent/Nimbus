@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795442308337,
+  "lastUpdate": 1795442903017,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "2f693b02642c7f77a2da2ed6cbb3e7b6e75a1010",
-          "message": "chore: release main (#1473)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.14.0</summary>\n\n##\n[7.14.0](https://github.com/nimbus-agent/Nimbus/compare/v7.13.0...v7.14.0)\n(2026-09-08)\n\n\n### Features\n\n* **fleet:** add the overnight-fleet change digest (PR 2a)\n([#1467](https://github.com/nimbus-agent/Nimbus/issues/1467))\n([4c54be8](https://github.com/nimbus-agent/Nimbus/commit/4c54be81e5363246037c5ccdd1928ff706611776))\n\n\n### Bug Fixes\n\n* **deps:** unbreak main — move the override pins\n[#1469](https://github.com/nimbus-agent/Nimbus/issues/1469) outgrew, and\nrestore the docs build\n([#1474](https://github.com/nimbus-agent/Nimbus/issues/1474))\n([2cc6fcf](https://github.com/nimbus-agent/Nimbus/commit/2cc6fcf0870629919ee83110681a44503f2a674d))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>\nCo-authored-by: Asaf <asafgolombek@gmail.com>",
-          "timestamp": "2026-09-08T18:19:06Z",
-          "tree_id": "9647f6dcb81066d6bbd701a43c7ff7863115bbcc",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/2f693b02642c7f77a2da2ed6cbb3e7b6e75a1010"
-        },
-        "date": 1788892335941,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 318.5722378999988,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 321.17313305000135,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 209.97922115000512,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "99d8cacebde12bed717b642c585fe6faba304621",
+          "message": "fix(gateway): llama.cpp base-URL collision ignores every trailing slash; correct three stale doc pointers (#2099)\n\n## 1. Bug fix: llama.cpp base-URL collision key\n`resolveBaseUrl` (`platform/assemble/llm-vendors.ts`, used by\n`dropLlamacppBaseUrlCollisions`) stripped one trailing slash, so\n`.../proxy/` and `.../proxy//` had different keys and both routes\nsurvived against the same server. It now strips every trailing slash\n(`/\\/+$/`). The runtime-default path is unchanged.\n\nRed-proof: added `two llamacpp routes whose base_url differ only in\nMULTIPLE trailing slashes collide` to\n`test/integration/llm-routes.integration.test.ts`. Before the fix it\nfailed (`Expected length: 1, Received length: 2`); after, 13/13 pass.\n\nOther normalisers with the same single-slash regex, NOT changed (not\npart of the collision key; they only tidy a value already normalised by\n`resolveBaseUrl` for local routes): `llm/llamacpp-provider.ts:23`,\n`llm/ollama-provider.ts:137`, `llm/cloud-provider-base.ts:42`.\n`llm/base-url-locality.ts` (I34) has no trailing-slash strip, so it is\nunaffected.\n\n## 2. Docs: I2 line table in `docs/SECURITY-INVARIANTS.md`\nThe three rows cited import lines in `ipc/automation-rpc.ts`.\nRe-pointed:\n- `workflow.run` write steps -> `automation/workflow-runner.ts:300`\n(`executeWriteStep`, executor from `buildWorkflowWriteExecutor`).\n- consent/coordinator row -> `ipc/consent.ts:145`\n(`ConsentCoordinatorImpl`); the runner's HITL step preview\n(`workflow-runner.ts:579`) is noted as informational.\n- `workflow.rerun` row: no such method exists anywhere. The row now\ndescribes `workflow.resume` (`ipc/server/inline-handlers.ts:393`), which\ncontinues a blocked run on the owner's attended executor, and says there\nis no `workflow.rerun`.\n`audit:doc-refs` passes.\n\n## 3. Comments: `agents/_lib/brief-contract.test.ts`\n`render.ts:662,...,865` ->\n`render/negotiate.ts:72,108,134,157,179,231,254` (the seven\n`negotiateNotComputedSection` calls); `render.ts:789` ->\n`render/negotiate.ts:203`. File not in the size baseline's growth path\n(`audit:file-size` OK).\n\n## Core docs\nNo change to CLAUDE.md, GEMINI.md, roadmap, architecture, docs/README or\ncli-reference: no behaviour, command, invariant, count or status changed\nbeyond fixing an edge-case normalisation and correcting pointers.\n\nChecks: typecheck, the two touched test files, `audit:file-size`,\n`audit:doc-refs`, `preflight:fast` all pass.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrGFPLqt8C3Ybzk2dHq\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* Explicit service URLs with multiple trailing slashes are now\nnormalized consistently. Routes that differ only by trailing slashes are\ntreated as duplicates, and only the first route is retained. Default URL\nselection is unchanged.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-23T13:57:41Z",
+          "tree_id": "3a1c5f64b8ead6deaa8c0b5067eefb2fc1697bfe",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/99d8cacebde12bed717b642c585fe6faba304621"
+        },
+        "date": 1795442897594,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 254.99348300000256,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 252.99463954999956,
             "unit": "ms"
           }
         ]
