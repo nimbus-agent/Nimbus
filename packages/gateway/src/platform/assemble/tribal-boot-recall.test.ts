@@ -240,6 +240,15 @@ describe("bootTribalKnowledge — recall and drafting from the index", () => {
         chunks: ["malformed metadata"],
       });
       seedMessage({
+        id: "slack:nul",
+        service: "slack",
+        // Valid JSON then a NUL: SQLite's parser stops at the NUL, so json_valid admits it, but
+        // JSON.parse throws.
+        metadata: `{"channel":"C-watched"}${String.fromCharCode(0)}`,
+        url: null,
+        chunks: ["nul metadata"],
+      });
+      seedMessage({
         id: "slack:good",
         service: "slack",
         metadata: JSON.stringify({ channel: "C-watched" }),
@@ -254,6 +263,7 @@ describe("bootTribalKnowledge — recall and drafting from the index", () => {
       expect(payload.bodyMarkdown).toContain("Drafted from 1 source message(s)");
       expect(payload.bodyMarkdown).toContain("rotate it in the vault");
       expect(payload.bodyMarkdown).not.toContain("malformed metadata");
+      expect(payload.bodyMarkdown).not.toContain("nul metadata");
     },
   );
 

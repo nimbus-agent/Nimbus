@@ -138,9 +138,13 @@ export function bootTribalKnowledge(deps: {
       } | null;
       let channelId = "";
       if (row?.metadata != null) {
-        // Valid JSON by construction: the SQL channel filter only admits `json_valid` metadata.
-        const m = JSON.parse(row.metadata) as { channel?: unknown };
-        if (typeof m.channel === "string") channelId = m.channel;
+        // SQLite's parser stops at a NUL byte, so `json_valid` can admit text JSON.parse rejects.
+        try {
+          const m = JSON.parse(row.metadata) as { channel?: unknown };
+          if (typeof m.channel === "string") channelId = m.channel;
+        } catch {
+          // leave channelId empty (filtered out by the watch-set check)
+        }
       }
       out.push({ itemId: h.itemId, channelId, url: row?.url ?? null, text: h.chunkText });
     }
