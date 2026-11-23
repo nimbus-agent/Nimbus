@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.3.14 inputHash=sha256:3f3de40a5f692717d7ae691bf75bfd3fc2991b4c15477c1cc6cb9856461be0a8
+// nimbus-action-dist bun=1.3.14 inputHash=sha256:5bca054cfcc0947fca2652ec6d01912a524e5c5baaba9e4cbd5fe5c2338912ec
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -11024,12 +11024,40 @@ __export(exports_git_tree, {
   REGISTRY_NOT_INITIALISED: () => REGISTRY_NOT_INITIALISED
 });
 import { execFileSync } from "node:child_process";
+
+// src/git-path.ts
+import { existsSync } from "node:fs";
+var GIT_PATHS = {
+  linux: ["/usr/bin/git", "/usr/local/bin/git"],
+  darwin: ["/opt/homebrew/bin/git", "/usr/local/bin/git", "/usr/bin/git"],
+  win32: [
+    String.raw`C:\Program Files\Git\cmd\git.exe`,
+    String.raw`C:\Program Files\Git\bin\git.exe`
+  ]
+};
+function findGit(platform, exists = existsSync) {
+  return (GIT_PATHS[platform] ?? []).find((p2) => exists(p2));
+}
+function resolveGit(platform = process.platform, exists = existsSync) {
+  const found = findGit(platform, exists);
+  if (found !== undefined)
+    return found;
+  const tried = GIT_PATHS[platform] ?? [];
+  throw new Error(tried.length === 0 ? `git: no fixed git location is known for platform ${platform}` : `git: not found at any fixed location (${tried.join(", ")}); it is never looked up on PATH`);
+}
+var cached;
+function gitExecutable() {
+  cached ??= resolveGit();
+  return cached;
+}
+
+// src/git-tree.ts
 var REGULAR_FILE_MODE = "100644";
 var EXTENSIONS_PREFIX = "extensions/";
 var MAX_GIT_OUTPUT_BYTES = 64 * 1024 * 1024;
 var REGISTRY_NOT_INITIALISED = "registry not initialised: push the init --github site to gh-pages first";
 function git(args, opts) {
-  return execFileSync("git", [...args], {
+  return execFileSync(gitExecutable(), [...args], {
     cwd: opts.cwd,
     windowsHide: true,
     maxBuffer: MAX_GIT_OUTPUT_BYTES,
@@ -11193,7 +11221,7 @@ function remoteDefaultBranch(opts) {
 
 // src/provenance.ts
 import { execFile } from "node:child_process";
-import { existsSync, writeFileSync as writeFileSync2 } from "node:fs";
+import { existsSync as existsSync2, writeFileSync as writeFileSync2 } from "node:fs";
 var TIMEOUT_MS = 60000;
 var RETRY_DELAY_MS = 5000;
 function ghRunOf(err, stdout, stderr) {
@@ -11215,7 +11243,7 @@ var GH_PATHS = {
   darwin: ["/opt/homebrew/bin/gh", "/usr/local/bin/gh"],
   win32: [String.raw`C:\Program Files\GitHub CLI\gh.exe`]
 };
-function resolveGh(platform, exists = existsSync) {
+function resolveGh(platform, exists = existsSync2) {
   return (GH_PATHS[platform] ?? []).find((p2) => exists(p2));
 }
 function runGhAt(gh, exec = execFile) {
@@ -11442,7 +11470,7 @@ function code(s3) {
 
 // src/score.ts
 import { randomUUID } from "node:crypto";
-import { existsSync as existsSync2, mkdtempSync as mkdtempSync4, renameSync, rmSync as rmSync3, statSync, writeFileSync as writeFileSync4 } from "node:fs";
+import { existsSync as existsSync3, mkdtempSync as mkdtempSync4, renameSync, rmSync as rmSync3, statSync, writeFileSync as writeFileSync4 } from "node:fs";
 import { tmpdir as osTmpdir2 } from "node:os";
 import { basename, dirname, isAbsolute, join as join5 } from "node:path";
 
@@ -11860,7 +11888,7 @@ function logStderr(log, ref, stderrTail) {
 function assertGateway(gateway) {
   let ok = false;
   try {
-    ok = isAbsolute(gateway) && existsSync2(gateway) && statSync(gateway).isFile();
+    ok = isAbsolute(gateway) && existsSync3(gateway) && statSync(gateway).isFile();
   } catch {
     ok = false;
   }
@@ -12870,7 +12898,7 @@ var BOT_ENV = {
   GIT_COMMITTER_EMAIL: BOT_EMAIL
 };
 function run(args, opts) {
-  return execFileSync2("git", [...args], {
+  return execFileSync2(gitExecutable(), [...args], {
     cwd: opts.cwd,
     env: opts.env ?? process.env,
     input: opts.input,

@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { gitExecutable } from "./git-path.ts";
 import {
   assertSafeTreePath,
   diffTree,
@@ -36,7 +37,7 @@ afterEach(() => {
 });
 
 function git(cwd: string, ...args: string[]): string {
-  return execFileSync("git", [...GIT_CONFIG, ...args], {
+  return execFileSync(gitExecutable(), [...GIT_CONFIG, ...args], {
     cwd,
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"],
