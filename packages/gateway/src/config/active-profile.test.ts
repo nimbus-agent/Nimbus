@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -129,6 +129,14 @@ describe("profileFilePath", () => {
 });
 
 test("resolveNimbusTomlForProfile is gone", () => {
-  const src = readFileSync(join(import.meta.dir, "nimbus-toml.ts"), "utf8");
-  expect(src).not.toContain("resolveNimbusTomlForProfile");
+  const sectionDir = join(import.meta.dir, "nimbus-toml");
+  const files = [
+    join(import.meta.dir, "nimbus-toml.ts"),
+    ...readdirSync(sectionDir)
+      .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"))
+      .map((f) => join(sectionDir, f)),
+  ];
+  for (const file of files) {
+    expect(readFileSync(file, "utf8")).not.toContain("resolveNimbusTomlForProfile");
+  }
 });

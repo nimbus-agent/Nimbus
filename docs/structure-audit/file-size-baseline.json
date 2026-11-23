@@ -123,7 +123,6 @@
     "packages/gateway/src/config/fleet-toml.test.ts": 558,
     "packages/gateway/src/config/fleet-toml.ts": 557,
     "packages/gateway/src/config/nimbus-toml.test.ts": 2071,
-    "packages/gateway/src/config/nimbus-toml.ts": 3096,
     "packages/gateway/src/connectors/_lib/gcp-auth.test.ts": 541,
     "packages/gateway/src/connectors/_lib/gitlab/events.test.ts": 1626,
     "packages/gateway/src/connectors/_lib/gitlab/events.ts": 509,
