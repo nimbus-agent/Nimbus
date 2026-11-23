@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795431706790,
+  "lastUpdate": 1795434346509,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "1e6050fabfa49b8390f5f3ccd8005624c1b80188",
-          "message": "docs(spec): propose GET /v1/items/resolve-ids — an item id back to its reference (#1464)\n\n## Summary\n\n**Contract proposal only — no implementation in this branch.** A design\ndoc asking for one new bearer-authed read, `GET /v1/items/resolve-ids`,\nwhich maps indexed item ids back to the references they came from. It is\nthe inverse of `GET /v1/items/resolve`, which has mapped URL → item\nsince the clip surface shipped.\n\n**Why it is needed now.** The browser client renders agent briefs as\nstructure rather than prose (phase C8 in `nimbus-web-clipper`; `why`,\n`glossary` and `decisions` shipped in v0.6.0 and the release after).\nSeveral findings name other indexed items **by id with no URL** —\n`ExpertFinding.evidence[].itemId`, `ImpactFinding.affectedItemId`,\n`CatchupItem.itemId`. So four of the browser's seven lanes render titles\nthat look like references, are not, and cannot be made into references\nby any client-side means. The client slice that renders those lanes is\ndesigned and ships either way; with this route it ships with links\ninstead of dead text.\n\n## The argument that should lead review\n\nThe reflexive objection to an id-keyed read is that it is an enumeration\noracle. **That door is already open, wider, and unauthenticated** —\n`packages/gateway/src/ipc/http-route-auth.ts:48-49`:\n\n```ts\n  \"GET /v1/items\": { kind: \"public\" },\n  \"GET /v1/items/*\": { kind: \"public\" },\n```\n\n`GET /v1/items/{id}` has no bearer gate at all and returns the entire\nrow, including `body`, `metadata` and `author_id`. This proposal is a\n`resolve`-scoped read of six named fields — no body, no metadata, no\nauthor. **Strictly less disclosure than the status quo.** The only thing\nit adds is arity.\n\nSo the discussion worth having is about arity and cost, not about\ndisclosure.\n\n## Shape\n\nFollows #1447 (`resolve-file`) deliberately, so there is nothing novel\nto adjudicate:\n\n- Existing **`resolve` scope** — it reads, it runs nothing, no egress\nrow, **no re-pairing**.\n- **No version floor.** Route presence is the capability signal, probed\nvia the 404 that fires before auth when the clips surface is unmounted.\nA floor constant has to be raised by hand forever; presence cannot\ndrift.\n- **No schema change, no migration, no OpenAPI entry** — `item.id` is\nalready the primary key, and this stays off `HTTP_ROUTES` like every\nother clip-scoped bearer read.\n- Response is `ResolveCandidate` + `modified_at` **verbatim**, so the\nclient already has the type, the parser and the renderer.\n\n## Three decisions argued rather than assumed\n\nEach is a place a reviewer will reach for a precedent that does not\nquite transfer, so §5 argues them explicitly:\n\n1. **`RESOLVE_IDS_MAX_BATCH = 100`, borrowing `RESOLVE_CANDIDATE_CAP`'s\nrationale but not its magnitude.** That cap is 5 — right for a\ndisambiguation menu a human reads, hopeless here, since `catchup` alone\nadmits `PER_SERVICE_QUOTA = 50` items *per service*\n(`packages/gateway/src/agents/catchup.ts:12`) across several sections in\none brief. A cap near 5 would refuse the largest consumer on its\nordinary path.\n2. **Refuse over the cap rather than clamp.** The repo has both\npostures. Silently dropping ids here means silently dropping *links* —\nthe reader sees some references and not others with nothing to say why.\nNote `resolve`'s own \"empty list plus `truncated: true`\" posture rests\non a truncated menu implying the right answer is among those shown; an\nid map has no ranking, so that argument does not transfer.\n3. **An unindexed id is absent from the response, not null.** \"Not in\nthe index\" and \"indexed, no source URL\" are different facts a client\nrenders differently.\n\n## One divergence from the sibling, flagged deliberately\n\nThe response returns the bare `url` column, matching\n`resolve-by-url.ts:58` — **with one exception**: where `url` is null and\n`canonical_url` is not, it returns `canonical_url`. The fallback fires\nexactly where the sibling would have returned nothing, so no caller ever\nsees a *different* URL for the same row — only a URL where it would\notherwise have had none.\n\nThis is the **opposite** precedence from the row's own `resolve_key`,\nwhich is canonical-first, and that is intentional: `resolve_key` exists\nto make two spellings of an address match, so it wants the normalized\nform; this field exists to be clicked, so it wants the address the\nprovider published. Called out because it is the one place a reviewer\nmay reasonably prefer strict parity instead.\n\n## Alternatives considered (§9)\n\n- **Have the client call the public `GET /v1/items/{id}` per id.**\nRejected: far more data than it needs, unauthenticated where the rest of\nits surface is scoped, one round trip per reference, and outside the\nclip contract the client is built against — it would be reaching around\nits own boundary.\n- **Put URLs into the agent briefs themselves.** Arguably tidier, since\nthe agents hold the rows. Rejected as the larger change: it alters what\nagents *return*, which is a three-repo chain through the SDK's published\nbrief types, and inflates every brief with data most consumers do not\nrender.\n\n## Related Issue\n\n<!-- No tracking issue yet — happy to open one if you'd like this\ntriaged that way. -->\n\n## Type of Change\n\n- [x] Documentation only\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors — unaffected, no\nsource changed\n- [x] `bun run lint` passes (Biome) — unaffected, no source changed\n- [x] All existing tests pass (`bun test`) — unaffected, no source\nchanged\n- [x] New behaviour is covered by tests — n/a, no behaviour in this\nbranch\n- [x] No `any` types introduced\n- [x] No credentials, tokens, or secret values appear in logs, IPC\nmessages, config, or test fixtures\n- [x] Platform-specific code is behind the `PlatformServices`\nabstraction — n/a\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable\n- [x] Does not touch `docs/README.md`\n\n## Testing\n\nDocs-only, so the gates that apply are the docs gates, both run in the\nworktree:\n\n- `bun run lint:markdown` — 171 files, **0 issues** (clean at baseline\ntoo, so the delta is this branch's)\n- `bun run audit:doc-refs` — **1464 refs across 81 docs, all resolve**\n\n## Notes for Reviewers\n\n**The proposal was reviewed and amended before this PR opened**; §11\nrecords the disposition. Two findings changed the contract — the batch\ncap above, and the URL column, where both the original draft *and* the\nreview had it backwards until `resolve-by-url.ts:58` was actually read.\nA review recommendation to include the module layout and implementation\ncode was **declined**: the gateway owns its implementation, and a\nconsumer arriving with the code already written has pre-empted the\ndecision it came to ask for. The behavioural requirements that code\nencoded are captured as contract instead.\n\nIf the shape is acceptable, I am happy to implement it — or to hand it\nover, since the client half is independent and ships either way.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01StU1MQg9BjZzthYFue7TPr\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **New Features**\n- Added a batched endpoint for resolving item IDs into reference\nmetadata, including service, type, title, URL, and modification time.\n- Supports up to 100 IDs per request, removes duplicates, preserves\ndeterministic ordering, and omits unknown IDs.\n  - Added scoped authorization for the endpoint.\n\n- **Documentation**\n- Documented request validation, response behavior, URL fallback rules,\nauthorization, and integration requirements.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-07T22:19:35+03:00",
-          "tree_id": "67f0b9458eb4046d9011eedc9cfbd85bd1bf835a",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/1e6050fabfa49b8390f5f3ccd8005624c1b80188"
-        },
-        "date": 1788809551039,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 348.29987810000165,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 338.14703449999286,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 174.17478690000044,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "73d6b90d6deecf6f350ed26602eb4c52fab39fce",
+          "message": "refactor(gateway): split ipc/automation-rpc.ts into per-family modules (no behaviour change) (#2096)\n\n## Why\nOwner ruling (2026-11-23): files stay under 500 lines, and a file\nalready over 500 never grows. `ipc/automation-rpc.ts` was 1,653 lines.\nThis splits it with zero behaviour change.\n\n## Layout\n`ipc/automation-rpc.ts` stays as the facade (103 lines): it composes the\nhandler tables, builds the per-call context and re-exports the old\npublic names, so no importer changes. Modules under\n`ipc/automation-rpc/`:\n\n| module | lines | holds |\n| --- | --- | --- |\n| `shared.ts` | 139 | `AutomationRpcError`, `Hit`, `AutomationCtx`, the\nhandle/gate/eval types, param helpers, `continuityTableOf`,\n`stopExtensionBestEffort` |\n| `watcher.ts` | 134 | `watcher.*` |\n| `workflow.ts` | 145 | `workflow.*` (list `source` is owner-kind only,\n`refuseSuppliedClientKind`, save/unschedule client-kind checks) |\n| `extension-read.ts` | 474 |\n`extension.list/info/audit/verifyProvenance` |\n| `extension-install.ts` | 316 | `extension.install/rehash/eval` |\n| `extension-run.ts` | 258 |\n`extension.approveRun/revokeRun/credentialSet/credentialStatus` (I52\npath) |\n| `extension-lifecycle.ts` | 220 |\n`extension.enable/disable/remove/update/checkForUpdates` |\n\nEvery handler body and every ordered check (client-kind, owner gate,\nvalidation, approval) was moved verbatim with its comments; no check was\nextracted into a helper. Nothing is left over 500 lines.\n\n## Proof\n1. `bun run typecheck` and `bun run typecheck:tests` pass (469\nbaselined, 0 new).\n2. Public surface: `Object.keys(await import(...))` is\n`AutomationRpcError, dispatchAutomationRpc, orphanedDependenciesOrNone`\nbefore and after; the four exported types are re-exported and every\nimporter typechecks.\n3. Tests: 21 files that import or pin the module, 1,157 test cases; the\nJUnit (classname, name, status) lists before and after are identical, 0\nskipped.\n4. Pins repointed: `migration-boot.test.ts` (reads `extension-run.ts`,\n`shared.ts` and the facade), `i51-liveness-evidence.test.ts`\n(`extension-read.ts`), `rpc-params.wiring.test.ts` (its derived importer\nlist maps the folder to the one `automation-rpc` row), D50 rules\n`workflow-import-upsert-confined` and `workflow-import-rule-isolation`\n(`workflow.ts`) and their test fixture, docs (SECURITY-INVARIANTS.md,\narchitecture.md, CLAUDE.md and GEMINI.md I52, the sandbox skill) and two\nsource comments.\n5. `bun run preflight:fast` passes, including `audit:doc-refs`, the\nstatic invariants and `audit:file-size` (baseline entry for the old file\nremoved).\n\n## Coverage\nMeasured with the CI Istanbul preloads. Every new module is over the\nfloor (lines/branches): extension-install 97/92, extension-lifecycle\n99/94, extension-read 97/95, extension-run 98/95, shared 93/80, watcher\n100/100, facade 100/97. `workflow.ts` was 71/73 (the imported-source\nbranch of `workflow.list` had no test), so this adds\n`automation-rpc.workflow-source.test.ts` (113 lines): now 91/86.\n\nNo release note, roadmap row or CHANGELOG entry: an internal refactor\nneeds none.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrGFPLqt8C3Ybzk2dHq\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-23T11:34:31Z",
+          "tree_id": "a8c851aa35daf0af1b18e4230ae34c3be9f2cea1",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/73d6b90d6deecf6f350ed26602eb4c52fab39fce"
+        },
+        "date": 1795434342777,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 176.1575169500009,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 181.45279594999957,
             "unit": "ms"
           }
         ]
