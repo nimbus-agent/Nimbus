@@ -68,7 +68,7 @@ export const LANE_EXEMPTIONS: readonly LaneExemption[] = [
     category: "disclosed",
     reads: 1,
     reason:
-      "PR size stats are written by GitHub alone; accumulateAuthoredPrStats tallies statsCoverage and agents/_lib/render.ts renderNegotiateAuthoredPrs prints '(stats coverage N/M)' or 'stats: not available (no enriched PR in this window)'.",
+      "PR size stats are written by GitHub alone; accumulateAuthoredPrStats tallies statsCoverage and agents/_lib/render/negotiate.ts renderNegotiateAuthoredPrs prints '(stats coverage N/M)' or 'stats: not available (no enriched PR in this window)'.",
   },
   {
     file: "packages/gateway/src/agents/negotiate.ts",
@@ -76,7 +76,7 @@ export const LANE_EXEMPTIONS: readonly LaneExemption[] = [
     category: "disclosed",
     reads: 1,
     reason:
-      "PR size stats are written by GitHub alone; read only on rows counted in statsCoverage, which agents/_lib/render.ts renderNegotiateAuthoredPrs prints as '(stats coverage N/M)'.",
+      "PR size stats are written by GitHub alone; read only on rows counted in statsCoverage, which agents/_lib/render/negotiate.ts renderNegotiateAuthoredPrs prints as '(stats coverage N/M)'.",
   },
   {
     file: "packages/gateway/src/agents/negotiate.ts",
@@ -84,7 +84,7 @@ export const LANE_EXEMPTIONS: readonly LaneExemption[] = [
     category: "disclosed",
     reads: 1,
     reason:
-      "PR size stats are written by GitHub alone; read only on rows counted in statsCoverage, which agents/_lib/render.ts renderNegotiateAuthoredPrs prints as '(stats coverage N/M)'.",
+      "PR size stats are written by GitHub alone; read only on rows counted in statsCoverage, which agents/_lib/render/negotiate.ts renderNegotiateAuthoredPrs prints as '(stats coverage N/M)'.",
   },
   {
     file: "packages/gateway/src/agents/premortem.ts",

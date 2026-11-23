@@ -147,7 +147,7 @@ describe("I31 — disclosure integrity: a synthesized brief never says less than
   ])(
     "I31: the renderer and the guard both CALL the one %s disclosure builder",
     async (kind, builder) => {
-      const render = await read("packages/gateway/src/agents/_lib/render.ts");
+      const render = await read(`packages/gateway/src/agents/_lib/render/${kind}.ts`);
       const contract = await read("packages/gateway/src/agents/_lib/brief-contract.ts");
       expect(render).toContain(`${builder}(`);
       expect(contract).toContain(`${builder}(`);
@@ -169,7 +169,10 @@ describe("I31 — disclosure integrity: a synthesized brief never says less than
     // (`brief.kind === "…"`), which the export name alone cannot tell us: the kind for
     // `negotiateOwnershipDisclosures` is `negotiate`, not `negotiateOwnership`.
     const disclosures = await read("packages/gateway/src/agents/_lib/brief-disclosures.ts");
-    const render = await read("packages/gateway/src/agents/_lib/render.ts");
+    // The renderers are split per brief kind under `render/`: a builder may be called from any of them.
+    const render = (await readDirFiles("packages/gateway/src/agents/_lib/render"))
+      .map((f) => f.contents)
+      .join("\n");
     const contract = await read("packages/gateway/src/agents/_lib/brief-contract.ts");
 
     const builders = [...disclosures.matchAll(/export function ([a-zA-Z]+Disclosures)\(/g)]

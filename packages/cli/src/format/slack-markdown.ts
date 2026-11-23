@@ -14,7 +14,7 @@
  *
  * The title may contain BACKSLASH-ESCAPED brackets, and stopping at the first `]` CHARACTER is
  * wrong against the briefs this tool actually consumes: the gateway renderer hardens every entry
- * title through `escapeMarkdownLinkText` (`agents/_lib/render.ts`), which turns `[` into `\[`,
+ * title through `escapeMarkdownLinkText` (`agents/_lib/render/text.ts`), which turns `[` into `\[`,
  * `]` into `\]` and `\` into `\\`. A scan that stops at the `]` of a `\]` makes the whole link fail
  * to match and ship unconverted — a raw `[title](url)` posted into Slack, and a bare URL in the
  * plain-text output this module's own contract says must not carry one. `[WIP]`, `[RFC]`,
