@@ -71,15 +71,19 @@ describe("openGatewaySqlite", () => {
   it("re-opens an existing database without losing its rows", () => {
     const dataDir = join(root, "data");
     mkdirSync(dataDir, { recursive: true });
-    const first = openGatewaySqlite(dataDir, []);
+    const firstStops: Array<() => void> = [];
+    const first = openGatewaySqlite(dataDir, firstStops);
     first.db.run("INSERT INTO _meta (key, value) VALUES ('probe', 'kept')");
+    for (const stop of firstStops) stop();
     first.db.close();
-    const second = openGatewaySqlite(dataDir, []);
+    const secondStops: Array<() => void> = [];
+    const second = openGatewaySqlite(dataDir, secondStops);
     try {
       expect(second.db.query("SELECT value FROM _meta WHERE key = 'probe'").get()).toEqual({
         value: "kept",
       });
     } finally {
+      for (const stop of secondStops) stop();
       second.db.close();
     }
   });

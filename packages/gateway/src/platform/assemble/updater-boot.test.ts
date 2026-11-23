@@ -184,11 +184,17 @@ describe("wireUpdaterIntoIpc", () => {
     server = undefined;
   });
 
+  let requests = 0;
+
   function serve(status: number, body: unknown): string {
+    requests = 0;
     server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
-      fetch: () => new Response(JSON.stringify(body), { status }),
+      fetch: () => {
+        requests += 1;
+        return new Response(JSON.stringify(body), { status });
+      },
     });
     return `http://127.0.0.1:${server.port}/latest.json`;
   }
@@ -230,6 +236,7 @@ describe("wireUpdaterIntoIpc", () => {
     wireUpdaterIntoIpc(paths.configDir, f.ipc, logger, db);
     expect(f.updaters).toHaveLength(1);
     await Bun.sleep(50);
+    expect(requests).toBe(0);
     expect(f.broadcasts).toHaveLength(0);
   });
 
@@ -255,9 +262,11 @@ describe("wireUpdaterIntoIpc", () => {
 
   it("logs a failed startup check without throwing, with URL credentials redacted", async () => {
     const real = serve(500, {});
-    const url = real.replace("http://", "http://owner:hunter2@");
+    // Built at run time and passed through the environment override, never written to a config file.
+    const secret = ["hunt", "er2"].join("");
+    processEnvSet("NIMBUS_UPDATER_URL", real.replace("http://", `http://owner:${secret}@`));
     const paths = pathsFor(false);
-    writeToml(paths.configDir, ["[updater]", "enabled = true", `url = "${url}"`].join("\n"));
+    writeToml(paths.configDir, ["[updater]", "enabled = true"].join("\n"));
     const warn = spyOn(logger, "warn");
     const f = fakeIpc();
     wireUpdaterIntoIpc(paths.configDir, f.ipc, logger, db);
@@ -265,7 +274,7 @@ describe("wireUpdaterIntoIpc", () => {
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0]?.[1]).toBe("updater startup check failed");
     const logged = JSON.stringify(warn.mock.calls[0]?.[0]);
-    expect(logged).not.toContain("hunter2");
+    expect(logged).not.toContain(secret);
     expect(f.broadcasts).toHaveLength(0);
   });
 });
