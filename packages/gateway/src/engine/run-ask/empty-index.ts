@@ -1,8 +1,8 @@
 import type { Database } from "bun:sqlite";
 import { earliestHistoryMs, pointInTimeDisclosure } from "../../index/item-history-at.ts";
 import type { LocalIndex } from "../../index/local-index.ts";
+import type { LlmGenerateResult } from "../../llm/types.ts";
 import { gatewayZone } from "../../util/zoned-time.ts";
-import type { RunAskResult } from "./result.ts";
 
 /** The `RunAskParams` fields the empty-index answer reads (structural: `RunAskParams` is assignable). */
 export type EmptyIndexParams = {
@@ -89,3 +89,9 @@ export function emptyIndexGuidanceIfNeeded(
   }
   return { reply: `${guidance}\n${block}`, asOfMs: atMs };
 }
+
+/**
+ * What `runAsk` returns. `asOfMs` is set only on a point-in-time turn that was honoured: the echo is how a
+ * client tells a gateway that answered as of the instant from an older one that ignored `at`.
+ */
+export type RunAskResult = { reply: string; modelMeta?: LlmGenerateResult; asOfMs?: number };

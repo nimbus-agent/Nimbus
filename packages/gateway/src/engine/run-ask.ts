@@ -38,6 +38,7 @@ import { createOwnerOnlyAsk } from "./owner-only-approval.ts";
 import { type PlanResult, planFromIntent } from "./planner.ts";
 import type { ClassifiedIntent } from "./router.ts";
 import { classifyIntentForAskWithLocalFallback } from "./run-ask/classify.ts";
+import type { RunAskResult } from "./run-ask/empty-index.ts";
 import { countIndexedItems, emptyIndexGuidanceIfNeeded } from "./run-ask/empty-index.ts";
 import {
   conversationalExplainRoute,
@@ -47,7 +48,6 @@ import {
 } from "./run-ask/explain.ts";
 import { buildLocalIndexedContext } from "./run-ask/local-context.ts";
 import { runAskLog } from "./run-ask/log.ts";
-import type { RunAskResult } from "./run-ask/result.ts";
 import {
   formatResultSummary,
   loadRecentConversationHistory,
@@ -57,9 +57,9 @@ import { runConversationalAgent } from "./run-conversational-agent.ts";
 import type { NotifyGasLimit } from "./step-budget.ts";
 import type { AuditSink, ConnectorDispatcher, ConsentChannel, PlannedAction } from "./types.ts";
 
+export type { RunAskResult } from "./run-ask/empty-index.ts";
 // The split's facade: every name `run-ask.ts` exported before the split is still exported from here.
 export { resolveLocalContextItemLimit } from "./run-ask/local-context.ts";
-export type { RunAskResult } from "./run-ask/result.ts";
 
 /** The arguments every turn executor is built from; `RunAskParams` carries them all. */
 export type ExecutorBuildParams = Pick<
