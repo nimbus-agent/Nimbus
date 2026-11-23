@@ -22,7 +22,7 @@
 export interface ContextTruncation {
   /** Items actually placed in the model's context. */
   readonly shown: number;
-  /** Matches found. When `atLeast`, the real total may be higher — see `PROBE` in run-ask.ts. */
+  /** Matches found. When `atLeast`, the real total may be higher — see `PROBE` in run-ask/local-context.ts. */
   readonly total: number;
   /** `total` is a floor, not an exact count: the probe itself hit its ceiling. */
   readonly atLeast: boolean;

@@ -245,7 +245,7 @@
     "packages/gateway/src/engine/prepare-step.ts": 575,
     "packages/gateway/src/engine/run-ask.point-in-time.test.ts": 577,
     "packages/gateway/src/engine/run-ask.test.ts": 2295,
-    "packages/gateway/src/engine/run-ask.ts": 1840,
+    "packages/gateway/src/engine/run-ask.ts": 885,
     "packages/gateway/src/engine/run-conversational-agent.test.ts": 844,
     "packages/gateway/src/engine/user-mcp-agent-tools.test.ts": 655,
     "packages/gateway/src/extensions/approve-run.test.ts": 1600,

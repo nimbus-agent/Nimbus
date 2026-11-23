@@ -6,7 +6,7 @@
  * is allowed to see.
  */
 
-/** The subset both helpers need. Kept structural so `LocalContextItem` stays private to run-ask. */
+/** The subset both helpers need. Kept structural so `LocalContextItem` stays private to run-ask/. */
 interface ServiceScoped {
   readonly service: string;
 }
