@@ -9,14 +9,14 @@ import { DEFAULT_SHELL_ID, resolveShellById } from "../computer-use/cu-lanes/ter
 import { TerminalLineBuffer } from "../computer-use/cu-terminal-buffer.ts";
 import { COVERAGE_CLASSES, THIS_BINARY_COVERAGE } from "../egress/egress-coverage.ts";
 
+const COMPUTE_DISPATCHERS = "packages/gateway/src/ipc/server/dispatchers/tribal-compute-rpcs.ts";
+
 describe("I35 — computer-use actuation only inside an approved envelope", () => {
   test("performActuation is called only from cu-gate.ts (and defined ONCE in cu-actuate.ts)", async () => {
-    // Review finding: the earlier version collected DISTINCT FILE PATHS containing a match, not
-    // OCCURRENCE COUNTS — so a second, illegitimate direct call added anywhere else inside
-    // `cu-actuate.ts` (which is already expected to appear once, for its own declaration) would
-    // leave the file SET unchanged and this test would stay green. Counting matches per file, not
-    // just membership, closes that — matching the same fix just applied to the static audit
-    // (`check-nimbus-invariants.ts`'s `checkActuationConfinement`).
+    // Review finding: an earlier version collected the FILE PATHS with a match, not OCCURRENCE
+    // COUNTS, so a second, illegitimate direct call inside `cu-actuate.ts` (expected once, for its
+    // own declaration) left the set unchanged and this test green. Counting matches per file closes
+    // that, as the static audit's `checkActuationConfinement` does.
     const files = await readDirFiles("packages/gateway/src");
     const matchesByFile = new Map<string, number>();
     for (const f of files) {
@@ -477,9 +477,7 @@ describe("I35 — computer-use actuation only inside an approved envelope", () =
       "const from = { clientId: ctx.clientId, answerSource: answerSourceOf(params) }",
     );
     expect(rpc).not.toMatch(/\.respond\(/);
-    const dispatchers = stripComments(
-      await read("packages/gateway/src/ipc/server/dispatchers/tribal-compute-rpcs.ts"),
-    );
+    const dispatchers = stripComments(await read(COMPUTE_DISPATCHERS));
     expect(dispatchers).toContain("dispatchComputerRpc(method, params, rpc, clientId)");
 
     const assemble = stripComments(await read("packages/gateway/src/platform/assemble.ts"));

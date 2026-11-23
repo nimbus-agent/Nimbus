@@ -2239,7 +2239,7 @@ Reverse-lookup table for inline comments migrated from source files during the 2
 | `packages/gateway/src/ipc/data-rpc.ts:23` | I4 | data.delete routes through ToolExecutor; hitlStatus set by gate only |
 | `packages/gateway/src/ipc/reindex-rpc.test.ts:56` | I5 | connector.reindex listed in FORBIDDEN_OVER_LAN |
 | `packages/gateway/src/ipc/reindex-rpc.ts:8` | I5 | connector.reindex is FORBIDDEN_OVER_LAN (I5) |
-| `packages/gateway/src/ipc/server/dispatchers/core-rpcs.ts:317` | I4 | consent.respond dispatcher is the sole production hitlStatus supplier |
+| `packages/gateway/src/ipc/server/inline-handlers.ts:624` | I4 | consent.respond handler (`rpcConsentRespond`, dispatched from `server.ts`) is the sole production hitlStatus supplier |
 | `packages/gateway/src/ipc/server/vault-dispatch.ts:22` | I4 | vault dispatch does not set hitlStatus; routes through executor |
 | `packages/gateway/src/ipc/server/vault-dispatch.ts:101` | I4 | vault dispatch confirmed non-HITL; hitlStatus: not_required |
 | `packages/gateway/src/security-invariants/i10-constant-time-compare.test.ts` (`describe("I10 …")`) | I10 | Test asserts constantTimeStringEqual canonical source is util/timing-safe-compare.ts |
