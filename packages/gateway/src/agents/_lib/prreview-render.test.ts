@@ -55,6 +55,15 @@ describe("renderPrereview", () => {
     expect(uncovered).toContain("acme/app on github, files not indexed");
   });
 
+  test("a truncated target file list says the check is unavailable, not that nothing met the threshold", () => {
+    const fx = buildPrereviewFixture();
+    const md = renderPrereview(
+      buildPrereviewFixture({ coChanges: [], target: { ...fx.target, filesTruncated: true } }),
+    );
+    expect(md).toContain("changed-file list is incomplete");
+    expect(md).not.toContain("No co-change pattern met the threshold");
+  });
+
   test("root area, directory companion, no examples, and more reviews than shown", () => {
     const fx = buildPrereviewFixture();
     const md = renderPrereview(

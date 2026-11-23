@@ -219,6 +219,28 @@ describe("buildPrereviewBrief", () => {
     expect(b.reviewTerms).toEqual([{ term: "migration", reviews: 2 }]);
   });
 
+  test("reviews of other PRs never use up the scan cap of a cohort review", () => {
+    const db = standardRepo();
+    seedReview(db, {
+      prNumber: 1,
+      reviewId: 1,
+      state: "COMMENTED",
+      body: "old cohort note",
+      daysAgo: 90,
+    });
+    for (let i = 0; i < 250; i++) {
+      seedReview(db, {
+        prNumber: 900 + i,
+        reviewId: 100 + i,
+        state: "COMMENTED",
+        body: "noise",
+        daysAgo: 1,
+      });
+    }
+    const b = buildPrereviewBrief(db, prUrl("acme/app", TARGET), NOW);
+    expect(b.counts.reviewsMatched).toBe(1);
+  });
+
   test("a PR the owner reviewed still resolves (the review shares its resolve key)", () => {
     const db = standardRepo();
     seedReview(db, { prNumber: TARGET, reviewId: 9, state: "COMMENTED", body: "x" });

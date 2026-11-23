@@ -51,6 +51,9 @@ function coChangeSection(brief: PrereviewBrief): string {
   let body: string;
   if (!brief.target.filesCovered) {
     body = "_Not available: this pull request's changed files are not in the index._";
+  } else if (brief.target.filesTruncated) {
+    body =
+      "_Not available: this pull request's changed-file list is incomplete, so a missing companion cannot be established._";
   } else if (brief.coChanges.length === 0) {
     body = "_No co-change pattern met the threshold._";
   } else {

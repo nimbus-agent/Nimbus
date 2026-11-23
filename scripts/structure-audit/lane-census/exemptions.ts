@@ -44,7 +44,7 @@ export const LANE_EXEMPTIONS: readonly LaneExemption[] = [
     category: "disclosed",
     reads: 3,
     reason:
-      "loadHistory orders and windows merged PRs by COALESCE(merged_at, item.modified_at), so a Bitbucket PR (no merge time) and a GitLab row without one fall back to the last update; buildPrereviewBrief adds the gap 'Bitbucket records no merge time, so the history window uses each pull request's last update time instead'.",
+      "loadHistory orders and windows merged PRs by COALESCE(merged_at, item.modified_at), so a Bitbucket PR (no merge time) falls back to the last update (the GitLab connector writes merged_at from the MR resource for a merged MR, so GitLab rows normally have it); buildPrereviewBrief adds the gap 'Bitbucket records no merge time, so the history window uses each pull request's last update time instead'.",
   },
   {
     file: "packages/gateway/src/prreview/prreview-build.ts",

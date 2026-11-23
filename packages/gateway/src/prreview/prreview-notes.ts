@@ -52,17 +52,20 @@ export function reviewsFor(
   prs: ReadonlyMap<number, PrereviewPrRef>,
 ): PrereviewReviewNote[] {
   if (prs.size === 0) return [];
+  const nums = [...prs.keys()];
+  const marks = nums.map(() => "?").join(", ");
   const rows = db
     .query(
       `SELECT body, modified_at, metadata FROM item
         WHERE service = 'github' AND type = 'review'
           AND json_extract(metadata, '$.repo') = ?
+          AND CAST(json_extract(metadata, '$.pr_number') AS INTEGER) IN (${marks})
           AND upper(json_extract(metadata, '$.state')) IN ('CHANGES_REQUESTED', 'COMMENTED')
           AND body IS NOT NULL AND trim(body) <> ''
         ORDER BY modified_at DESC, id ASC
         LIMIT ?`,
     )
-    .all(repo, REVIEWS_SCANNED) as ReviewRow[];
+    .all(repo, ...nums, REVIEWS_SCANNED) as ReviewRow[];
   const out: PrereviewReviewNote[] = [];
   for (const r of rows) {
     const meta = parseMeta(r.metadata);
