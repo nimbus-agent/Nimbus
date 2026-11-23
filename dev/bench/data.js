@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795423096655,
+  "lastUpdate": 1795426898541,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "d47d52e220b56293e94628c091bac662404eb816",
-          "message": "feat(fleet): overnight sub-agent fleets on local compute — S2 PR 1 of 2 (#1458)\n\n## Summary\n\nSpine S2, PR 1 of 2 of the *overnight sub-agent fleets on zero-marginal\nlocal compute* row. Runs the existing read-only agents on a schedule\nwhile the machine is genuinely idle, and persists the briefs so the\nmorning read is instant instead of a cold thirty-second wait.\n\nDefault OFF twice over: `[fleet] enabled = false`, and no jobs run\nwithout an explicit `[[fleet.job]]` block.\n\nWhat lands:\n\n- **`HostActivity`** — a new PAL power/idle probe with three per-OS\nbackends behind a factory. Admission blocks on `battery`; it does not\nrequire `ac`, because a desktop or server has no battery and answers\n`unknown`. An unmeasurable idle signal admits and is disclosed as\n`power_only` rather than silently claiming a check it did not make.\n- **Schema V60** — `fleet_job_state`, `fleet_run`, `fleet_brief`. A run\nrow is self-describing: `unattempted = in_scope - attempted -\nskipped_not_due`.\n- **Invariant I38 + static rule D28** — an unattended run reaches a\nnon-local model only with `[fleet] allow_remote` and remaining budget. A\nfrontier key configured for interactive use grants the fleet nothing on\nits own.\n- **A derived `fleet` caller identity** — on the `ClientKind` union,\ndeliberately absent from `RECOGNISED`, so no local process on the socket\ncan file work under that attribution.\n- **`fleet.*` IPC and `nimbus fleet`** — status, list, briefs, show,\nrun. LAN-forbidden, absent from the Tauri renderer allowlist.\n- **`agent_fleet`** — the sixth `[policy.capabilities.ai_v2]` org\nlockoff, read through the live `EnforcedPolicy` accessor so a policy\ninstalled after boot still disables it.\n- **`[embedding] pause_on_battery` finally works.** It has parsed,\ndefaulted to `true`, and had no consumer since it was added. It now\npauses the embedding backfill per batch on all three runtime legs, and\nis documented in the user-facing config reference for the first time.\n\n## Related Issue\n\nNone — this implements the `[NEW] Overnight sub-agent fleets` row in\n`docs/roadmap.md` § Active.\n\n## Linked Discussion\n\nNone.\n\n## Type of Change\n\n- [x] New feature (non-breaking change that adds functionality)\n- [x] Documentation only — three false claims corrected, see Notes\n\nNot marked breaking. Every signature change is confined to\n`packages/gateway`, which is `private: true` and has no published\nsurface, and there is nothing an existing user must do to keep working.\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes\n- [x] All existing tests pass\n- [x] New behaviour is covered by tests\n- [x] No `any` types introduced\n- [x] No credentials, tokens, or secret values in logs, IPC, config, or\nfixtures\n- [x] Platform-specific code is behind `PlatformServices` — the three\nbackends sit behind `createHostActivity`, and a circular import between\nthe factory and its backends was caught and broken with a leaf types\nmodule\n- [x] The HITL consent gate has not been weakened. The fleet reads and\nreports: no writes, no autonomous action, no standing approvals. Agents\nwith owner-machine side effects are refused by a total eligibility map\n\n## Coverage\n\n`engine/` and `vault/` are untouched, so neither gate applies.\n\nThree coverage-floor exclusions were added, each citing the existing\n`platform/sandbox/sandbox-runner.ts` precedent and naming the pure\nhelpers that **are** covered, so the exemption is scoped rather than a\nblanket pass. `host-activity/linux.ts` was deliberately **not** exempted\n— its injectable root makes it testable on any OS.\n\n## Testing\n\n- Full `bun run test:ci` green.\n- `bun run preflight` on Windows: 38 of 39 gates green. The single red\nis `audit:coverage-floor`, with 6 violations in 4 files this branch\nnever touched.\n- `bun run verify:docker --full` on Linux, which is the authoritative\nrunner for that gate: **`audit:coverage-floor` reports 0 violations.**\nThe Windows numbers are machine noise.\n- Every task was reviewed, and every fix was red-proved by reverting the\nchange and confirming the covering test fails.\n\n## Notes for Reviewers\n\n**Two bounds are stated rather than closed, deliberately.**\n\n1. I38's **per-run** disclosure is accurate — `remote_calls_made` and\n`remote_call_budget` are persisted. Its **per-brief** disclosure is not:\nthe router withholds the provider once the budget is spent, so the\nrunner returns `no_eligible_provider` with no detail, indistinguishable\nfrom \"no provider configured\". Closing it needs a reason channel on the\nshared brief path.\n2. D28's regex requires a quoted `\"fleet\":` key, but the real egress map\nwrites it unquoted — so two of its three allow-listed files contain\nnothing the rule can see. Widening it would false-positive on the CLI\ncommand map. Capability confinement is the primary defense here; D28 is\nthe backstop.\n\n**One optional follow-up:** `retention_days = 0` is accepted, and a\nzero-retention run now deletes its own row. Pre-existing shape; worth a\nclamp.\n\n**What did not ship:** PR 2 — subject enumeration, change thresholds,\nthe digest. `negotiate` is classified `deferred` rather than eligible.\nLinux idle is never measured, so admission there is power-only and says\nso per run. The composed I38 path is proven at the wrapper and at the\ninvoker separately, not end to end; that bound is written into the\ninvariant row.\n\n**Worth knowing about how this was built.** Fourteen defects in the\nimplementation plan were found by the implementers, not by the plan's\nauthor — including an invoker that would have failed every production\nrun, an IPC context never wired so the whole surface would have answered\n\"Method not found\" while every unit test passed, and a migration\nregistered but never run. Ten tests that could not fail were found and\nfixed, one of them guarding I38 itself: the entire invariant block would\nhave passed against a wrapper that refused everything unconditionally.\nThree false claims in committed documents were corrected, and the\ninvariant ceiling was stale in ten files. Reviewers may find it useful\nto read the diff with that history in mind.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01QcyA4M6fQsoqNUnzANxjzH\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-07T04:20:47Z",
-          "tree_id": "43af6abd17f083d8e6a4d62d14e672bea89bbf15",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/d47d52e220b56293e94628c091bac662404eb816"
-        },
-        "date": 1788755648851,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 326.6537267999964,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 326.9370704000088,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 176.0644997999945,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e01d5e5bf7cd0f626a3dcc9f522a84d5dd8df57c",
+          "message": "refactor(gateway): split config/nimbus-toml.ts into per-section modules (no behaviour change) (#2087)\n\n## Why\nOwner ruling (2026-11-23): files stay under 500 lines, and a file\nalready over 500 never grows. `config/nimbus-toml.ts` was 3,096 lines.\n\n## Layout\n`config/nimbus-toml.ts` (251 lines) is now a facade: it re-exports each\noriginal public name BY LIST (so no helper becomes public surface),\nkeeps `loadNimbusServiceConfigsFromConfigDir`, and re-exports\n`service-config-toml.ts` and `nimbus-toml-connectors.ts` as before. Code\nmoved verbatim into `config/nimbus-toml/`:\n\n| module | lines |\n| --- | --- |\n| shared (loaders, parse helpers, sub-table scanner) | 274 |\n| embedding | 121 |\n| llm | 362 |\n| voice-updater | 162 |\n| lan (I6 default) | 102 |\n| code-execution-computer-use | 220 |\n| tool-generation | 133 |\n| federation-automation | 113 |\n| extensions | 106 |\n| audit-security-user | 160 |\n| pagerduty-identity | 212 |\n| quorum-scim-chatops | 180 |\n| preflight-tribal-share | 257 |\n| briefs-glossary-decisions | 258 |\n| ownership-premortem-negotiate | 301 |\n| agents-persona | 152 |\n\nHelpers used by more than one section (`collectSubTableKv`,\n`beginQuotedIdTable`, `parseIntWithMin`, `assign*`, the pass toggles)\nlive in `shared.ts`, so no section module imports another (no cycles).\nNothing is over 500 lines.\n\n## Proof\n1. `bun run typecheck` and `bun run typecheck:tests` pass (469\nbaselined, 0 new).\n2. Public surface: `Object.keys(await import(\"config/nimbus-toml.ts\"))`\nis identical before and after (124 names); all ~121 importers typecheck\nunchanged. No test `mock.module`s the file.\n3. Tests: `config/`, `test/unit/config`, `test/integration/config` and\n`security-invariants` run before and after: 1,799 tests, JUnit\n(classname, name, status) lists identical.\n4. Path readers updated: the I6 test now reads `nimbus-toml/lan.ts`\n(same assertions); three tests that scanned `config/*.ts` by path\n(`config-env-overrides`, `config-explain`, `active-profile`) also scan\n`config/nimbus-toml/`; `docs/SECURITY-INVARIANTS.md`, CLAUDE.md and\nGEMINI.md name the new I6 / `[lan]` / `model_tools` modules. Static rule\nD35 does not name the file (it scans `config/` by prefix), and\n`audit:invariants` passes.\n5. `bun run preflight:fast` passes.\n\nThe file-size baseline is not touched: the gate (#2085) was not on\n`main` when this was opened. After it lands, `bun run audit:file-size\n--update` should drop the `nimbus-toml.ts` entry.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrGFPLqt8C3Ybzk2dHq\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Refactor**\n* Reorganized configuration handling into focused sections while\npreserving existing configuration exports and behavior.\n* **Documentation**\n* Updated security-invariant references to match the configuration\nlayout.\n* **Tests**\n* Expanded configuration checks to cover section-based configuration\nfiles and updated LAN binding checks to follow the revised layout.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-23T09:35:20Z",
+          "tree_id": "1b374ff6536835a5762333e0cdb0489f7d837262",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/e01d5e5bf7cd0f626a3dcc9f522a84d5dd8df57c"
+        },
+        "date": 1795426894664,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 167.57033715000617,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 160.29022470000092,
             "unit": "ms"
           }
         ]
