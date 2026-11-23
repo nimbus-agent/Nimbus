@@ -20,7 +20,6 @@ import {
   finalizeSession,
   type LiveSession,
   laneBase,
-  liveSessions,
   safeAppendSessionAudit,
 } from "./cu-gate/live-sessions.ts";
 import { type PreparedLane, prepareLane } from "./cu-gate/prepare-lane.ts";
@@ -40,9 +39,7 @@ import { insertSession } from "./cu-store.ts";
 import { TerminalLineBuffer } from "./cu-terminal-buffer.ts";
 import type { CuActionClass, CuEnvelope, CuLaneHandle, CuOutcome } from "./cu-types.ts";
 
-// The module's public surface lives in `cu-gate/`; this file keeps the two ordered gates
-// (`openSession`, `runAction`) and every `performActuation` call site, so I35's sequence reads as one
-// list here and D26(a) still confines the actuation primitive to this exact file.
+// Public surface lives in `cu-gate/`; the two ordered gates and every `performActuation` call stay here.
 export type { CuActionKind } from "./cu-gate/kinds.ts";
 export { isCuActionKind } from "./cu-gate/kinds.ts";
 export type {
@@ -62,10 +59,13 @@ export { CuGateError } from "./cu-gate/types.ts";
 
 const CAPABILITY = "computer_use";
 
+// Every session this gate has opened and not closed, evicted on every terminal outcome. PRIVATE to
+// this file on purpose (I35, D26(c)): its entries hold a lane handle that actuates with no gate.
+const liveSessions = new Map<string, LiveSession>();
+
 /**
- * The lane of a session THIS gateway process holds open, or `undefined` (never opened here, closed,
- * or orphaned by an earlier process). The model's computer-use binding (I35, OR-MCU-1) is built only
- * for such a session; every action still goes through `runAction`'s own checks.
+ * The lane KIND of a session THIS process holds open, or `undefined`. The model's binding (I35,
+ * OR-MCU-1) is built only for such a session; every action still goes through `runAction`'s checks.
  */
 export function liveSessionLane(sessionId: string): CuLane | undefined {
   return liveSessions.get(sessionId)?.lane.kind;
@@ -304,7 +304,7 @@ export async function openSession(
         openedAt: envelope.approvedAt,
       });
       rowInserted = true;
-      await evictExistingSession(sessionId);
+      await evictExistingSession(liveSessions, sessionId);
       liveSessions.set(sessionId, {
         session,
         lane,
@@ -329,7 +329,7 @@ export async function openSession(
         session,
         lane: laneBase(lane),
         syncRow: rowInserted,
-        evictMap: registeredInMap,
+        evictMap: registeredInMap ? liveSessions : null,
         // Deliberately a normal (throwing) append here too — if it ALSO fails (same root cause
         // as the one above), the throw propagates to the OUTER catch below, whose OWN append IS
         // safe and is the true last line of defense, guaranteeing `openSession` still returns.
@@ -395,7 +395,7 @@ export async function closeSession(
     session,
     lane: laneBase(lane),
     syncRow: true,
-    evictMap: true,
+    evictMap: liveSessions,
     writeAudit: () =>
       safeAppendSessionAudit(openDeps, sessionId, "approved", {
         outcome: "closed_by_owner",
@@ -502,7 +502,7 @@ async function runActionExclusive(
       session,
       lane: laneBase(lane),
       syncRow: true,
-      evictMap: true,
+      evictMap: liveSessions,
       writeAudit: () =>
         writeActionAudit(openDeps, {
           sessionId: req.sessionId,
@@ -537,7 +537,7 @@ async function runActionExclusive(
       // The session STAYS live: this one action was simply not for it.
       lane: null,
       syncRow: false,
-      evictMap: false,
+      evictMap: null,
       writeAudit: () =>
         writeActionAudit(openDeps, {
           sessionId: req.sessionId,
@@ -567,7 +567,7 @@ async function runActionExclusive(
       session,
       lane: laneBase(lane),
       syncRow: true,
-      evictMap: true,
+      evictMap: liveSessions,
       writeAudit: () =>
         writeActionAudit(openDeps, {
           sessionId: req.sessionId,
@@ -670,7 +670,7 @@ async function runActionExclusive(
       // hence `null`. When the lane is lost there is a lane to tear down and an entry to evict.
       lane: audit.laneLost ? laneBase(lane) : null,
       syncRow: true,
-      evictMap: audit.laneLost,
+      evictMap: audit.laneLost ? liveSessions : null,
       writeAudit: () =>
         writeActionAudit(openDeps, {
           sessionId: req.sessionId,

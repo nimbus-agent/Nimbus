@@ -99,12 +99,6 @@ export interface LiveSession {
 }
 
 /**
- * One live computer-use session: the frozen envelope, the driver handle, and the deps it opened
- * with, held beside it. Module-private, holding every session this gate has opened and not yet
- * closed. An entry is evicted on every terminal outcome (fix round 1, I-4) — a session id that
- * has already terminated must never be found here again.
- */
-/**
  * The one lane-independent view the gate's teardown paths need.
  *
  * Deliberately NOT in `cu-types.ts`: that file carries a DECLARATION-ONLY header and is
@@ -114,8 +108,6 @@ export interface LiveSession {
 export function laneBase(handle: CuLaneHandle): CuLaneBase {
   return handle.kind === "browser" ? handle.browser : handle.terminal;
 }
-
-export const liveSessions = new Map<string, LiveSession>();
 
 function syncSessionRow(
   deps: Pick<CuGateDeps, "db" | "now">,
@@ -187,7 +179,8 @@ export async function finalizeSession(params: {
   readonly session: CuSession;
   readonly lane: CuLaneBase | null;
   readonly syncRow: boolean;
-  readonly evictMap: boolean;
+  /** The gate's own registry, handed in per call: this module holds none (I35, D26(c)). */
+  readonly evictMap: Pick<Map<string, LiveSession>, "delete"> | null;
   readonly writeAudit: () => void;
 }): Promise<void> {
   try {
@@ -203,8 +196,8 @@ export async function finalizeSession(params: {
     if (params.lane !== null) {
       await bestEffortCloseLane(params.lane);
     }
-    if (params.evictMap) {
-      liveSessions.delete(params.sessionId);
+    if (params.evictMap !== null) {
+      params.evictMap.delete(params.sessionId);
     }
   }
 }
@@ -223,8 +216,11 @@ export async function finalizeSession(params: {
  * `cu_session` row was left with `closed_at`/`close_reason` still `NULL` forever, and no
  * `computer.session` audit row recorded that it was ever superseded at all.
  */
-export async function evictExistingSession(sessionId: string): Promise<void> {
-  const existing = liveSessions.get(sessionId);
+export async function evictExistingSession(
+  registry: Map<string, LiveSession>,
+  sessionId: string,
+): Promise<void> {
+  const existing = registry.get(sessionId);
   if (existing === undefined) return;
   const { session, lane, openDeps } = existing;
   session.close("evicted", openDeps.now());
@@ -234,7 +230,7 @@ export async function evictExistingSession(sessionId: string): Promise<void> {
     session,
     lane: laneBase(lane),
     syncRow: true,
-    evictMap: true,
+    evictMap: registry,
     writeAudit: () =>
       appendSessionAudit(openDeps, sessionId, "rejected", {
         outcome: "evicted",
