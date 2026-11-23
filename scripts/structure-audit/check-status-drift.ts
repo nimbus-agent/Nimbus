@@ -92,15 +92,13 @@ const CEILING_RANGE_SURFACES: readonly string[] = [
 ];
 
 /**
- * The highest static rule `D<N>` the auditor implements. Derived from the enforcement site for the
- * same reason the invariant ceiling is derived from the `security-invariants/` test files: a rule that is
- * documented but not implemented is the drift this gate exists to catch, so the code must be the
- * source and the prose the thing checked against it.
+ * The highest static rule `D<N>` the auditor (entry point plus `invariants/`) implements. Derived
+ * from the code, as the invariant ceiling is from `security-invariants/`: a rule documented but not
+ * implemented is the drift this gate exists to catch, so the prose is checked against the code.
  */
 export function canonicalStaticRule(repoRoot: string): number | undefined {
-  const rel = "scripts/structure-audit/check-nimbus-invariants.ts";
-  if (!existsSync(join(repoRoot, rel))) return undefined;
-  // The rules live in invariants/ beside the entry point, so read the whole auditor.
+  if (!existsSync(join(repoRoot, "scripts/structure-audit/check-nimbus-invariants.ts")))
+    return undefined;
   return maxCapture(readInvariantsSource(repoRoot), /\bD(\d+)\b/g);
 }
 
