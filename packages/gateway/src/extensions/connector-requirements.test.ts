@@ -178,7 +178,7 @@ describe("connectorRequirementStatuses", () => {
 
   /**
    * The connectors whose `nimbus connector auth` needs `--token` and nothing else. The source of
-   * truth is the CLI, `packages/cli/src/commands/connector.ts` (each `apply*ConnectorAuth`): a
+   * truth is the CLI, `packages/cli/src/commands/connector/auth-appliers-*.ts` (each `apply*ConnectorAuth`): a
    * connector belongs here only when its CLI auth succeeds with `--token` alone.
    */
   const TOKEN_ONLY_CLI_AUTH = ["github", "gitlab", "linear", "circleci", "pagerduty", "newrelic"];
