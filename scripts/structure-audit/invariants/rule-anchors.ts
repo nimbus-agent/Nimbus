@@ -126,6 +126,9 @@ export const RULE_ANCHORS: readonly string[] = [
   // not capture-validate.ts) and (e) reads then permits. Without it, both rules would report clean
   // while scanning nothing the moment iterateSourceFiles() stopped loading mcp-sink/.
   "packages/gateway/src/mcp-sink/capture-gate.ts",
+  // D32(b)(d) allow-list the revoke and purge verbs' module by exact path; it moving out of the scan
+  // would leave those two allowances reading nothing.
+  "packages/gateway/src/mcp-sink/capture-gate/owner-verbs.ts",
   "packages/gateway/src/extensions/approve-run.ts", // D33(b)(c) — scanned; the run-grant store's main caller
   // D34(a)(b)(c) — anchored on the RPC path, which (a) and (b) SCAN (it names neither the table nor
   // the grant entry point) and (c) reads then permits.

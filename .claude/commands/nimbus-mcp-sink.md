@@ -257,9 +257,9 @@ is clamped.
 | Rule | Confines |
 |---|---|
 | (a) | the `capture` table identifier → `capture-store.ts`, `index/capture-v67-sql.ts`, `index/capture-action-v69-sql.ts` |
-| (b) | `submitCapture`/`acceptCapture`/`rejectCapture`/`revokeCapture`/`purgeCapture` → `ipc/capture-rpc.ts` + `capture-gate.ts` |
+| (b) | `submitCapture`/`acceptCapture`/`rejectCapture`/`revokeCapture`/`purgeCapture` → `ipc/capture-rpc.ts` + `ipc/approvals-rpc.ts` + `capture-gate.ts` + `capture-gate/owner-verbs.ts` (revoke and purge) |
 | (c) | value-import / re-export / dynamic import of `capture-gate.ts` → only `ipc/capture-rpc.ts` (`import type` allowed) |
-| (d) | the four agent-row writers → their definitions + `capture-native.ts`; `writeCaptureNative`/`revokeCaptureNative` → `capture-native.ts` + `capture-gate.ts` |
+| (d) | the four agent-row writers → their definitions + `capture-native.ts`; `writeCaptureNative`/`revokeCaptureNative` → `capture-native.ts` + `capture-gate.ts` + `capture-gate/owner-verbs.ts` |
 | (e) | `acceptAction` → its definition + its one call in `capture-gate.ts` |
 | (f) | no non-test `mcp-sink/` file imports `engine/executor.ts` or anything under `connectors/` (type-only included) — execution, classification, configured-ness arrive injected |
 | (g) | the `mcpToolId` literal under `mcp-sink/` → `capture-validate.ts` only (which refuses it) |
@@ -268,7 +268,8 @@ is clamped.
 
 | Path | Role |
 |---|---|
-| `packages/gateway/src/mcp-sink/capture-gate.ts` | `submitCapture`, `acceptCapture`, `rejectCapture`, `revokeCapture`, `purgeCapture`, list/get/state/status |
+| `packages/gateway/src/mcp-sink/capture-gate.ts` | `submitCapture` (the fixed order, with its named steps), `acceptCapture`, `rejectCapture`; re-exports the rest |
+| `packages/gateway/src/mcp-sink/capture-gate/` | `contract.ts` (deps, views, constants), `shared.ts`, `reads.ts` (list/get/state/mine/proposals/status), `submit-support.ts` (audited and unaudited refusals, step 9-10 write; importable only by `capture-gate.ts`, pinned by `i28-capture-gate-confinement.test.ts`), `owner-verbs.ts` (`revokeCapture`, `purgeCapture`) |
 | `packages/gateway/src/mcp-sink/capture-act.ts` | `acceptAction`, expiry sweep, boot reconcile, error classification |
 | `packages/gateway/src/mcp-sink/capture-native.ts` | native-row write/revoke/status for decision/term/link |
 | `packages/gateway/src/mcp-sink/capture-store.ts` | the only file naming the `capture` table |

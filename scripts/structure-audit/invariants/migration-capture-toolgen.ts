@@ -145,7 +145,8 @@ export function checkConfigReaderConfinement(files: readonly FileEntry[]): Viola
 }
 
 // (b) The five gate entry points are CALLED only from the two RPC modules, ipc/capture-rpc.ts and
-//     (agent door AD2) ipc/approvals-rpc.ts, and DEFINED only in capture-gate.ts. Any other mention
+//     (agent door AD2) ipc/approvals-rpc.ts, and DEFINED only in capture-gate.ts (and, for revoke and
+//     purge, mcp-sink/capture-gate/owner-verbs.ts, which capture-gate.ts re-exports). Any other mention
 //     — a call or an import (aliased or not) — is a violation, so a second door cannot be opened by
 //     importing the function under another name. Entries are FULL repo-relative paths: the check
 //     is `includes(f.relPath)`, so a bare `ipc/approvals-rpc.ts` would exempt nothing. A second
@@ -157,6 +158,7 @@ const D32_GATE_ALLOWED: readonly string[] = [
   "packages/gateway/src/ipc/capture-rpc.ts",
   "packages/gateway/src/ipc/approvals-rpc.ts",
   "packages/gateway/src/mcp-sink/capture-gate.ts",
+  "packages/gateway/src/mcp-sink/capture-gate/owner-verbs.ts",
 ];
 const D32_GATE_IMPORTERS_ALLOWED: readonly string[] = [
   "packages/gateway/src/ipc/capture-rpc.ts",
@@ -219,7 +221,8 @@ export function checkCaptureGateImporters(files: readonly FileEntry[]): Violatio
 
 // (d) Rows with 'agent' provenance arise ONLY from an owner-accepted capture. The four agent-row
 //     writers are named only by their definitions and `mcp-sink/capture-native.ts`, and
-//     capture-native's write/inverse entry points only by itself and `capture-gate.ts`, so the one
+//     capture-native's write/inverse entry points only by itself and `capture-gate.ts` (and
+//     `capture-gate/owner-verbs.ts`, which holds the revoke inverse), so the one
 //     path to an 'agent' row is acceptCapture → writeCaptureNative. Stated bound: a hand-written
 //     `INSERT … 'agent'` elsewhere, string-keyed access (`gs["upsertAgentTerm"](…)` — the literal is
 //     stripped), a caller in a non-test file outside packages/gateway/src/ (scripts/, test helpers),
@@ -237,6 +240,7 @@ const D32_CAPTURE_NATIVE_RE = /\b(?:writeCaptureNative|revokeCaptureNative)\b/g;
 const D32_CAPTURE_NATIVE_ALLOWED: readonly string[] = [
   "packages/gateway/src/mcp-sink/capture-native.ts",
   "packages/gateway/src/mcp-sink/capture-gate.ts",
+  "packages/gateway/src/mcp-sink/capture-gate/owner-verbs.ts",
 ];
 
 export function checkAgentProvenanceWriters(files: readonly FileEntry[]): Violation[] {

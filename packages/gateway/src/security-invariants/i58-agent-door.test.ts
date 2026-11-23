@@ -95,7 +95,7 @@ describe("Phase 28 AD3a-1 - the agent door's approval list (the owner's enable, 
       "packages/gateway/src/mcp-sink/capture-act.ts",
       "packages/gateway/src/mcp-sink/capture-types.ts",
     ]) {
-      expect(stripComments(await read(rel)), rel).not.toMatch(/from "\.\.\/connectors\//);
+      expect(stripComments(await read(rel)), rel).not.toMatch(/from "(?:\.\.\/)+connectors\//);
     }
   });
 });
