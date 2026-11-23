@@ -40,7 +40,10 @@ import { runTeamsEventsRoute } from "./http-write-routes/teams-events.ts";
 import type { ResolvedRoute, WriteRouteContext } from "./http-write-routes/types.ts";
 
 // The allow-list lives in its own module (the I13 enumeration scanned by audit:status-drift);
-// this file is the gate: route match, auth, rate limit, body cap, then the handler.
+// this file is the gate: route match, the static bearer check, rate limit, body cap, then the
+// handler. `checkAuth` checks the static bearer (deployment, SCIM, policy) itself; the scoped and
+// protocol-specific routes (clips, briefs, agents, fetch, Teams, pairing) authenticate in-route,
+// after the rate limit and body cap.
 export { ROUTE_ITEMS_FETCH, WRITE_ROUTE_ALLOWLIST } from "./http-write-routes/allowlist.ts";
 export type {
   AgentsWriteSurface,

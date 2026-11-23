@@ -79,14 +79,16 @@ export function briefsDisabled(): Response {
  *
  * Takes `route.key` — the STATIC route constant — never the raw request path. `clipScopeFor`
  * (via `enforceClipScope`) looks up the requirement by that literal key; a raw path (with the id
- * substituted in) would miss every templated key and silently wave the request through with no
- * scope check at all.
+ * substituted in) would miss every templated key, and `enforceClipScope` then returns its
+ * misconfigured verdict, so the request is refused with 500 `internal_error` (never waved through).
  *
- * EVERY caller of `scopeRefusal` is a clip-token-authenticated route — `runClipIngestRoute`
- * (kind `clipIngest`) and `requireBriefAuth` (kinds `briefCreate`/`briefSource`/`briefRun`/
- * `briefSave`) — so `enforceClipScope` returning "misconfigured" here means the table's entry for
- * this key was removed or changed away from `kind: "clip"`, not that the route legitimately needs
- * no scope. FAIL CLOSED (500), never treat that as "no refusal".
+ * `scopeRefusal` has two callers, both labeled-token routes: `runClipIngestRoute` (kind
+ * `clipIngest`) directly, and the shared bearer gate `requireBearerAuth`, through which
+ * `requireBriefAuth` (kinds `briefCreate`/`briefSource`/`briefRun`/`briefSave`),
+ * `requireAgentAuth` (`agentInvoke`) and `requireFetchAuth` (`itemsFetch`) all pass. So
+ * `enforceClipScope` returning "misconfigured" here means the table's entry for this key was
+ * removed or changed away from `kind: "clip"`, not that the route legitimately needs no scope.
+ * FAIL CLOSED (500), never treat that as "no refusal".
  */
 export function scopeRefusal(
   routeKey: string,
