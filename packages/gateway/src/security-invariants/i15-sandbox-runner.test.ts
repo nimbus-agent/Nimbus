@@ -473,7 +473,7 @@ describe("I15 — SandboxRunner is intrinsic to every extension spawn", () => {
         expect(registrable).toMatch(/userMcpWriteConfineRefusal\(resolved,/);
         // The consent channel of a write-grant registration is the human-only one.
         const dispatchers = stripComments(
-          await read("packages/gateway/src/ipc/server/dispatchers.ts"),
+          await read("packages/gateway/src/ipc/server/dispatchers/platform-rpcs.ts"),
         );
         expect(dispatchers).toMatch(
           /method === "connector\.addMcp" && Array\.isArray\(writePathsParam\) && writePathsParam\.length > 0/,

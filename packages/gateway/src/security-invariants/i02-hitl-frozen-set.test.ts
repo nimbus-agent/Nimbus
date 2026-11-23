@@ -125,7 +125,9 @@ describe("I2 — HITL frozen-set membership", () => {
         dispatchAutomationRpc({ ...base, extensionsDir, ownerGate: async () => false }),
       ).rejects.toThrow(/ERR_EXTENSION_INSTALL_NOT_APPROVED/);
       expect(listExtensions(db)).toEqual([]);
-      const dispatchers = await read("packages/gateway/src/ipc/server/dispatchers.ts");
+      const dispatchers = await read(
+        "packages/gateway/src/ipc/server/dispatchers/automation-rpcs.ts",
+      );
       expect(dispatchers).toMatch(/OWNER_GATED_EXTENSION_METHODS[^;]*"extension\.install"/);
       db.close();
     } finally {
@@ -228,7 +230,9 @@ describe("I2 — HITL frozen-set membership", () => {
       ).rejects.toThrow(/ERR_REGISTRY_ADD_NOT_APPROVED/);
       expect(asked).toEqual(["registry.add"]);
       expect(listRegistries(db)).toEqual([]);
-      const dispatchers = await read("packages/gateway/src/ipc/server/dispatchers.ts");
+      const dispatchers = await read(
+        "packages/gateway/src/ipc/server/dispatchers/platform-rpcs.ts",
+      );
       expect(dispatchers).toMatch(
         /method === "registry\.add"[\s\S]{0,200}buildExtensionGateExecutor/,
       );

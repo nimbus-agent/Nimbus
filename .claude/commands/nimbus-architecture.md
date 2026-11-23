@@ -64,7 +64,7 @@ nimbus/
 
 **Key files to know:**
 - `engine/executor.ts` — HITL gate lives here. Touch carefully.
-- `ipc/<namespace>-rpc.ts` — one file per IPC namespace (e.g. `federation-rpc.ts`, `connector-rpc.ts`, `llm-rpc.ts`); each exports a `dispatch<Namespace>Rpc` wired into `ipc/server/dispatchers.ts`
+- `ipc/<namespace>-rpc.ts` — one file per IPC namespace (e.g. `federation-rpc.ts`, `connector-rpc.ts`, `llm-rpc.ts`); each exports a `dispatch<Namespace>Rpc` called from a `tryDispatch*Rpc` wrapper in `ipc/server/dispatchers/<group>-rpcs.ts` (`dispatchers.ts` only re-exports them)
 - `index/migrations/runner.ts` (`INDEXED_SCHEMA_STEPS`) — all SQLite schema changes go through migrations, never manual ALTER
 
 ### `packages/cli/src/`
@@ -116,7 +116,7 @@ nimbus/
 
 **Adding a new IPC method:**
 1. Add handler in `packages/gateway/src/ipc/<namespace>-rpc.ts` (create the file if it doesn't exist), exporting a `dispatch<Namespace>Rpc` function (built via the `dispatchByMethod` helper) that returns an `RpcMissOrHit` discriminated union — `{ kind: "hit", value }` on a match, `{ kind: "miss" }` otherwise
-2. Wire it into the dispatcher chain in `packages/gateway/src/ipc/server/dispatchers.ts`
+2. Wire it into the matching `tryDispatch*Rpc` wrapper in `packages/gateway/src/ipc/server/dispatchers/<group>-rpcs.ts` (`dispatchers.ts` only re-exports them). A NEW wrapper must also be registered with its caller: `ipc/server/server.ts` tries the session, automation, diagnostics and other wrappers first and only then calls `tryDispatchPhase4Rpc`, whose own order is in `dispatchers/phase4-router.ts`
 3. If it should be callable from the Tauri UI, add it to `ALLOWED_METHODS` in `gateway_bridge.rs`
 4. Write a unit test in `packages/gateway/test/unit/ipc/`
 

@@ -94,8 +94,12 @@ describe("ruling B1: the built-in registry and continuity table are injected, ne
       readFileSync(join(import.meta.dir, "..", rel), "utf8")
         .replace(/\/\*[\s\S]*?\*\//g, "")
         .replace(/(^|[^:])\/\/.*$/gm, "$1");
-    const dispatchers = strip(join("ipc", "server", "dispatchers.ts"));
+    const dispatchersOf: Record<string, string> = {
+      dispatchAutomationRpc: strip(join("ipc", "server", "dispatchers", "automation-rpcs.ts")),
+      dispatchConnectorRpc: strip(join("ipc", "server", "dispatchers", "platform-rpcs.ts")),
+    };
     for (const callee of ["dispatchAutomationRpc", "dispatchConnectorRpc"]) {
+      const dispatchers = dispatchersOf[callee] ?? "";
       const at = dispatchers.indexOf(`await ${callee}({`);
       expect(at, callee).toBeGreaterThan(-1);
       const args = dispatchers.slice(at, dispatchers.indexOf("});", at));
@@ -132,7 +136,7 @@ describe("ruling B1: the built-in registry and continuity table are injected, ne
     const removal = strip(join("ipc", "connector-rpc-handlers", "removal.ts"));
     expect(removal).toMatch(/extensionIdBackingServiceId\(db, s, ctx\.continuityTable\)/);
     // No IPC module names the baked constants: the composition is the only source.
-    for (const src of [dispatchers, automation, connectorRpc, removal]) {
+    for (const src of [...Object.values(dispatchersOf), automation, connectorRpc, removal]) {
       expect(src).not.toMatch(/\bCONTINUITY_TABLE\b/);
     }
   });

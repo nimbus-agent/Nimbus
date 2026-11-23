@@ -565,7 +565,7 @@ describe("I55 SA4 — a scheduled run is unattended: a rule or a block, never a 
   });
 
   test("a schedule is set only through workflow.save from a cli or ui connection (the kind comes from the server)", async () => {
-    const dispatch = await read("packages/gateway/src/ipc/server/dispatchers.ts");
+    const dispatch = await read("packages/gateway/src/ipc/server/dispatchers/automation-rpcs.ts");
     expect(dispatch).toMatch(/clientKind:\s*ctx\.getClientKind\(clientId\)/);
     const sched = stripComments(await read("packages/gateway/src/automation/workflow-schedule.ts"));
     expect(sched).toMatch(/new Set<ClientKind>\(\["cli", "ui"\]\)/);

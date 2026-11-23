@@ -359,7 +359,7 @@ describe("C0: a templated send is never offered or approved (OR-W34-1)", () => {
 
 describe("wiring", () => {
   test("the executor the connector dispatcher builds is gate-only: NULL_EGRESS_SINK, stub dispatcher", () => {
-    const src = readFileSync(join(import.meta.dir, "server", "dispatchers.ts"), "utf8");
+    const src = readFileSync(join(import.meta.dir, "server/dispatchers/platform-rpcs.ts"), "utf8");
     const at = src.indexOf("export async function tryDispatchConnectorRpc(");
     const body = src.slice(at, src.indexOf("export async function tryDispatchDiagnosticsRpc(", at));
     expect(body).toContain("NULL_EGRESS_SINK");

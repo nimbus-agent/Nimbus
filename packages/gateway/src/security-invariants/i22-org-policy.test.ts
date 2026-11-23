@@ -283,7 +283,7 @@ code_execution=true
     // `read()`, not a bare relative `Bun.file("packages/...")`: CI's coverage job `cd`s into
     // `packages/gateway` before running `bun test`, so a cwd-relative path ENOENTs there while
     // resolving fine from the repo root. That is why this helper exists.
-    const dispatchers = await read("packages/gateway/src/ipc/server/dispatchers.ts");
+    const dispatchers = await read("packages/gateway/src/ipc/server/dispatchers/media-rpcs.ts");
     expect(dispatchers).toContain("capabilitiesDisabled.has(MULTIMODAL_CAPABILITY)");
     const assemble = await read("packages/gateway/src/platform/assemble.ts");
     expect(assemble).toContain("ipcOpts.mediaRpcCtx");

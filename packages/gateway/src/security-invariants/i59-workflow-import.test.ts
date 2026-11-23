@@ -195,7 +195,9 @@ describe("I59 - a workflow from outside this install enters only through importW
   });
 
   test("the RPC asks through createOwnerOnlyAsk (no delegation, a human answer only) and checks the connection's kind before the core", async () => {
-    const disp = stripComments(await read("packages/gateway/src/ipc/server/dispatchers.ts"));
+    const disp = stripComments(
+      await read("packages/gateway/src/ipc/server/dispatchers/automation-rpcs.ts"),
+    );
     const at = disp.indexOf("async function dispatchWorkflowImportRpcFor(");
     const body = disp.slice(at, disp.indexOf("\n}\n", at));
     expect(body).toMatch(/askOwner:\s*createOwnerOnlyAsk\(/);

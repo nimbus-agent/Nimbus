@@ -54,7 +54,7 @@ describe("I18 — IdP token validation is intrinsic + tokens are Vault-only", ()
     // would be permanently undefined; the holder is what makes it resolvable at call time.
     expect(assemble).toContain("identityBootRefHolder.current");
 
-    const dispatchers = await read("packages/gateway/src/ipc/server/dispatchers.ts");
+    const dispatchers = await read("packages/gateway/src/ipc/server/dispatchers/core-rpcs.ts");
     expect(dispatchers).toContain("identityGuard");
   });
 

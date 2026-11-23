@@ -3845,7 +3845,7 @@ describe("D34 — the connector migration's table, grant entry point and consent
         file("packages/gateway/src/platform/assemble.ts", "ipcOpts.migrationEngine = engine;"),
         file("packages/gateway/src/ipc/server/options.ts", "migrationEngine?: MigrationEngine;"),
         file(
-          "packages/gateway/src/ipc/server/dispatchers.ts",
+          "packages/gateway/src/ipc/server/dispatchers/migration-rpcs.ts",
           "const engine = ctx.options.migrationEngine;",
         ),
         file(

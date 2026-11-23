@@ -21,17 +21,17 @@ import { checkTableConfinement, sqlTableReferenceRe } from "./vlm-media-capture-
 //     (`engine/executor.ts`, which is what gates it); `createMigrationEngine` only by the
 //     engine and `platform/migration-boot.ts`, the one production constructor; and the
 //     `migrationEngine` option that carries the built instance only by `platform/assemble.ts` (which
-//     sets it), `ipc/server/options.ts` (which types it) and `ipc/server/dispatchers.ts` (which hands
+//     sets it), `ipc/server/options.ts` (which types it) and `ipc/server/dispatchers/migration-rpcs.ts` (which hands
 //     it to `ipc/migration-rpc.ts`).
 // Comments are stripped first; identifiers are matched as words after string literals are stripped
 // too (so an aliased import is caught), the literal on comment-stripped source. Test files and
 // anything outside packages/gateway/src/ are not scanned. STATED BOUND, as D33(c): a dynamically
 // composed name (`options["migration" + "Engine"]`) evades a text scan, and a second use inside an
-// allow-listed file is exempt whole-file. That matters for `dispatchers.ts`: every dispatcher there
+// allow-listed file is exempt whole-file. That matters for `dispatchers/migration-rpcs.ts`: every dispatcher there
 // receives the `ServerCtx` that carries the engine, and a caller holding it could pass `accept` a
 // consent callback of its own (`async () => true`). The rule cannot see which function in that file
 // reads the option; an I44-block test in `i43-extension-spawn.test.ts` pins that exactly one place in
-// `dispatchers.ts` does — `tryDispatchMigrationRpc` — and that `accept` is called only by
+// `dispatchers/migration-rpcs.ts` does — `tryDispatchMigrationRpc` — and that `accept` is called only by
 // `ipc/migration-rpc.ts`.
 const D34_TABLE_RE = sqlTableReferenceRe("connector_migration");
 const D34_TABLE_ALLOWED: readonly string[] = [
@@ -63,7 +63,7 @@ const D34_IDENTIFIER_SCANS: ReadonlyArray<
     [
       "packages/gateway/src/platform/assemble.ts",
       "packages/gateway/src/ipc/server/options.ts",
-      "packages/gateway/src/ipc/server/dispatchers.ts",
+      "packages/gateway/src/ipc/server/dispatchers/migration-rpcs.ts",
     ],
   ],
 ];
