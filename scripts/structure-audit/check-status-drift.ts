@@ -289,14 +289,14 @@ function statesWriteRouteCount(line: string): boolean {
 function auditWriteRouteSurface(repoRoot: string): string[] {
   const errors: string[] = [];
   const sources = readAll(repoRoot, [
-    "packages/gateway/src/ipc/http-write-routes.ts",
+    "packages/gateway/src/ipc/http-write-routes/allowlist.ts",
     ...WRITE_SURFACE_DOCS.map((d) => d.rel),
   ]);
   if (sources === undefined) return [];
   const src = sources[0] as string;
   const frozen = /WRITE_ROUTE_ALLOWLIST[^=]*=\s*Object\.freeze\(\[([\s\S]*?)\]\s*\)/.exec(src);
   if (frozen?.[1] === undefined) {
-    return ["could not find WRITE_ROUTE_ALLOWLIST in ipc/http-write-routes.ts"];
+    return ["could not find WRITE_ROUTE_ALLOWLIST in ipc/http-write-routes/allowlist.ts"];
   }
   // Each entry is a `ROUTE_*` const; resolve each to its literal route string.
   const names = [...frozen[1].matchAll(/ROUTE_[A-Z_0-9]+/g)].map((m) => m[0]);

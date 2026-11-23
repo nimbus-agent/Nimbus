@@ -89,7 +89,7 @@ describe("auditStatusDrift", () => {
 
 /**
  * `auditWriteRouteSurface` had no test at all: the fixture repos above omit
- * `http-write-routes.ts`, so `readAll` opts the whole check out and every case
+ * `http-write-routes/allowlist.ts`, so `readAll` opts the whole check out and every case
  * passes without exercising it. These fixtures supply both sides.
  *
  * The docs it reads now include the two `.claude/commands/` skills, added after
@@ -121,7 +121,7 @@ function withWriteRoutes(overrides: Record<string, string> = {}): Record<string,
     "",
   ].join("\n");
   return inSync({
-    "packages/gateway/src/ipc/http-write-routes.ts": src,
+    "packages/gateway/src/ipc/http-write-routes/allowlist.ts": src,
     "docs/SECURITY-INVARIANTS.md":
       "**Current ceiling:** invariants I1–I27.\n\n## I27 — the share gate\n\n" +
       "The `WRITE_ROUTE_ALLOWLIST` carries `POST /v1/a` and `POST /v1/b`.\n",

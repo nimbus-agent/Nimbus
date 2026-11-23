@@ -24,7 +24,8 @@ This skill is the rule a contributor consults **before** adding any HTTP `POST` 
 
 | File | Role |
 |---|---|
-| [`packages/gateway/src/ipc/http-write-routes.ts`](../../packages/gateway/src/ipc/http-write-routes.ts) | `WRITE_ROUTE_ALLOWLIST` (frozen, compile-time) + `dispatchWriteRoute` — the single dispatcher every HTTP write goes through |
+| [`packages/gateway/src/ipc/http-write-routes/allowlist.ts`](../../packages/gateway/src/ipc/http-write-routes/allowlist.ts) | `WRITE_ROUTE_ALLOWLIST` (frozen, compile-time) and the `ROUTE_*` literals `audit:status-drift` derives the write-route count and enumeration from |
+| [`packages/gateway/src/ipc/http-write-routes.ts`](../../packages/gateway/src/ipc/http-write-routes.ts) | `dispatchWriteRoute` — the single dispatcher every HTTP write goes through (route match, auth, rate limit, body cap, then the handler); the handlers are one module per route family under [`ipc/http-write-routes/`](../../packages/gateway/src/ipc/http-write-routes/) |
 | [`packages/gateway/src/ipc/http-server.ts`](../../packages/gateway/src/ipc/http-server.ts) | Where POST requests are routed to `dispatchWriteRoute`; opens **at most one** writable `Database` handle (the read handle stays `SQLITE_OPEN_READONLY`); holds the ordered request pipeline, while the read-route families and write-seam builders live in [`ipc/http-server/`](../../packages/gateway/src/ipc/http-server/) |
 | [`packages/gateway/src/ipc/http-auth.ts`](../../packages/gateway/src/ipc/http-auth.ts) | `requireBearer` + `tokenFingerprint` — reads the expected token from the `http_api.deployment_token` vault key; constant-time compare via `constantTimeStringEqual` (invariant `I10`) |
 | [`packages/gateway/src/ipc/http-rate-limit.ts`](../../packages/gateway/src/ipc/http-rate-limit.ts) | Per-token sliding-window rate limiter (default 60 req/min); surfaces `X-RateLimit-*` headers |
@@ -56,7 +57,7 @@ export const WRITE_ROUTE_ALLOWLIST: readonly string[] = Object.freeze([
 
 Entries are `"<METHOD> <PATH>"` strings. The deployment route is exact-match. Path templating is sanctioned only through a `resolveRoute` regex, and four route families use one: the SCIM item routes (`{id}`), the three brief sub-routes (`POST /v1/briefs/{id}/sources|run|save`), and `POST /v1/agents/{agent}` (`AGENT_INVOKE_RE`). A placeholder that is not matched by one of those regexes is not a route. `dispatchWriteRoute` selects the per-route bearer token (deployment → `http_api.deployment_token`; SCIM → `identity.scim.bearer`) and audit action type (`deployment.annotation_rejected` vs `scim.provision_rejected`). It rejects anything not resolvable to an entry; unknown paths return 404, known paths on the wrong method return 405 with `Allow` header. SCIM **GET** roster reads are not writes — they go through the bearer-checked `dispatchScimRead` read path, off this surface.
 
-The fourteen routes do **not** all share one auth model — see the block comment above `WRITE_ROUTE_ALLOWLIST` in `http-write-routes.ts` for the live source of truth:
+The fourteen routes do **not** all share one auth model — see the block comment above `WRITE_ROUTE_ALLOWLIST` in `http-write-routes/allowlist.ts` for the live source of truth:
 
 | Route | Auth model |
 |---|---|
@@ -112,7 +113,7 @@ These can **never** become HTTP write surfaces, no matter the bearer auth qualit
 When a new POST/PUT/DELETE genuinely needs to live on the HTTP API (not the IPC socket):
 
 - [ ] Confirm the action is **not** in the forbidden categories above. If destructive, it must go through `ToolExecutor` first and only become an HTTP surface for already-approved automation flows (CI annotation patterns).
-- [ ] Add `"<METHOD> <PATH>"` to `WRITE_ROUTE_ALLOWLIST` in `http-write-routes.ts`.
+- [ ] Add `"<METHOD> <PATH>"` to `WRITE_ROUTE_ALLOWLIST` in `http-write-routes/allowlist.ts` (and a `ROUTE_*` const beside it).
 - [ ] **Bump the `length` assertion** in `i13-http-write-routes.test.ts` (`expect(WRITE_ROUTE_ALLOWLIST.length).toBe(N)`). The count *is* the integrity check.
 - [ ] Add an `if (key === "<METHOD> <PATH>")` branch in `dispatchWriteRoute` that calls the route's handler. Route handlers throw typed errors (e.g. `DeploymentRpcError`) so the dispatcher can map them to `400 invalid_<field>` audit rows.
 - [ ] Decide whether the handler writes its own success audit (current pattern for `dispatchDeploymentRpc`). If yes, **do not double-write** in the dispatcher.

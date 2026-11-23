@@ -339,7 +339,6 @@
     "packages/gateway/src/ipc/http-read-gates.test.ts": 882,
     "packages/gateway/src/ipc/http-server.test.ts": 928,
     "packages/gateway/src/ipc/http-write-routes.test.ts": 2065,
-    "packages/gateway/src/ipc/http-write-routes.ts": 1698,
     "packages/gateway/src/ipc/incident-rpc.test.ts": 755,
     "packages/gateway/src/ipc/incident-rpc.ts": 743,
     "packages/gateway/src/ipc/index-rebody-rpc.test.ts": 1037,
