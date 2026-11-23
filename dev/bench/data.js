@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795456989372,
+  "lastUpdate": 1795458402445,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "806bf0c532911d0330845e060e5ac51e338d2776",
-          "message": "docs(spec): propose an HTTP route for the bucketed DORA series (#1490)\n\n## Summary\n\nProposes exposing the **bucketed DORA series** the gateway already\ncomputes — `computeStatsSeries` / `metrics.stats` — over HTTP, with\n`until_ms` on `GET /v1/metrics/dora` as the named fallback. **Design\nonly, no implementation**, in the shape of #1464.\n\nSibling proposal: `GET /v1/services` — #1489. Neither is a blocker; the\nclient ships and works without both.\n\n## The ask started out wrong, and the spec says so\n\nThe original draft proposed adding `until` to `GET /v1/metrics/dora`,\nbecause every window that route answers ends at *now* — 7d/30d/90d are\n**nested**, sharing an end point, not consecutive, so a disjoint series\nis not expressible and a consumer cannot honestly draw a trend.\n\nReviewing it against your source changed the ask. `computeStatsSeries`\nalready walks `splitBuckets(untilMs, windowMs, bucketMs)` and evaluates\nthe DORA metrics per bucket, with `window.since_ms` / `until_ms` already\nabsolute. **The series exists; it has no HTTP route.** Asking for a new\nparameter on a different route, when an existing computation answers the\nquestion, is the worse request — so the spec now leads with the stats\nroute and keeps `until_ms` as the fallback for the case where you would\nrather not expose stats.\n\n## The part we think matters most\n\nWhile establishing that, we found what looks like a live attribution\ndefect, and it is **not** something either proposal would introduce:\n\n`changeFailureRate` selects deploys and incidents over the same window,\nbut `selectResolvedIncidents` bounds on `modified_at` — *resolution*\ntime — while attribution compares against `inc.opened` (`dora.ts:347`).\nAn incident that opens inside a window and resolves after it falls out\nof the selection, so its deploy is reported clean.\n\nToday the upper bound is always *now*, which makes this a single edge\nnobody hits. Under a series it becomes **one edge per bucket** — and\n`computeStatsSeries` binds `nowMs` to each bucket's end, so `nimbus\nstats` has this now.\n\nOur first attempt at a fix was also wrong: widening by\n`incidentWindowMinutes` does not work, because it widens the\n*resolution* bound while attribution reads *opened*. The spec's §5\nproposes selecting on `opened_at_ms` instead. We would rather hand you a\ndefect we found honestly, with a first fix that turned out to be wrong\nand why, than a clean-looking proposal that quietly ships a metric wrong\nat every boundary.\n\nThis is your call to make in whichever register you prefer — the spec\nframes it as a condition of shipping a series, not a demand.\n\n## What it leaves to you\n\nMounting and scoping, response shape, whether the IPC verb changes, and\nwhether the attribution correction lands with a route or separately. The\nspec records what we established from source and flags where we are\nguessing.\n\n## If you say no\n\nThe consumer renders three nested windows side by side, each labelled as\nending now — directional and honest, without implying a trend the\ncontract cannot back. That is already shipped and documented in the\nclient's `architecture.md` as a property of the route, so a \"no\" costs\nus nothing but a nicer page.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01SdWmqLJUG2mXevhr31o9dG\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-11T10:31:09+03:00",
-          "tree_id": "4ef2e647e30c2ea0da5ec5d63a4c8da9db804813",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/806bf0c532911d0330845e060e5ac51e338d2776"
-        },
-        "date": 1789112448375,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 271.6567342500002,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 274.11865519999776,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 259.52745389999325,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5e076dbfbda4436094b259242346273d21d0e2a8",
+          "message": "refactor(gateway): split engine/executor.ts, moving the prompt display and audit shaping to executor/ (no behaviour change) (#2117)\n\n## Why\n\nOwner's 500-line ruling (2026-11-23). `engine/executor.ts` is the HITL\nconsent gate (non-negotiable 2), so this split moves only what is not a\ncheck: the consent-prompt display and redaction code, the audit-shaping\nhelpers and three small type predicates. The gate stays whole.\n\n## Layout\n\n| File | Lines | Holds |\n| --- | --- | --- |\n| `engine/executor.ts` | 1957 (was 2460) | `HITL_REQUIRED_BACKING` and\nits frozen view, the `ToolExecutor` class with every ordered phase\n(gate, execute, approval, prepare, preflight, bound dispatch,\nbefore-state, confirm, standing-rule wiring, the egress append before\ndispatch, the drift check), the gate records, reasons, scopes,\n`auditPayload`, `isOwnerOnlyActionType`; re-exports the moved public\nnames |\n| `engine/executor/consent-display.ts` | 401 |\n`redactPayloadForConsentDisplay`, `consentDisplayPayload`,\n`formatConsentPrompt` and the prompt-line builders |\n| `engine/executor/audit-shape.ts` | 110 | `auditedAction` with its\nprojection helpers, `boundValuesDigest` |\n| `engine/executor/action-types.ts` | 31 | `isUserMcpActionType`,\n`isStandingRuleActionType`, `usesPromptText` |\n\n`executor.ts` stays over 500 lines and its baseline entry is lowered\nfrom 2460 to 1957 by `audit:file-size --update`. This is the allowed\nexception: the class alone is about 1000 lines and is one ordered\nsequence of phases, and the frozen set (about 255 lines) must stay\nmodule-private beside it.\n\n## What stayed, on purpose\n\n`HITL_REQUIRED_BACKING` is not exported and is read by nothing outside\n`executor.ts`. Not moved, because each one decides something:\n`gateRefusal`, `ownerOutcome`, `refuseGate`, `withPrepared`,\n`gateResultOf`, `isOwnerOnlyActionType`, `requiredByPolicy`, every phase\nmethod, `auditExtrasOf` and `auditPayload`. The gate still reads\n`HITL_REQUIRED.has(action.type)` and `isUserMcpActionType(action.type)`\nat the same call sites.\n\n## New exports (none was exported before from these modules)\n\nEvery binding is a pure function of its arguments: no write, no\napproval, no audit append, no handle. None sets `hitlStatus`.\n`audit:split-privacy` makes `engine/executor/` importable only by\n`executor.ts`, its siblings and tests.\n\n- `action-types.ts`: `isUserMcpActionType`, `isStandingRuleActionType`,\n`usesPromptText` (were exported from `executor.ts`; still are, by\nre-export).\n- `consent-display.ts`: `redactPayloadForConsentDisplay`,\n`consentDisplayPayload`, `formatConsentPrompt` (were exported from\n`executor.ts`; re-exported). New cross-module only: `hasPlanText`,\n`omitPlanText` (string tests and key omission, used by\n`audit-shape.ts`).\n- `audit-shape.ts`: `auditedAction` and `boundValuesDigest` (private on\nmain; they return a value and write nothing, and a caller outside\n`executor.ts` cannot reach them).\n\nThe exported key list of `executor.ts` is identical before and after\n(checked on this commit and on main).\n\n## Static rules and pins repointed (each red-proved)\n\nRules that name `executor.ts` and whose text stayed there need no change\n(D22 dispatch, D39(e), D40, D41, D42, D44(c) to (e), D46(c) and (e), the\nI2 to I4 pins, i15, i22, i53, i54, i55, i58, i59, i60): the\n`connectors.dispatch` call, the phases, `requestApproval` calls,\n`standingRuleStep`, the frozen set and its literals all stay.\n\nRepoints, with the executor entry REPLACED because the text left the\nfile:\n- D49(c) `proposer:` property: `executor.ts` replaced by\n`executor/audit-shape.ts`. Red-proof: a `proposer:` property added to\n`executor.ts` fails D49(c).\n- D44(a) `WorkflowProvenance` and `fieldSources`: `executor.ts` replaced\nby `executor/audit-shape.ts`. Red-proof: the type named in `executor.ts`\nfails D44(a) and the `workflow-provenance.sync.test.ts` readers test;\n`fieldSources` in `consent-display.ts` fails D44(a).\n- `workflow-provenance.sync.test.ts` readers, `i28` labelSource list\n(both lists), `i29` AD4 projection pin, `i42` display pin, `i57`\nrunbook, blast and proposer pins: read the module that now holds the\ntext. Red-proofs: deleting `labelSource: proposer.labelSource,` from\n`audit-shape.ts` fails i29; deleting the user-MCP display branch fails\ni42; deleting `...blastPromptLines(action.engineProposal),`, `\"Proposed\nby: the incident engine\",` or the runbook line fails i57.\n\nAdded one exact path (the text stays in `executor.ts` too, so this is\nthe only widening, by one file each and not a glob):\n- D49(g) `userMcpCall`: `executor/audit-shape.ts` and\n`executor/consent-display.ts`. Red-proof: the name in `action-types.ts`\nfails.\n- D34(c) `\"extension.migrate\"` literal: `executor/consent-display.ts`.\nRed-proof: the literal in `action-types.ts` fails.\n- D50 `\"workflow.import\"` literal and D51 `\"tool.model.invoke\"` literal:\n`executor/action-types.ts` (the `usesPromptText` predicate). Red-proof:\neither literal in `audit-shape.ts` (or `workflow.import` in\n`consent-display.ts`) fails D50 or D51.\n\nBefore these edits the checker reported exactly these six rules on the\nnew files and nothing else.\n\n## Docs\n\n`docs/SECURITY-INVARIANTS.md` (I42, I47, I59, I60 wiring lines; D34,\nD44, D49(c) and (g), D50 prose; the display paragraph and the\nlabel-source paragraph) and four source comments that cited `executor.ts\nSENSITIVE_PAYLOAD_KEY` or `formatConsentPrompt` now name the module that\nholds them. CLAUDE.md, GEMINI.md, the skills, roadmap and architecture\nneed no change: they point at `executor.ts` for the gate, the frozen set\nand the phases, all still true there. No release note: an internal\nrefactor.\n\n## Proof\n\n- `bun run typecheck`, `typecheck:tests` (0 new), `audit:split-privacy`,\n`audit:file-size`, `audit:status-drift`, `audit:doc-refs`,\n`check-nimbus-invariants.ts` (0 errors) and `preflight:fast` pass.\n- Whole `packages/gateway` plus `scripts` run, JUnit before (main at\n240d0cde8) against after: 41,382 cases each; after the fixes above the\nonly differences are four known load-sensitive timeouts that failed\nbefore and pass now. No case went from pass to fail.\n- Coverage (Istanbul, engine, security-invariants and the executor\nimporters): `executor.ts` 401 of 401 lines, 384 of 385 branches;\n`consent-display.ts` 124 of 124 lines, 142 of 143 branches;\n`audit-shape.ts` 29 of 29 and 19 of 19; `action-types.ts` 3 of 3 and 6\nof 6. No new tests were needed.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrGFPLqt8C3Ybzk2dHq\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Refactor**\n* Reorganized consent prompts, action-type checks, and audit projections\ninto dedicated components while preserving existing public behavior.\n* Audit records now omit sensitive prompt and content fields, and\ninclude a digest for bound values.\n* **Documentation**\n* Updated security and structure references to match the reorganized\ncomponents.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Sonnet 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-23T18:16:56Z",
+          "tree_id": "adefcc2ae365304951b4312d20dc82f9ef83732b",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/5e076dbfbda4436094b259242346273d21d0e2a8"
+        },
+        "date": 1795458398243,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 175.08466750000053,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 176.46858034999732,
             "unit": "ms"
           }
         ]
