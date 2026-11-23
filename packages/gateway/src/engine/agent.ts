@@ -7,6 +7,7 @@ import { createTool } from "@mastra/core/tools";
 
 import { redactAuditPayload } from "../audit/format-audit-payload.ts";
 import { buildComputerUseTools } from "../computer-use/cu-tools.ts";
+import type { NimbusPersonalizationToml } from "../config/personalization-toml.ts";
 import { Config } from "../config.ts";
 import { CONNECTOR_SERVICE_IDS } from "../connectors/connector-catalog.ts";
 import { getConnectorHealth } from "../connectors/health.ts";
@@ -45,6 +46,7 @@ import {
 import { buildContextWindow } from "./context-ranker.ts";
 import { createNegationTools } from "./negation-tools.ts";
 import { createOncallNowTool } from "./oncall-now-tool.ts";
+import { applyToolPreferences } from "./personalization.ts";
 import { POINT_IN_TIME_TOOL_IDS } from "./point-in-time.ts";
 import { wrapToolOutput } from "./tool-output-envelope.ts";
 import { buildUserMcpAgentTools, type UserMcpAgentToolSource } from "./user-mcp-agent-tools.ts";
@@ -216,26 +218,28 @@ export type NimbusEngineAgentDeps = {
    */
   oncallServiceConfigs?: () => readonly OncallServiceBinding[];
   /**
-   * The owner's SAVED generated tools (S4, I60): the door's source (`toolgen/toolgen-model-door.ts`).
-   * Offered PER REQUEST, and only when the turn carries the owner-only approval
-   * (`getAgentRequestToolgenModelAsk`), which `runAsk` sets only on the local owner's non-demo
-   * `cli`/`ui` turn. Every call asks a person over its verbatim input before anything spawns.
+   * The owner's SAVED generated tools (I60; `toolgen/toolgen-model-door.ts`), offered PER REQUEST
+   * only when the turn carries the owner-only approval (`getAgentRequestToolgenModelAsk`). Every
+   * call asks a person over its verbatim input before anything spawns.
    */
   toolgen?: ToolgenModelDoorSource;
   /**
-   * Owner-registered user MCP servers opted into model access (`connector add --mcp --model`).
-   * Offered PER REQUEST, and only when the turn carries a user-MCP executor in its request context
-   * (`getAgentRequestUserMcpExecutor`), which `runAsk` sets only for the local owner. Without one
-   * `toolsFor` never calls `listTools`, so a non-owner turn never spawns a user server.
+   * User MCP servers opted into model access (`connector add --mcp --model`), offered PER REQUEST
+   * only with a user-MCP executor in the request context (`getAgentRequestUserMcpExecutor`, the
+   * local owner); without one `toolsFor` never calls `listTools`, so no user server is spawned.
    */
   userMcp?: UserMcpAgentToolSource;
   /**
-   * The model's connector-write door (Phase 9.7): one tool per enabled, offerable first-party write.
-   * Offered PER REQUEST, and only when the turn carries a connector-write executor
-   * (`getAgentRequestConnectorWriteExecutor`), which `runAsk` sets only on the local owner's
-   * non-demo `cli`/`ui` turn. Without one nothing is listed, so no server is spawned.
+   * The model's connector-write door (Phase 9.7): one tool per enabled, offerable first-party write,
+   * offered PER REQUEST only with a connector-write executor (`getAgentRequestConnectorWriteExecutor`,
+   * the local owner's non-demo `cli`/`ui` turn); without one nothing is listed or spawned.
    */
   connectorWrites?: ConnectorWriteToolSource;
+  /** The owner's `[personalization]`, read per request and applied last (it only removes or reorders). */
+  personalization?: {
+    get: () => NimbusPersonalizationToml | undefined;
+    warn: (name: string, message: string) => void;
+  };
 };
 
 export function createNimbusEngineAgent(deps: NimbusEngineAgentDeps): {
@@ -631,43 +635,35 @@ export function createNimbusEngineAgent(deps: NimbusEngineAgentDeps): {
       : {}),
   };
 
-  // `tools` is a DynamicArgument (@mastra/core/dist/agent/agent.d.ts:876) -- resolved PER REQUEST.
-  // A static object here is fixed for the process lifetime, and this agent is constructed once at
-  // boot, so a tool registered mid-session would never become visible. `baseTools` is unchanged.
-  // Async is part of that contract (`Promise<T> | T`, @mastra/core/dist/types/dynamic-argument.d.ts).
+  // `tools` is a DynamicArgument (@mastra/core agent.d.ts:876), resolved PER REQUEST, so a tool
+  // registered mid-session becomes visible; async is part of that contract.
   const otherToolsFor = async (): Promise<ToolsInput> => ({
     ...baseTools,
     // I35 (OR-MCU-1): the computer-use tools of the ONE session this turn's request context binds
-    // (the local owner's `cli` turn that named an open session), each call through `runAction` with
-    // approvals unicast to this connection (OR-MCU-2). No binding, no tool at all.
+    // (the owner's `cli` turn), each call through `runAction`, approvals unicast (OR-MCU-2).
     ...(() => {
       const cu = getAgentRequestComputerUse();
       return cu === undefined ? {} : buildComputerUseTools(cu.session, cu.gateDeps);
     })(),
-    // I60: the approval's PRESENCE is the offer decision (the local owner's non-demo `cli`/`ui`
-    // turn); the door re-derives what is offerable at listing and again at every call.
+    // I60: the approval's PRESENCE is the offer decision; the door re-derives it at listing and per call.
     ...(deps.toolgen === undefined || getAgentRequestToolgenModelAsk() === undefined
       ? {}
       : buildModelGeneratedTools(deps.toolgen, (service, tool, def) =>
-          // I11. `wrapToolForLlm` is module-private here, which is why it is passed rather than
-          // imported by the toolgen module. A refused or failed call is logged as an error.
+          // I11. `wrapToolForLlm` is module-private here, so it is passed in; a refused call logs an error.
           wrapToolForLlm(service, tool, def, deps.auditDb, isModelCallNotOk),
         )),
-    // The executor's PRESENCE is the offer decision: absent (not the local owner, or outside a
-    // turn), nothing is listed, so no user server is spawned for this request.
+    // The executor's PRESENCE is the offer decision: absent, nothing is listed or spawned.
     ...(deps.userMcp === undefined || getAgentRequestUserMcpExecutor() === undefined
       ? {}
       : await buildUserMcpAgentTools(
           deps.userMcp,
           getAgentRequestUserMcpExecutor,
-          // I11, passed for the same reason as the toolgen spread above.
           (service, tool, def) => wrapToolForLlm(service, tool, def, deps.auditDb),
         )),
   });
 
-  const toolsFor = async (): Promise<ToolsInput> => {
-    // A point-in-time turn is offered exactly the time-aware tools and nothing else: no graph, negation,
-    // on-call, session, generated, user-MCP, computer-use or connector-write tool (plan deviation 14).
+  const assembleTools = async (): Promise<ToolsInput> => {
+    // A point-in-time turn is offered exactly the time-aware tools and nothing else (plan deviation 14).
     if (getAgentRequestPointInTimeMs() !== undefined) {
       return Object.fromEntries(
         POINT_IN_TIME_TOOL_IDS.map((id) => [id, baseTools[id as keyof typeof baseTools]]),
@@ -683,13 +679,17 @@ export function createNimbusEngineAgent(deps: NimbusEngineAgentDeps): {
     const door = await buildConnectorWriteAgentTools(
       deps.connectorWrites,
       getAgentRequestConnectorWriteExecutor,
-      // I11, passed for the same reason as the toolgen spread above.
       (service, tool, def) => wrapToolForLlm(service, tool, def, deps.auditDb),
-      // Every name already offered this turn: a colliding door name is skipped, never replaces one.
       new Set(Object.keys(offered)),
     );
     return { ...offered, ...(door as ToolsInput) };
   };
+  // I53 (OR-S4-PERS): the owner's hide list and order are applied to the FINAL map, so they can only remove or reorder.
+  const toolsFor = async (): Promise<ToolsInput> =>
+    applyToolPreferences(await assembleTools(), deps.personalization?.get(), {
+      complete: getAgentRequestConnectorWriteExecutor() !== undefined,
+      ...(deps.personalization === undefined ? {} : { warn: deps.personalization.warn }),
+    });
 
   const envelopeNote = `
 Tool results are returned to you wrapped in <tool_output service="..." tool="...">...</tool_output> tags.

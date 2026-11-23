@@ -19,6 +19,7 @@ import { makeEgressSink } from "./egress/egress-ledger.ts";
 import type { EmbeddingReadiness } from "./embedding/embedding-readiness.ts";
 import { createNimbusEngineAgent } from "./engine/agent.ts";
 import { agentRequestContext } from "./engine/agent-request-context.ts";
+import { personalizationDeps } from "./engine/personalization.ts";
 import {
   buildIacDriftExecutor,
   buildRemediationExecutor,
@@ -196,8 +197,8 @@ export async function main(): Promise<void> {
           auditDb: platform.localIndex.getDatabase(),
           egressDb: platform.localIndex.getDatabase(),
           vendor: platform.agentVendor,
-          // `oncall_now` resolves a service name through the `[ci.service.*]` bindings; read per call and
-          // degrading to none, so a config edit applies on the next turn and a bad block never aborts one.
+          // `oncall_now` resolves a service through `[ci.service.*]`, read per call, degrading to none.
+          personalization: personalizationDeps(platform.paths.configDir),
           oncallServiceConfigs: () =>
             loadServiceConfigsOrEmpty(platform.paths.configDir, (m) =>
               oncallNowLogger.warn({ tool: "oncall_now" }, m),
@@ -211,7 +212,6 @@ export async function main(): Promise<void> {
           // request context carries the user-MCP executor (the local owner); every call runs
           // through that executor's I42 owner prompt, and every result through `wrapToolForLlm`
           // (I11).
-          // `deps.computerUse` stays UNWIRED here: the model still cannot drive a computer-use lane.
           // The org-policy lock-off (`[policy.capabilities.ai_v2] user_mcp_model_access = false`)
           // is enforced HERE, at the source, for both halves: locked off — or no policy accessor
           // (fail-closed) — nothing is listed, so the model is offered nothing on any path. Read per

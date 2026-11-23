@@ -622,6 +622,17 @@ Changing the mapping never deletes a decision or a glossary term. A newly mapped
 
 Applies to **three** surfaces: `nimbus ask`, every built-in agent brief, and — because a `@nimbus <question>` mention runs through the same `runAsk` pipeline — **ChatOps replies in Slack/Teams**. That third one is worth stating plainly: an `opinionated` or `collective` voice configured for your own machine will be visible to everyone in the channel the bot answers in. It carries no new content and no new egress — only tone — and it is the owner's own configured voice on the owner's own ChatOps integration, which is why it is not scoped out: doing so would make ChatOps replies the one surface that ignores your persona. It composes with `--devil` (persona directive outermost, `--devil`'s directive innermost, closest to the question). Every `tone` and `voice` value governs register and stance, never what gets said — no persona directive may tell the model to omit content. A `terse` persona can still raise the rate at which a brief falls back to its deterministic rendering, because the honesty contract that protects every brief discards a rewrite that drops a required disclosure rather than risk losing it — that is the contract working, not a bug, and the resolved persona rides the `briefReady` notification's `synthesis` field alongside the discard reason, so a `contract_violation` under `tone = "terse"` is self-explanatory.
 
+**Configuration, `[personalization]` (your explicit preferences, never inferred; the owner's own file, not pack-settable).** Read fresh on every turn (no restart), through the same profile-resolved reader.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `tone` | `"neutral"` | One of `neutral`, `terse`, `formal`, `casual`, `verbose`. When not `neutral` it replaces `[persona] tone` for `nimbus ask`. |
+| `verbosity` | `"default"` | `default` adds nothing; `brief` asks for a compact answer; `detailed` asks for the supporting detail and reasoning. |
+| `tool_order` | `[]` | Tool names offered to the model first, in this order, when the turn offers them. Never adds a tool. |
+| `hide_tools` | `[]` | Tool names never offered to the model (a base tool such as `oncall_now`, a connector write as `<service>__<tool_id>`, a generated, user-MCP or computer-use tool by the name the model sees). Hiding only removes: it never offers a tool the safety checks would not, and hiding beats ordering. |
+
+Tone and verbosity are fixed values: the sentence the model reads is Nimbus's own, never your text. A bad value or a name outside `[A-Za-z0-9_-]{1,64}` is ignored with a warning; a name the turn does not offer is warned once and has no effect. `nimbus config explain` (whole file or `personalization`) prints the active tone, verbosity, order, hidden tools and every warning.
+
 **Not supported:** `tool_caution` (HITL escalation levels) and `confidence_threshold` (how often the agent admits uncertainty) are not configuration keys. Both were rejected, not deferred — a knob that loosens what triggers the HITL consent gate, or one that lets the agent suppress an uncertainty admission, is prohibited on the same grounds as the consent gate itself.
 
 ### `nimbus catalog`

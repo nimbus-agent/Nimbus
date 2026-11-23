@@ -60,6 +60,8 @@ export type RunConversationalAgentParams = {
    * `devil` is. Undefined and neutral both mean "no directive"; see `engine/persona.ts`.
    */
   persona?: NimbusPersonaToml;
+  /** `[personalization] verbosity` as a fixed sentence (`engine/personalization.ts`); empty or absent adds nothing. */
+  verbosity?: string;
   /**
    * Told when the Mastra agent's step budget stopped this turn early (`engine/step-budget.ts`).
    * Supplied only by the IPC entry (`agent.invoke`), which turns it into a UNICAST
@@ -428,13 +430,19 @@ export async function runConversationalAgent(
   // directive is the one that must not be diluted, and proximity to the question is the
   // cheapest emphasis available. Both are identity functions when inactive, so a default
   // gateway's prompt is unchanged.
-  const promptWithContext = applyPersona(
+  const personaPrompt = applyPersona(
     applyDevilAdvocate(
       withPointInTimeInstruction(buildPromptText(trimmed, p.localContext), p.pointInTime?.atMs),
       p.devil,
     ),
     p.persona,
   );
+  const promptWithContext =
+    p.verbosity === undefined || p.verbosity === ""
+      ? personaPrompt
+      : `${p.verbosity}
+
+${personaPrompt}`;
   const promptArg = buildPromptArg(promptWithContext, p.priorTurns ?? []);
 
   try {
