@@ -21,70 +21,86 @@
 // The child is the only thing this module trusts less than the gateway: a call has a budget after
 // which the child is killed, and the per-directory run lock (and the run's staging and approved
 // directories) are released only once every child of the run has actually exited.
-import { type ChildProcess, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import {
-  chmodSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  realpathSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import type { PreflightOutcome } from "../../engine/bound-write-capabilities.ts";
 import type { ExtensionManifest } from "../../extensions/manifest.ts";
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import type { PlatformPaths } from "../../platform/paths.ts";
-import {
-  type AppContainerGrantRevoker,
-  appContainerGrantRevokerFor,
-} from "../../platform/sandbox/win32-grant-revoke.ts";
-import { isSameOrInside, pathApiFor, pathsOverlap } from "../../util/path-overlap.ts";
-import type { NimbusVault } from "../../vault/nimbus-vault.ts";
-import { gcloudKeyFileEnv, loadGcpAuthFromVault } from "../_lib/gcp-auth.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
 import { iacCfnHosts, iacTerraformHosts } from "../connector-writes/iac-clouds.ts";
 import {
   gateWorkdirChecked,
   type IacCloud,
   type IacGrants,
-  type IacPathDeps,
   workdirsOverlap,
 } from "../connector-writes/iac-grants.ts";
 import {
-  IAC_ESCALATE_AFTER_MS,
-  IAC_EXIT_WAIT_MS,
   IAC_PREFLIGHT_REFUSALS,
   IAC_TOOL_TIMEOUTS_MS,
-  iacEscalationGraceMs,
   isPlainStackName,
 } from "../connector-writes/iac-limits.ts";
 import { type K8sGrant, k8sGrantFor } from "../connector-writes/k8s-grants.ts";
-import { K8S_PREFLIGHT_REFUSALS } from "../connector-writes/k8s-limits.ts";
 import {
   buildSingleContextKubeconfig,
   inspectKubeconfig,
-  type KubeFs,
   kubeconfigMatchesGrant,
   nodeKubeFs,
 } from "../connector-writes/kubeconfig-facts.ts";
 import { manifestForFirstParty } from "./first-party-manifests.ts";
+import {
+  callChildTool,
+  EXIT_WAIT_MS,
+  escalationGraceMs,
+  type IacChild,
+  type IacChildSpawner,
+  iacChildFromProcess,
+  STOP_GRACE_MS,
+  STOP_KILL_WAIT_MS,
+} from "./iac-runner/iac-child.ts";
+import { loadIacCloudEnv } from "./iac-runner/iac-cloud-env.ts";
+import { IacWindowsGrants } from "./iac-runner/iac-grant-ledger.ts";
+import { type IacBinary, installReads } from "./iac-runner/iac-install-reads.ts";
+import { IacLiveChildren } from "./iac-runner/iac-live-children.ts";
+import { IAC_RUNNER_REFUSALS } from "./iac-runner/iac-refusals.ts";
+import type { IacHost, IacRunnerDeps } from "./iac-runner/iac-runner-types.ts";
+import { defaultRemoveTree } from "./iac-runner/iac-tree.ts";
 import { connectorSpawn } from "./keys.ts";
 import { loadAwsCreds } from "./phase3-shared.ts";
-import type { ServerSpec } from "./slot.ts";
 import { mcpClientToolKey } from "./tool-map.ts";
 import { wrapIacServerSpec } from "./wrap-server-spec.ts";
+
+// The public surface of this module is unchanged by the split (the pieces live in `./iac-runner/`).
+export { IAC_APPLY_ESCALATE_AFTER_MS as APPLY_ESCALATE_AFTER_MS } from "../connector-writes/iac-limits.ts";
+export {
+  type ChildCall,
+  callChildTool,
+  escalationGraceMs,
+  type IacChild,
+  type IacChildSpawner,
+  iacChildFromProcess,
+} from "./iac-runner/iac-child.ts";
+export {
+  fileIacGrantLedger,
+  type IacGrantLedger,
+  type IacLedgerEntry,
+  iacGrantLedgerFile,
+} from "./iac-runner/iac-grant-ledger.ts";
+export {
+  type IacBinary,
+  type InstallReadEnv,
+  installReads,
+  isSystemOwnedDir,
+} from "./iac-runner/iac-install-reads.ts";
+export { IAC_RUNNER_REFUSALS } from "./iac-runner/iac-refusals.ts";
+export type { IacHost, IacRunnerDeps } from "./iac-runner/iac-runner-types.ts";
 
 // ---------------------------------------------------------------------------------------------
 // Routing: which tool runs in which profile.
 
 export type IacProfileKind = "plan" | "show" | "apply" | "cfn" | "kube";
-
-/** The CLIs an iac or kube child runs. */
-export type IacBinary = "terraform" | "aws" | "kubectl";
 
 /** The eight tools the runner executes. Everything else the `iac` slot lists stays in the slot. */
 export const IAC_TOOL_PROFILE: Readonly<Record<string, Exclude<IacProfileKind, "kube">>> =
@@ -122,25 +138,6 @@ export function iacRoutedKeys(): readonly string[] {
     ...Object.keys(KUBE_TOOL_PROFILE).map((id) => mcpClientToolKey("kubernetes", id)),
   ];
 }
-
-/** The reasons a call is refused before any child exists; fixed text, never the path or the input. */
-export const IAC_RUNNER_REFUSALS = Object.freeze({
-  noRun: IAC_PREFLIGHT_REFUSALS.noRun,
-  notApproved: IAC_PREFLIGHT_REFUSALS.notApprovedDirectory,
-  badPlanFile: "iac: the plan file is not in this gateway's approved plan directory",
-  noBinary: "iac: the required command line tool was not found",
-  noCredential: IAC_PREFLIGHT_REFUSALS.noCloudCredential,
-  notOurChangeSet: "iac: that change set is not one this gateway created",
-  stopping: IAC_PREFLIGHT_REFUSALS.stopping,
-  regionNotApproved: IAC_PREFLIGHT_REFUSALS.regionNotApproved,
-  kubeNoRun: "kubernetes: this call is not part of an approved run",
-  kubeNoBinary: K8S_PREFLIGHT_REFUSALS.noCommandLineTool,
-  kubeNotApproved: K8S_PREFLIGHT_REFUSALS.notApprovedNamespace,
-  kubeDrift: K8S_PREFLIGHT_REFUSALS.kubeconfigDrift,
-  kubeBusy: K8S_PREFLIGHT_REFUSALS.busy,
-  kubeStopping: K8S_PREFLIGHT_REFUSALS.stopping,
-  kubeNoContext: "kubernetes: name the context; more than one is approved",
-});
 
 /**
  * The region a CloudFormation child uses: the Vault credential's own region, else the first
@@ -337,116 +334,6 @@ export function buildIacProfile(req: IacProfileRequest): IacProfile {
   return { manifest, env };
 }
 
-/** Is `p` under a directory the operating system owns (so a read grant there is neither needed nor safe)? */
-export function isSystemOwnedDir(p: string, platform: NodeJS.Platform): boolean {
-  if (platform === "win32") return true;
-  const roots = [
-    "/usr",
-    "/bin",
-    "/sbin",
-    "/lib",
-    "/lib64",
-    "/etc",
-    "/System",
-    "/Library",
-    "/private/etc",
-  ];
-  return roots.some((r) => p === r || p.startsWith(`${r}/`));
-}
-
-/** The folders an install directory must not be, hold or sit in: where the gateway reads them from. */
-export interface InstallReadEnv {
-  readonly homeDir: string;
-  readonly tmpDir: string;
-  readonly protectedRoots: readonly string[];
-}
-
-/** Directory names that are shared or personal, never "an install of one tool". */
-const SHARED_DIR_NAMES: ReadonlySet<string> = new Set([
-  "bin",
-  "sbin",
-  "downloads",
-  "desktop",
-  "documents",
-  "tmp",
-  "temp",
-]);
-/** A path segment under which a read grant would expose credentials or personal state. */
-const SENSITIVE_SEGMENTS: ReadonlySet<string> = new Set([
-  ".ssh",
-  ".aws",
-  ".gnupg",
-  ".azure",
-  ".kube",
-]);
-
-/**
- * Is `tree` a directory dedicated to one tool's install, safe to hand to a networked, credentialed
- * child as a read grant? Not a root; deep enough to be a product directory (three segments); not a
- * shared or personal folder, a dotfile folder or one under a credential folder; not home or temp or
- * a folder that holds them; and not overlapping a Nimbus folder in either direction.
- */
-function isVettedInstallRoot(
-  tree: string,
-  env: InstallReadEnv,
-  platform: NodeJS.Platform,
-): boolean {
-  const api = pathApiFor(platform);
-  const segments = tree.split(api.sep).filter((s) => s !== "");
-  if (segments.length < 3) return false;
-  const last = (segments.at(-1) ?? "").toLowerCase();
-  if (SHARED_DIR_NAMES.has(last) || last.startsWith(".")) return false;
-  if (segments.some((s) => SENSITIVE_SEGMENTS.has(s.toLowerCase()))) return false;
-  if (isSameOrInside(platform, env.homeDir, tree) || isSameOrInside(platform, env.tmpDir, tree)) {
-    return false;
-  }
-  return !env.protectedRoots.some((r) => pathsOverlap(platform, tree, r));
-}
-
-/**
- * What the CLI child may READ of its own install, POSIX only (a Windows grant on a tree under
- * `C:\Program Files` fails in the helper and the image loads without one) and never for a
- * system-owned binary (bubblewrap and the sandbox profile already carry `/usr`). Terraform is one
- * static binary: the FILE alone is granted, never its directory, so a binary left in the home
- * directory, `~/Downloads` or `~/.local/bin` exposes nothing else to a child that has the network
- * and a cloud credential. The `aws` CLI needs its install directory as well; it gets it only when
- * that directory is a vetted install root (see {@link isVettedInstallRoot}), else only the file
- * (the call then fails, which is the safe direction).
- */
-export function installReads(
-  binaryRealPath: string | undefined,
-  platform: NodeJS.Platform,
-  tool: IacBinary,
-  env: InstallReadEnv,
-): string[] {
-  if (binaryRealPath === undefined || platform === "win32") return [];
-  const tree = dirname(binaryRealPath);
-  if (isSystemOwnedDir(tree, platform)) return [];
-  if (tool !== "aws" || !isVettedInstallRoot(tree, env, platform)) return [binaryRealPath];
-  return [binaryRealPath, tree];
-}
-
-// ---------------------------------------------------------------------------------------------
-// The child and the one MCP call it makes.
-
-/** A started child as the runner sees it (a node child process in production, a fake in tests). */
-export interface IacChild {
-  /** The OS process id, when the child started (recorded so a later boot knows what may be alive). */
-  readonly pid?: number;
-  /** Writes one JSON-RPC line to the child's stdin. */
-  send(line: string): void;
-  /** Called with every complete line the child writes to stdout. */
-  onLine(cb: (line: string) => void): void;
-  /** Called once, when the process has actually exited (or failed to start). */
-  onExit(cb: (code: number | null) => void): void;
-  /** SIGTERM-class (`force` false) or SIGKILL-class (`force` true). */
-  kill(force: boolean): void;
-  /** Closes stdin (the connector exits on EOF). */
-  closeInput(): void;
-}
-
-export type IacChildSpawner = (spec: ServerSpec) => IacChild;
-
 /** The production spawner: a hidden child process with the wrapped spec's own environment. */
 export const spawnIacChild: IacChildSpawner = (spec) =>
   iacChildFromProcess(
@@ -458,307 +345,6 @@ export const spawnIacChild: IacChildSpawner = (spec) =>
       windowsHide: true,
     }),
   );
-
-/**
- * Wraps a started process. The child counts as exited when the OS reports it closed, or when it
- * never started; a later `"error"` event (a kill or a write that failed) says nothing about the
- * process being gone, so it must not free the run lock.
- */
-export function iacChildFromProcess(proc: ChildProcess): IacChild {
-  let exited = false;
-  const exitCbs: Array<(code: number | null) => void> = [];
-  const finish = (code: number | null): void => {
-    if (exited) return;
-    exited = true;
-    for (const cb of exitCbs) cb(code);
-  };
-  proc.on("close", (code) => finish(code));
-  proc.on("error", () => {
-    // pid is undefined only when the spawn itself failed; any other error leaves the process there.
-    if (proc.pid === undefined) finish(null);
-  });
-  proc.stderr?.on("data", () => {
-    // Drained and dropped: a connector's stderr never reaches the model, the owner or a log.
-  });
-  proc.stdin?.on("error", () => {
-    // A write after the child exited; the exit path reports it.
-  });
-  return {
-    ...(proc.pid === undefined ? {} : { pid: proc.pid }),
-    send: (line) => {
-      proc.stdin?.write(`${line}\n`);
-    },
-    onLine: (cb) => {
-      let buf = "";
-      proc.stdout?.setEncoding("utf8");
-      proc.stdout?.on("data", (d: string) => {
-        buf += d;
-        let i = buf.indexOf("\n");
-        while (i >= 0) {
-          const line = buf.slice(0, i).trim();
-          buf = buf.slice(i + 1);
-          if (line !== "") cb(line);
-          i = buf.indexOf("\n");
-        }
-      });
-    },
-    onExit: (cb) => {
-      if (exited) cb(proc.exitCode);
-      else exitCbs.push(cb);
-    },
-    kill: (force) => {
-      try {
-        proc.kill(force ? "SIGKILL" : "SIGTERM");
-      } catch {
-        // already gone
-      }
-    },
-    closeInput: () => {
-      try {
-        proc.stdin?.end();
-      } catch {
-        // already closed
-      }
-    },
-  };
-}
-
-/** At gateway stop: the grace children get to finish (a state write) before SIGKILL. */
-const STOP_GRACE_MS = 15_000;
-const STOP_KILL_WAIT_MS = 5_000;
-
-// The SIGTERM-to-SIGKILL grace, the plan's reap wait and the dispatcher's race over them live in
-// `iac-limits.ts`, so the dispatcher's timeout is derived from the same numbers (it must outlast
-// all of these: the runner always settles first).
-export { IAC_APPLY_ESCALATE_AFTER_MS as APPLY_ESCALATE_AFTER_MS } from "../connector-writes/iac-limits.ts";
-export const escalationGraceMs = iacEscalationGraceMs;
-const ESCALATE_AFTER_MS = IAC_ESCALATE_AFTER_MS;
-const EXIT_WAIT_MS = IAC_EXIT_WAIT_MS;
-
-/** What one call to a child produced; `exited` resolves when the process is really gone. */
-interface ChildCall {
-  readonly result: Promise<unknown>;
-  readonly exited: Promise<void>;
-}
-
-/** The global timers, read at call time (a test may replace them after this module loads). */
-function globalTimers(): { set: typeof setTimeout; clear: typeof clearTimeout } {
-  return { set: setTimeout, clear: clearTimeout };
-}
-
-/**
- * Runs `initialize` then one `tools/call` against `child` and resolves with the call's MCP result.
- * On expiry of `budgetMs` the child is killed (SIGTERM, then SIGKILL after a grace period) and the
- * call rejects with `timeoutText`; a child that exits first rejects the call. `exited` settles only
- * when the process has exited, which is what the run lock waits for.
- */
-export function callChildTool(
-  child: IacChild,
-  toolName: string,
-  args: Record<string, unknown>,
-  budgetMs: number,
-  timeoutText: string,
-  timers: { set: typeof setTimeout; clear: typeof clearTimeout } = globalTimers(),
-  escalateAfterMs: number = ESCALATE_AFTER_MS,
-): ChildCall {
-  let settled = false;
-  let resolveExit: () => void = () => undefined;
-  const exited = new Promise<void>((r) => {
-    resolveExit = r;
-  });
-  const waiters = new Map<number, (m: Record<string, unknown>) => void>();
-  let failCall: (e: Error) => void = () => undefined;
-
-  child.onLine((line) => {
-    let msg: unknown;
-    try {
-      msg = JSON.parse(line);
-    } catch {
-      return; // not JSON-RPC (a stray log line): ignored
-    }
-    if (typeof msg !== "object" || msg === null) return;
-    const rec = msg as Record<string, unknown>;
-    const id = rec["id"];
-    if (typeof id === "number") waiters.get(id)?.(rec);
-  });
-  const request = (id: number, method: string, params: unknown): Promise<Record<string, unknown>> =>
-    new Promise((resolve, reject) => {
-      failCall = reject;
-      waiters.set(id, (m) => {
-        if (m["error"] !== undefined) reject(new Error("iac: the connector reported an error"));
-        else resolve(m);
-      });
-      child.send(JSON.stringify({ jsonrpc: "2.0", id, method, params }));
-    });
-
-  let killTimer: ReturnType<typeof setTimeout> | undefined;
-  let escalation: ReturnType<typeof setTimeout> | undefined;
-  let terminating = false;
-  const terminate = (): void => {
-    if (terminating) return;
-    terminating = true;
-    child.closeInput();
-    child.kill(false);
-    escalation = timers.set(() => child.kill(true), escalateAfterMs);
-  };
-  child.onExit(() => {
-    if (escalation !== undefined) timers.clear(escalation);
-    if (killTimer !== undefined) timers.clear(killTimer);
-    failCall(new Error("iac: the connector exited before it answered"));
-    resolveExit();
-  });
-
-  const result = new Promise<unknown>((resolve, reject) => {
-    killTimer = timers.set(() => {
-      if (settled) return;
-      settled = true;
-      terminate();
-      reject(new Error(timeoutText));
-    }, budgetMs);
-    void (async () => {
-      try {
-        await request(1, "initialize", {
-          protocolVersion: "2025-03-26",
-          capabilities: {},
-          clientInfo: { name: "nimbus-iac-runner", version: "1" },
-        });
-        child.send(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }));
-        const reply = await request(2, "tools/call", { name: toolName, arguments: args });
-        if (settled) return;
-        settled = true;
-        resolve(reply["result"]);
-      } catch (e) {
-        if (settled) return;
-        settled = true;
-        reject(e instanceof Error ? e : new Error("iac: the call failed"));
-      } finally {
-        if (killTimer !== undefined) timers.clear(killTimer);
-        terminate();
-      }
-    })();
-  });
-  return { result, exited };
-}
-
-// ---------------------------------------------------------------------------------------------
-// The Windows persisted-grants ledger.
-
-/** One profile id and every path its spawn was handed a grant on. */
-export interface IacLedgerEntry {
-  readonly id: string;
-  readonly paths: readonly string[];
-}
-
-export interface IacGrantLedger {
-  /** The recorded entries. Missing: `[]`. Unreadable or malformed: THROWS (fail closed). */
-  load(): readonly IacLedgerEntry[];
-  save(entries: readonly IacLedgerEntry[]): void;
-}
-
-export function iacGrantLedgerFile(configDir: string): string {
-  return join(configDir, "sandbox-grants", "iac-ledger.json");
-}
-
-export function fileIacGrantLedger(file: string): IacGrantLedger {
-  return {
-    load: () => {
-      let raw: string;
-      try {
-        raw = readFileSync(file, "utf8");
-      } catch (err) {
-        if ((err as { code?: unknown }).code === "ENOENT") return [];
-        throw err;
-      }
-      const parsed: unknown = JSON.parse(raw);
-      if (
-        !Array.isArray(parsed) ||
-        !parsed.every(
-          (e) =>
-            typeof e === "object" &&
-            e !== null &&
-            typeof (e as IacLedgerEntry).id === "string" &&
-            Array.isArray((e as IacLedgerEntry).paths) &&
-            (e as IacLedgerEntry).paths.every((p) => typeof p === "string"),
-        )
-      ) {
-        throw new Error(`the iac grant ledger is malformed: ${file}`);
-      }
-      return parsed as IacLedgerEntry[];
-    },
-    save: (entries) => {
-      mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
-      const tmp = `${file}.tmp`;
-      writeFileSync(tmp, JSON.stringify(entries), { mode: 0o600 });
-      renameSync(tmp, file);
-    },
-  };
-}
-
-// ---------------------------------------------------------------------------------------------
-// The runner.
-
-export interface IacRunnerDeps {
-  readonly paths: Pick<PlatformPaths, "sandboxDir" | "configDir" | "dataDir">;
-  readonly vault: NimbusVault;
-  readonly platform: NodeJS.Platform;
-  /** The owner's V85 approval, read fresh for every call. */
-  readonly grants: () => IacGrants;
-  readonly pathDeps: IacPathDeps;
-  /** Test seam; production: {@link spawnIacChild}. */
-  readonly spawnChild?: IacChildSpawner;
-  /** Test seam; production: `Bun.which` then realpath. */
-  readonly resolveBinary?: (name: IacBinary) => string | undefined;
-  /** The owner's V86 (context, namespace) approvals, read fresh for every call. Absent: nothing approved. */
-  readonly k8sGrants?: () => readonly K8sGrant[];
-  /** Test seam for the kubeconfig reads; production: {@link nodeKubeFs}. */
-  readonly kubeFs?: KubeFs;
-  /** The kubeconfig path the Vault holds for the kubernetes connector; production reads the Vault. */
-  readonly kubeconfigPath?: () => Promise<string | undefined>;
-  /** Windows only. Production: the helper-backed revoker. */
-  readonly revokerFor?: (profileId: string) => AppContainerGrantRevoker;
-  readonly ledger?: IacGrantLedger;
-  readonly randomHex?: (bytes: number) => string;
-  /** Test seam for removing a directory tree; production: forced `rmSync` with retries. */
-  readonly removeTree?: (p: string) => void;
-  readonly timeoutsMs?: Readonly<Record<string, number>>;
-  /**
-   * How long a plan call waits, after the connector answered, for its process to be gone before it
-   * fails closed ({@link EXIT_WAIT_MS} when absent).
-   */
-  readonly exitWaitMs?: number;
-  /** Test seam: the SIGTERM-to-SIGKILL grace for every tool; production: {@link escalationGraceMs}. */
-  readonly escalateAfterMs?: number;
-  /** `stop()`: how long children get after SIGTERM before SIGKILL (default {@link STOP_GRACE_MS}). */
-  readonly stopGraceMs?: number;
-  /** `stop()`: how long to wait for children after SIGKILL (default {@link STOP_KILL_WAIT_MS}). */
-  readonly stopKillWaitMs?: number;
-  /** Test seam: is this process id alive? Production: signal 0. */
-  readonly isPidAlive?: (pid: number) => boolean;
-  /**
-   * Test seam: extra READ paths for every child (never write). A dev tree runs the connector as
-   * `bun <gateway source>`, which a sandboxed child cannot read; the integration test hands it the
-   * source root. Production leaves it empty: the compiled gateway re-executes itself.
-   */
-  readonly extraReadPaths?: readonly string[];
-}
-
-/** What the registry's `BoundWriteCapabilities` needs of the runner. */
-export interface IacHost {
-  preflight(rowToolId: string, input: Readonly<Record<string, unknown>>): Promise<PreflightOutcome>;
-  /**
-   * The bounded `.git` scan, run again after the plan child has exited and before anything is shown
-   * to the owner (D2 review 5): a plan child can write a `.git` into its working directory. The fixed
-   * refusal reason when the directory is not clean (found, over the caps or unreadable), else
-   * `undefined`. It deletes nothing: the owner's directory is left as the child left it.
-   */
-  recheckGit(workdir: string): string | undefined;
-  /** The directories THIS run's plan child writes and the settler reads. */
-  terraformRunDirs(
-    workdir: string,
-  ): { readonly stagingDir: string; readonly approvedRoot: string } | undefined;
-  /** The API server `host:port` the owner approved for exactly this (context, namespace), or `undefined`. */
-  k8sServerFor?(context: string, namespace: string): string | undefined;
-}
 
 interface Run {
   readonly id: string;
@@ -799,49 +385,28 @@ const CFN_ROW = "iac_cloudformation_deploy";
 const HEX32 = /^[0-9a-f]{32}$/;
 const PLAN_NAMES: ReadonlySet<string> = new Set(["plan.tfplan", "destroy.tfplan"]);
 
-/** An approved plan directory is read-only (0500): make a tree removable before removing it. */
-function makeTreeWritable(p: string): void {
-  try {
-    chmodSync(p, 0o700);
-    for (const e of readdirSync(p, { withFileTypes: true })) {
-      if (e.isDirectory()) makeTreeWritable(join(p, e.name));
-    }
-  } catch {
-    // missing or not ours to change: the removal below reports what matters
-  }
-}
-
-function defaultRemoveTree(p: string): void {
-  makeTreeWritable(p);
-  rmSync(p, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-}
-
 export class IacRunner implements IacHost {
   private readonly runs = new Map<string, Run>();
   private readonly kubeRuns = new Map<string, KubeRun>();
   private readonly iacRoot: string;
-  private swept = false;
   private realApproved: string | undefined;
-  private ledgerTail: Promise<void> = Promise.resolve();
-  /** Profile ids whose child THIS process started and has not yet seen exit and release. */
-  private readonly runningProfiles = new Set<string>();
   /** Children this process started and has not seen exit; `stop()` kills and waits for them. */
   private readonly liveChildren = new Set<{
     readonly child: IacChild;
     readonly exited: Promise<void>;
   }>();
   private stopped = false;
-  /** Children a previous gateway process recorded and that are still alive at boot (see sweep). */
-  private orphans: Array<{ pid: number; workdir?: string }> = [];
-  /** The live-children record existed but could not be read: no run starts until it can be. */
-  private liveRecordUnreadable = false;
   private readonly hex: (bytes: number) => string;
   private readonly removeTree: (p: string) => void;
+  private readonly live: IacLiveChildren;
+  private readonly winGrants: IacWindowsGrants;
 
   constructor(private readonly deps: IacRunnerDeps) {
     this.iacRoot = iacRootFor(deps.paths);
     this.hex = deps.randomHex ?? ((n) => randomBytes(n).toString("hex"));
     this.removeTree = deps.removeTree ?? defaultRemoveTree;
+    this.live = new IacLiveChildren(this.iacRoot, (p) => this.removeTree(p), deps.isPidAlive);
+    this.winGrants = new IacWindowsGrants(deps);
   }
 
   /** `<iacRoot>/approved`: where the settler moves an approved plan. */
@@ -880,111 +445,13 @@ export class IacRunner implements IacHost {
       : { stagingDir: run.stagingDir, approvedRoot: this.approvedRoot() };
   }
 
-  private liveFile(): string {
-    return join(this.iacRoot, "live-children.json");
-  }
-
-  private pidAlive(pid: number): boolean {
-    if (this.deps.isPidAlive !== undefined) return this.deps.isPidAlive(pid);
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch (e) {
-      return (e as { code?: unknown }).code === "EPERM";
-    }
-  }
-
-  /** The children recorded as started; `undefined` when the record exists but cannot be read. */
-  private readLive(): Array<{ pid: number; workdir?: string }> | undefined {
-    let raw: string;
-    try {
-      raw = readFileSync(this.liveFile(), "utf8");
-    } catch (e) {
-      return (e as { code?: unknown }).code === "ENOENT" ? [] : undefined;
-    }
-    try {
-      const parsed: unknown = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return undefined;
-      const out: Array<{ pid: number; workdir?: string }> = [];
-      for (const e of parsed as unknown[]) {
-        const rec = e as { pid?: unknown; workdir?: unknown };
-        if (typeof rec.pid !== "number" || !Number.isInteger(rec.pid)) return undefined;
-        out.push(
-          typeof rec.workdir === "string"
-            ? { pid: rec.pid, workdir: rec.workdir }
-            : { pid: rec.pid },
-        );
-      }
-      return out;
-    } catch {
-      return undefined;
-    }
-  }
-
-  private writeLive(entries: ReadonlyArray<{ pid: number; workdir?: string }>): void {
-    try {
-      mkdirSync(this.iacRoot, { recursive: true, mode: 0o700 });
-      // Atomic: a crash mid-write leaves the previous record, never a truncated one.
-      const tmp = `${this.liveFile()}.tmp`;
-      writeFileSync(tmp, JSON.stringify(entries), { mode: 0o600 });
-      renameSync(tmp, this.liveFile());
-    } catch {
-      // best effort: the record only narrows what a later boot deletes
-    }
-  }
-
-  // An unreadable record is never overwritten: it is the only evidence of what may still be running.
-  private recordLive(pid: number, workdir: string | undefined): void {
-    const cur = this.readLive();
-    if (cur === undefined) return;
-    this.writeLive([
-      ...cur.filter((e) => e.pid !== pid),
-      workdir === undefined ? { pid } : { pid, workdir },
-    ]);
-  }
-
-  private forgetLive(pid: number): void {
-    const cur = this.readLive();
-    if (cur === undefined) return;
-    this.writeLive(cur.filter((e) => e.pid !== pid));
-  }
-
-  /**
-   * Boot sweep, once: nothing a crashed gateway left under the iac root is worth keeping, EXCEPT
-   * while a child it recorded may still be alive (a macOS child can outlive the gateway; a Linux
-   * child dies with it by `--die-with-parent`, a Windows child by its job object): then the run
-   * directories are left for a later boot, and a run on that child's workdir is refused. A record
-   * that cannot be read fails closed: it is kept as it is, nothing is deleted, and every run is
-   * refused until a later read of it succeeds ({@link liveRecordRefusal}).
-   */
-  private sweep(): void {
-    if (this.swept) return;
-    this.swept = true;
-    const recorded = this.readLive();
-    if (recorded === undefined) {
-      this.liveRecordUnreadable = true;
-      return;
-    }
-    const alive = recorded.filter((e) => this.pidAlive(e.pid));
-    this.orphans = alive;
-    this.writeLive(alive);
-    if (alive.length > 0) return;
-    for (const d of ["staging", "approved", "scratch", "cwd", "kube"]) {
-      try {
-        this.removeTree(join(this.iacRoot, d));
-      } catch {
-        // best effort
-      }
-    }
-  }
-
   async preflight(
     rowToolId: string,
     input: Readonly<Record<string, unknown>>,
   ): Promise<PreflightOutcome> {
     if (this.stopped) return { ok: false, reason: IAC_RUNNER_REFUSALS.stopping };
-    this.sweep();
-    const unreadable = this.liveRecordRefusal();
+    this.live.sweep();
+    const unreadable = this.live.liveRecordRefusal();
     if (unreadable !== undefined) return { ok: false, reason: unreadable };
     if (rowToolId === CFN_ROW) return this.preflightCfn();
     if (rowToolId === K8S_APPLY_ROW) return this.preflightKube(input);
@@ -1000,8 +467,8 @@ export class IacRunner implements IacHost {
     const workdir = gated.path;
     // One run per workdir, held until its children have exited (not merely until the gate returns).
     // A child a previous gateway left running may still be writing this directory.
-    this.orphans = this.orphans.filter((o) => this.pidAlive(o.pid));
-    for (const o of this.orphans) {
+    this.live.orphans = this.live.orphans.filter((o) => this.live.pidAlive(o.pid));
+    for (const o of this.live.orphans) {
       if (
         o.workdir !== undefined &&
         workdirsOverlap(o.workdir, workdir, this.deps.pathDeps.platform)
@@ -1026,20 +493,6 @@ export class IacRunner implements IacHost {
     };
     this.runs.set(workdir, run);
     return { ok: true, workingDirectory: workdir, release: () => this.release(run) };
-  }
-
-  /**
-   * While the live-children record is unreadable, re-read it: once it parses, its live children
-   * become the orphans a run must not overlap (their directories are still not deleted this boot).
-   */
-  private liveRecordRefusal(): string | undefined {
-    if (!this.liveRecordUnreadable) return undefined;
-    const recorded = this.readLive();
-    if (recorded === undefined) return IAC_PREFLIGHT_REFUSALS.liveRecordUnreadable;
-    this.liveRecordUnreadable = false;
-    this.orphans = recorded.filter((e) => this.pidAlive(e.pid));
-    this.writeLive(this.orphans);
-    return undefined;
   }
 
   private gateRefusal(reason: "not-approved" | "git"): string {
@@ -1245,8 +698,8 @@ export class IacRunner implements IacHost {
     // A read can be the first call after boot: the boot sweep must have run (it clears the run
     // directories a crashed gateway left) before this call makes its own, and an unreadable
     // live-children record refuses, as it does for a preflight.
-    this.sweep();
-    const unreadable = this.liveRecordRefusal();
+    this.live.sweep();
+    const unreadable = this.live.liveRecordRefusal();
     if (unreadable !== undefined) throw new Error(unreadable);
     // Phase 1: the (context, namespace) pair, against a FRESH read of the owner's approvals.
     const { context, grant, key } = this.approvedKubePair(toolId, args);
@@ -1482,7 +935,7 @@ export class IacRunner implements IacHost {
     let child: IacChild | undefined;
     let prepared = false;
     try {
-      await this.prepareGrants(manifest.id, paths);
+      await this.winGrants.prepareGrants(manifest.id, paths);
       prepared = true;
       // I1: the child's environment is extensionProcessEnv plus exactly the named variables.
       const wrapped = wrapIacServerSpec(
@@ -1496,7 +949,7 @@ export class IacRunner implements IacHost {
       child = (this.deps.spawnChild ?? spawnIacChild)(wrapped);
     } catch (e) {
       // A spawn that failed after its grants were recorded releases them like a child that exited.
-      if (prepared) await this.afterExit(manifest.id, paths);
+      if (prepared) await this.winGrants.afterExit(manifest.id, paths);
       this.safeRemove(cwd);
       onExited();
       throw e;
@@ -1513,7 +966,7 @@ export class IacRunner implements IacHost {
     const live = { child, exited: call.exited };
     this.liveChildren.add(live);
     const pid = child.pid;
-    if (pid !== undefined) this.recordLive(pid, opts.workdir);
+    if (pid !== undefined) this.live.recordLive(pid, opts.workdir);
     // A stop that began while the spawn was in flight could not see this child: kill it now.
     if (this.stopped) {
       child.closeInput();
@@ -1521,8 +974,8 @@ export class IacRunner implements IacHost {
     }
     const done = call.exited.then(async () => {
       this.liveChildren.delete(live);
-      if (pid !== undefined) this.forgetLive(pid);
-      await this.afterExit(manifest.id, paths);
+      if (pid !== undefined) this.live.forgetLive(pid);
+      await this.winGrants.afterExit(manifest.id, paths);
       this.safeRemove(cwd);
       onExited();
     });
@@ -1587,98 +1040,8 @@ export class IacRunner implements IacHost {
     }
   }
 
-  /** The granted clouds' credential environment and the credential files the child must read. */
-  private async cloudEnv(
-    grants: IacGrants,
-  ): Promise<{ env: Record<string, string>; files: string[] }> {
-    const env: Record<string, string> = {};
-    const files: string[] = [];
-    if (grants.clouds.includes("aws")) {
-      const creds = await loadAwsCreds(this.deps.vault);
-      if (creds.ok) Object.assign(env, creds.env);
-    }
-    if (grants.clouds.includes("azure")) {
-      const t = (await readConnectorSecret(this.deps.vault, "azure", "tenant_id"))?.trim() ?? "";
-      const c = (await readConnectorSecret(this.deps.vault, "azure", "client_id"))?.trim() ?? "";
-      const s =
-        (await readConnectorSecret(this.deps.vault, "azure", "client_secret"))?.trim() ?? "";
-      if (t !== "" && c !== "" && s !== "") {
-        env["ARM_TENANT_ID"] = t;
-        env["ARM_CLIENT_ID"] = c;
-        env["ARM_CLIENT_SECRET"] = s;
-      }
-    }
-    if (grants.clouds.includes("gcp")) {
-      const auth = await loadGcpAuthFromVault(this.deps.vault);
-      if (auth?.kind === "key") {
-        Object.assign(env, gcloudKeyFileEnv(auth.credPath));
-        files.push(auth.credPath);
-      }
-    }
-    return { env, files };
-  }
-
-  // ---- Windows grants: revoke what earlier spawns left, record what this one will leave --------
-
-  private serial<T>(fn: () => Promise<T>): Promise<T> {
-    const next = this.ledgerTail.then(fn, fn);
-    this.ledgerTail = next.then(
-      () => undefined,
-      () => undefined,
-    );
-    return next;
-  }
-
-  private revoker(profileId: string): AppContainerGrantRevoker {
-    return (this.deps.revokerFor ?? ((id) => appContainerGrantRevokerFor(this.deps.platform, id)))(
-      profileId,
-    );
-  }
-
-  /**
-   * Windows only. The ledger holds ONE entry per profile id. Entries whose child this process is
-   * not running (a crash, an earlier boot, a release that failed) are revoked FIRST (an ACE outlives
-   * its child; a failure refuses the spawn, fail closed, and the stale entry stays); an entry of a
-   * child that is still running is left alone, so a sibling mid-apply keeps its grants. Then this
-   * spawn's paths are recorded BEFORE it can be granted anything. The helper's DACL rewrites are
-   * serialised behind this one chain.
-   */
-  private prepareGrants(profileId: string, paths: readonly string[]): Promise<void> {
-    if (!this.revoker(profileId).active) return Promise.resolve();
-    const ledger =
-      this.deps.ledger ?? fileIacGrantLedger(iacGrantLedgerFile(this.deps.paths.configDir));
-    return this.serial(async () => {
-      const entries = ledger.load();
-      const keep: IacLedgerEntry[] = [];
-      for (const e of entries) {
-        if (this.runningProfiles.has(e.id)) {
-          keep.push(e);
-          continue;
-        }
-        await this.revoker(e.id).revoke(e.paths); // ACL revocations run one at a time, in ledger order, under the serial lock
-      }
-      ledger.save([...keep, { id: profileId, paths }]);
-      this.runningProfiles.add(profileId);
-    });
-  }
-
-  /** After the child is gone: release this profile's ACEs and drop its ledger entry on success. */
-  private afterExit(profileId: string, paths: readonly string[]): Promise<void> {
-    const revoker = this.revoker(profileId);
-    if (!revoker.active) return Promise.resolve();
-    const ledger =
-      this.deps.ledger ?? fileIacGrantLedger(iacGrantLedgerFile(this.deps.paths.configDir));
-    return this.serial(async () => {
-      // The child is gone whether or not the release below succeeds: a kept entry is retried by the
-      // next spawn, which treats any entry it is not running as stale.
-      this.runningProfiles.delete(profileId);
-      try {
-        await revoker.revoke(paths);
-        ledger.save(ledger.load().filter((e) => e.id !== profileId));
-      } catch {
-        // The entry stays; the next spawn revokes it first (fail closed there).
-      }
-    });
+  private cloudEnv(grants: IacGrants): Promise<{ env: Record<string, string>; files: string[] }> {
+    return loadIacCloudEnv(this.deps.vault, grants);
   }
 }
 
