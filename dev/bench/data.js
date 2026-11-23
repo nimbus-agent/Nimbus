@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795435230882,
+  "lastUpdate": 1795438454314,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "243733018b14161caa67a82d73f83ade2fa66a19",
-          "message": "chore: release main (#1466)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.13.0</summary>\n\n##\n[7.13.0](https://github.com/nimbus-agent/Nimbus/compare/v7.12.0...v7.13.0)\n(2026-09-07)\n\n\n### Features\n\n* **http:** GET /v1/items/resolve-ids — an item id back to its reference\n([#1465](https://github.com/nimbus-agent/Nimbus/issues/1465))\n([8531752](https://github.com/nimbus-agent/Nimbus/commit/8531752330d23551738d815e9f6e2d6d72e75f77))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-09-07T21:32:36Z",
-          "tree_id": "efed6a338448283bc7c068109706f9867662c74f",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/243733018b14161caa67a82d73f83ade2fa66a19"
-        },
-        "date": 1788817382037,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 274.4442321999999,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 278.5965130500055,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 179.26509019999466,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a6f4bda76c81a85fc8dc3917004ac986c1e4aac5",
+          "message": "refactor(cli): split commands/extension.ts into per-subcommand-group modules (no behaviour change) (#2097)\n\n## Why\nOwner ruling (2026-11-23): files stay under 500 lines.\n`packages/cli/src/commands/extension.ts` was 1,879 lines. Pure move,\nzero behaviour change. No release note, roadmap row or CHANGELOG entry\n(internal refactor).\n\n## Layout (`packages/cli/src/commands/extension/`)\n- `extension.ts` (55, facade re-exporting the same 31 names)\n- `flags.ts` 45, `list.ts` 260, `info.ts` 192, `install.ts` 307,\n`approve.ts` 177, `credential.ts` 85, `lifecycle.ts`\n(enable/disable/remove) 147, `keys.ts` (keygen/sign) 138, `dispatch.ts`\n242, `update.ts` 270, `downgrade.ts` 71\n- New `dispatch.test.ts` (103) for routing coverage.\nMoved verbatim; the only edits are `export` on helpers now shared across\nmodules, and `extensionUpdateApplies` living in `update.ts` (it is still\nexported from the facade) so `dispatch` -> `update` has no import cycle.\n\n## Proof\n1. `typecheck` and `typecheck:tests` pass (469 baselined, 0 new).\n2. Public surface: `Object.keys` of old vs new module: 31 = 31,\nidentical. A line-multiset comparison of the old body against the union\nof the new modules shows no differences besides `export`.\n3. `bun test packages/cli/src` JUnit before/after: 6536 / 6536\ntestcases, (classname, name, status) lists identical, 0 failures. (One\nearlier run showed a single unrelated flake; two reruns were clean.)\n4. Path pins: `scripts/structure-audit/platform-branching-allowlist.ts`\n(now `extension/dispatch.ts` and `extension/keys.ts`), two pointers in\n`docs/SECURITY-INVARIANTS.md` (badge -> `list.ts`, `--network` ->\n`approve.ts`). No `mock.module` targets the file or its importers.\n5. `preflight:fast` passes; `audit:file-size` passes with the baseline\nentry removed.\n\nCoverage (bun, lines): every new module is at 92% or more; `dispatch.ts`\nwas 80.6% and is now 95.6% via the new test. CI-Linux lcov is\nauthoritative.\n\nLeft over: `docs/structure-audit/sonarqube-rule-tuning.md` still names\n`extension.ts` for one S9382 finding (a historical count table; the\nmodule it moved to is unknown).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrGFPLqt8C3Ybzk2dHq\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n  * Added an extension downgrade command with text and JSON results.\n* Extension commands now support managing approvals and credentials,\nviewing extension details, installing and rehashing extensions,\ngenerating publisher keys and signing manifests, and enabling,\ndisabling, or removing extensions.\n* Extension listings and update workflows include dependency details,\nnetwork findings, publisher verification, and clearer success or failure\ninformation.\n* **Documentation**\n* Updated security-invariant references for extension listing and\napproval commands.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-23T12:43:50Z",
+          "tree_id": "716cbba3fc3bb0a387e4adaa9c0f6a105d00d784",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/a6f4bda76c81a85fc8dc3917004ac986c1e4aac5"
+        },
+        "date": 1795438450713,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 182.542046249998,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 183.64215254999763,
             "unit": "ms"
           }
         ]
