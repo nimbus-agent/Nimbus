@@ -1,7 +1,7 @@
 /**
  * The single source of truth for which watcher conditions the engine can evaluate.
  *
- * `watcher-engine.ts` builds its item query from this table, and `ipc/automation-rpc.ts`
+ * `watcher-engine.ts` builds its item query from this table, and `ipc/automation-rpc/watcher.ts`
  * rejects a `watcher.create` whose condition type is absent from it. Keeping both readers on
  * one table is the point: a creation path that accepted a condition the engine cannot evaluate
  * would produce a watcher that is silently inert forever.

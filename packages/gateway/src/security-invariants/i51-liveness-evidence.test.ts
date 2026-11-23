@@ -291,7 +291,7 @@ describe("I51 — liveness and baseline evidence is inert", () => {
     // Calls, not names: an import left behind after a call is removed must not satisfy the pin.
     only(/\b(?:readInstalledProvenance|reverifyInstalledProvenance)\s*\(/, [
       "extensions/registry/installed-provenance.ts",
-      "ipc/automation-rpc.ts",
+      "ipc/automation-rpc/extension-read.ts",
     ]);
     only(/\brecordInstalledProvenance\s*\(/, [
       "extensions/registry/installed-provenance.ts",

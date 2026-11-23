@@ -1331,7 +1331,7 @@ interface InstallFromLocalOptions {
   rootFingerprint?: string;
   /**
    * The local owner's approval, asked after the plan resolves and before anything is written. The
-   * production IPC path always supplies one (`ipc/automation-rpc.ts`); a direct library call
+   * production IPC path always supplies one (`ipc/automation-rpc/extension-install.ts`); a direct library call
    * without one installs ungated and records the install audit row as `not_required`, never as
    * `approved`.
    */

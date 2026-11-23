@@ -136,7 +136,7 @@ Install and run are **different consents**. Install records what arrived; a run 
 - **(c)** `checkRunGrantWriters` — `upsertRunGrant` only in the store + `approve-run.ts`; `deleteRunGrant` additionally `automation/extension-store.ts`. Aliased imports count.
 - Stated bound: text scans; a dynamically composed role string, call or identifier evades them. The I43 source pins in `i43-extension-spawn.test.ts` cover the spec builders.
 
-**Surfaces.** `extension.approveRun` / `extension.revokeRun` are CLI-only, LAN-forbidden (`ipc/lan-rpc.ts`), demo-refused, and absent from the Tauri allowlist; the renderer may `extension.enable` (the next spawn re-verifies) but never approve. Calls: `nimbus connector tools|call ext_<id>` (backed by `connector.userMcpTools` / `connector.userMcpCall`). Handlers: `ipc/automation-rpc.ts`, `ipc/connector-rpc-handlers/user-mcp.ts`.
+**Surfaces.** `extension.approveRun` / `extension.revokeRun` are CLI-only, LAN-forbidden (`ipc/lan-rpc.ts`), demo-refused, and absent from the Tauri allowlist; the renderer may `extension.enable` (the next spawn re-verifies) but never approve. Calls: `nimbus connector tools|call ext_<id>` (backed by `connector.userMcpTools` / `connector.userMcpCall`). Handlers: `ipc/automation-rpc/extension-run.ts`, `ipc/connector-rpc-handlers/user-mcp.ts`.
 
 **Stated bounds / not shipped** (do not claim otherwise):
 

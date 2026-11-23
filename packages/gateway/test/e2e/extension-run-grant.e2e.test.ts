@@ -1,5 +1,5 @@
 // E2E over a REAL gateway socket for the extension run-grant methods (extension-runtime PR 2).
-// The handlers live in `ipc/automation-rpc.ts`; a real client reaches them only through
+// The handlers live in `ipc/automation-rpc/`; a real client reaches them only through
 // `ipc/server/dispatchers.ts`'s `tryDispatchAutomationRpc` prefix match AND the owner gate +
 // run-grant env that `dispatchExtensionAutomationRpc` builds. A unit test calling
 // `dispatchAutomationRpc` directly bypasses all three. "Extension not found" (-32602) proves the
