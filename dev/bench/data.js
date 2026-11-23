@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795449566508,
+  "lastUpdate": 1795450096498,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "ecd1a04f8c8f47032992b2475cd67334f8afe0dd",
-          "message": "feat(toolgen): draft a tool body and its input schema, and bind credentials at create time (#1481)\n\n## Summary\n\nReplaces the `ERR_TOOLGEN_DRAFT_NOT_IMPLEMENTED` stub so `nimbus tool\ncreate` actually produces a\nworking, owner-approved, sandboxed tool instead of walking the whole\ngate and refusing at the last\nstep. A model now authors both the tool body **and** its input schema;\nthe schema goes inside the\nartifact the owner approves, is covered by `artifactDigest`, is baked\ninto the emitted script, and\ndrives the parameters the calling model sees. A four-rung validation\nladder runs before the owner is\nprompted, with exactly one bounded redraft. The drafting prompt is\ngrounded on API endpoints already\nindexed from OpenAPI specs under `[[filesystem.roots]]`.\n\nAlso closes two things PR 1 left inert: `--credential <host>=<token>` is\nnow transmitted and binds a\nbearer credential per host, and the drafting locality is\nowner-controlled via a new\n`[tool_generation] drafting` key defaulting to `\"local\"`.\n\nNo schema migration. No new invariant — this rides I39, the existing\n`model` egress class and the\nexisting `tool.generate` audit row.\n\nDesign:\n`docs/superpowers/specs/2026-09-09-s2-toolgen-drafting-design.md`\nPlan: `docs/superpowers/plans/2026-09-09-s2-toolgen-drafting.md`\n\n## Related Issue\n\nN/A — planned work from the Spine S2 runtime-tool-generation row in\n`docs/roadmap.md`.\n\n## Type of Change\n\n- [ ] Bug fix (non-breaking change that fixes an issue)\n- [x] New feature (non-breaking change that adds functionality)\n- [ ] Breaking change (fix or feature that changes existing behaviour)\n- [ ] Refactor (no behaviour change)\n- [ ] Test improvement\n- [ ] Documentation only\n- [ ] CI / tooling\n\nDeliberately **not** marked breaking. Nothing an existing user has to\nchange: the new config key is\nadditive and defaults to the safe value, `--credential` previously\nparsed and discarded its value so\nhonouring it breaks nobody, and the removed error code was never a\ndocumented contract.\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes — Biome, format + lint\n- [x] All existing tests pass — 22,200 pass / 70 skip / 0 fail across\n1,497 files\n- [x] New behaviour is covered by tests\n- [x] No `any` types introduced — `unknown` is used for external data\n- [x] No credentials, tokens, or secret values appear in logs, IPC\nmessages, config, or test fixtures\n- [x] Platform-specific code is behind the `PlatformServices`\nabstraction\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable\n- [x] Does not touch `docs/README.md`\n\n## Coverage\n\n`engine/` and `vault/` are untouched, so those two gates are not\napplicable. `audit:coverage-floor`\npasses on an authoritative Docker-Linux build.\n\n## Testing\n\n- Whole-repo suite: `bun test packages/gateway packages/cli scripts` —\n22,200 pass, 70 skip, 0 fail.\n- Full `bun run preflight`, plus `audit:doc-refs`, `audit:status-drift`,\n`lint:markdown`.\n- Sandbox behaviour exercised end to end on Windows against the real\nhelper and on Linux under\n  bubblewrap. macOS is reasoned but not measured — see below.\n\n## Notes for Reviewers\n\n**The most important change is not the drafting.** Building the\nend-to-end test against a real\nsandbox revealed that the pre-consent confinement probe was measuring\nnothing on any platform. It\nread `/etc/passwd` and expected denial, but `bwrap` `--ro-bind`s `/etc`,\nso the read succeeded and\nthe probe reported \"unconfined\"; macOS has the same hole via `subpath\n/private/etc`. Linux was\nalready red on this branch and nobody had seen it, because **both test\nlayers injected around\n`defaultSpawnProbe`** — the unit tests through the `spawnProbe` seam,\nthe e2e through its own inline\nprobe — so the production default was executed by no test at all.\n\nThe probe is now inline, and its target is a parent-written sentinel\nplaced outside every grant,\nwith the parent proving the sentinel readable first, so any read failure\ncounts as denial. That\nmatters because the three platforms deny three different ways. A control\nrun against the real\nWindows helper confirms it discriminates: exit 2 for a target inside a\ngranted directory, exit 10\noutside every grant.\n\n**Stated residuals, none softened:**\n- macOS is reasoned, not measured on hardware. The e2e does not skip, so\nthe macOS PR leg will\nexecute the real probe — a failure there reds this PR rather than\n`main`.\n- `header` and `basic` credential bindings exist in the broker but no\nuser-facing path produces one.\n- Agent-initiated tool proposal and persistence via `nimbus tool save`\nare explicitly not shipped.\n- One doc sentence is loose and known: \"both test layers now drive the\nreal probe\" overstates the\nunit layer, which drives the real function against a fake runner. Worth\na one-line follow-up.\n\n**Where I would look hardest:** `toolgen-gate.ts`'s ordering — every\nrefusal decidable without the\nowner must precede the consent prompt — and the credential path, where a\nraw-vs-normalised host\nsplit could previously strand a bearer token in the Vault on a denial.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01TCGiUd9StvWkDv7pPgAG1r\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **New Features**\n- `nimbus tool create` can draft tool code and input schemas using\nindexed API information.\n- Drafts are validated and may receive one automatic correction before\napproval.\n- Approval details now show parameters, hosts, credentials, provenance,\nand model locality.\n- Credentials can be securely bound to supported hosts during tool\ncreation.\n- Tool generation supports disabled, local-only, and explicitly\nremote-enabled drafting modes.\n  - Generated tools enforce their approved input parameters.\n\n- **Bug Fixes**\n- Improved cross-platform confinement verification with fail-closed\nbehavior.\n\n- **Documentation**\n- Updated the changelog, CLI reference, roadmap, and project status\ndocumentation.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-10T06:07:54Z",
-          "tree_id": "7fe2485615addde3acc71f95c7f68165b15cba84",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/ecd1a04f8c8f47032992b2475cd67334f8afe0dd"
-        },
-        "date": 1789021239144,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 335.11619964999556,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 339.7899983999985,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 188.85182709999972,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b7de8ca208c534f83956b0d13c4d9e3e39840ae0",
+          "message": "test(gateway): real tests for platform/assemble/scheduler-mesh, index-boot, boot-misc, updater-boot, stubs (#2107)\n\nReal tests for five of the `platform/assemble/*` helpers that #2098\nmoved out of `assemble.ts` and exempted. Tests only: no source change,\nno `mock.module`, nothing in `exclusions.ts` or\n`sonar-project.properties` touched.\n\n## Coverage (Istanbul lcov, CI preloads, `--parallel --no-isolate`)\n\n\"Before\" is the existing `platform/assemble*.test.ts` files alone.\n\"After\" is the NEW test files alone (the real CI number is the union, so\nat least this).\n\n| Module | Before lines / branches | After lines / branches |\n| --- | --- | --- |\n| `scheduler-mesh.ts` | 62.5% (65/104) / 54.2% (26/48) | 89.4% (93/104)\n/ 87.5% (42/48) |\n| `index-boot.ts` | 79.7% (47/59) / 63.6% (14/22) | 94.9% (56/59) / 100%\n(22/22) |\n| `boot-misc.ts` | 81.6% (31/38) / 50.0% (9/18) | 100% (38/38) / 94.4%\n(17/18) |\n| `updater-boot.ts` | 70.8% (17/24) / 50.0% (7/14) | 95.8% (23/24) /\n85.7% (12/14) |\n| `stubs.ts` | 100% (5/5) / n.a. | 100% (5/5) / n.a. |\n| `scheduler-mesh-opts.ts` | types only | types only |\n\n`scheduler-mesh-opts.ts` has no executable statement (two interfaces and\nimports), so it gets no tests: it belongs in the types-only exclusion\nsection with a guardian header, which the final PR handles.\n\n## What each test file covers\n\n- `boot-misc.test.ts`: lenient service-config load, boot-marker append\nand its warn-on-failure, audit shipper start (a stop only for a\nconfigured endpoint), orphaned computer-use session reconcile,\n`assignIfPresent`/`pushStops`, `bootCaptureStore` (invalid `[mcp_sink]`,\nexpire and interrupted-action reconcile, retention prune), the one-shot\nre-graph (runs, stop before the microtask, unreadable config keeps the\nmarker, rejection is logged).\n- `index-boot.test.ts`: `openGatewaySqlite` (WAL, migrated, reopen),\n`createLocalIndexWithEmbeddingRuntime` (demo has no runtime; a wanted\nruntime settles without a model fetch), GitHub Actions and CircleCI\nscheduler companions by vault credential, session-memory store (old\nschema, with and without a runtime, hourly TTL prune, zero TTL clamp,\nprune failure swallowed), filesystem-root syncable registration\n(registered vs TOML roots, missing folder dropped).\n- `updater-boot.test.ts`: auto-update daemon start/veto (env, demo) and\nstop, the IPC option slices, `wireUpdaterIntoIpc` (disabled, env\ndisable, package-manager channel, no startup check, available-update\nbroadcast, failed check logged with URL credentials redacted).\n- `stubs.test.ts`: the no-op autostart; the non-delivering notification\nservice logs the title only and turns a throwing logger into a\nrejection.\n- `scheduler-mesh.test.ts`, `scheduler-mesh-passes.test.ts`,\n`scheduler-mesh-signals.test.ts` (shared harness\n`test/helpers/scheduler-mesh-harness.ts`, which hands REAL parts to the\nreal `createSchedulerWithMesh`): what is built under each config, the\nI22 allowlist at the registrar, demo gateway inertness (I41), the\npost-sync hook (`sync.completed`, the I29 sync ledger row, watcher fire,\nstartup catch-up), each post-sync pass (glossary, decisions, pre-mortem,\nownership: plain vs rebuild, degraded service config, failed pass\nlogged), the sync anomaly detector (seeded history, finding opened,\ntoast only when opted in), the ambiguous watcher-chat destination, and\nthe incident engine and scribe.\n\n## Left under the floor\n\nNone. Uncovered remainders are callbacks only reached by spawning a\nsandboxed connector (`obsidianWriteGrantEnabled`, `iacGrants`,\n`k8sGrants`, `listUserMcpConnectors`, `runtimeReadPaths`) and a few\nsingle-line closures; no seam is needed.\n\n## Notes\n\n- Local dev gotcha found on the way: `NIMBUS_DISTRIBUTION_CHANNEL` set\non a machine makes `wireUpdaterIntoIpc` build no updater; the new test\nclears it.\n- Verified: `bun run typecheck`, `typecheck:tests` (0 new), `bun test\npackages/gateway/src/security-invariants` and `platform/assemble/` (768\npass), `bun run preflight:fast`. Each new file is under 500 lines.\n- The exemptions are removed in a follow-up PR once all three groups\nhave merged.\n- Core docs (CLAUDE.md, GEMINI.md, roadmap, architecture, docs/README,\ncli-reference): no change, since this adds tests only and changes no\nbehaviour, command, invariant or count.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrGFPLqt8C3Ybzk2dHq\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Tests**\n* Added coverage for gateway startup, scheduler and mesh behavior,\nupdate checks, notifications, and related boot helpers.\n* Added a reusable test harness to verify scheduler behavior across\ndifferent configurations and failure scenarios.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-23T15:55:30Z",
+          "tree_id": "cc356d34a0c1e437618bced6c05b178460562f6d",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/b7de8ca208c534f83956b0d13c4d9e3e39840ae0"
+        },
+        "date": 1795450093113,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 182.44400265000294,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 181.4103001499996,
             "unit": "ms"
           }
         ]
