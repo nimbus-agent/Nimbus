@@ -14,7 +14,7 @@ import { lineOfOffset } from "./policy-chatops-writes.ts";
 //     `platform/assemble.ts`, so a second door built over other facts cannot appear.
 // (c) `origin: "agent"` is written only by `ipc/capture-rpc.ts` `buildActDeps`, the one place that
 //     holds the accepting session's consent channel; a `proposer:` property only there and in the
-//     two files that declare or project it (`engine/types.ts`, and `engine/executor.ts`'s audit
+//     two files that declare or project it (`engine/types.ts`, and `engine/executor/audit-shape.ts`'s audit
 //     projection, which copies two fields out and sets no origin).
 // (d) An action's `origin` is compared with a literal ("agent" or "model") only in
 //     `engine/outside-origin.ts`; every other site asks `isOutsideOrigin` / `isAgentOrigin`.
@@ -27,7 +27,8 @@ import { lineOfOffset } from "./policy-chatops-writes.ts";
 // (g) The user-MCP call facts (Phase 28 AD5a, I42): the `userMcpCall` property of a planned action
 //     (what the owner's prompt shows about third-party code) is written only by `ipc/capture-rpc.ts`
 //     `buildActDeps`, from the agent door's own read, and named besides only by the file that declares
-//     it (`engine/types.ts`), the two that read it (`engine/executor.ts`, `engine/user-mcp-call-block.ts`).
+//     it (`engine/types.ts`), the four that read it (`engine/executor.ts`, its `executor/audit-shape.ts` and
+//     `executor/consent-display.ts`, and `engine/user-mcp-call-block.ts`).
 //     No other site may put facts on an action, so the prompt cannot be made to show a description the
 //     definition check did not hash.
 // (h) The agent door's reach into user-registered servers (AD5a): `listUserMcpToolDefinitions` (the
@@ -52,7 +53,7 @@ const D49_PROPOSER_PROP_RE = /\bproposer\s*\??\s*:/g;
 const D49_PROPOSER_PROP_ALLOWED: readonly string[] = [
   `${D49_SRC}ipc/capture-rpc.ts`,
   `${D49_SRC}engine/types.ts`,
-  `${D49_SRC}engine/executor.ts`,
+  `${D49_SRC}engine/executor/audit-shape.ts`,
 ];
 const D49_ORIGIN_COMPARE_RE =
   /\borigin\s*[!=]==?\s*["'](?:agent|model)["']|["'](?:agent|model)["']\s*[!=]==?\s*[\w.?]*\borigin\b/g;
@@ -62,6 +63,8 @@ const D49_USER_MCP_CALL_ALLOWED: readonly string[] = [
   `${D49_SRC}ipc/capture-rpc.ts`,
   `${D49_SRC}engine/types.ts`,
   `${D49_SRC}engine/executor.ts`,
+  `${D49_SRC}engine/executor/audit-shape.ts`,
+  `${D49_SRC}engine/executor/consent-display.ts`,
   `${D49_SRC}engine/user-mcp-call-block.ts`,
 ];
 // An object-literal property (`{ userMcpCall: x }`). The same text inside a destructuring PATTERN

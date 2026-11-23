@@ -11,7 +11,11 @@ import { stripComments } from "../../../../scripts/structure-audit/lib.ts";
 
 const SRC = join(import.meta.dir, "..");
 const CONSTRUCTOR = "automation/workflow-write-step.ts";
-const READERS = ["engine/types.ts", "engine/executor.ts", "engine/standing-rule-step.ts"];
+const READERS = [
+  "engine/types.ts",
+  "engine/executor/audit-shape.ts",
+  "engine/standing-rule-step.ts",
+];
 
 function sources(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {

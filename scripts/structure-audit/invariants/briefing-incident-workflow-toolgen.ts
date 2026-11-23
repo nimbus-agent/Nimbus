@@ -175,6 +175,10 @@ const D50_IDENTIFIERS: readonly {
   },
 ];
 const D50_LITERAL_RE = /(["'`])workflow\.(?:import|export)\1/g;
+const D50_EXPORT_LITERAL_RE = /(["'`])workflow\.export\1/g;
+// Files allowed the `workflow.import` literal ONLY (a `workflow.export` there is still flagged):
+// `usesPromptText`, split out of the executor, names the types whose prompt is a prompt text.
+const D50_IMPORT_ONLY_ALLOWED: readonly string[] = [`${D50_SRC}engine/executor/action-types.ts`];
 const D50_LITERAL_ALLOWED: readonly string[] = [
   `${D50_SRC}engine/executor.ts`,
   D50_IMPORT,
@@ -216,8 +220,10 @@ export function checkWorkflowImportConfinement(files: readonly FileEntry[]): Vio
     }
     // (b) the method literals
     if (!D50_LITERAL_ALLOWED.includes(f.relPath)) {
-      for (const m of code.matchAll(D50_LITERAL_RE))
-        push("workflow-import-entry-confined", m.index);
+      const literalRe = D50_IMPORT_ONLY_ALLOWED.includes(f.relPath)
+        ? D50_EXPORT_LITERAL_RE
+        : D50_LITERAL_RE;
+      for (const m of code.matchAll(literalRe)) push("workflow-import-entry-confined", m.index);
     }
     // (d) the rule and learning path never reads provenance
     if (D50_RULE_PATH.includes(f.relPath)) {
@@ -331,7 +337,8 @@ export function checkComputerUseBindingConfinement(files: readonly FileEntry[]):
 // (e) the request slot `toolgenModelAsk` only by `engine/agent-request-context.ts` (its declaration)
 //     and `engine/run-ask.ts` (the one setter, on the owner's non-demo `cli`/`ui` turn), and its
 //     reader `getAgentRequestToolgenModelAsk` only by the context module, `engine/agent.ts` and the door;
-// (f) the literal "tool.model.invoke" only by the door and `engine/executor.ts` (the I2 frozen set).
+// (f) the literal "tool.model.invoke" only by the door and `engine/executor.ts` (the I2 frozen set) and
+//     `engine/executor/action-types.ts` (the `usesPromptText` predicate).
 // Test files are not scanned. Stated bounds: a text scan, so a dynamically composed name evades it, and
 // a second use inside an allow-listed file is exempt whole-file; the behavioural tests in
 // `i60-saved-tool-owner-turn.test.ts` (I60) are authoritative. Tied to I60.
@@ -362,7 +369,12 @@ const D51_RULES: readonly { readonly re: RegExp; readonly allowed: readonly stri
 ];
 const D51_STRING_LITERAL_RE = /(["'`])((?:\\[\s\S]|(?!\1)[^\\\n])*)\1/g;
 const D51_TYPE_VALUE = "tool.model.invoke";
-const D51_LITERAL_ALLOWED: readonly string[] = [D51_DOOR, `${D51_SRC}engine/executor.ts`];
+const D51_LITERAL_ALLOWED: readonly string[] = [
+  D51_DOOR,
+  `${D51_SRC}engine/executor.ts`,
+  // `usesPromptText`, split out of the executor (the type's prompt is a prompt text).
+  `${D51_SRC}engine/executor/action-types.ts`,
+];
 
 export function checkToolgenModelDoorConfinement(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];

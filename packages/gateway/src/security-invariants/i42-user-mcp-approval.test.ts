@@ -207,8 +207,8 @@ describe("I42 — every user-MCP tool call needs the local owner's approval", ()
     expect(prompts).toHaveLength(2);
     expect(prompts[1]?.prompt).not.toContain("ak-OTHER");
     expect(JSON.stringify(prompts[1]?.details)).not.toContain("ak-OTHER");
-    // Source pin: the display branch keys on the action TYPE (I3), never the payload.
-    const src = stripComments(await read("packages/gateway/src/engine/executor.ts"));
+    const typeKeyedDisplay = "packages/gateway/src/engine/executor/consent-display.ts"; // I3, not the payload
+    const src = stripComments(await read(typeKeyedDisplay));
     expect(src).toMatch(/if \(isUserMcpActionType\(action\.type\)\) return action\.payload;/);
   });
 

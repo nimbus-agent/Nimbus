@@ -39,7 +39,7 @@ export type ExtensionInstallApprovalRequest = {
   /**
    * `fingerprint` is the first 32 hex chars of SHA-256 over the decoded Ed25519 public key. It is
    * deliberately NOT named `key`: the consent display redacts any payload field whose name
-   * contains "key" (`executor.ts` `SENSITIVE_PAYLOAD_KEY`), which would hide the one value that
+   * contains "key" (`engine/executor/consent-display.ts` `SENSITIVE_PAYLOAD_KEY`), which would hide the one value that
    * lets the owner tell two publishers with the same id apart.
    */
   readonly publisher: { readonly id: string; readonly fingerprint: string } | null;

@@ -1,7 +1,7 @@
 /**
  * The text the local owner approves for an install that adds more than one package (a dependency
  * plan), and the connectors the added packages need (a `Needs:` block). Pure: it formats what it is handed and reads nothing. The rendered plan is the prompt body
- * (`executor.ts` prints it after the Details line), so every manifest-sourced string is passed
+ * (`engine/executor/consent-display.ts` prints it after the Details line), so every manifest-sourced string is passed
  * through `oneLine` first: a control, line-break, invisible or bidi character is shown as an escape,
  * never rendered, and cannot forge a line of the prompt.
  */
@@ -11,7 +11,7 @@ import type { ExtensionManifest } from "./manifest.ts";
 
 /**
  * One package of an install plan, as the owner is shown it. Field names never contain "key" or
- * "auth": the consent display redacts any such field (`executor.ts` `SENSITIVE_PAYLOAD_KEY`).
+ * "auth": the consent display redacts any such field (`engine/executor/consent-display.ts` `SENSITIVE_PAYLOAD_KEY`).
  */
 export type PlannedPackage = {
   readonly id: string;

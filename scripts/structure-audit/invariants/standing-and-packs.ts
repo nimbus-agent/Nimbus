@@ -11,7 +11,7 @@ import { sqlTableReferenceRe } from "./vlm-media-capture-door.ts";
 // (a) the owner-workflow PROVENANCE is built only by `automation/workflow-write-step.ts`: the
 //     `kind: "owner_workflow"` literal is written there and in the type (`engine/types.ts`); the
 //     literal is READ (never constructed) only by `engine/standing-rule-step.ts`; the type and its
-//     `fieldSources` member are named only by those files and `engine/executor.ts` (the audit row's
+//     `fieldSources` member are named only by those files and `engine/executor/audit-shape.ts` (the audit row's
 //     trimmed copy). No IPC method, door, payload, ChatOps, LAN or HTTP path can supply one;
 // (b) the `standing_rule` and `standing_rule_fire` tables are referenced only by
 //     `standing/standing-rule-store.ts` and their V88 DDL, and the store's writers (`insertRule`,
@@ -116,7 +116,7 @@ const D44_NAME_RULES: ReadonlyArray<{
   {
     rule: "standing-provenance-confined",
     re: /\bWorkflowProvenance\b|\bfieldSources\b/g,
-    allowed: [D44_WRITE_STEP, D44_TYPES, D44_STEP, D44_EXECUTOR],
+    allowed: [D44_WRITE_STEP, D44_TYPES, D44_STEP, `${D44_SRC}engine/executor/audit-shape.ts`],
     keepStrings: false,
   },
   {

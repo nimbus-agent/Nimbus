@@ -1016,14 +1016,14 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     expect(build).toBeGreaterThan(0);
     expect(build).toBeLessThan(audit);
     expect(audit).toBeLessThan(append);
+    expect(src.split("...subStepAttribution(action, scope)").length - 1).toBe(3); // the sub-steps carry the parent
   });
 
   test("AD4: the audit projection copies exactly door, captureId, label and labelSource, by name, before the payload (static D49(c))", async () => {
-    const src = stripComments(await read("packages/gateway/src/engine/executor.ts"));
+    const src = stripComments(await read("packages/gateway/src/engine/executor/audit-shape.ts"));
     expect(src).toMatch(
       /proposer:\s*\{\s*door:\s*proposer\.door,\s*captureId:\s*proposer\.captureId,\s*label:\s*proposer\.label,\s*labelSource:\s*proposer\.labelSource,\s*\},\s*\.\.\.others,/,
     );
-    expect(src.split("...subStepAttribution(action, scope)").length - 1).toBe(3); // the three sub-step sites pass the parent's attribution
   });
 
   test("AD4: the agent: source prefix is written only by egress-record.ts and read only by the proof reader", async () => {
