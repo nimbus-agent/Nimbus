@@ -242,7 +242,7 @@ describe("I54 — a bound connector write is dispatched only with the values its
     ]);
   });
 
-  test("the prepare set is exactly the seven declared tools, frozen; the bound production rows name members of it (D1c, D2, D3a)", () => {
+  test("the prepare set is exactly the eight declared tools, frozen; the bound production rows name members of it (D1c, D2, D3a)", () => {
     expect(
       CONNECTOR_WRITE_ROWS.filter((r) => r.bound !== undefined)
         .map((r) => r.toolId)
@@ -253,6 +253,7 @@ describe("I54 — a bound connector write is dispatched only with the values its
         "gitlab_commit_create",
         "iac_cloudformation_deploy",
         "iac_terraform_apply",
+        "iac_terraform_apply_refresh_only",
         "iac_terraform_destroy",
         "k8s_manifest_apply",
       ].sort(),
@@ -263,6 +264,7 @@ describe("I54 — a bound connector write is dispatched only with the values its
       "iac_cloudformation_changeset_create",
       "iac_terraform_destroy_plan",
       "iac_terraform_plan",
+      "iac_terraform_plan_refresh_only",
       "iac_terraform_show_json",
       "k8s_manifest_plan",
     ]);
@@ -270,7 +272,7 @@ describe("I54 — a bound connector write is dispatched only with the values its
       expect(PREPARE_TOOL_IDS.has(r.bound?.prepare.tool ?? ""), r.toolId).toBe(true);
     }
     expect(() => (PREPARE_TOOL_IDS as unknown as Set<string>).add("x_plan")).toThrow(TypeError);
-    expect(PREPARE_TOOL_IDS.size).toBe(7);
+    expect(PREPARE_TOOL_IDS.size).toBe(8);
   });
 
   test("the Kubernetes apply (D3a) is the sixth bound row: settled by the gateway's own pure settler, reached only through the capability, with both hashes gateway-computed", async () => {

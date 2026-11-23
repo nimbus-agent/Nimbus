@@ -1,6 +1,7 @@
 // packages/gateway/src/connectors/connector-writes/iac-bound.ts
 // The bound declarations of the plan-bound IaC writes (Phase 9.7 D2, invariant I54): Terraform
-// apply, Terraform destroy and the CloudFormation deploy. Each is bound to the identity of the plan
+// apply, Terraform destroy, the refresh-only apply that accepts drift into state (OR-S4-DRIFT) and
+// the CloudFormation deploy. Each is bound to the identity of the plan
 // or change set its PREPARE tool made, but never to what that tool SAYS about it: a row names a
 // `settle` tag, and the gateway's settler (`engine/iac-settle.ts`, reached through the dispatcher's
 // `boundWriteCapabilities`) fixes the identity itself (a plan file it moved and hashed and had
@@ -10,7 +11,8 @@
 // name the settler's value keys, `SETTLE_VALUE_KEYS`); the values bound are the settler's.
 //
 // What the connectors reply (read from the installed 0.9.0 source, `connectors/iac/src/tools.ts`):
-//  - `iac_terraform_plan` / `iac_terraform_destroy_plan`: `{planId, planFile, planSha256, hasChanges}`;
+//  - `iac_terraform_plan` / `iac_terraform_destroy_plan` / `iac_terraform_plan_refresh_only`:
+//    `{planId, planFile, planSha256, hasChanges}`;
 //  - `iac_cloudformation_changeset_create`: `{changeSetId (ARN), changeSetName, stackId, stackName,
 //    changeSetType, templateSha256, capabilities, changes: [...]}`.
 // Imported BY `cloud-infra.ts`; imports nothing from the row table or the executor.
@@ -61,10 +63,12 @@ function pickKeys(
  */
 export const NO_REPLY_FACTS: PrepareRead["select"] = () => [];
 
-function terraformBound(destroy: boolean): BoundWrite {
+function terraformBound(
+  tool: "iac_terraform_plan" | "iac_terraform_destroy_plan" | "iac_terraform_plan_refresh_only",
+): BoundWrite {
   return {
     prepare: {
-      tool: destroy ? "iac_terraform_destroy_plan" : "iac_terraform_plan",
+      tool,
       argKeys: TERRAFORM_INPUT_KEYS,
       args: (input) => {
         const workingDirectory = input["workingDirectory"];
@@ -87,10 +91,19 @@ function terraformBound(destroy: boolean): BoundWrite {
 }
 
 /** `iac_terraform_apply`: bound to the plan `iac_terraform_plan` saved, as the gateway settled it. */
-export const TERRAFORM_APPLY_BOUND: BoundWrite = terraformBound(false);
+export const TERRAFORM_APPLY_BOUND: BoundWrite = terraformBound("iac_terraform_plan");
 
 /** `iac_terraform_destroy`: bound to the destroy plan `iac_terraform_destroy_plan` saved. */
-export const TERRAFORM_DESTROY_BOUND: BoundWrite = terraformBound(true);
+export const TERRAFORM_DESTROY_BOUND: BoundWrite = terraformBound("iac_terraform_destroy_plan");
+
+/**
+ * `iac_terraform_apply_refresh_only`: bound to the refresh-only plan `iac_terraform_plan_refresh_only`
+ * saved. The settler refuses it unless the plan changes no infrastructure and its drift is shown in
+ * full (`iac-refresh-only.ts`).
+ */
+export const TERRAFORM_REFRESH_ONLY_BOUND: BoundWrite = terraformBound(
+  "iac_terraform_plan_refresh_only",
+);
 
 /**
  * `iac_cloudformation_deploy`: bound to the change set `iac_cloudformation_changeset_create` made

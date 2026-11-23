@@ -52,10 +52,12 @@ export const IAC_LIMITS = Object.freeze({
 export const IAC_TOOL_TIMEOUTS_MS: Readonly<Record<string, number>> = Object.freeze({
   iac_terraform_plan: 10 * 60_000,
   iac_terraform_destroy_plan: 10 * 60_000,
+  iac_terraform_plan_refresh_only: 10 * 60_000,
   iac_terraform_show_json: 120_000,
   iac_cloudformation_changeset_create: 180_000,
   iac_terraform_apply: 30 * 60_000,
   iac_terraform_destroy: 30 * 60_000,
+  iac_terraform_apply_refresh_only: 30 * 60_000,
   iac_cloudformation_deploy: 60_000,
   iac_cloudformation_changeset_discard: 60_000,
   // D3a: the nine kubernetes tools (the plan is a dry run, a read and a diff on a cold sandbox).
@@ -86,6 +88,7 @@ export const IAC_DISPATCH_MARGIN_MS = 30_000;
 const IAC_LONG_GRACE_TOOLS: ReadonlySet<string> = new Set([
   "iac_terraform_apply",
   "iac_terraform_destroy",
+  "iac_terraform_apply_refresh_only",
   "iac_cloudformation_deploy",
 ]);
 export function iacEscalationGraceMs(toolId: string): number {

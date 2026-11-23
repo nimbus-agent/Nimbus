@@ -235,6 +235,7 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   "gcp.gke.workload.restart",
   "iac.terraform.apply",
   "iac.terraform.destroy",
+  "iac.terraform.apply_refresh_only",
   "iac.cloudformation.deploy",
   "iac.pulumi.up",
   "iac.cloudformation.changeset.discard",
@@ -905,10 +906,7 @@ export const DRY_RUN_BOUND_REASON = "dry run: a bound write has no dry run";
 /** The payload names another row's tool (the dispatcher would pick that tool, I3). */
 export const DRY_RUN_MISMATCH_REASON = "dry run: the action names another row's tool";
 
-/**
- * What a dry run returns: the target's current state the row's reader showed (`ok` or `unavailable`, the preview's
- * own before-state), a refusal with a fixed reason, or `no_reader` when the row has no before reader.
- */
+/** What a dry run returns: the row's before-state, a fixed refusal, or `no_reader` when it has none. */
 export type BeforeOnlyOutcome =
   | ConnectorWriteBeforeState
   | { readonly status: "refused"; readonly reason: string }
