@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795426898541,
+  "lastUpdate": 1795429023983,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "bf0559b56c52ab79c9c48e94fd1d2ce1e649aa67",
-          "message": "fix(fleet): close the five follow-ups from the overnight-fleet merge (#1462)\n\n## Summary\n\nThe five follow-ups recorded when the overnight-fleet row merged in\n#1458, plus the fixes from a review of this branch itself.\n\n- **`[fleet] retention_days` refuses below 1.** `pruneRuns` deletes rows\nwith `started_at <= cutoff`, so a zero-retention run pruned its own\nrecord on completion and `runOnce` returned a runId naming no row. The\nbound is raised for that key ONLY — `remote_call_budget = 0` is what\n`allow_remote = false` implies and is the shipped default, and\n`min_idle_seconds = 0` reads as \"no idle requirement\".\n- **`audit:status-drift` now sees ceiling RANGES.** It caught none of\nthe ten stale invariant ceilings found while shipping I38, because the\nceiling is almost always written as `I1–I38` or `D10–D28` rather than\nthe one phrasing it matched. Its silence was evidence about its scan\nset, not about the claims.\n- **A withheld remote provider is now disclosed on the brief itself.**\nI38's row claimed this and it was not true: the wrapper withholds the\nprovider, and the runner reports `no_eligible_provider` with no detail —\nthe same answer a machine with no model configured gets.\n- **D28 can now see the egress classification it was blind to.** Its\nmap-key alternative required a quoted `\"fleet\":` while the shipped map\nwrites it bare, so a copy-paste of the real line into a fourth file\npassed.\n- **The composed I38 path is exercised.** A run now spends its budget\nthrough the real synthesis runner on job one and is withheld on job two.\n\n## Related Issue\n\nNone — these are the follow-ups recorded in #1458's own review.\n\n## Linked Discussion\n\nNone.\n\n## Type of Change\n\n- [x] Bug fix (non-breaking change that fixes an issue)\n- [x] Test improvement\n\n**One config value changes meaning, and it is called out rather than\nburied:** `[fleet] retention_days = 0` was accepted and is now refused.\nIt is not marked breaking because the fleet is default-off, shipped in\n#1458 the same day, and a zero there produced a run that deleted its own\nrecord — there is no working configuration being taken away. A user who\nsomehow set it gets a loud config error naming the key, and the gateway\nstill boots with the fleet off.\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes\n- [x] All existing tests pass\n- [x] New behaviour is covered by tests\n- [x] No `any` types introduced\n- [x] No credentials, tokens, or secret values in logs, IPC, config, or\nfixtures\n- [x] Platform-specific code is behind `PlatformServices` — untouched by\nthis branch\n- [x] The HITL consent gate has not been weakened\n\n## Coverage\n\n`engine/` and `vault/` are untouched, so neither gate applies.\n\n## Testing\n\n`bun run preflight:fast` green. 629 tests across the fleet and config\nsuites pass. Every behavioural change is red-proved by reverting it and\nconfirming the covering test fails:\n\n- the shared-arm raise fails `min_idle_seconds`, and dropping the key\nfrom the switch fails the non-default assertion\n- injecting a stale range in two newly-covered surfaces fails\n`audit:status-drift`\n- swapping the per-job delta for the raw counter fails exactly the delta\ntest\n- copying the real egress line into a fourth file fails\n`audit:invariants`\n- replacing the wrapper with the raw router fails three tests together\n\n## Notes for Reviewers\n\n**A claim in this branch's own history is retracted in it.** Commit\n`bea3c273` says `bun run lint` was RED on `main` and that #1458 passed a\ngate it should have failed. That is false. Biome reports `useTemplate`\nat INFO severity and `--error-on-warnings` escalates warn, not info, so\nthe gate exits 0 — in CI too. The template-literal edit stands as a\ncosmetic cleanup. Raising `useTemplate` to error in `biome.json` would\nmake the original claim true, but that is a repo-wide decision and is\ndeliberately not taken here.\n\n**Three claims this branch falsified were fixed in it, after a review\ncaught them:** the D28 block comment still said the rule could not see\nthe real egress line, twenty lines above the alternative that now sees\nit; and `CLAUDE.md` plus `GEMINI.md` carried the same bound, \"there is\nNO per-brief disclosure\", and \"the composed path is not exercised end to\nend\" — all three untrue once this landed. `docs/SECURITY-INVARIANTS.md`\nhad been rewritten and its two mirrors had not.\n\n**A control test could not fail, and now says what it does and does not\ncatch.** `remote_call_budget = 0 stays legal` was added to prove the\nraised bound did not spread to a sibling key, but the default IS zero,\nso the mutation leaves the merged config reading zero either way.\n`min_idle_seconds`, whose default is 900, is what actually catches it.\n\n**Deliberate design choice worth a look:** the per-brief disclosure does\nNOT add a `SynthesisAttempt` reason variant, which was the obvious\nroute. That union is on the path every brief in this repo takes, so a\nnew arm makes each existing consumer's exhaustiveness a question to\nre-answer for a fact only the fleet can produce or read. The wrapper\nrecords the withholding on the budget and the invoker writes a per-job\ncount onto the fleet's own provenance; reader and writer are both inside\n`fleet/`.\n\n**Bounds still stated rather than closed:** the disclosure names that a\nremote provider was withheld and how often, not which of its two causes\napplied; `audit:status-drift` compares only the highest range per file;\nand the composed test drives the real runner but not a real agent.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01QcyA4M6fQsoqNUnzANxjzH\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **New Features**\n- Fleet synthesis now reports when remote providers were withheld,\nincluding only the count for the current run.\n- Fleet retention settings now require at least one day, while\nzero-minute idle and zero remote-call budgets remain supported.\n- Status auditing now detects stale invariant and rule-range references\nacross supported documentation surfaces.\n\n- **Bug Fixes**\n- Improved fleet classification checks to recognize additional valid\nconfiguration syntax while avoiding unrelated map and list entries.\n\n- **Documentation**\n- Updated security and infrastructure documentation to reflect current\nfleet synthesis, detection coverage, and roadmap status.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-07T15:59:58Z",
-          "tree_id": "7c736cd5f0abd738312718138a93f2823d986836",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/bf0559b56c52ab79c9c48e94fd1d2ce1e649aa67"
-        },
-        "date": 1788797559854,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 327.34947665000584,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 320.53995719999983,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 160.29022470000092,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3bb77f66472278fd78f9bf6e746f6146497ffb5a",
+          "message": "refactor(scripts): split check-nimbus-invariants.ts into per-rule-family modules (no behaviour change) (#2090)\n\n## Why\nOwner ruling (2026-11-23): files stay under 500 lines.\n`scripts/structure-audit/check-nimbus-invariants.ts` (the static D10-D51\nauditor) was 7,336 lines. This is wave 1 of the campaign. No behaviour\nchange.\n\n## Layout\n`check-nimbus-invariants.ts` is now a 190-line entry point: it\nre-exports the same 93 public names (the unit tests and 10+ invariant\ntests import them from this path), parses the mode, loads the files, and\ncalls four report parts in the original order. Everything else is moved\nverbatim (the generator cut at top-level statement boundaries and wrote\nthe imports; nothing was reworded):\n\n| File | Lines | Holds |\n| --- | --- | --- |\n| `invariants/_shared.ts` | 13 | `FileEntry`, `Violation`, `Mode` |\n| `invariants/spawn-vault-db-identity.ts` | 427 | D10-D15 |\n| `invariants/policy-chatops-writes.ts` | 449 | D16-D21 (share.publish)\n|\n| `invariants/share-sync-index-incident.ts` | 415 | D21 consent broker,\nD24, item history, incident records and links |\n| `invariants/incident-runbook-client-kinds.ts` | 437 | incident\nremediation, findings, runbooks, spawn-hidden, run-confined, client\nkinds |\n| `invariants/actuation-embedding-registry.ts` | 422 | actuation,\nlane/driver, forward share, agent emitters, embedding and registry\nappenders |\n| `invariants/vlm-media-capture-door.ts` | 425 | embedding constructors,\nVLM, media grants, capture table, door approvals |\n| `invariants/agent-door.ts` / `agent-door-order.ts` | 392 / 202 | D49 |\n| `invariants/extension-grants-eval.ts` | 475 | run grants, extension\nrole, trust tables, eval |\n| `invariants/briefing-incident-workflow-toolgen.ts` | 441 | briefing,\nfinops, incident, workflow import, computer-use, toolgen model door, LAN\nbox |\n| `invariants/model-write-door-bound-writes.ts` | 454 | D39-D42 |\n| `invariants/bound-write-pins.ts` | 243 | pin helpers shared by D41-D44\n(moved out to break an import cycle) |\n| `invariants/drift-bound-capabilities-iac.ts` | 318 | drift, bound\ncapabilities, write-dir, IaC discard |\n| `invariants/standing-and-packs.ts` | 434 | D44, D36 |\n| `invariants/migration-capture-toolgen.ts` | 442 | D32, D34, D35, D29 |\n| `invariants/sqlite-listeners-egress-graph.ts` | 438 | D29, D30, D31,\nD22, graph co-owned types |\n| `invariants/rule-anchors.ts` | 208 | `RULE_ANCHORS`,\n`assertScanIsMeaningful` |\n| `invariants/report-1..4.ts` | 193 / 329 / 317 / 86 | the old `run()`\nbody, cut at block boundaries; each part `let exit = 0 ... return exit`,\nthe entry takes the max |\n| `invariants-source.ts` | 27 | `readInvariantsSource()`: entry plus all\nmodules as one text |\n\nThe old `run()` was 800 lines, but a flat list of independent `if\n(mode...)` blocks, not an ordered gate, so it was split into the four\nreport parts. No security check was extracted into a helper: each check\nfunction moved whole.\n\n## Source readers\nSeveral tests (the\n`security-invariants/i14/i24/i25/i26/i29/i53/i54/i55/i56` tests) and\n`check-status-drift.ts` read the auditor's SOURCE text to pin what it\nnames. They now get the whole auditor through `readInvariantsSource()`:\n`read()` in `packages/gateway/test/helpers/security-invariants.ts`\nspecial-cases the auditor path (so no test body changed), and\n`canonicalStaticRule` reads it too. CODEOWNERS covers the new paths;\nCLAUDE.md/GEMINI.md and the stale line-number rows in\n`docs/SECURITY-INVARIANTS.md` point at the new locations.\n\n## Proof\n1. `bun run typecheck` and `bun run typecheck:tests` pass (469\nbaselined, 0 new).\n2. Public surface: `Object.keys(await import(path))` is identical before\nand after (93 names, byte-identical lists).\n3. Tests: `scripts/structure-audit`,\n`packages/gateway/src/security-invariants` and `gcp-auth.test.ts` (116\nfiles, 2449 tests): JUnit (classname, name, status) lists are identical\nbefore and after, 0 fail. The first run, before the source readers were\nfixed, had 15 failures; they were exactly the tests that read the\nauditor's text.\n4. `bun scripts/structure-audit/check-nimbus-invariants.ts` with and\nwithout `--binary-only`: stdout, stderr and exit codes identical (0 / 0,\ncensus line identical). The tree is clean, so the per-rule behaviour is\ncarried by item 3.\n5. `bun run preflight:fast` passes.\n\nNot done: `audit:file-size` is not on `main` yet (#2085), so there is no\nbaseline entry to lower. The largest new file is 475 lines.\n`check-nimbus-invariants.test.ts` (about 6.6k lines) is untouched, per\nthe brief. The branch's one commit has a wrong message (another\nsession's text landed in it); the squash replaces it with this title and\ndescription.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrGFPLqt8C3Ybzk2dHq\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Improvements**\n* Automated repository audits now cover more security and architecture\nrules across areas such as data access, workflow ordering, and\nintegrations, helping identify violations earlier.\n* Audit findings continue to be reported with actionable details to\nsupport review.\n* **Documentation**\n* Updated guidance clarifies where static audit rules are maintained and\nhow they relate to the audit process.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-23T10:08:28Z",
+          "tree_id": "f778b1a1de112627adf1d1d59c70a929c7ebfe73",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/3bb77f66472278fd78f9bf6e746f6146497ffb5a"
+        },
+        "date": 1795429019189,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 196.22693744999924,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 195.03575399999863,
             "unit": "ms"
           }
         ]
