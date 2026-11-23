@@ -12,7 +12,6 @@
     "packages/cli/src/commands/config.test.ts": 997,
     "packages/cli/src/commands/connector-writes-cli.ts": 787,
     "packages/cli/src/commands/connector.test.ts": 2378,
-    "packages/cli/src/commands/connector.ts": 1476,
     "packages/cli/src/commands/demo.test.ts": 733,
     "packages/cli/src/commands/doctor-bwrap.test.ts": 562,
     "packages/cli/src/commands/doctor-core.test.ts": 1495,

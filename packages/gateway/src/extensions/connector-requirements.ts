@@ -255,7 +255,7 @@ async function ownedStatus(
  * The flags `nimbus connector auth <id>` requires for the token connectors that need more than
  * `--token`, in the order the CLI's own usage text gives them (optional flags such as
  * `--sentry-url` are left out). The gateway cannot import the CLI; the source of truth is
- * `packages/cli/src/commands/connector.ts` (the `apply*ConnectorAuth` functions and
+ * `packages/cli/src/commands/connector/auth-appliers-*.ts` (the `apply*ConnectorAuth` functions and
  * `JIRA_CONNECTOR_SITE` / `CONFLUENCE_CONNECTOR_SITE`). A connector absent here takes `--token` alone.
  */
 const TOKEN_CONNECTOR_AUTH_FLAGS: Readonly<Record<string, string>> = {
