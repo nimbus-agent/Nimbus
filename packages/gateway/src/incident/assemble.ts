@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { serviceFreshness } from "../agents/_lib/briefing-queries.ts";
-import type { IncidentBrief } from "../agents/_lib/incident-types.ts";
+import type { IncidentBrief, IncidentDataBrief } from "../agents/_lib/incident-types.ts";
 import { synthesize } from "../agents/_lib/synthesize.ts";
 import { CREATED_KEY } from "../index/item-history.ts";
 import { loadServiceHistoryStarts } from "../index/item-history-at.ts";
@@ -458,14 +458,17 @@ async function assembleAttempt(
     freshness: freshnessOf(deps.db, withCutGap, nowMs, body.onCallStale),
   };
 
-  const brief: IncidentBrief = {
-    kind: "incident",
-    agentVersion: 1,
+  const common = {
+    agentVersion: 1 as const,
     generatedAt: nowMs,
     latencyMs: 0,
     gaps: [...record.gaps],
     record,
   };
+  // A record with a data lane (a Monte Carlo or Bigeye trigger) is the Data Incident Brief; every other
+  // record is the general incident brief. Both are deterministic renders of the same stored record.
+  const brief: IncidentBrief | IncidentDataBrief =
+    record.data === null ? { kind: "incident", ...common } : { kind: "incident_data", ...common };
   // ONE argument, always: no runner, so the render is deterministic and no model is reachable from here.
   const rendered = await synthesize(brief);
   // From here to the write there is no await: nothing can erase between this check and the insert.

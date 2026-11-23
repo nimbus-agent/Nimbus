@@ -1324,6 +1324,7 @@ nimbus incident list --source jira --json
 nimbus incident show inc_0123456789abcdef # a record id
 nimbus incident show pagerduty:PXXXXX     # a trigger item id
 nimbus incident show PXXXXX --json        # the provider's own id
+nimbus incident show montecarlo:MXXXXX    # a data trigger reads as the Data Incident Brief (monitored models first)
 nimbus incident timeline inc_0123456789abcdef            # what happened, in order
 nimbus incident timeline inc_0123456789abcdef --version 1 # what was known at version 1
 nimbus incident list --open --cascade     # the open records ranked into cascades
