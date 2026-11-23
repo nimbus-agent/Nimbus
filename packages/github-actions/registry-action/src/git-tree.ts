@@ -14,6 +14,7 @@
  * Runs on node24 inside the action bundle: `node:child_process` only, argv arrays, `windowsHide`.
  */
 import { execFileSync } from "node:child_process";
+import { gitExecutable } from "./git-path.ts";
 
 /** Where the git commands run (the registry repository's checkout). */
 export interface GitOptions {
@@ -51,7 +52,7 @@ export const REGISTRY_NOT_INITIALISED =
   "registry not initialised: push the init --github site to gh-pages first";
 
 function git(args: readonly string[], opts: GitOptions): Buffer {
-  return execFileSync("git", [...args], {
+  return execFileSync(gitExecutable(), [...args], {
     cwd: opts.cwd,
     windowsHide: true,
     maxBuffer: MAX_GIT_OUTPUT_BYTES,

@@ -13,6 +13,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { gitExecutable } from "./git-path.ts";
 import { assertSafeTreePath } from "./git-tree.ts";
 
 const BOT_NAME = "github-actions[bot]";
@@ -42,7 +43,7 @@ interface RunOptions {
 }
 
 function run(args: readonly string[], opts: RunOptions): string {
-  return execFileSync("git", [...args], {
+  return execFileSync(gitExecutable(), [...args], {
     cwd: opts.cwd,
     env: opts.env ?? process.env,
     input: opts.input,

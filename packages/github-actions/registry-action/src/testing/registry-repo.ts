@@ -26,6 +26,7 @@ import {
   type TrustStatement,
   trustStatementId,
 } from "../../../../registry-format/src/index.ts";
+import { gitExecutable } from "../git-path.ts";
 
 export const ROOT_SEED = new Uint8Array(32).fill(3);
 export const PUBLISHER_SEED = new Uint8Array(32).fill(7);
@@ -71,7 +72,7 @@ export function gitIsolatedEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.Pr
 }
 
 export function git(cwd: string, ...args: string[]): string {
-  return execFileSync("git", [...IDENTITY, ...args], {
+  return execFileSync(gitExecutable(), [...IDENTITY, ...args], {
     cwd,
     env: gitIsolatedEnv(),
     windowsHide: true,
@@ -304,7 +305,7 @@ export function syncMaintainer(repo: RegistryRepo, branch: string): void {
 
 /** `origin`'s copy of `path` on `branch`. */
 export function originFile(repo: RegistryRepo, branch: string, path: string): Buffer {
-  return execFileSync("git", ["cat-file", "blob", `${branch}:${path}`], {
+  return execFileSync(gitExecutable(), ["cat-file", "blob", `${branch}:${path}`], {
     cwd: repo.origin,
     env: gitIsolatedEnv(),
     windowsHide: true,
