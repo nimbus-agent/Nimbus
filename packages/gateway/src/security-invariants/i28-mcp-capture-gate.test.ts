@@ -383,7 +383,7 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
     expect(users.sort()).toEqual([
       "packages/gateway/src/gateway-main.ts",
       "packages/gateway/src/ipc/capture-rpc.ts",
-      "packages/gateway/src/ipc/server/dispatchers.ts",
+      "packages/gateway/src/ipc/server/dispatchers/platform-rpcs.ts",
     ]);
     const rpc = stripComments(await read("packages/gateway/src/ipc/capture-rpc.ts"));
     expect(rpc).not.toContain("delegation");

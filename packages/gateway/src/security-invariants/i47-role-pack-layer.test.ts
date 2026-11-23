@@ -221,7 +221,9 @@ describe("I47 — a role-pack layer is written only after the owner approved pac
     ).rejects.toThrow(/^ERR_PACK_RENDERER_FILE:/);
     expect(prompts).toBe(0);
     // The kind is the connection's declared one, filled by the dispatcher — never a request field.
-    const src = stripComments(await read("packages/gateway/src/ipc/server/dispatchers.ts"));
+    const src = stripComments(
+      await read("packages/gateway/src/ipc/server/dispatchers/platform-rpcs.ts"),
+    );
     const fnAt = src.indexOf("export async function tryDispatchPackRpc(");
     const body = src.slice(fnAt, src.indexOf("\n}\n", fnAt));
     expect(body).toContain('ctx.getClientKind(clientId) === "ui"');
@@ -245,15 +247,20 @@ describe("I47 — a role-pack layer is written only after the owner approved pac
   });
 
   test("the RPC raises pack.install through the gate-only executor, which carries NULL_EGRESS_SINK", async () => {
-    const src = stripComments(await read("packages/gateway/src/ipc/server/dispatchers.ts"));
+    const src = stripComments(
+      await read("packages/gateway/src/ipc/server/dispatchers/platform-rpcs.ts"),
+    );
     const fnAt = src.indexOf("export async function tryDispatchPackRpc(");
     expect(fnAt).toBeGreaterThan(-1);
     const body = src.slice(fnAt, src.indexOf("\n}\n", fnAt));
     expect(body).toContain("buildExtensionGateExecutor(ctx, localIndex, clientId)");
     expect(body).toContain('(await toolExecutor.gate(action)) === "proceed"');
-    const builderAt = src.indexOf("function buildExtensionGateExecutor(");
+    const builderSrc = stripComments(
+      await read("packages/gateway/src/ipc/server/dispatchers/automation-rpcs.ts"),
+    );
+    const builderAt = builderSrc.indexOf("function buildExtensionGateExecutor(");
     expect(builderAt).toBeGreaterThan(-1);
-    const builder = src.slice(builderAt, src.indexOf("\n}\n", builderAt));
+    const builder = builderSrc.slice(builderAt, builderSrc.indexOf("\n}\n", builderAt));
     expect(builder).toContain("NULL_EGRESS_SINK");
     expect(builder).toContain('reject(new Error("extension gate does not dispatch to MCP"))');
   });

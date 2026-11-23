@@ -15,7 +15,7 @@ import { MULTIMODAL_CAPABILITY } from "./media-types.ts";
  * `llm/local-definition.test.ts`, where this exact bug shipped once already.
  */
 const HERE = import.meta.dir;
-const DISPATCHERS = join(HERE, "..", "ipc", "server", "dispatchers.ts");
+const DISPATCHERS = join(HERE, "..", "ipc", "server", "dispatchers", "media-rpcs.ts");
 const ASSEMBLE = join(HERE, "..", "platform", "assemble.ts");
 
 describe("multimodal org-policy lockoff", () => {

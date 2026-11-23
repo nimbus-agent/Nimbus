@@ -653,7 +653,7 @@ implement one, delete its "reserved" mention here in the same commit.
 4. **Streaming?** — return `{ streamId }` immediately; emit `namespace.eventName { streamId, ... }` notifications
 5. **Write the handler** — `packages/gateway/src/ipc/handlers/<namespace>.ts`
 6. **Register it** — in the IPC server (handler map)
-6b. **Route it** — `ipc/server/dispatchers.ts` decides which methods reach each sub-dispatcher, and
+6b. **Route it** — `ipc/server/dispatchers/*.ts` (`dispatchers.ts` is the facade; the order is in `phase4-router.ts`) decides which methods reach each sub-dispatcher, and
    some of those predicates are **explicit per-method allow-lists**, not prefix matches.
    `tryDispatchDiagnosticsRpc` is the one that bites: `db.*` and `diag.*` match by prefix, but
    `index.*` is enumerated one method at a time (deliberately minimum-necessary). **Adding a `case`

@@ -725,10 +725,12 @@ describe("I43 — an installed extension's code runs only through the verified s
   });
 
   test("D34 bound: inside dispatchers.ts only tryDispatchMigrationRpc reads the engine, and only migration-rpc.ts calls accept", async () => {
-    // D34(c) exempts `dispatchers.ts` whole-file, and every dispatcher there receives the ServerCtx
+    // (Title kept for a stable test id; the code now lives in dispatchers/migration-rpcs.ts.) D34(c) exempts `dispatchers/migration-rpcs.ts` whole-file, and every dispatcher there receives the ServerCtx
     // that carries the engine. A holder could call `accept` with a consent callback of its own, so
     // this pins WHERE in that file the option is read, and who calls `accept` at all.
-    const src = stripComments(await read("packages/gateway/src/ipc/server/dispatchers.ts"));
+    const src = stripComments(
+      await read("packages/gateway/src/ipc/server/dispatchers/migration-rpcs.ts"),
+    );
     const reads = [...src.matchAll(/\bmigrationEngine\b/g)].map((m) => m.index ?? -1);
     expect(reads).toHaveLength(1);
     const fnAt = src.indexOf("export async function tryDispatchMigrationRpc(");

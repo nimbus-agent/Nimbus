@@ -6,9 +6,11 @@ import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
 describe("Phase 28 AD3a-1 - the agent door's approval list (the owner's enable, status and store)", () => {
   test("AD3a-1: the dispatcher wraps the consent in humanOnlyConsent for the agent enable alone, before the executor is built", async () => {
     const src = stripStringLiterals(
-      stripComments(await read("packages/gateway/src/ipc/server/dispatchers.ts")),
+      stripComments(await read("packages/gateway/src/ipc/server/dispatchers/platform-rpcs.ts")),
     );
-    const rawSrc = stripComments(await read("packages/gateway/src/ipc/server/dispatchers.ts"));
+    const rawSrc = stripComments(
+      await read("packages/gateway/src/ipc/server/dispatchers/platform-rpcs.ts"),
+    );
     const fn = rawSrc.slice(rawSrc.indexOf("export async function tryDispatchConnectorRpc("));
     const body = fn.slice(0, fn.indexOf("\nexport "));
     const iCond = body.indexOf('method === "connector.writesEnable"');

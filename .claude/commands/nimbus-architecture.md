@@ -116,7 +116,7 @@ nimbus/
 
 **Adding a new IPC method:**
 1. Add handler in `packages/gateway/src/ipc/<namespace>-rpc.ts` (create the file if it doesn't exist), exporting a `dispatch<Namespace>Rpc` function (built via the `dispatchByMethod` helper) that returns an `RpcMissOrHit` discriminated union — `{ kind: "hit", value }` on a match, `{ kind: "miss" }` otherwise
-2. Wire it into the dispatcher chain in `packages/gateway/src/ipc/server/dispatchers.ts`
+2. Wire it into the dispatcher chain in `packages/gateway/src/ipc/server/dispatchers/<group>-rpcs.ts` (`dispatchers.ts` is a re-exporting facade; the chain order is in `dispatchers/phase4-router.ts`)
 3. If it should be callable from the Tauri UI, add it to `ALLOWED_METHODS` in `gateway_bridge.rs`
 4. Write a unit test in `packages/gateway/test/unit/ipc/`
 

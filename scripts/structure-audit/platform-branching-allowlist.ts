@@ -218,7 +218,12 @@ export const PLATFORM_BRANCHING_ALLOWLIST: readonly PlatformFileEntry[] = [
     why: "per-OS path normalisation",
   },
   {
-    file: "packages/gateway/src/ipc/server/dispatchers.ts",
+    file: "packages/gateway/src/ipc/server/dispatchers/local-surface-rpcs.ts",
+    gate: "none",
+    why: "named pipe vs unix socket",
+  },
+  {
+    file: "packages/gateway/src/ipc/server/dispatchers/platform-rpcs.ts",
     gate: "none",
     why: "named pipe vs unix socket",
   },

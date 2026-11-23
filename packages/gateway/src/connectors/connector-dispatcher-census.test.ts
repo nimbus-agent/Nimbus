@@ -13,7 +13,17 @@ const SRC = join(import.meta.dir, "..");
 const NOT_ON_AN_IAC_PATH: Readonly<Record<string, string>> = {
   "chatops/chatops-tool-runner-e2e-sink.ts":
     "the e2e sink dispatcher writes a file for the ChatOps e2e tests; no connector, no iac",
-  "ipc/server/dispatchers.ts":
+  "ipc/server/dispatchers/automation-rpcs.ts":
+    "inline stub dispatchers whose dispatch() refuses or throws; they never reach a connector",
+  "ipc/server/dispatchers/core-rpcs.ts":
+    "inline stub dispatchers whose dispatch() refuses or throws; they never reach a connector",
+  "ipc/server/dispatchers/index-rpcs.ts":
+    "inline stub dispatchers whose dispatch() refuses or throws; they never reach a connector",
+  "ipc/server/dispatchers/local-surface-rpcs.ts":
+    "inline stub dispatchers whose dispatch() refuses or throws; they never reach a connector",
+  "ipc/server/dispatchers/platform-rpcs.ts":
+    "inline stub dispatchers whose dispatch() refuses or throws; they never reach a connector",
+  "ipc/server/dispatchers/share-rpcs.ts":
     "inline stub dispatchers whose dispatch() refuses or throws; they never reach a connector",
   "ipc/server/vault-dispatch.ts": "a stub whose dispatch() throws; it never reaches a connector",
   "engine/owner-only-approval.ts":

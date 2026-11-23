@@ -477,7 +477,9 @@ describe("I35 — computer-use actuation only inside an approved envelope", () =
       "const from = { clientId: ctx.clientId, answerSource: answerSourceOf(params) }",
     );
     expect(rpc).not.toMatch(/\.respond\(/);
-    const dispatchers = stripComments(await read("packages/gateway/src/ipc/server/dispatchers.ts"));
+    const dispatchers = stripComments(
+      await read("packages/gateway/src/ipc/server/dispatchers/tribal-compute-rpcs.ts"),
+    );
     expect(dispatchers).toContain("dispatchComputerRpc(method, params, rpc, clientId)");
 
     const assemble = stripComments(await read("packages/gateway/src/platform/assemble.ts"));
