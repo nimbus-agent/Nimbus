@@ -17,6 +17,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { readHttpServerCode } from "../../test/helpers/http-server-sources.ts";
 import { AgentRunController } from "../agent-runs/agent-run-store.ts";
 import { BriefRunController } from "../briefs/brief-run-store.ts";
 import type { ApiScope } from "../clips/api-scopes.ts";
@@ -400,8 +401,7 @@ describe("the SCOPED_ROUTES table itself", () => {
     // Scanned as Bun transpiles it, so comments are gone (a `see requireScopedSurface()` note is
     // not a call) and every call keeps one printed shape whatever the formatter did. A definition
     // still reads `function name(`, which the lookbehinds below exclude.
-    const source = await Bun.file(join(import.meta.dir, "http-server.ts")).text();
-    const code = new Bun.Transpiler({ loader: "ts" }).transformSync(source);
+    const code = await readHttpServerCode();
     const callsOf = (names: string): string[] =>
       code.match(new RegExp(String.raw`(?<!function )\b(?:${names})\(`, "g")) ?? [];
 
