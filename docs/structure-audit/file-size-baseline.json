@@ -112,7 +112,7 @@
     "packages/gateway/src/chatops/chatops-flow.integration.test.ts": 536,
     "packages/gateway/src/computer-use/cu-gate.coverage.test.ts": 711,
     "packages/gateway/src/computer-use/cu-gate.test.ts": 1660,
-    "packages/gateway/src/computer-use/cu-gate.ts": 1857,
+    "packages/gateway/src/computer-use/cu-gate.ts": 939,
     "packages/gateway/src/computer-use/cu-lanes/browser.test.ts": 1139,
     "packages/gateway/src/computer-use/cu-lanes/browser.ts": 582,
     "packages/gateway/src/config/config-explain.ts": 573,
