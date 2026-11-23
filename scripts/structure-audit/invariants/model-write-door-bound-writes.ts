@@ -354,17 +354,24 @@ const D42_MUTATOR_RE = /\bPREPARE_TOOL_IDS\s*\.\s*(?:add|delete|clear)\s*\(/g;
 /**
  * The index of the `>` that closes the type-argument list opened at `open` (a `<`), or -1 when the
  * text is not one: only identifiers, dots, commas, spaces, `[]`, `|`, `&`, string-literal types and nested `<>`
- * may appear (no `?`, `:`, `(` or operator: that is a comparison or a ternary).
+ * may appear, plus a function type `(x?: A) => B`: `(`, `)` and `=>` anywhere, `:` and `?:` only
+ * inside its parentheses. A bare `?` or `:` (a ternary) or any other operator means a comparison.
  */
 function d42TypeArgsEnd(code: string, open: number): number {
   let depth = 0;
+  let parens = 0;
   for (let i = open; i < code.length; i++) {
     const ch = code.charAt(i);
     if (ch === "<") depth++;
     else if (ch === ">" && code.charAt(i - 1) !== "=") {
       depth--;
       if (depth === 0) return i;
-    } else if (!/[\w$.,\s[\]|&'"`]/.test(ch)) return -1;
+    } else if (ch === "(") parens++;
+    else if (ch === ")") {
+      if (--parens < 0) return -1;
+    } else if (ch === "=" && code.charAt(i + 1) === ">") i++;
+    else if (parens > 0 && (ch === ":" || (ch === "?" && code.charAt(i + 1) === ":"))) continue;
+    else if (!/[\w$.,\s[\]|&'"`]/.test(ch)) return -1;
   }
   return -1;
 }

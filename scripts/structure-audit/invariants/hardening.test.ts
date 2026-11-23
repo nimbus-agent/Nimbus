@@ -39,6 +39,10 @@ ${extra}      const executor = buildAgentWriteExecutor({ clientId, consentCoordi
       .map((v) => v.snippet);
 
   test("const passes", () => expect(site(rpc("const"))).toEqual([]));
+  test("a name ending in $ is matched whole", () => {
+    const f = rpc("const");
+    expect(site({ ...f, contents: f.contents.replaceAll("channel", "channel$") })).toEqual([]);
+  });
   test("let (reassignable before the executor reads it) is refused", () => {
     expect(site(rpc("let", "      channel = coordinator;\n"))).toHaveLength(1);
   });
@@ -108,6 +112,10 @@ describe("5. D45 ignores an import example that is only text in a string", () =>
     expect(scan(`const h = await import("node:http");`)).toBeGreaterThan(0);
     expect(scan(`import http from "node:http";`)).toBeGreaterThan(0);
     expect(scan(`import "node:net";`)).toBeGreaterThan(0);
+  });
+  test("a require after a spread is an import; a member called require is not", () => {
+    expect(scan(`const h = { ...require("node:http") };`)).toBeGreaterThan(0);
+    expect(scan(`const h = loader.require("node:http");`)).toBe(0);
   });
   test("an import example in a template does not swallow a real import after it", () => {
     const v = checkBriefingConfinement([
@@ -196,5 +204,7 @@ describe("9. D42 counts call arguments past a generic's commas", () => {
     expect(withBound("a<b ? x:y, c>d, seam")).toHaveLength(1);
     expect(withBound("make<A, B>(), handler")).toEqual([]);
     expect(withBound("make(), handler")).toEqual([]);
+    expect(withBound("make<() => A, B>(), handler")).toEqual([]);
+    expect(withBound("make<(x?: A, y: B) => C, D>(), handler")).toEqual([]);
   });
 });

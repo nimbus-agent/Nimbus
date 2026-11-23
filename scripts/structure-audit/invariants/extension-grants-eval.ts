@@ -408,7 +408,8 @@ const D45_FETCH_REF_RE = /(?<![.\w$])fetch(?![\w$])/g;
 // in a string, which is blanked): the briefing needs none of them.
 const D45_GLOBAL_OBJECT_RE = /(?<![.\w$])(?:globalThis|window|self)(?![\w$])/g;
 
-const IMPORT_KEYWORD_RE = /(?<![.\w$])(?:import|export|require)\b/g;
+// Not after a member dot (`obj.require`), but after a spread (`...require("node:http")`).
+const IMPORT_KEYWORD_RE = /(?<![\w$])(?<!(?<!\.\.)\.)(?:import|export|require)\b/g;
 const IMPORT_FORMS: ReadonlyArray<readonly [RegExp, "static" | "specifier"]> = [
   [/(?:import|export)\s+(type\s+)?([^;"']*?)\s*from\s*["']([^"']+)["']/y, "static"],
   [/import\s*\(\s*["']([^"']+)["']\s*\)/y, "specifier"],
