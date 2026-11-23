@@ -14,6 +14,7 @@ import {
   readV2Reply,
   sendV2Request,
 } from "./testing/lan-v2.test-helpers.ts";
+import { fakePairing } from "./testing/pairing-fakes.ts";
 
 interface Harness {
   server: LanServer;
@@ -81,14 +82,12 @@ async function start(
       recordSuccess: () => {},
     },
     pairing: {
+      ...fakePairing(),
       isOpen: () => pairingOpen === true,
       consume: (code) => {
         consumed.push(code);
         return true;
       },
-      open: () => {},
-      close: () => {},
-      getExpiresAt: () => undefined,
     },
     ...opts,
   });

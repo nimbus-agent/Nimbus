@@ -1,0 +1,211 @@
+{
+  "_source": "Noise test vectors, Noise wiki format: centromere/cacophony vectors/cacophony.txt (master) and mcginty/snow tests/vectors/snow.txt (main), fetched from raw.githubusercontent.com. Two independent implementations entries.",
+  "_licence": "cacophony: The Unlicense; snow: Apache-2.0 OR MIT",
+  "_retrieved": "2026-11-23",
+  "_filter": "protocol_name is one of Noise_XXpsk3, Noise_XXpsk0+psk1, Noise_XXpsk0+psk2, Noise_XXpsk0+psk3, Noise_XXpsk0+psk1+psk2+psk3, each _25519_AESGCM_SHA256 (neither file holds a plain Noise_XXpsk0 entry)",
+  "vectors": [
+    {
+      "_origin": "centromere/cacophony vectors/cacophony.txt",
+      "protocol_name": "Noise_XXpsk3_25519_AESGCM_SHA256",
+      "init_prologue": "4a6f686e2047616c74",
+      "init_psks": ["54686973206973206d7920417573747269616e20706572737065637469766521"],
+      "init_static": "e61ef9919cde45dd5f82166404bd08e38bceb5dfdfded0a34c8df7ed542214d1",
+      "init_ephemeral": "893e28b9dc6ca8d611ab664754b8ceb7bac5117349a4439a6b0569da977c464a",
+      "resp_prologue": "4a6f686e2047616c74",
+      "resp_psks": ["54686973206973206d7920417573747269616e20706572737065637469766521"],
+      "resp_static": "4a3acbfdb163dec651dfa3194dece676d437029c62a408b4c5ea9114246e4893",
+      "resp_ephemeral": "bbdb4cdbd309f1a1f2e1456967fe288cadd6f712d65dc7b7793d5e63da6b375b",
+      "handshake_hash": "033c8317037cb66a83308d5ae57ebbbea254e7ef2267f296c40baa4beaae4fcc",
+      "messages": [
+        {
+          "payload": "4c756477696720766f6e204d69736573",
+          "ciphertext": "ca35def5ae56cec33dc2036731ab14896bc4c75dbb07a61f879f8e3afa4c7944ad6766e442bec99c94ff573cd5316da008cbcc1ebcf47fbe43991ed633bcbb75"
+        },
+        {
+          "payload": "4d757272617920526f746862617264",
+          "ciphertext": "95ebc60d2b1fa672c1f46a8aa265ef51bfe38e7ccb39ec5be34069f14480884336a2439b0bafb5e97fee2c19b6f9f741125f810ad98e7e9659c48ca3e19652d316d1121073a281e0402b7bc1acb476caa1e7308faad7f75337b30f12435c98303cac63cac1d69ac11f2e1971e138ac"
+        },
+        {
+          "payload": "462e20412e20486179656b",
+          "ciphertext": "2504a7905dbd6a56820581eb314085df196fda55aa5e77745d61c0b526355733d5ee67b9a4f345be7dc7c6583d3807626eb0f42c69388955ff0c9f35b03951129db18848a76f6a4d270022"
+        },
+        {
+          "payload": "4361726c204d656e676572",
+          "ciphertext": "b20ca762013411bc55d65fc7137a2e719d432cd549cb037f5e9c84"
+        },
+        {
+          "payload": "4a65616e2d426170746973746520536179",
+          "ciphertext": "6b10e774950e93bc7cc50f225a105e656eb418310c00c374a81c1452b48cb12000"
+        },
+        {
+          "payload": "457567656e2042f6686d20766f6e2042617765726b",
+          "ciphertext": "6d617e8fd817a630755b8dffdee52ad3c39964bdca895a56847fd5f1edb49d14f555cc314b"
+        }
+      ]
+    },
+    {
+      "_origin": "mcginty/snow tests/vectors/snow.txt",
+      "protocol_name": "Noise_XXpsk0+psk1_25519_AESGCM_SHA256",
+      "init_prologue": "5468657265206973206e6f20726967687420616e642077726f6e672e2054686572652773206f6e6c792066756e20616e6420626f72696e672e",
+      "init_psks": [
+        "3663f2da19b7cfcd6037a9473d9db64dcdb64c77992a2e67387d4a8932d39a95",
+        "6260d7f2dab84397ac2b610c285f63012d5a9edc06a0e4e37efa60622c3e0a8d"
+      ],
+      "init_static": "83396a045485dbc8870eb9b25957e045a1958520c6add8c8e5891786bc40a892",
+      "init_ephemeral": "d83c2f5c6da12fcdb7ce1cb4cc4d7a133513b4c6fe0acb564b6859120753c90b",
+      "resp_prologue": "5468657265206973206e6f20726967687420616e642077726f6e672e2054686572652773206f6e6c792066756e20616e6420626f72696e672e",
+      "resp_psks": [
+        "3663f2da19b7cfcd6037a9473d9db64dcdb64c77992a2e67387d4a8932d39a95",
+        "6260d7f2dab84397ac2b610c285f63012d5a9edc06a0e4e37efa60622c3e0a8d"
+      ],
+      "resp_static": "cf86f6be25bba095d0db8e32da680625e4d4630bf1e82fd2f13d82846fd8171f",
+      "resp_ephemeral": "db992247d87dee997314886b97954a0a2566ef01c5e16d6f29e8e9f2ec050b74",
+      "messages": [
+        {
+          "payload": "c7e7df89fc25464e91005322b8cae9aa481c3d17afc36d537a5947a0e7ca1020",
+          "ciphertext": "d5d29982bc087ad2891a1bb2b6cb941221b6744c26df7a2ba6c7eb3dbc8c790b1daa4805bab2b913445cdae47ddf7f15d665daab29a718169eadf92afccdfaa1e8fd3c553083410c6b577cb6ef11a26f"
+        },
+        {
+          "payload": "224c62640bc1f9d5a5b404b1c68bb351ffa4fd45f9bf5c8a1855dae7f9ba8b84",
+          "ciphertext": "a4d765fcf360912cc283ce7eb84affe3a6085b6d9f611261d0b2bfcc9d24b93ab630d1c10afccf263414a3c92ff3a9d63cc1d294c593b804c619cd5a1fb152094158357b4250bd9329b433ca9486608278956a6c52def88677df3eeae0a880d693f5bd1a32a11af61e7f780c46c2cd4e836cfd43c9976caae60c50f95ce43044"
+        },
+        {
+          "payload": "89e6e568b1a0ebac382ba562db0c9f2114bdc3d931072abb5d74f43ea26979a7",
+          "ciphertext": "4961880091a7dcdf792657a232f13d27ef8c01880faa105c945b8ce8ef5e22c08dbf159773b5581ca707319c9a41bb38814ff0b6273fccd983236227ba5c03655151dff95696a3a9bdb5520ba72c79dd9b60111d95b98d8d097ddb5e7d64ac81"
+        },
+        {
+          "payload": "d7e8fef4aa6b2d0377c89dd2c85cc33c818bd6617f7abbf64f0a5588cdfb1cf9",
+          "ciphertext": "98d8ec677d0081da36aa4502a8835cc441a684e97aad0773d08032ff70b9b16d86227cf6346bf2e67e035581af0185d5"
+        },
+        {
+          "payload": "b50f8900ba2fe6b1bc3d98746e9b3419b1d3921eda92b01001e29ac1e20dd986",
+          "ciphertext": "d6e2caca91796d43cc29f9596b1ab2edd331c7cfc4919c5a8b23fd2a9ed6a2246aa3d1a54cfbbceab56b2164c86d760d"
+        }
+      ]
+    },
+    {
+      "_origin": "mcginty/snow tests/vectors/snow.txt",
+      "protocol_name": "Noise_XXpsk0+psk2_25519_AESGCM_SHA256",
+      "init_prologue": "5468657265206973206e6f20726967687420616e642077726f6e672e2054686572652773206f6e6c792066756e20616e6420626f72696e672e",
+      "init_psks": [
+        "c7b7c34d14dfb886700aaa51186cbfeed0d347fbb67601e32e075e29ca5921c0",
+        "c9310d0e96825651d9ead542e4bde7ba73e26fc5d8c396e6be0a9c137c462225"
+      ],
+      "init_static": "41d2bbe1c5cd767ec0afac92152709d6ffc926bb5ce7cc2637b7e01b4541491f",
+      "init_ephemeral": "ca6713b799b6943f814d467faf752f3af3ad5d3f7a52be73a90fcd064b2acd54",
+      "resp_prologue": "5468657265206973206e6f20726967687420616e642077726f6e672e2054686572652773206f6e6c792066756e20616e6420626f72696e672e",
+      "resp_psks": [
+        "c7b7c34d14dfb886700aaa51186cbfeed0d347fbb67601e32e075e29ca5921c0",
+        "c9310d0e96825651d9ead542e4bde7ba73e26fc5d8c396e6be0a9c137c462225"
+      ],
+      "resp_static": "5ac94f4689b3f4728ad049435764fd71e578e5a553c8ad040fbdb153543dd6fd",
+      "resp_ephemeral": "b9baf0d618e7e32b0bd5a0ffd33e8ce57cd3e72138a284ff204bb7453c90b1ba",
+      "messages": [
+        {
+          "payload": "141d45c3a291016451bf11015a6dd61ae06f068900da55ffd79348634a6e57e1",
+          "ciphertext": "398a4cb3e1665b493908df55287d3f5e8069a079451e52e6d70004e2f3c3144be1e051e794fa66657c4455fd983d259b4d73369b3baca101fe0bf380fdb53dad64c693b6f7556916e64207f2a68f99f5"
+        },
+        {
+          "payload": "2f2f7bba9115ed77e215f241c2873b02a037324814ca5d59c6e8af5765299a0a",
+          "ciphertext": "dddcb46fee1738d315596417c45ac4fc07d7796a3c06eae9718678b40b97431c2d2d16321f67c2c72decdbe7841d51280fa1499ff2db5b7b50a14dc677a7d6c8dc5d4e35fc885ee35d2915c0b185a419d63608b2a609914094a81d57dc610aff1c7c335a4415fbb26ac37293219a3f23a1e8ce74c3628017da1e59e7e71215c7"
+        },
+        {
+          "payload": "a2980ddaff59a8b2f40fdda7f0965b46f61e99f3b558ba4b2babde5d29195a29",
+          "ciphertext": "726ab4cb6268ec870cdd978567d8a04c93fc48a006574601103107019776dd5247d013c18dfa270ee487a4fef214fb581ce6bdf4810b9ef48272052ca4d1a793688c3cc4aadd03811d351911f96ae8c71d1311b7ee5e0e6afad3e83cd95ab7c2"
+        },
+        {
+          "payload": "140ff1e7986bd11cfcfc7a3cd712f5e565bc4d12f7ff61518850b6f98c211d88",
+          "ciphertext": "accba5f5467ee6e97ca50df06bd599430d1730dc000de5d8cacf2bf596031565e9f2ac1d377dd4816176da35f311d6e7"
+        },
+        {
+          "payload": "7f6f1ecbb64985bf184131f24771fb951d39ced92d8297158f5055e5180003dd",
+          "ciphertext": "62652bfd2f2756b20ba99c7fe9a4be6ce952dde75e1577b7b005560d60a0b0fe776b6e94fd8545ae8cf3775e0a63ce88"
+        }
+      ]
+    },
+    {
+      "_origin": "mcginty/snow tests/vectors/snow.txt",
+      "protocol_name": "Noise_XXpsk0+psk3_25519_AESGCM_SHA256",
+      "init_prologue": "5468657265206973206e6f20726967687420616e642077726f6e672e2054686572652773206f6e6c792066756e20616e6420626f72696e672e",
+      "init_psks": [
+        "7b066eaf83ee72139438eae833a8a1c1da6be21fca430e699cfd058dfb949d1b",
+        "804d28a976d21baec035b3aa327d6bd1e574cc62e2999569659fb3a4ca448d77"
+      ],
+      "init_static": "653fda60c79fdc62cb762cc095b5ff3b15ddedce9910178801a5790ee679a3a1",
+      "init_ephemeral": "fe7ace7ddd4689645f2ff18a860ddf8f05a656eccb9c93a2ffa23c5e3017c3d3",
+      "resp_prologue": "5468657265206973206e6f20726967687420616e642077726f6e672e2054686572652773206f6e6c792066756e20616e6420626f72696e672e",
+      "resp_psks": [
+        "7b066eaf83ee72139438eae833a8a1c1da6be21fca430e699cfd058dfb949d1b",
+        "804d28a976d21baec035b3aa327d6bd1e574cc62e2999569659fb3a4ca448d77"
+      ],
+      "resp_static": "2e478d62fc001093fb3dbda98f9f6ee04e3b807c57ad237276cc0f6be61d3dce",
+      "resp_ephemeral": "50889db4992f57f2248197a79262274048bac43ff8e8de1f81a632cb5e897661",
+      "messages": [
+        {
+          "payload": "7d7a9181083cb2b8f54eb52c11c08ec89fec0645f5c780f60cddbe1a2cec56ba",
+          "ciphertext": "6897c095aff74dfe88c1f7110dfcb7d0bcb8c2527b433a8ca9f20c9b4e8df75c1d62fd182c62a70e0dfc0c4a8e7298869efab99e683aa466baa58090ac9a880211ce1b08b3b6ccf58536fcbc5a179783"
+        },
+        {
+          "payload": "39ea3c2a3639b7593ed944d42a39e4f8f8a973a1160b096c2abc7e0eac19a74b",
+          "ciphertext": "bf29f8ac801677a8d105befb78df9f30763c4a198ea39dde7823374bc8a9df5fb66890a953fdad3a565ba3f79b361394b3774baad03b280906d173348b91b185fed0ef9b6eee607c30dd7dbd29032fd11fa938884f9db58cfd9a35df87e0463e1e7b8ab8c650251a113cce7f973bbe7831f6212a2809dcee27aed0c983b21355"
+        },
+        {
+          "payload": "fb3c8abb26bcf832e7e931816ed32069971df91f06f3a987ea118f94a7261e6f",
+          "ciphertext": "9c458815d2593deff97b7cbc7c7904420344c2e435ac3a93cc781717b9e950cdde1947fa43f0bda112ec9b9b25a3cd3731a7af26cb6fa8ab3e03dab1d0600a091b964e8b9caf6dc8efe563e4f6aebb38770524095e6fa4d522c0cd06ab4a6c43"
+        },
+        {
+          "payload": "3f0a8a3fa2529d3acb1bdb8dd6aaae67ad2810345ccd5d36f503eacde94978e6",
+          "ciphertext": "233c6b91a668de5dcc1788fdde18ba3909d183223a9dea535eae55d591dadf8f65bfa4b5b81918e961affe89d8650b8f"
+        },
+        {
+          "payload": "aa472f13cab99e2f71dffb40187f52db04573ef222e148b28362dbf11fb2e840",
+          "ciphertext": "7ae4e6950d639b2dea8a0c7e1807a567bfeb50f3e05c336ad610d1e4b8c0562782a2918008cd7719888448d31c3ce425"
+        }
+      ]
+    },
+    {
+      "_origin": "mcginty/snow tests/vectors/snow.txt",
+      "protocol_name": "Noise_XXpsk0+psk1+psk2+psk3_25519_AESGCM_SHA256",
+      "init_prologue": "5468657265206973206e6f20726967687420616e642077726f6e672e2054686572652773206f6e6c792066756e20616e6420626f72696e672e",
+      "init_psks": [
+        "5c8f95485123c407a174657ac19fe80e536e7143c70250fa1ecf8f913e9b8395",
+        "87b0f86ba8ec92c2336df91d679f5ccc6f30b5c7761302659fc58dd2d97d447e",
+        "c03dcfa49512d83d25461db3bf6d01a0c9b1feb4fb3254863f463a13111c07e2",
+        "30955582165792e4f828182c5c0b0806ca5543cb62f37b6e96df33084030df37"
+      ],
+      "init_static": "998bf86e2eaf9005600342413021324cbcad97d86fabac7c9b8ecb4cee888f2a",
+      "init_ephemeral": "e27d3f0a7944c309e3b5e67ffd1c7b36ca9289b7f5dbd90d14f2dfb9ac60ef66",
+      "resp_prologue": "5468657265206973206e6f20726967687420616e642077726f6e672e2054686572652773206f6e6c792066756e20616e6420626f72696e672e",
+      "resp_psks": [
+        "5c8f95485123c407a174657ac19fe80e536e7143c70250fa1ecf8f913e9b8395",
+        "87b0f86ba8ec92c2336df91d679f5ccc6f30b5c7761302659fc58dd2d97d447e",
+        "c03dcfa49512d83d25461db3bf6d01a0c9b1feb4fb3254863f463a13111c07e2",
+        "30955582165792e4f828182c5c0b0806ca5543cb62f37b6e96df33084030df37"
+      ],
+      "resp_static": "a4ba801e0b5fdc6bc9fec07998fac49893f526dc4c55aec9d716f230baa0c356",
+      "resp_ephemeral": "87bc2eb568fc13d163670d1512825033453c21a53572c2553ccef2093044efa9",
+      "messages": [
+        {
+          "payload": "015633dda92c7f4766f184eba41b0d9b8019ffc996960cde21fa7ce3da4a984a",
+          "ciphertext": "569dc4d6d64bfcfa3d195bdfcb4af3304b51b9818c8392872030e1f3952c29039b0c1b101506ee03c5c43b555b192ab35adb11d1cfb19fc1573e725fa741ae27452d72fc354f74eb0183e8fe429a6546"
+        },
+        {
+          "payload": "b805102281c99030c98f468fb79484225eada59d543d0e02318638803ddc1c94",
+          "ciphertext": "0195aef2c402d0f2ad63eabc124227cc4cde8d632407b0b0615d448d8bb4c9056c16bcc3dc646e8b7a9efb015de19c1b53d93895207a46e5f1cec300898736a331c8f6e5b837d2dc59b6e6930e286b569771c36bf3bcc4a548de16ad3e5c3ae8fe88e52de3c18c4c5e4073876672b4f3f914fd40dcd39a77491986f5b4f17b1c"
+        },
+        {
+          "payload": "4d70ac3f24f6f27cf09254ff95b6d8f7ed6e1fa86aab291c56e56156abcd4a6b",
+          "ciphertext": "42a6dac134faae2883b3a541e828554ac8aeaa4a047e946ad94584cbd39ed990c8b5b30a3c44551bfabe79de87e5e53d17512899dc6a5ea1ca040e25d5b92962fa1a46e7cf78d49f64f6bab12addec9d763177d6df82bcaedffb7954dbde4441"
+        },
+        {
+          "payload": "b87aea76e1f6d725d2f50fc7d2ed4b0a3b5eb30c77ce813c84532bbffe5a18c8",
+          "ciphertext": "336664200b9a14ac95959f809918d85a1793b9117ef00f90bea761ae914aa681706d0fce4d8d5f94d33838ecd60488b6"
+        },
+        {
+          "payload": "1e8402714859b8a418e5c06a2168f33e580fd602368ef9b260fb6700b8442e25",
+          "ciphertext": "6eb00bcbeeccedfd55f9bcc780666bce16f829686153bb922916ac67f6cadc3a099780c91e13bdc0c65c23b103af2693"
+        }
+      ]
+    }
+  ]
+}

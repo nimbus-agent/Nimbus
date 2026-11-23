@@ -59,6 +59,8 @@ export class PeerPairing {
       direction: "outbound",
       hostIp: host,
       hostPort: port,
+      // D-FS-17: the only outbound handshake is XXpsk0, so the host is at protocol 2 from the start.
+      protoVersion: 2,
     });
     // Fire-and-forget the best-effort drain (same guard as approveInboundPair): the hook does
     // network delivery work, so AWAITING it would let a slow/hung drain stall successful pairing.

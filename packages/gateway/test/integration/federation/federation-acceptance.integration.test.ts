@@ -44,7 +44,7 @@ function ctx(): FederationRpcContext {
 
 beforeEach(() => {
   db = new Database(":memory:");
-  runIndexedSchemaMigrations(db, 33);
+  runIndexedSchemaMigrations(db, 95);
   index = new LocalIndex(db);
   notes = [];
   db.run(

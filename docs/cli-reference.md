@@ -4151,7 +4151,7 @@ nimbus profile delete personal --yes
 
 ## Team Federation
 
-Peer-to-peer federation between Nimbus Gateways over the encrypted LAN channel (Phase 6 Slice 1). Disabled by default; enable via the `[federation]` section in `nimbus.toml`. Every inbound query is answered only through the consent-scoped, leak-proof **query gate** (invariant `I17`): grant + role + consent + declared-namespace filter, returning rank/metadata-free results only. Pairing uses an out-of-band code (same trust model as `nimbus lan pair`).
+Peer-to-peer federation between Nimbus Gateways over the encrypted LAN channel (Phase 6 Slice 1). Disabled by default; enable via the `[federation]` section in `nimbus.toml`. Every inbound query is answered only through the consent-scoped, leak-proof **query gate** (invariant `I17`): grant + role + consent + declared-namespace filter, returning rank/metadata-free results only. Pairing uses an out-of-band code, which keys a Noise `XXpsk0` handshake and is never sent over the network (since Phase 10 FS2).
 
 ### `nimbus team discover`
 
@@ -4163,7 +4163,7 @@ nimbus team discover
 
 ### `nimbus team pair <host> <code>`
 
-Pair with a peer Gateway using a one-time, out-of-band pairing code. Transmit the code over a channel other than the one being paired (read it aloud, SMS, etc.) — a mid-pairing network attacker who sees the code can substitute their own key.
+Pair with a peer Gateway using a one-time, out-of-band pairing code: the 20-character code `nimbus lan open` printed on the host. The code keys the pairing handshake and is never sent, so a network observer or a man in the middle cannot read it or pair in your place; tell it to the other owner over a channel an attacker does not read (aloud, in person). Both gateways must be upgraded to this version: the client never falls back to the old plaintext pairing frame, so a host that stays silent (wrong or expired code, or an old version) gives `no reply`. A code that is not exactly 20 base58 characters is refused before any connection, and the paired peer starts on the v2 (forward-secret) wire.
 
 ```bash
 nimbus team pair gw.lan:7700 a1b2c3d4e5f6g7h8i9j0
@@ -6838,9 +6838,9 @@ Two further limits apply to replay, both reported rather than silent: only tools
 
 Encrypted, relay-free remote access between machines on the same network. Disabled by default (`[lan] enabled = false` in `nimbus.toml`). Enable via `nimbus config set lan.enabled true`.
 
-Traffic between two upgraded gateways is E2E encrypted in a Noise `IK` session (X25519, AES-256-GCM, SHA-256) with an ephemeral key from both sides, so a later theft of either pairing key does not open a recorded session and a recorded request cannot be replayed (invariant I56). With the default `min_protocol = 1`, those guarantees hold only for sessions that actually run the new handshake: an attacker who can interrupt the first new-style attempt between two peers that have not yet completed one can force that session onto the old wire, which has neither forward secrecy nor replay protection (`min_protocol = 2` refuses it; once a peer has completed one new-style session it can no longer be forced back). A peer that has not upgraded is still served over the old NaCl-box wire (X25519 DH + XSalsa20-Poly1305, no forward secrecy) while `[lan] min_protocol = 1`; pairing itself still uses the old frames until the next slice.
+Traffic between two upgraded gateways is E2E encrypted in a Noise `IK` session (X25519, AES-256-GCM, SHA-256) with an ephemeral key from both sides, so a later theft of either pairing key does not open a recorded session and a recorded request cannot be replayed (invariant I56). With the default `min_protocol = 1`, those guarantees hold only for sessions that actually run the new handshake: an attacker who can interrupt the first new-style attempt between two peers that have not yet completed one can force that session onto the old wire, which has neither forward secrecy nor replay protection (`min_protocol = 2` refuses it; once a peer has completed one new-style session it can no longer be forced back). A peer that has not upgraded is still served over the old NaCl-box wire (X25519 DH + XSalsa20-Poly1305, no forward secrecy) while `[lan] min_protocol = 1`.
 
-**`[lan] min_protocol`** (`1` or `2`, default `1`; any other value is ignored; no environment override). `2` refuses the old wire for EVERY peer: a legacy `hello` or `pair` is closed with no reply and counted as a failed attempt, and this gateway never falls back to the old wire when it calls a peer. Because pairing still uses the old frames, set `2` only after your peers are paired (the next slice moves pairing to the new exchange). Independently of this setting, a peer that has completed ONE new-style session with this gateway is recorded (`lan_peers.proto_version = 2`, visible in `lan.listPeers`; the human-facing line comes with the next slice) and is never again talked to or answered over the old wire; there is no way to lower it short of removing and re-pairing the peer. Rolling back to an older gateway after that makes the peer unreachable until it is re-paired.
+**`[lan] min_protocol`** (`1` or `2`, default `1`; any other value is ignored; no environment override). `2` refuses the old wire for EVERY peer: a legacy `hello` or `pair` is closed with no reply and counted as a failed attempt, and this gateway never falls back to the old wire when it calls a peer. Pairing works under `2` (the new pairing exchange does not use the old frames), but a legacy `pair` frame from an old initiator is refused. Independently of this setting, a peer that has completed ONE new-style session with this gateway, or that was paired with the new pairing, is recorded (`lan_peers.proto_version = 2`, shown by `nimbus lan status`) and is never again talked to or answered over the old wire; there is no way to lower it short of removing and re-pairing the peer. Rolling back to an older gateway after that makes the peer unreachable until it is re-paired.
 
 A gateway that cannot open a peer's first message, or does not know the sender, closes without a reply (no oracle); the caller then reports "no reply: the peer may have been re-paired or reset; run nimbus team pair again". A connection that does not finish its handshake within 10 seconds is closed.
 
@@ -6848,7 +6848,7 @@ Legacy note: the old wire is E2E encrypted with NaCl box (X25519 DH + XSalsa20-P
 
 ### `nimbus lan status`
 
-Show LAN server state: whether LAN is enabled, whether a pairing window is open, and the listen address. This is the default subcommand (`nimbus lan` with no argument runs `status`).
+Show LAN server state: whether LAN is enabled, whether a pairing window is open, the listen address, the `min_protocol` floor, and every peer with its recorded protocol (`v2` is the forward-secret wire, `v1` the old static-key wire), with a warning while any peer is on `v1`. A peer moves to `v2` after one session with an upgraded gateway or when you pair it again. This is the default subcommand (`nimbus lan` with no argument runs `status`).
 
 ```bash
 nimbus lan status

@@ -34,7 +34,7 @@ afterEach(() => {
 
 test("a single approval stays locked; two distinct approvals unlock the team tool", async () => {
   const bDb = new Database(":memory:");
-  runIndexedSchemaMigrations(bDb, 35);
+  runIndexedSchemaMigrations(bDb, 95);
   const bIndex = new LocalIndex(bDb);
   const bIdentity = generateBoxKeypair();
   const bStore = new TeamVaultStore(bDb);
@@ -71,7 +71,7 @@ test("a single approval stays locked; two distinct approvals unlock the team too
   const bPort = bBuilt.lanServer.listenAddr()?.port as number;
 
   const aDb = new Database(":memory:");
-  runIndexedSchemaMigrations(aDb, 35);
+  runIndexedSchemaMigrations(aDb, 95);
   const aIndex = new LocalIndex(aDb);
   const aRuntime = buildFederationRuntime(
     { enabled: true, consentTimeoutSeconds: 30, mdnsEnabled: false, mdnsBind: "127.0.0.1" },

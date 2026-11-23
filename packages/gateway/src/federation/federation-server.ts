@@ -69,6 +69,8 @@ export function pairingServiceFor(pairingWindow: PairingWindow): PairingService 
   return {
     isOpen: () => pairingWindow.isOpen(),
     consume: (code) => pairingWindow.consume(code),
+    currentPsk: () => pairingWindow.currentPsk(),
+    consumeOpen: () => pairingWindow.consumeOpen(),
     open: (code) => pairingWindow.open(code),
     close: () => pairingWindow.close(),
     // PairingWindow returns number|null; PairingService expects number|undefined
@@ -118,9 +120,15 @@ export function buildFederationLanServer(deps: BuildFederationLanServerDeps): Fe
     // The downgrade ratchet (I56), responder side: a peer that completed a v2 session is never
     // talked to over the old wire again.
     onPeerNegotiated: (pubkey) => deps.index.markLanPeerProto(pubkey, 2),
-    registerPeer: (pubkey, ip) => {
+    registerPeer: (pubkey, ip, protoVersion) => {
       const peerId = peerIdFor(pubkey);
-      deps.index.addLanPeer({ peerId, peerPubkey: pubkey, direction: "inbound", hostIp: ip });
+      deps.index.addLanPeer({
+        peerId,
+        peerPubkey: pubkey,
+        direction: "inbound",
+        hostIp: ip,
+        ...(protoVersion === undefined ? {} : { protoVersion }),
+      });
       return peerId;
     },
     onMessage: async (method, params, peer) => {

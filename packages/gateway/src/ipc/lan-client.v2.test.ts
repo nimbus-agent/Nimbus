@@ -10,6 +10,7 @@ import {
   startLegacyOnlyServer,
   startStub,
 } from "./testing/lan-v2.test-helpers.ts";
+import { fakePairing } from "./testing/pairing-fakes.ts";
 
 const cleanups: Array<() => void | Promise<void>> = [];
 afterEach(async () => {
@@ -23,13 +24,7 @@ interface Peer {
 }
 
 const noopRate = { checkAllowed: () => true, recordFailure: () => {}, recordSuccess: () => {} };
-const noopPairing = {
-  isOpen: () => false,
-  consume: () => false,
-  open: () => {},
-  close: () => {},
-  getExpiresAt: () => undefined,
-};
+const noopPairing = fakePairing();
 
 function peers(): Peer {
   return { host: generateBoxKeypair(), client: generateBoxKeypair(), calls: [] };

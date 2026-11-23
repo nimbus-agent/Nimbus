@@ -55,7 +55,7 @@ test("payoff: two gateways over a real NaCl-box socket — discover → pair →
   // SETUP — Answerer B (real LanServer on a loopback port) + Asker A (real runtime).
   // ---------------------------------------------------------------------------
   const bDb = new Database(":memory:");
-  runIndexedSchemaMigrations(bDb, 33);
+  runIndexedSchemaMigrations(bDb, 95);
   const bIndex = new LocalIndex(bDb);
   const bIdentity = generateBoxKeypair();
 
@@ -93,7 +93,7 @@ test("payoff: two gateways over a real NaCl-box socket — discover → pair →
 
   // Asker A: real runtime gives `pairing` with the production outbound handshake closed over A's id.
   const aDb = new Database(":memory:");
-  runIndexedSchemaMigrations(aDb, 33);
+  runIndexedSchemaMigrations(aDb, 95);
   const aIndex = new LocalIndex(aDb);
   const askerKp = generateBoxKeypair();
   const aRuntime = buildFederationRuntime(

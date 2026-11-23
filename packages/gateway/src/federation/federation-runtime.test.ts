@@ -46,7 +46,7 @@ test("buildFederationRuntime wires a real outbound handshake (initiatePair no lo
   // No responder running → connection error, NOT the "not wired" sentinel.
   let err: unknown;
   try {
-    await rt?.pairing.initiatePair("127.0.0.1", 1, "code");
+    await rt?.pairing.initiatePair("127.0.0.1", 1, "3J98t1WpEZ73CNmQviec");
   } catch (e) {
     err = e;
   }

@@ -17,6 +17,7 @@ import { LanServer } from "../lan-server.ts";
 import { createInitiatorHandshake } from "../lan-session.ts";
 import { makeFrameReader } from "../lan-wire.ts";
 import { connectRaw, readV2Reply, sendV2Request } from "./lan-v2.test-helpers.ts";
+import { fakePairing } from "./pairing-fakes.ts";
 
 export interface RecordedConnection {
   /** Whole frame bodies, client to server, in order. */
@@ -203,13 +204,7 @@ export const SECRET_REQUEST = "the-recorded-secret-request-body";
 export const SECRET_REPLY = "the-recorded-secret-reply-body";
 
 const noopRate = { checkAllowed: () => true, recordFailure: () => {}, recordSuccess: () => {} };
-const noopPairing = {
-  isOpen: () => false,
-  consume: () => false,
-  open: () => {},
-  close: () => {},
-  getExpiresAt: () => undefined,
-};
+const noopPairing = fakePairing();
 
 export interface RecordedSession {
   conn: RecordedConnection;

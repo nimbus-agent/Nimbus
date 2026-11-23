@@ -29,7 +29,7 @@ const noConnector = { dispatch: async () => ({}) };
 test("a delegated HITL approval is recorded in BOTH the owner's and the delegate's audit logs; offline falls back to the owner", async () => {
   // --- Delegate B: a real LanServer whose delegateApproval auto-approves and audits on B's db. ---
   const bDb = new Database(":memory:");
-  runIndexedSchemaMigrations(bDb, 35);
+  runIndexedSchemaMigrations(bDb, 95);
   const bIndex = new LocalIndex(bDb);
   const bIdentity = generateBoxKeypair();
   let bPrompted = 0;
@@ -56,7 +56,7 @@ test("a delegated HITL approval is recorded in BOTH the owner's and the delegate
 
   // --- Owner A: real runtime + a DelegationStore that routes email.send approvals to B. ---
   const aDb = new Database(":memory:");
-  runIndexedSchemaMigrations(aDb, 35);
+  runIndexedSchemaMigrations(aDb, 95);
   const aIndex = new LocalIndex(aDb);
   const askerKp = generateBoxKeypair();
   const aRuntime = buildFederationRuntime(

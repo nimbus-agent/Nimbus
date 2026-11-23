@@ -373,10 +373,23 @@ function handleLanLocalRpc(ctx: ServerCtx, method: string, params: unknown): unk
     }
     case "lan.getStatus": {
       const pw = ctx.options.lanPairingWindow;
+      // FS2: each peer's recorded protocol (`lan_peers.proto_version`), never its key. A peer still at
+      // 1 talks the old static-box wire until it completes one v2 session or is re-paired.
+      const peers = (ctx.options.localIndex?.listLanPeers() ?? []).map((row) => ({
+        peerId: row.peer_id,
+        direction: row.direction,
+        protoVersion: row.proto_version === 2 ? 2 : 1,
+      }));
       return {
         enabled: ctx.options.lanServer !== undefined,
         pairingOpen: pw?.isOpen() ?? false,
         listenAddr: ctx.options.lanServer?.listenAddr() ?? null,
+        minProtocol: ctx.options.localIndex?.lanMinProtocol() ?? 1,
+        peers,
+        peersByProtocol: {
+          v1: peers.filter((p) => p.protoVersion === 1).length,
+          v2: peers.filter((p) => p.protoVersion === 2).length,
+        },
       };
     }
     default:

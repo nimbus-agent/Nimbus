@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { processListeners } from "../locality/listener-registry.ts";
 import { generateBoxKeypair, openBoxFrame, sealBoxFrame } from "./lan-crypto.ts";
 import { LanServer } from "./lan-server.ts";
+import { fakePairing } from "./testing/pairing-fakes.ts";
 
 let server: LanServer | undefined;
 
@@ -13,13 +14,7 @@ function makeServer(): LanServer {
     onMessage: async () => ({}),
     isKnownPeer: () => null,
     rateLimit: { checkAllowed: () => true, recordFailure: () => {}, recordSuccess: () => {} },
-    pairing: {
-      isOpen: () => false,
-      consume: () => false,
-      open: () => {},
-      close: () => {},
-      getExpiresAt: () => undefined,
-    },
+    pairing: fakePairing(),
     registerPeer: () => "peer-id",
   });
 }
@@ -165,13 +160,7 @@ describe("LanServer gate (G4)", () => {
       },
       isKnownPeer: () => ({ peerId: "test-peer", writeAllowed: false, protoVersion: 1 }),
       rateLimit: { checkAllowed: () => true, recordFailure: () => {}, recordSuccess: () => {} },
-      pairing: {
-        isOpen: () => false,
-        consume: () => false,
-        open: () => {},
-        close: () => {},
-        getExpiresAt: () => undefined,
-      },
+      pairing: fakePairing(),
       registerPeer: () => "test-peer",
     });
     await server.start();
@@ -242,13 +231,7 @@ async function buildBareLanServer(
       recordFailure: rateLimit?.recordFailure ?? (() => {}),
       recordSuccess: () => {},
     },
-    pairing: {
-      isOpen: () => false,
-      consume: () => false,
-      open: () => {},
-      close: () => {},
-      getExpiresAt: () => undefined,
-    },
+    pairing: fakePairing(),
     registerPeer: () => "p",
   });
 }
@@ -344,13 +327,7 @@ describe("LanServer oversized frame post-handshake", () => {
         recordFailure: (ip) => recordedFailures.push(ip),
         recordSuccess: () => {},
       },
-      pairing: {
-        isOpen: () => false,
-        consume: () => false,
-        open: () => {},
-        close: () => {},
-        getExpiresAt: () => undefined,
-      },
+      pairing: fakePairing(),
       registerPeer: () => "post-hs-peer",
     });
     await svr.start();
@@ -483,13 +460,7 @@ describe("LanServer.handleHandshake — additional guard branches", () => {
       onMessage: async () => ({}),
       isKnownPeer: () => null,
       rateLimit: { checkAllowed: () => true, recordFailure: () => {}, recordSuccess: () => {} },
-      pairing: {
-        isOpen: () => false,
-        consume: () => false,
-        open: () => {},
-        close: () => {},
-        getExpiresAt: () => undefined,
-      },
+      pairing: fakePairing(),
       registerPeer: () => "p",
     });
     await svr.start();
@@ -542,13 +513,8 @@ describe("LanServer.handleHandshake — additional guard branches", () => {
         recordFailure: (ip) => failures.push(ip),
         recordSuccess: () => {},
       },
-      pairing: {
-        isOpen: () => true, // window IS open
-        consume: () => false, // but code is wrong — consume returns false
-        open: () => {},
-        close: () => {},
-        getExpiresAt: () => undefined,
-      },
+      // the window IS open, but the code is wrong: consume returns false
+      pairing: fakePairing({ isOpen: () => true }),
       registerPeer: () => "p",
     });
     await svr.start();
@@ -676,13 +642,7 @@ describe("LanServer.handleEncryptedMessage — method and error branches", () =>
       onMessage: async (method) => onMsg(method),
       isKnownPeer: () => ({ peerId: "enc-peer", writeAllowed: true, protoVersion: 1 }),
       rateLimit: { checkAllowed: () => true, recordFailure: () => {}, recordSuccess: () => {} },
-      pairing: {
-        isOpen: () => false,
-        consume: () => false,
-        open: () => {},
-        close: () => {},
-        getExpiresAt: () => undefined,
-      },
+      pairing: fakePairing(),
       registerPeer: () => "enc-peer",
     });
     await svr.start();
@@ -718,13 +678,7 @@ describe("LanServer.handleEncryptedMessage — method and error branches", () =>
       },
       isKnownPeer: () => ({ peerId: "enc-peer2", writeAllowed: true, protoVersion: 1 }),
       rateLimit: { checkAllowed: () => true, recordFailure: () => {}, recordSuccess: () => {} },
-      pairing: {
-        isOpen: () => false,
-        consume: () => false,
-        open: () => {},
-        close: () => {},
-        getExpiresAt: () => undefined,
-      },
+      pairing: fakePairing(),
       registerPeer: () => "enc-peer2",
     });
     await svr.start();
@@ -757,13 +711,7 @@ describe("LanServer.handleEncryptedMessage — method and error branches", () =>
       },
       isKnownPeer: () => ({ peerId: "enc-peer3", writeAllowed: true, protoVersion: 1 }),
       rateLimit: { checkAllowed: () => true, recordFailure: () => {}, recordSuccess: () => {} },
-      pairing: {
-        isOpen: () => false,
-        consume: () => false,
-        open: () => {},
-        close: () => {},
-        getExpiresAt: () => undefined,
-      },
+      pairing: fakePairing(),
       registerPeer: () => "enc-peer3",
     });
     await svr.start();

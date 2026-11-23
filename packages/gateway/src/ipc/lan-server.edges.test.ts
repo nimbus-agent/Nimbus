@@ -11,6 +11,7 @@ import {
   createQueuedSocketWriter,
   type QueuedSocketWriter,
 } from "./server/queued-socket-writer.ts";
+import { fakePairing } from "./testing/pairing-fakes.ts";
 
 /**
  * Three refusals `lan-server.test.ts` does not reach, each asserted as "the server CLOSED the
@@ -36,13 +37,7 @@ function frame(payload: Uint8Array): Uint8Array {
   return out;
 }
 
-const NO_PAIRING = {
-  isOpen: () => false,
-  consume: () => false,
-  open: () => {},
-  close: () => {},
-  getExpiresAt: () => undefined,
-};
+const NO_PAIRING = fakePairing();
 
 async function startServer(): Promise<{
   port: number;

@@ -8,6 +8,7 @@ import { TeamVaultStore } from "../teamvault/team-vault-store.ts";
 import { dispatchFederationRpc, type FederationRpcContext } from "./federation-rpc.ts";
 import { type BoxKeypair, generateBoxKeypair } from "./lan-crypto.ts";
 import { LanServer } from "./lan-server.ts";
+import { fakePairing } from "./testing/pairing-fakes.ts";
 
 /**
  * `federation-rpc.ts` paths the other federation suites do not reach:
@@ -71,13 +72,7 @@ async function askerWithPeer(answers: Record<string, Answer>): Promise<{
     isKnownPeer: () => ({ peerId: "asker", writeAllowed: false, protoVersion: 1 }),
     registerPeer: () => "asker",
     rateLimit: { checkAllowed: () => true, recordFailure: () => {}, recordSuccess: () => {} },
-    pairing: {
-      isOpen: () => false,
-      consume: () => false,
-      open: () => {},
-      close: () => {},
-      getExpiresAt: () => undefined,
-    },
+    pairing: fakePairing(),
   });
   await server.start();
   servers.push(server);
