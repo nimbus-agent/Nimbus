@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795458402445,
+  "lastUpdate": 1795463994692,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "7da3b84dda806f712d1ca7753dc28da580a5eb67",
-          "message": "feat(http): GET /v1/services/resolve — repo-URN-to-service resolution (#1491)\n\nAnswers [#1489](https://github.com/nimbus-agent/Nimbus/pull/1489),\nmerged this morning. The **resolve form** of its §5 — not the §7 list\nform, which stays compatible and unbuilt.\n\nA browser sitting on a repository knows the repository and nothing else.\nThe two routes that would tell its reader anything — `/v1/metrics/dora`\nand `/v1/preflight/deploy` — both take a `service` it has no way to\nobtain, so the consumer ships a hand-typed per-repository binding\ninstead. This removes that gesture.\n\n```text\nGET /v1/services/resolve?repo=github:acme/payments-api\n→ { \"service\": \"payment-service\", \"ambiguous\": false, \"candidates\": [\"payment-service\"] }\n```\n\n## The decisions, and why\n\n**§11 Q1 — resolve form.** It discloses one answer about one repository\nthe caller already named rather than the owner's whole service-to-repo\ngrouping, and the matching rules stay gateway-side.\n\n**Q2/Q3 — scoped, reusing `resolve`.** This is a decision, not an\ninheritance: both routes it feeds are `{ kind: \"public\" }`, so public\nwas the consistent-looking choice. The reason it is not is recorded at\nthe `HTTP_ROUTE_AUTH` entry, because the next proposal will copy it —\n**a public mount would not preserve this route's own narrowing.** `GET\n/v1/items` is public and projects `metadata`, so repo names are already\nenumerable unauthenticated; with that list in hand, N cheap calls here\nwould rebuild exactly the grouping the resolve form claims not to\nexpose. The scope is what makes \"strictly less disclosure\" true rather\nthan nominal. It reuses `resolve` because it *is* a resolution —\ncoordinate in, identity out — so no re-pairing, no fourth scope, and it\nstays off `HTTP_ROUTES`/`openapi/v1.yaml` like every other clip-scoped\nread.\n\n**Q4 — malformed `nimbus.toml` is surfaced (`500 config_unreadable`),\nnot degraded.** `service: null` is indistinguishable from \"no service\nclaims this repo\" — a confident wrong answer about the owner's own\nconfiguration. The body names only that parsing failed; those messages\nembed the service id and offending value verbatim, and a client token is\nnot the owner.\n\n**Q5 — cardinality discloses.** First claimant wins, matching the M-2\nrule the rest of the DORA pipeline already applies, so the route cannot\ndisagree with the binding the metrics behind it used. Every claimant is\nreturned, because the caller is about to gate a deployment and cannot\nsee the resolver's stderr warning. The key set is **total** —\n`ambiguous` and `candidates` are on every answer including the null one,\nso their absence can never be misread as \"uncontested\", and `ambiguous`\nis derived from the candidate count so the two cannot disagree.\n\n## C6, and where the spec was wrong\n\n§5.1 called a URN-to-URN entry point \"the third matcher §5 warns about\nunless the other two are refactored onto it\". **It is not, and it needed\nno refactor** — corrected in place in the spec rather than quietly\nfixed.\n\nThe three do not answer the same question. `repoMetadataMatchesUrn` and\n`repoLikeMatchesUrn` ask *does this **indexed item** belong to this\nservice*, matching heterogeneous item metadata\n(`repo`/`project`/`jobName`/an external id) against a config URN — which\nis why they need provider-specific arms. `resolveServicesByRepoUrn` asks\n*does this **config URN** name this service*, where both sides are\nconfig vocabulary from the same `parseDoraRepoUrn`. Exact comparison, no\nprovider rules.\n\nThat is also the real reason **`circleci` resolves here** while the\nitem-shaped matcher returns `false` for every circleci URN: that arm is\n`false` because an indexed item carries no external id — a fact about\n*items*, not about URNs — so there was never a gap for this route to\ninherit. The synthesised-item alternative was rejected on all three of\n§5.1's counts: it would have inherited that `false`, forced a `type`\nchoice that silently decides the answer, and left\n`bound`/`excluded`/`unknown` with no honest projection onto `service |\nnull`.\n\n## Verification\n\n- `resolveServicesByRepoUrn` was written test-first (6 cases, red\nfirst).\n- The route-auth completeness gate was **red-proved by removing the\ntable entry** — it fails with `+ \"/v1/services/resolve\"`, so the entry\nis genuinely enforced rather than merely present.\n- The disclosure and malformed-config tests were **mutation-checked**:\nmaking `ambiguous` constant and degrading the config error fails exactly\nthose two tests and no others.\n- 16 integration cases (incl. 401/403/404-precedence, wire-key pinning,\nand that the malformed-config body echoes no config value); 2535 tests\ngreen across `ipc`/`metrics`/`egress`/`test/integration/http`.\n- `bun run preflight` green **except `audit:coverage-floor`**, which is\nthe documented Windows false violation, not a regression here. Its 7\nviolations are in five files this branch does not touch —\n`ipc/server/dispatchers.ts`, `ipc/server/socket-listeners.ts`,\n`platform/linux.ts`, `platform/sandbox/win32-reap.ts`,\n`platform/sandbox/win32.ts` — while the two source files this branch\n*does* change clear both floors even on this platform.\n`docs/CONTRIBUTING.md` states the gate is CI-Linux-authoritative and\nthat other platforms produce false violations; the coverage baseline is\nempty, so main clears these on Linux. The Ubuntu leg is the authority\nand settles it on this PR.\n\nNo migration, no invariant, no new egress class — it reads one local\nfile and appends no row, recorded in `egress-coverage.ts`'s `http`\nnarrowing.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01QHGHyesmwAiDZEDrZBTYu1\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added an authenticated `GET /v1/services/resolve?repo=...` endpoint to\nmap repository URNs to configured services.\n* Responses identify the selected service, indicate ambiguity, and list\nall matching candidates.\n* Added support for provider-specific repository matching, including\nCircleCI URNs.\n\n* **Bug Fixes**\n* Added clear handling for invalid, missing, unavailable, or malformed\nservice configuration.\n\n* **Documentation**\n* Documented the endpoint, authentication scope, resolution behavior,\nand error responses.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-11T11:40:38+03:00",
-          "tree_id": "29bcaac3cad1b552b422d8164d40afb6b1237d69",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/7da3b84dda806f712d1ca7753dc28da580a5eb67"
-        },
-        "date": 1789116833602,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 333.79571320000434,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 326.40608815000377,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 176.46858034999732,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "baa3d080ed83fa96ced3cd327f92a0b92ffda5b7",
+          "message": "feat(cli): nimbus agent uninstall and the A6 verification helper (#2121)\n\n## What\n\nPhase 28 agent-kits remainder, CLI only.\n\n- `nimbus agent uninstall <claude-code|codex|cursor|vscode> [--scope\nuser|project] [--dry-run] [--yes]`, the exact mirror of install. It\nplans over the same files install would plan (same link checks, scope\nrules, `--scope` defaults), prints every file with a diff, copies each\nchanged file to `<file>.nimbus-bak-<UTC time>`, and takes a typed `yes`.\n`--yes` and `--dry-run` behave as for install; with no terminal and no\n`--yes` it refuses.\n- `scripts/agent-kits/verify-kit.ts`, the owner's helper for acceptance\nA6: `plan <kit>` prints the procedure order with the fixed prompt,\n`check installed|drifted|clean|removed <kit>` runs `nimbus agent status\n--json` and says PASS/FAIL, `row <kit> ...` prints the matrix row. It\nruns no agent and writes nothing. A6 is NOT closed by this PR.\n\n## Design decisions\n\n- Removes ONLY what a kit wrote: an owned block (only while its body\nstill matches its marker hash), the `nimbus` server entry when its args\nare the kit's own, the kit's hook handler (a group that also holds the\nowner's handlers keeps them) and the kit's deny rules.\n- A drifted (hand-edited) block is REFUSED for the whole command, with\nthe file named and nothing changed. Alternatives were skip-with-warning\n(leaves a half-removed kit) and delete-anyway (loses the owner's lines).\nRefuse is the one that keeps \"nothing changed\" simple; the owner deletes\nthe block, or reinstalls to restore and then uninstalls.\n- Install did not record whether the owner had written a deny rule\nfirst, so a rule byte-equal to one of the kit's is removed. Stated\nbound.\n- A foreign `nimbus` server entry or Codex `[mcp_servers.nimbus]` table\noutside the block is left (with a note for JSON).\n- Deletion: `apply.ts` gains `FileEdit.remove`, used only for the\nNimbus-named files (`rules/nimbus.rules`, `.cursor/rules/nimbus.mdc`)\nthat hold nothing else afterwards, after their backup. Every other file\nis kept, even when left empty or `{}`. Without this, a left-over empty\n`nimbus.mdc` would make a later install refuse (\"Nimbus did not write\nit\").\n- Claude Code at user scope: the server is the owner's command, so\nuninstall prints `claude mcp remove --scope user nimbus`; Nimbus runs no\nvendor CLI.\n- No gateway, IPC, LAN, Tauri, egress or HITL surface touched; no\nmigration; no new invariant or static rule. The steer table and\n`scripts/agent-kits/*.test.ts` are unchanged and green.\n\n## Stated bounds\n\n- A6 stays open: the matrix still reads `not yet run`.\n- Uninstall against the real Claude Code and Codex files is exercised\nonly by in-memory tests (and now step 6 of the owner's procedure).\n- A block edited by hand blocks the uninstall of that kit until the\nowner acts.\n- Line-scan limits of install's Codex conflict check carry over.\n\n## Tests\n\n- `packages/cli/src/agent-kits/removal.test.ts`,\n`packages/cli/src/commands/agent-uninstall.test.ts`,\n`scripts/agent-kits/verify-kit.test.ts` (new); 241 + 26 agent-kit tests\npass; round-trip install/uninstall for every kit and scope, status not\ninstalled after, owner content preserved, edited block refused, delete\nfailures, reinstall after uninstall.\n- typecheck, typecheck:tests, security-invariants (683),\n`check-nimbus-invariants`, file-size, split-privacy, doc-refs,\nstatus-drift, `preflight:fast`: green. `audit:platform-test-gaps`: every\ntest in the diff runs on win32. Istanbul coverage was not measured\nlocally (CI-Linux authoritative).\n\n## For the batch-docs PR\n\nRoadmap row (Phase 28 AD7b follow-up): \"`nimbus agent uninstall`\nshipped; A6 (two kits verified against the real agents) still open: the\nowner's manual run, with `scripts/agent-kits/verify-kit.ts` as the\nhelper.\"\n\nCHANGELOG draft:\n- feat(cli): `nimbus agent uninstall <kit>` removes what `nimbus agent\ninstall` wrote (an unedited block, the kit's own JSON keys), with a\ndiff, a backup per file and a typed `yes`; a hand-edited block is\nrefused. `scripts/agent-kits/verify-kit.ts` helps the owner run\nacceptance A6.\n\nCLAUDE.md / GEMINI.md sentence (after the AD7b summary): \"`nimbus agent\nuninstall <kit> [--scope user|project] [--dry-run] [--yes]` (2026-11-23)\nmirrors install: it removes only an owned block whose hash still\nmatches, the kit's own JSON keys and a Nimbus-named file that held\nnothing else, shows every diff, backs up each file and takes a typed\n`yes`; a hand-edited block is refused.\n`scripts/agent-kits/verify-kit.ts` is the owner's A6 helper; A6 is still\nnot closed.\"\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrGFPLqt8C3Ybzk2dHq\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-23T19:49:44Z",
+          "tree_id": "bdc45ca76faae4091d9201e79eb692eb3ad4b5bf",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/baa3d080ed83fa96ced3cd327f92a0b92ffda5b7"
+        },
+        "date": 1795463991353,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 181.12123239999946,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 180.16538860000037,
             "unit": "ms"
           }
         ]
