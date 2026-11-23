@@ -117,6 +117,13 @@ const FAST: readonly Gate[] = [
     cmd: ["bun", "run", "audit:file-size"],
     tier: "fast",
   },
+  {
+    // A module inside a split folder (`X/` beside the facade `X.ts`) is imported only by its facade,
+    // its own folder and tests; the rest go through the facade, which keeps the pre-split privacy.
+    name: "audit:split-privacy",
+    cmd: ["bun", "run", "audit:split-privacy"],
+    tier: "fast",
+  },
   { name: "audit:release-please", cmd: ["bun", "run", "audit:release-please"], tier: "fast" },
   {
     // A root `overrides` pin outranks every declared range, so a divergence

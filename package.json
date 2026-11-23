@@ -64,6 +64,7 @@
     "audit:exclusion-parity": "bun scripts/coverage-floor/check-exclusion-parity.ts",
     "audit:any": "bun scripts/structure-audit/count-any-usage.ts",
     "audit:file-size": "bun scripts/structure-audit/check-file-size.ts",
+    "audit:split-privacy": "bun scripts/structure-audit/check-split-folder-privacy.ts",
     "audit:invariants": "bun scripts/structure-audit/check-nimbus-invariants.ts --binary-only",
     "audit:lane-census": "bun scripts/structure-audit/check-index-lane-coverage.ts",
     "audit:agent-param-kinds": "bun scripts/structure-audit/check-agent-param-kinds.ts",

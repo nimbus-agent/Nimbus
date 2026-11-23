@@ -62,6 +62,9 @@ jobs:
       - name: File size — new files under 500 lines, larger ones never grow
         run: bun run audit:file-size
 
+      - name: Split-folder privacy — a split folder's modules are imported only through the facade
+        run: bun run audit:split-privacy
+
       - name: D10/D11 — Nimbus invariants (binary)
         run: bun run audit:invariants
 
