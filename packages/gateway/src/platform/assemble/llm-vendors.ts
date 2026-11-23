@@ -21,13 +21,21 @@ export type RouteValidationLogger = { warn: (msg: string) => void };
 export const defaultRouteValidationLogger: RouteValidationLogger = { warn: () => {} };
 
 /** Resolves what base URL a `[llm.local.*]` entry actually talks to, applying the runtime's
- *  default when `base_url` is omitted and stripping a trailing slash — the form two entries must
+ *  default when `base_url` is omitted and stripping every trailing slash — the form two entries must
  *  be compared in. Comparing the raw, unresolved field misses the case where BOTH entries omit
  *  `base_url`: both fields are `undefined`, but both resolve to the SAME real endpoint. */
 export function resolveBaseUrl(runtime: string, baseUrl: string | undefined): string {
   const explicit = baseUrl?.trim() ?? "";
-  if (explicit !== "") return explicit.replace(/\/$/, "");
+  if (explicit !== "") return stripTrailingSlashes(explicit);
   return runtime === "llamacpp" ? LLAMACPP_DEFAULT_BASE_URL : OLLAMA_DEFAULT_BASE_URL;
+}
+
+/** Linear-time `s.replace(/\/+$/, "")`: the regex backtracks quadratically on a long run of `/`
+ *  that is not at the end (Sonar S8786). */
+function stripTrailingSlashes(s: string): string {
+  let end = s.length;
+  while (end > 0 && s.charCodeAt(end - 1) === 47) end--;
+  return s.slice(0, end);
 }
 
 export const KNOWN_LOCAL_RUNTIMES = new Set(["ollama", "llamacpp"]);

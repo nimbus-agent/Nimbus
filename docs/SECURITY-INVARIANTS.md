@@ -2288,9 +2288,9 @@ Reverse-lookup table for inline comments migrated from source files during the 2
 | `packages/gateway/src/extensions/verify-signature.ts:6` | I16 | Gateway re-export shim for @nimbus-dev/sdk crypto/verify-signature.ts (MIT, license-clean) |
 | `packages/gateway/src/index/tool-call-log-v29-sql.ts:3` | I11 | V29 tool_call_log is write-only from I11 wiring sites; read-only from audit.toolCalls |
 | `packages/gateway/src/index/tool-call-log-v29-sql.ts:9` | I11 | audit.toolCalls is CLI-only (FORBIDDEN_OVER_LAN per I5, absent from Tauri allowlist per I7) |
-| `packages/gateway/src/ipc/automation-rpc.ts:97` | I2 | workflow.run routes destructive workflow steps through ToolExecutor gate |
-| `packages/gateway/src/ipc/automation-rpc.ts:99` | I2 | workflow HITL batch consolidation handled by coordinator, not automation-rpc |
-| `packages/gateway/src/ipc/automation-rpc.ts:101` | I2 | workflow.rerun routes through same HITL gate as initial run |
+| `packages/gateway/src/automation/workflow-runner.ts:300` | I2 | workflow.run routes write steps through the ToolExecutor gate (`executeWriteStep`, via the executor `buildWorkflowWriteExecutor` builds) |
+| `packages/gateway/src/ipc/consent.ts:145` | I2 | workflow consent prompts are asked by the ConsentCoordinator (`ConsentCoordinatorImpl`), not by the workflow RPC handler; the runner's HITL step preview (`workflow-runner.ts:579`) is informational only |
+| `packages/gateway/src/ipc/server/inline-handlers.ts:393` | I2 | workflow.resume (there is no `workflow.rerun` method) continues a blocked run on the owner's attended write executor, so the same HITL gate applies as on the initial run |
 | `packages/gateway/src/ipc/automation-rpc/watcher.ts:70` | I2 | watcher.create does not trigger HITL; watchers are read-only observers |
 | `packages/gateway/src/ipc/automation-rpc/watcher.ts:105` | I2 | watcher.delete does not trigger HITL (watcher is gateway-local, not a cloud mutation) |
 | `packages/gateway/src/ipc/deployment-rpc.ts:5` | I13 | deployment-rpc handler is NOT in Tauri ALLOWED_METHODS (only reachable via HTTP write surface) |
