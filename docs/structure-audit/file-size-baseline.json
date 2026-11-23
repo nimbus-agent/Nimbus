@@ -338,7 +338,6 @@
     "packages/gateway/src/ipc/fleet-rpc.test.ts": 901,
     "packages/gateway/src/ipc/http-read-gates.test.ts": 882,
     "packages/gateway/src/ipc/http-server.test.ts": 928,
-    "packages/gateway/src/ipc/http-server.ts": 1686,
     "packages/gateway/src/ipc/http-write-routes.test.ts": 2065,
     "packages/gateway/src/ipc/http-write-routes.ts": 1698,
     "packages/gateway/src/ipc/incident-rpc.test.ts": 755,

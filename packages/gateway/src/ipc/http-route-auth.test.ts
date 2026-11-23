@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
+import { readHttpServerSources } from "../../test/helpers/http-server-sources.ts";
 import { LEGACY_SCOPES } from "../clips/api-scopes.ts";
 import {
   clipScopeFor,
@@ -66,7 +67,7 @@ const EXTERNALLY_ROUTED = new Set<string>(["/scim/v2/Users", "/scim/v2/Users/{id
  * of the table's keys instead.
  */
 async function routeLiteralsInServer(): Promise<string[]> {
-  const src = await Bun.file(SERVER_SRC).text();
+  const src = (await readHttpServerSources()).join("\n");
   const out = new Set<string>();
   for (const m of src.matchAll(/(?:^|[^.\w])(?:path|url\.pathname)\s*===\s*"(\/[^"]*)"/g)) {
     out.add(m[1] as string);
@@ -147,7 +148,7 @@ describe("http-route-auth", () => {
     //
     // So the unseen forms are themselves forbidden, with the known exceptions named. A comment
     // asking developers to remember this would not fail; this does.
-    const src = await Bun.file(SERVER_SRC).text();
+    const src = (await readHttpServerSources()).join("\n");
     const UNSEEN_FORMS = [
       /path\.includes\(/,
       /path\.match\(/,

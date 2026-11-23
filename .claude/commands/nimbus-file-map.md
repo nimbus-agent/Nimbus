@@ -226,7 +226,8 @@ Everything else follows the standard triple. These break from it in a way worth 
 | `packages/gateway/src/ipc/llm-rpc.ts` | `dispatchLlmRpc` — `llm.listModels` / `llm.getStatus` |
 | `packages/gateway/src/ipc/voice-rpc.ts` | `dispatchVoiceRpc` — `voice.*` |
 | `packages/gateway/src/ipc/updater-rpc.ts` | `dispatchUpdaterRpc` — `updater.getStatus/checkNow/applyUpdate/rollback` |
-| `packages/gateway/src/ipc/http-server.ts` | Read-only local HTTP API (`localhost`, `SQLITE_OPEN_READONLY`) |
+| `packages/gateway/src/ipc/http-server.ts` | Read-only local HTTP API (`localhost`, `SQLITE_OPEN_READONLY`): the ordered request pipeline |
+| `packages/gateway/src/ipc/http-server/` | The HTTP API's route families: `_shared.ts` (scoped-read gate, params), `metrics-reads`, `admin-reads`, `data-reads`, `resolve-reads`, `egress-reads`, `run-reads`, `clip-related`, `write-seams`, `options` |
 | `packages/gateway/src/ipc/http-routes.ts` | `HTTP_ROUTES` — source of truth for OpenAPI drift gate |
 | `packages/gateway/src/ipc/openapi-loader.ts` | `loadOpenApiJsonBytes` — cached YAML→JSON for `GET /v1/openapi.json` |
 | `packages/gateway/openapi/v1.yaml` | OpenAPI 3.1 schema; serves `/v1/metrics/dora`, `/v1/preflight/deploy`, `POST /v1/deployments` |

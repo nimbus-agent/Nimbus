@@ -25,7 +25,7 @@ This skill is the rule a contributor consults **before** adding any HTTP `POST` 
 | File | Role |
 |---|---|
 | [`packages/gateway/src/ipc/http-write-routes.ts`](../../packages/gateway/src/ipc/http-write-routes.ts) | `WRITE_ROUTE_ALLOWLIST` (frozen, compile-time) + `dispatchWriteRoute` — the single dispatcher every HTTP write goes through |
-| [`packages/gateway/src/ipc/http-server.ts`](../../packages/gateway/src/ipc/http-server.ts) | Where POST requests are routed to `dispatchWriteRoute`; opens **at most one** writable `Database` handle (the read handle stays `SQLITE_OPEN_READONLY`) |
+| [`packages/gateway/src/ipc/http-server.ts`](../../packages/gateway/src/ipc/http-server.ts) | Where POST requests are routed to `dispatchWriteRoute`; opens **at most one** writable `Database` handle (the read handle stays `SQLITE_OPEN_READONLY`); holds the ordered request pipeline, while the read-route families and write-seam builders live in [`ipc/http-server/`](../../packages/gateway/src/ipc/http-server/) |
 | [`packages/gateway/src/ipc/http-auth.ts`](../../packages/gateway/src/ipc/http-auth.ts) | `requireBearer` + `tokenFingerprint` — reads the expected token from the `http_api.deployment_token` vault key; constant-time compare via `constantTimeStringEqual` (invariant `I10`) |
 | [`packages/gateway/src/ipc/http-rate-limit.ts`](../../packages/gateway/src/ipc/http-rate-limit.ts) | Per-token sliding-window rate limiter (default 60 req/min); surfaces `X-RateLimit-*` headers |
 | [`packages/gateway/src/security-invariants/i13-http-write-routes.test.ts`](../../packages/gateway/src/security-invariants/i13-http-write-routes.test.ts) | Three I13 sub-assertions — see "Enforcement" below |
