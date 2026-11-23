@@ -110,6 +110,13 @@ const FAST: readonly Gate[] = [
     tier: "fast",
   },
   { name: "audit:any", cmd: ["bun", "run", "audit:any", "--check"], tier: "fast" },
+  {
+    // Owner ruling 2026-11-23: new files stay under 500 lines, and a file already over it (listed
+    // in docs/structure-audit/file-size-baseline.json) never grows. A split runs `--update`.
+    name: "audit:file-size",
+    cmd: ["bun", "run", "audit:file-size"],
+    tier: "fast",
+  },
   { name: "audit:release-please", cmd: ["bun", "run", "audit:release-please"], tier: "fast" },
   {
     // A root `overrides` pin outranks every declared range, so a divergence
