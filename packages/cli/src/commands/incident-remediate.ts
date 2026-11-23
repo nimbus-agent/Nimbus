@@ -14,7 +14,7 @@ import { stripControl } from "./captures-format.ts";
 export const REMEDIATE_USAGE =
   "       nimbus incident remediate <id> [--pick <n|prp_...>] [--json]   list the proposals; with --pick, run one (needs a terminal)\n" +
   "       nimbus incident remediate <id> --pick <n|prp_...> --dry-run [--json]   read the target, predict the outcome; runs nothing\n" +
-  "       nimbus incident undo <act_...>                                 reverse an executed reversible action (needs a terminal)\n" +
+  "       nimbus incident undo [<act_...>]                               reverse an executed reversible action; with no id, the latest one (needs a terminal)\n" +
   "       nimbus incident advisory on|off|status [--json]                advisory mode: proposals are shown, nothing is run";
 
 export type RemediationArgs =
@@ -25,7 +25,7 @@ export type RemediationArgs =
       readonly pick?: string;
       readonly dryRun?: boolean;
     }
-  | { readonly verb: "undo"; readonly actionId: string }
+  | { readonly verb: "undo"; readonly actionId?: string }
   | { readonly verb: "advisory"; readonly json: boolean; readonly action: "on" | "off" | "status" };
 
 /** `--yes`, `-y` and any spelling of `--script-consent-source`: a person approves, nothing else. */
@@ -78,6 +78,8 @@ export function parseRemediationArgs(
   if (rest.some(isConsentShortcut)) return undefined;
   if (verb === "remediate") return parseRemediate(rest);
   if (verb === "undo") {
+    // No id: the gateway undoes the most recent executed reversible action (V106).
+    if (rest.length === 0) return { verb: "undo" };
     const [id, ...more] = rest;
     return more.length === 0 && ID_OK(id) && /^act_[0-9a-f]{16}$/.test(id)
       ? { verb: "undo", actionId: id }
@@ -386,7 +388,10 @@ async function runUndo(
     sink.err(`${TTY_REFUSAL}\n`);
     return 2;
   }
-  const out = await c.call<UndoReply>("incident.undo", { actionId: a.actionId });
+  const out = await c.call<UndoReply>(
+    "incident.undo",
+    a.actionId === undefined ? {} : { actionId: a.actionId },
+  );
   if (out.status === "undone") {
     sink.out(`Undone. Action ${clean(out.actionId)} was reversed.\n`);
     return 0;

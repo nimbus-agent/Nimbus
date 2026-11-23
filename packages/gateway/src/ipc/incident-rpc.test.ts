@@ -626,7 +626,7 @@ describe("IC5a: remediate, undo, proposals and the advisory switch", () => {
         { id: "a", proposalId: "prp_0123456789abcdef", x: 1 },
         /unknown parameter/,
       ],
-      ["incident.undo", {}, /actionId must be a non-empty string/],
+      ["incident.undo", {}, /ERR_UNDO_REFUSED: there is no executed reversible action/],
       ["incident.undo", { actionId: "" }, /actionId/],
       ["incident.undo", { actionId: "a", id: "b" }, /unknown parameter "id"/],
       ["incident.advisory", { on: true }, /unknown parameter "on"/],

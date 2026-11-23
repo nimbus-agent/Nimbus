@@ -138,9 +138,9 @@ describe("parsing", () => {
     }
   });
 
-  test("undo takes exactly one act_ id; advisory takes on, off or status", () => {
+  test("undo takes no id or one act_ id; advisory takes on, off or status", () => {
     expect(parseRemediationArgs("undo", [ACT])).toEqual({ verb: "undo", actionId: ACT });
-    for (const bad of [[], ["act_x"], [REC], [ACT, "x"], ["--act"]]) {
+    for (const bad of [["act_x"], [REC], [ACT, "x"], ["--act"]]) {
       expect(parseRemediationArgs("undo", bad)).toBeUndefined();
     }
     expect(parseRemediationArgs("advisory", ["on"])).toEqual({

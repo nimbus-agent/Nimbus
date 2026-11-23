@@ -65,6 +65,7 @@ describe("V102 incident_proposal and incident_engine_state (Phase 10 IC5a)", () 
       "captured_json",
       "undo_status",
       "undone_at_ms",
+      "executed_at_ms",
     ]);
     const state = db.query("PRAGMA table_info(incident_engine_state)").all() as ColRow[];
     expect(state.map((c) => c.name)).toEqual(["key", "value", "updated_at_ms"]);
