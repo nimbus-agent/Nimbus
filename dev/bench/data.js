@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795380391473,
+  "lastUpdate": 1795417047152,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "580e8930c7575a760cb838ce3fec4babddb0ae3a",
-          "message": "feat(multimodal): remote vision arm with per-artifact grants, I37 and D27 — S2 PR 4 of 4 (#1454)\n\nCompletes the S2 Multimodal I/O slice, 4 of 4. A user can now grant a\nspecific image permission to be described by a frontier vision model —\nAnthropic, OpenAI or Gemini. Everything ungranted keeps captioning on\nthe local Ollama VLM exactly as before.\n\nThis is the first time in this product's history that a user's private\nmedia can leave their machine for a model, so the design is\nconsent-first and fail-closed throughout.\n\nSpec: `docs/superpowers/specs/2026-09-02-s2-multimodal-io-design.md`\nsections 18 and 19. Plan:\n`docs/superpowers/plans/2026-09-05-multimodal-pr4-remote-arm.md`.\n\n## Four independent gates, in order\n\nAn image reaches a remote model only if all four hold, each checked\nbefore the next, each refusing rather than degrading:\n\n1. Org policy does not disable `multimodal_input` — invariant I22, live\nsince PR 2.\n2. `[multimodal] enabled` — default false.\n3. `[multimodal] remote_vlm = \"<vendor>\"` — default unset — AND that\nvendor is enabled under `[llm.remote.<vendor>]`. Both halves are\nrequired. The parent check matters because `openai.api_key` is\ndeliberately shared with the embedding runtime, so a live key can exist\non an install that never opted OpenAI in for text.\n4. A durable, artifact-scoped grant for that exact artifact and vendor.\n\nThe vendor's API key is the existing `[llm.remote.<vendor>]` Vault entry\n— no second credential surface. The capability is not inherited: \"I gave\nyou my OpenAI key so `nimbus ask` works\" is not \"you may send my photos\nto OpenAI\".\n\n## Invariant I37 and static rule D27\n\nI37: a media body reaches a non-local model only through\n`multimodal/media-gate.ts`, and only under a durable per-artifact grant.\nAbsent a grant the gate refuses rather than degrading to remote; a\nremote failure is terminal and never falls back to local. Locality is\nderived from `provider.isLocal`, invariant I34, never supplied by a\ncaller.\n\nD27 has two rules, both red-proved against the real tree rather than\nonly unit-tested:\n\n- D27(a) confines the remote `VlmProvider` constructor to\n`multimodal/build-media-pass-deps.ts`, and only inside a\n`wrapLedgeredVlm(...)` argument list — paren-matched per occurrence, so\na second unwrapped construction beside a legitimate one is still caught.\n- D27(b) confines the `media_grant` table to three files: the store,\nwhich is the only writer; `media-discovery.ts`, which reads it through\none correlated subquery; and the V59 DDL module.\n\n## What is deliberately NOT here\n\n- **Images only.** Speech-to-text stays local across all four PRs.\nEnforced twice over: the grant store refuses to write an `av` row at\nall, and the AV composite's locality is a conjunction, so a remote VLM\ninside it would make the gate refuse the whole video including its\ntranscript.\n- **No new egress class and no new appender.** The `model` class already\ncovered vision through `wrapLedgeredVlm`, shipped in PR 2 ahead of\nanything to wrap. The \"no named exclusions\" claim in the I29 entry was\nre-read against this PR rather than assumed, and survives.\n- **The pass never prompts.** Granting is a separate, deliberate CLI\nact. A batch over 500 photos that prompts 500 times produces one\ndecision and 499 reflexes.\n\n## Defects found along the way\n\nThree of these predate this PR and were surfaced by building on top of\nthe code:\n\n- **`json_extract` raises on malformed JSON, and `COALESCE` does not\nguard it** — only a `json_valid` CASE does. Discovery has carried the\nunguarded pattern since PR 1, so one derived row with unparseable\nmetadata could abort discovery for an entire library. Fixed in both\n`media-discovery.ts` and `orphan-prune.ts`.\n- **`.changes` counts trigger cascades in bun:sqlite.**\n`pruneOrphanedUnderstandings` was returning 7 for one pruned row, the\nrest being FTS shadow-table deletions. Wrong since PR 3, though nothing\nread the value.\n- **A keyless vendor wrote a false egress row.** `wrapLedgeredVlm`\nappends before delegating while the missing-key refusal lived inside\n`describe`, so a configured-but-keyless vendor appended a `model` row\nfor an image that never left the machine, repeating on every pass.\n`nimbus prove` would have reported egress that never happened. The gate\nnow probes availability on both arms and refuses with `not_configured`\nbefore the wrapper is reached.\n\n## Verification\n\n`test:ci` green — full suite, 0 failures. `typecheck`,\n`typecheck:tests`, `lint`, `audit:invariants`, `audit:status-drift`,\n`audit:doc-refs`, `lint:markdown` all pass.\n\n`audit:coverage-floor` reports 6 violations, all on four files this\nbranch never touched: `ipc/server/socket-listeners.ts`,\n`platform/linux.ts`, `platform/sandbox/win32-reap.ts`,\n`platform/sandbox/win32.ts`. `git diff main..HEAD` shows no changes to\nany of them. These were measured on Windows, where `platform/linux.ts`\ncannot execute at all, and the floor is CI-Linux-authoritative — so\nwhether they are real is a question for this PR's CI run, not something\nthe local number settles. The three files this PR does own went from\n61.4 percent line / 44.4 percent branch to 99.1 / 98.9, from 83.3 to\n100, and from 50 percent branch to 100.\n\n## Known gaps, stated rather than hidden\n\n- **The vendor request shapes have never been exercised against a live\nendpoint.** They were written from vendor documentation; the tests prove\nthe shape sent, not that any vendor accepts it. PR 4 needs its own\nacceptance run against at least one real key.\n- **The Google Photos leg of PR 3 remains unverified.** That API returns\nan empty library under `photoslibrary.readonly`, so the pre-signed\n`baseUrl` fetch and the rendition suffixes have never run. Recorded in\nspec section 20.\n- **`media.allowRemote` does not check the parent vendor opt-in at\ngrant-creation time**, only at use time. A grant written while\n`[llm.remote.<vendor>]` is disabled succeeds and then silently never\napplies. No data leaves; the runtime correctly degrades to local. Worth\na follow-up.\n- The selector form does not restrict by media type, so `--service slack\n--limit 5` writes five permanently inert grants.\n- Remote-vs-local provenance is recorded in item metadata but not in the\nprose body a user reads, so a frontier caption and a local one look\nalike in every surface.\n\nThis branch also carries one unrelated commit, `0ac3f6a4`, which adds\n`expectedBytes` to cloud byte-fetch ledger rows. It came out of the PR 3\nacceptance run and is independent of PR 4.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01EkD84tDHvSD3HqUNRgSr7L\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **New Features**\n* Added optional remote vision processing for individual still images\nthrough configured Anthropic, OpenAI, or Gemini vendors.\n* Added commands to grant, preview, list, and revoke image-specific\nremote-vision access.\n* Added clear handling for unsupported image formats and\nremote-processing failures.\n\n* **Security**\n* Remote processing requires explicit artifact-level consent and remains\ndisabled by default.\n  * Audio and video remain local-only.\n* Remote requests are ledgered, redacted, and fail closed when\nrequirements are unmet.\n\n* **Bug Fixes**\n  * Grant listings now handle invalid timestamps safely.\n\n* **Documentation**\n* Updated CLI, architecture, security, schema, changelog, and roadmap\ndocumentation.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-06T06:11:45Z",
-          "tree_id": "867ac116f9b23957a931aca6974b08921bcd3280",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/580e8930c7575a760cb838ce3fec4babddb0ae3a"
-        },
-        "date": 1788675696642,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 248.64793769999815,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 250.21484999999376,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 179.5225029499981,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "580ab6fe27bb8da23fac96bb5de19d1f75b1ae16",
+          "message": "fix: clear the SonarCloud reliability issues on main (#2086)\n\nThe scanner ran out of memory from 2026-11-18 until #2082, so 34\nreliability issues reached main unscored and the main gate is ERROR\n(new_reliability_rating D). Each is fixed in code, behaviour-preserving:\n\n- S2871: trust-maintain's readdirSync().sort() takes compareCodeUnits,\n  the same UTF-16 order the default sort gave.\n- S8786: the heading, title and list-item regexes in postmortem-convert,\n  the e-mail regex in oncall-now-tool and the trailing-dot regex in\n  commit-limits (I54's path check) become linear loops; each is pinned\n  by an exhaustive differential test against the former regex.\n- S9383/S4822: server.stop() and FileSink writes are explicitly ignored\n  (void, or Promise.try(...).catch in the try/catch sites); the ffmpeg\n  exit promise gets its rejection handler.\n- S7758: codePointAt/fromCodePoint (equal for every comparison made;\n  zotero's surrogate check reads a pair as a code point above U+FFFF).\n- S7503, S7737, S2310, S6772: no-await async dropped (dispatchByMethod\n  is async, so a throw still rejects), a frozen NO_TTY default, a while\n  loop in statuspage's parser, and an explicit JSX text child.\n\nNo file of 500 lines or more grew.\n\nRules addressed: S2871 (1), S8786 (5), S9383/S4822 (9), S7758 (9), S7503\n(6), S7737 (2), S2310 (1), S6772 (1) = 34. Nothing was marked false\npositive and no rule was excluded.\n\nVerification: `bun run preflight:fast` passed; gateway, cli and ui\ntypecheck clean; `bun test` over every touched gateway/cli area (2,292\npass, 0 fail); the Incidents page vitest (17 pass). Each new\ndifferential test was red-proved by mutating the new loop.\n\nCore docs (CLAUDE.md, GEMINI.md, roadmap, architecture, docs/README,\ncli-reference): unchanged, since no behaviour, command or invariant\nchanged.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrGFPLqt8C3Ybzk2dHq\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* Improved handling of Unicode text when truncating titles, reading\nincident and commit details, and processing labels.\n* Improved reliability when stopping local services and reporting audio\nrecording failures.\n* Strengthened handling of long or unusual text in on-call redaction and\npostmortem formatting, while preserving supported formats.\n* Improved consistency when parsing command-line options and ordering\nimported files.\n* **Tests**\n  * Added coverage for text parsing, redaction, and long-input handling.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-23T06:48:53Z",
+          "tree_id": "8b1fb92970a1fe80ddf99644ee8d994fe72d8948",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/580ab6fe27bb8da23fac96bb5de19d1f75b1ae16"
+        },
+        "date": 1795417042377,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 204.4408363500006,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 204.73028345000202,
             "unit": "ms"
           }
         ]
