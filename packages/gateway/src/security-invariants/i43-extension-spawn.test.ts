@@ -646,8 +646,7 @@ describe("I43 — an installed extension's code runs only through the verified s
         ),
       ).toThrow(/reserved variable/);
     }
-    // Positive control: the same manifest with an ordinary name parses, so the refusals above are
-    // about the NAME and not some other defect in the fixture.
+    // Positive control: an ordinary name parses, so the refusals above are about the NAME.
     const ok = parseExtensionManifestJson(
       JSON.stringify({ id: "x", version: "1.0.0", credentials: { token: { env: "I43_TOKEN" } } }),
     );
@@ -663,7 +662,8 @@ describe("I43 — an installed extension's code runs only through the verified s
   });
 
   test("stopping an extension stops its mesh:ext: slot, keyed by extensionMeshKey", async () => {
-    const src = stripComments(await read("packages/gateway/src/connectors/lazy-mesh/mesh.ts"));
+    const lm = "packages/gateway/src/connectors/lazy-mesh/mesh/";
+    const src = stripComments(await read(`${lm}extension-layer.ts`));
     const fnAt = src.indexOf("public async stopExtensionClient(");
     expect(fnAt).toBeGreaterThan(-1);
     const body = src.slice(fnAt, src.indexOf("\n  }\n", fnAt));

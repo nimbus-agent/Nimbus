@@ -86,7 +86,7 @@ const D49_USER_MCP_CALL_WRITE_ALLOWED: readonly string[] = [
 ];
 const D49_USER_MCP_LISTER_RE = /\blistUserMcpToolDefinitions\b/g;
 const D49_USER_MCP_LISTER_ALLOWED: readonly string[] = [
-  `${D49_SRC}connectors/lazy-mesh/mesh.ts`,
+  `${D49_SRC}connectors/lazy-mesh/mesh/user-mcp-layer.ts`,
   `${D49_SRC}platform/assemble.ts`,
   `${D49_SRC}ipc/connector-rpc.ts`,
 ];

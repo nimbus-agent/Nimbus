@@ -32,8 +32,8 @@ describe("I11 — Tool-result envelope on the LLM-facing path", () => {
   const I11_WIRING_SITES: ReadonlyArray<{ what: string; path: string }> = [
     { what: "agent.ts, on the LLM-facing path", path: "packages/gateway/src/engine/agent.ts" },
     {
-      what: "mesh.ts:listTools",
-      path: "packages/gateway/src/connectors/lazy-mesh/mesh.ts",
+      what: "mesh/tool-audit.ts (the body of mesh.ts:listTools)",
+      path: "packages/gateway/src/connectors/lazy-mesh/mesh/tool-audit.ts",
     },
     {
       what: "cu-tools.ts (computer-use), for its textual tool results",
@@ -48,6 +48,14 @@ describe("I11 — Tool-result envelope on the LLM-facing path", () => {
       expect(src).toMatch(/writeToolCallLog\(/);
     });
   }
+
+  test("mesh.ts listTools hands the merged map to the envelope-and-audit wrapper in mesh/tool-audit.ts", async () => {
+    const src = stripComments(await read("packages/gateway/src/connectors/lazy-mesh/mesh.ts"));
+    const body = src.slice(src.indexOf("async listTools("));
+    expect(body).toMatch(
+      /wrapToolsWithEnvelopeAndAudit\(merged, this\.auditDb\);\s*return merged;/,
+    );
+  });
 
   test("oncall_now (MB3) reaches the model only through wrapToolForLlm: registered wrapped in agent.ts, never wrapped bare, and the tool file does not wrap itself", async () => {
     const agent = stripComments(await read("packages/gateway/src/engine/agent.ts"));

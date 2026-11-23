@@ -6775,7 +6775,7 @@ describe("D49(g), (h) - the user-MCP call facts and the door's reach into user s
     file(`${SRC}engine/types.ts`, "userMcpCall?: UserMcpCallFacts;"),
     file(`${SRC}engine/executor.ts`, "if (action.userMcpCall !== undefined) {}"),
     file(`${SRC}engine/user-mcp-call-block.ts`, "export const x = (a) => a.userMcpCall;"),
-    file(`${SRC}connectors/lazy-mesh/mesh.ts`, "async listUserMcpToolDefinitions(id) {}"),
+    file(`${SRC}connectors/lazy-mesh/mesh/user-mcp-layer.ts`, "listUserMcpToolDefinitions(id) {}"),
     file(`${SRC}platform/assemble.ts`, "mesh.listUserMcpToolDefinitions(id);"),
     file(`${SRC}ipc/connector-rpc.ts`, "mesh.listUserMcpToolDefinitions(id);"),
     file(
