@@ -24,7 +24,7 @@ export type DecisionsContext = {
   runner?: SynthesisRunner;
   /**
    * `[decisions].min_confidence` from `nimbus.toml`, resolved by the caller
-   * (`ipc/agents-rpc.ts`) so this module keeps no config-file dependency. Used
+   * (`ipc/agents-rpc/handlers-content.ts`) so this module keeps no config-file dependency. Used
    * ONLY when the request omits `minConfidence` — an explicit `--min-confidence`
    * always wins, including an explicit `0`.
    */

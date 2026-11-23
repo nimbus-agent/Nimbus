@@ -34,7 +34,7 @@ export const STANDUP_CATEGORY_CAP = 50;
 /**
  * Raised when no person could be resolved for the local owner.
  *
- * A dedicated class rather than a bare `Error`, so `ipc/agents-rpc.ts` can map it to a JSON-RPC
+ * A dedicated class rather than a bare `Error`, so `ipc/agents-rpc/handlers-core.ts` can map it to a JSON-RPC
  * error code without string-matching a message — and declared HERE rather than imported from
  * `ipc/`, which would invert the dependency (`agents/*` is read by the IPC layer, never the
  * other way round).

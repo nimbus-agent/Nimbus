@@ -71,7 +71,7 @@ export const ONCALL_DEFAULT_CHAT_LOOKBACK_MS = 86_400_000;
  * already set this precedent for the same reason, as did the W6-B negation queries, which refuse
  * on an empty substrate rather than answering over it.
  *
- * A dedicated class rather than a bare `Error` so `ipc/agents-rpc.ts` can map it to a JSON-RPC
+ * A dedicated class rather than a bare `Error` so `ipc/agents-rpc/handlers-core.ts` can map it to a JSON-RPC
  * code without string-matching a message, declared HERE rather than imported from `ipc/` so the
  * dependency direction stays `ipc/` → `agents/`.
  */
@@ -461,7 +461,7 @@ export type EmitOncallOpts = {
  *
  * Three shapes in a fixed precedence, and the order is the point: an EXPLICIT id is never
  * second-guessed, an explicit SERVICE narrows without needing to know who is running the command,
- * and only the zero-parameter shape resolves the local owner's identity. `ipc/agents-rpc.ts`
+ * and only the zero-parameter shape resolves the local owner's identity. `ipc/agents-rpc/params-people.ts`
  * refuses that third shape for an external caller, which is why it is last and separable.
  */
 async function selectIncident(opts: EmitOncallOpts): Promise<{

@@ -1847,7 +1847,7 @@ PagerDuty incident counts above.
 
 ### Built-in Agents Catalogue
 
-All built-in agents follow the pattern above. The IPC handlers live in `packages/gateway/src/ipc/agents-rpc.ts` and are exposed to the Tauri renderer via `ALLOWED_METHODS`.
+All built-in agents follow the pattern above. The IPC dispatcher lives in `packages/gateway/src/ipc/agents-rpc.ts` (its validators and handlers are the modules of `packages/gateway/src/ipc/agents-rpc/`) and is exposed to the Tauri renderer via `ALLOWED_METHODS`.
 
 | Phase | Agent | Command | IPC method | Status |
 |---|---|---|---|---|

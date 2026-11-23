@@ -225,10 +225,10 @@ describe("agents.standup is owner-scoped, which is why it is externally excluded
     // COMMENT-STRIPPED, like every other source-scanning invariant in this file. Without it a
     // commented-out assignment counts as the real thing — the red-prove for the companion test
     // below passed with its call sitting in a `//` comment until this was applied.
-    const rpc = stripComments(await read("packages/gateway/src/ipc/agents-rpc.ts"));
+    const rpc = stripComments(await read("packages/gateway/src/ipc/agents-rpc/params-people.ts"));
     const validator = rpc.slice(
       rpc.indexOf("function requireStandupParams"),
-      rpc.indexOf("const STANDUP_DEFAULT_SINCE_MS"),
+      rpc.indexOf("const OWNER_SCOPED_ONCALL_ALLOWED"),
     );
     expect(validator.length).toBeGreaterThan(0);
 
@@ -256,11 +256,9 @@ describe("agents.standup is owner-scoped, which is why it is externally excluded
     // only `sinceMs`, a handler that spread the RAW params into `emitStandupBrief` would
     // reintroduce the whole surface. So the handler must pass the VALIDATED object's field, and
     // its `mePersonIdOverride` must come from `nimbus.toml` rather than from `params`.
-    const rpc = stripComments(await read("packages/gateway/src/ipc/agents-rpc.ts"));
-    const handler = rpc.slice(
-      rpc.indexOf("async function handleStandup"),
-      rpc.indexOf("async function handleGhost"),
-    );
+    // `handleStandup` is the last function of `handlers-core.ts`, so its slice runs to the end.
+    const rpc = stripComments(await read("packages/gateway/src/ipc/agents-rpc/handlers-core.ts"));
+    const handler = rpc.slice(rpc.indexOf("async function handleStandup"));
     expect(handler.length).toBeGreaterThan(0);
     // No spread of caller input anywhere in the handler.
     expect(handler).not.toContain("...params");
