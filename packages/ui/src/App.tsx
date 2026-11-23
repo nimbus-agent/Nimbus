@@ -13,6 +13,7 @@ import { Captures } from "./pages/Captures";
 import { Dashboard } from "./pages/Dashboard";
 import { HitlPopup } from "./pages/HitlPopup";
 import { Incidents } from "./pages/Incidents";
+import { Infrastructure } from "./pages/Infrastructure";
 import { Marketplace } from "./pages/Marketplace";
 import { Onboarding } from "./pages/Onboarding";
 import { Oncall } from "./pages/Oncall";
@@ -53,6 +54,7 @@ const router = createBrowserRouter(
       <Route index element={<Dashboard />} />
       <Route path="oncall" element={<Oncall />} />
       <Route path="incidents" element={<Incidents />} />
+      <Route path="infrastructure" element={<Infrastructure />} />
       <Route path="captures" element={<Captures />} />
       <Route path="briefs" element={<Briefs />} />
       <Route path="briefs/stored/:id" element={<StoredBrief />} />

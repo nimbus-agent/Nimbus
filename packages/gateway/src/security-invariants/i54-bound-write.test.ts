@@ -125,13 +125,17 @@ describe("I54 — a bound connector write is dispatched only with the values its
     expect(r.ok).toBe(true);
     expect(asked).toBe(0);
     expect(dispatched.map((a) => a.type)).toEqual(["iac.write.prepare"]);
-    // The namespace is the owner's CLI only: LAN-forbidden and not on the Tauri allowlist.
+    // The namespace is LAN-forbidden; only the read `iac.driftLatest` is on the Tauri allowlist (the check is not).
     const { checkLanMethodAllowed } = await import("../ipc/lan-rpc.ts");
     expect(() =>
       checkLanMethodAllowed("iac.driftCheck", { peerId: "p", writeAllowed: true }),
     ).toThrow(/not callable over LAN/);
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
-    expect(rust).not.toMatch(/"iac\./);
+    const list = rust.slice(rust.indexOf("pub const ALLOWED_METHODS"), rust.indexOf("];"));
+    expect([...list.matchAll(/"(iac\.[A-Za-z]+)"/g)].map((m) => m[1])).toEqual(["iac.driftLatest"]);
+    expect(rust).toContain(
+      'is_method_allowed("iac.driftLatest") && !is_method_allowed("iac.driftCheck")',
+    );
     // A demo gateway refuses the whole namespace at the demo gate, before any dispatcher (I41)...
     const { demoRefusal } = await import("../ipc/server/demo-gate.ts");
     expect(demoRefusal("iac.driftCheck")).toBeDefined();

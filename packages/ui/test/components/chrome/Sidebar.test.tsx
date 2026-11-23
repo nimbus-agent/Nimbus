@@ -73,7 +73,7 @@ describe("Sidebar", () => {
   it("adds only Briefs when there are no pack sections", () => {
     renderSidebar(null);
     expect(screen.queryAllByRole("group")).toHaveLength(0);
-    expect(screen.getAllByRole("link")).toHaveLength(10);
+    expect(screen.getAllByRole("link")).toHaveLength(11);
   });
 
   it("lists a pack's agents in a labelled group", () => {

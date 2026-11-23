@@ -153,6 +153,7 @@ pub const ALLOWED_METHODS: &[&str] = &[
     "fleet.show",
     "hitl.listDelegations",
     "hitl.pendingQueue",
+    "iac.driftLatest",
     "identity.listBindings",
     "identity.login",
     "identity.logout",
@@ -861,11 +862,10 @@ mod tests {
 
     #[test]
     fn allowlist_incident_reads_only() {
-        // Phase 10 IC10a and IC10b: the desktop reads incident records, their proposals and the
-        // findings. Only the five reads join the renderer; `assemble` runs the engine, and the
-        // write-class incident methods never will (I7). Named on both sides, and the exact set of
-        // `incident.` entries is pinned, because a one-for-one swap would keep allowlist_exact_size
-        // unchanged.
+        // Phase 10 IC10a and IC10b: only the five reads join the renderer; `assemble` runs the engine
+        // and the write-class methods never will (I7). The exact `incident.` set is pinned, since a
+        // one-for-one swap would keep allowlist_exact_size. `iac.driftCheck` (a plan child) stays off.
+        assert!(is_method_allowed("iac.driftLatest") && !is_method_allowed("iac.driftCheck"));
         assert!(is_method_allowed("incident.list"));
         assert!(is_method_allowed("incident.get"));
         assert!(is_method_allowed("incident.timeline"));
@@ -1145,7 +1145,7 @@ mod tests {
 
     #[test]
     fn allowlist_exact_size() {
-        assert_eq!(ALLOWED_METHODS.len(), 140);
+        assert_eq!(ALLOWED_METHODS.len(), 141);
     }
 
     #[test]

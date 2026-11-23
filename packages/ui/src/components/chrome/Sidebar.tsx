@@ -11,6 +11,7 @@ const BEFORE_BRIEFS: ReadonlyArray<Entry> = [{ to: "/", icon: "▦", label: "Das
 const AFTER_BRIEFS: ReadonlyArray<Entry> = [
   { to: "/oncall", icon: "☎", label: "On-call" },
   { to: "/incidents", icon: "🚨", label: "Incidents" },
+  { to: "/infrastructure", icon: "▦", label: "Infrastructure" },
   { to: "/captures", icon: "✎", label: "Captures" },
   { to: "/hitl", icon: "⚠", label: "HITL" },
   { to: "/marketplace", icon: "⚙", label: "Marketplace" },

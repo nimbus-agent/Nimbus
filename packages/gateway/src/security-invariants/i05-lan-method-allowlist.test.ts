@@ -111,7 +111,7 @@ describe("I5 — LAN method allowlist is intrinsic to LanServer", () => {
     "incident.timeline",
   ];
 
-  test("I7 (IC10a, IC10b): exactly the five incident reads are renderer-callable; the allowlist is 140", async () => {
+  test("I7 (IC10a, IC10b): exactly the five incident reads are renderer-callable; the allowlist is 141", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
     const start = rust.indexOf("pub const ALLOWED_METHODS: &[&str] = &[");
     const end = rust.indexOf("];", start);
@@ -135,11 +135,35 @@ describe("I5 — LAN method allowlist is intrinsic to LanServer", () => {
       expect(negated || positiveRead || denialLine).toBe(true);
     }
     expect(rust).toMatch(/^\s*"incident\.assemble",\s*$/m); // the Rust denial list names it
-    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*140\s*\)/);
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*141\s*\)/);
     // the Rust denial list names the methods that must stay off the renderer
     for (const m of ["assemble", "advisory", "advisorySet", "remediate", "undo"]) {
       expect(rust).toMatch(new RegExp(String.raw`^\s*"incident\.${m}",\s*$`, "m"));
     }
+  });
+
+  test("I7 (IaC drift desktop view): exactly iac.driftLatest is renderer-callable; driftCheck stays CLI-only and the namespace off the LAN", async () => {
+    const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    const start = rust.indexOf("pub const ALLOWED_METHODS: &[&str] = &[");
+    const end = rust.indexOf("];", start);
+    const list = rust.slice(start, end);
+    // by NAME: swapping `iac.driftLatest` for `iac.driftCheck` would keep the count
+    expect([...list.matchAll(/"(iac\.[A-Za-z]+)"/g)].map((m) => m[1])).toEqual(["iac.driftLatest"]);
+    expect(rust).toContain(
+      'is_method_allowed("iac.driftLatest") && !is_method_allowed("iac.driftCheck")',
+    );
+    const rpc = await read("packages/gateway/src/ipc/iac-drift-rpc.ts");
+    // the check is cli-only; the read also answers the desktop's declared kind
+    expect(rpc).toContain('runnerOf(c, caller.kind, ["cli"], IAC_DRIFT_CLI_ONLY)');
+    expect(rpc).toContain('runnerOf(c, caller.kind, ["cli", "ui"], IAC_DRIFT_OWNER_ONLY)');
+    const lan = await read("packages/gateway/src/ipc/lan-rpc.ts");
+    expect(lan).toMatch(/^\s*"iac",\s*$/m);
+    // the page calls only the one read and builds no HTML from gateway text
+    const page = await read("packages/ui/src/pages/Infrastructure.tsx");
+    expect(page).not.toContain("dangerouslySetInnerHTML");
+    expect(page).not.toContain("innerHTML");
+    expect(page).not.toContain("iac.driftCheck");
+    expect([...page.matchAll(/"(iac\.[A-Za-z]+)"/g)].map((m) => m[1])).toEqual(["iac.driftLatest"]);
   });
 
   test("I7 (S4 marketplace tile): exactly three registry reads are renderer-callable; install, add, refresh, remove and clone stay off", async () => {
