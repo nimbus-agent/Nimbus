@@ -1,47 +1,44 @@
-import type { Database } from "bun:sqlite";
-
 import { appendAuditEntry } from "../db/audit-chain.ts";
-import { deleteEvidenceCitingItem } from "../decisions/decision-store.ts";
 import { serviceOf } from "../engine/service-of.ts";
-import { deleteItemByPrimaryKey, itemPrimaryKey, upsertIndexedItem } from "../index/item-store.ts";
-import type { ClientKind } from "../ipc/server/client-kind.ts";
-import {
-  type ActionAcceptResult,
-  acceptAction,
-  actionDestinationVerdict,
-  expireDueActionsAudited,
-} from "./capture-act.ts";
+import { itemPrimaryKey, upsertIndexedItem } from "../index/item-store.ts";
+import { type ActionAcceptResult, acceptAction, actionDestinationVerdict } from "./capture-act.ts";
 import type { CaptureCapability } from "./capture-capability.ts";
 import { CAPTURE_ROLE_BY_KIND } from "./capture-client-policy.ts";
 import {
+  type ActionDefinitionCheck,
+  CAPTURE_ITEM_SERVICE,
+  CAPTURE_ITEM_TYPE,
+  type CaptureCaller,
+  type CaptureGateDeps,
+  HOUR_MS,
+} from "./capture-gate/contract.ts";
+import { missingItem, requireId, requireOwner } from "./capture-gate/shared.ts";
+import {
+  auditedStep,
+  notifyActionProposed,
+  refuseAudited,
+  refuseConnectionFull,
+  refuseKindNotAllowed,
+  refuseQueueFull,
+  refuseUnaudited,
+  type SubmitContext,
+  type SubmitResult,
+  writeSubmittedCapture,
+} from "./capture-gate/submit-support.ts";
+import {
   assertAcceptable,
-  captureNativeStatus,
-  type NativeStatus,
   renderAcceptedItem,
   resolveLinkEndpoints,
-  revokeCaptureNative,
   writeCaptureNative,
 } from "./capture-native.ts";
-import type { CaptureAttemptLimiter, CaptureRefusalCounter } from "./capture-rate-limit.ts";
-import {
-  actionTypeOfPayload,
-  type CaptureListOrder,
-  type CaptureStore,
-  FINISHED_RETENTION_MS,
-} from "./capture-store.ts";
+import { FINISHED_RETENTION_MS } from "./capture-store.ts";
 import {
   type ActDeps,
   type ActionBasis,
-  type ActionPayload,
   type ActionVerdict,
   CaptureError,
-  type CaptureErrorCode,
-  type CaptureKind,
   type CaptureRow,
-  type CaptureState,
   isCaptureKind,
-  isCaptureState,
-  type LabelSource,
   type NativeValidatedCapture,
   NO_BASIS_CLASS,
   type ValidatedCapture,
@@ -54,6 +51,32 @@ import {
   validateCapturePayload,
 } from "./capture-validate.ts";
 
+// The gate's public surface is unchanged: the pieces that moved out are re-exported here, so every
+// importer (ipc/capture-rpc.ts, ipc/approvals-rpc.ts, the tests) keeps naming `capture-gate.ts`.
+export {
+  type ActionDefinitionCheck,
+  type ActionProposalRow,
+  CAPTURE_ITEM_SERVICE,
+  CAPTURE_ITEM_TYPE,
+  type CaptureCaller,
+  type CaptureDetail,
+  type CaptureGateDeps,
+  type CaptureMineView,
+  type CaptureStateView,
+  type CaptureStatus,
+  type CaptureSummary,
+} from "./capture-gate/contract.ts";
+export { purgeCapture, revokeCapture } from "./capture-gate/owner-verbs.ts";
+export {
+  captureMine,
+  captureStateFor,
+  captureStatus,
+  getCapture,
+  listActionProposals,
+  listCaptures,
+} from "./capture-gate/reads.ts";
+export type { SubmitResult } from "./capture-gate/submit-support.ts";
+
 /**
  * Invariant I28 — the ONE door by which content from an MCP client enters Nimbus (spec § 5).
  * Submit takes all four kinds: a note goes live at once, a decision/term/link is stored PROPOSED.
@@ -61,241 +84,9 @@ import {
  * callers of `submitCapture`/`revokeCapture`/`acceptCapture`/`rejectCapture`/`purgeCapture` to
  * `ipc/capture-rpc.ts`.
  */
-export const CAPTURE_ITEM_SERVICE = "nimbus";
-export const CAPTURE_ITEM_TYPE = "capture";
-const HOUR_MS = 3_600_000;
 const ATTEMPT_MULTIPLIER = 4;
-const LIST_LIMIT_DEFAULT = 50;
-const LIST_LIMIT_MAX = 200;
 /** Agent door AD2: how many unexpired proposed actions ONE connection may hold (never above `actionMaxPending`). */
 const PER_CONNECTION_ACTIONS = 3;
-const MINE_LIMIT = 50;
-const PROPOSALS_LIMIT = 200;
-
-export interface CaptureGateDeps {
-  readonly db: Database;
-  readonly store: CaptureStore;
-  capability(): CaptureCapability;
-  readonly limiter: CaptureAttemptLimiter;
-  readonly refusals: CaptureRefusalCounter;
-  newId(): string;
-  now(): number;
-  scheduleEmbedding?(itemId: string): void;
-  /** The act door's proposability verdict (spec § 7 step 5a). Absent → every action refuses. */
-  classifyAction?(actionType: string): ActionVerdict;
-  /** Whether the action's connector is configured on this machine (step 5b). Absent → refuses. */
-  isServiceConfigured?(service: string): Promise<boolean>;
-  /** The action types `capture.status` advertises as proposable now. */
-  listProposableActionTypes?(): Promise<readonly string[]>;
-  /**
-   * The act door's destination refusal (owner rulings OR1/OR2): a fixed reason when the proposed
-   * action posts to a channel ChatOps listens on, carries a broadcast mention or a GitLab quick
-   * action, else `undefined`. The SAME check the model door runs, injected by `ipc/capture-rpc.ts`
-   * (this module imports nothing from `connectors/`, D32(f)). Required, so a construction site
-   * that forgets it fails typecheck. Called at submit (step 5a) and again at accept.
-   */
-  actionDestinationRefusal(
-    actionType: string,
-    input: Readonly<Record<string, unknown>>,
-    basis: ActionBasis | undefined,
-  ): string | undefined;
-  /**
-   * The agent door's definition check (AD3a-2a, D-3): lists the action's connector ONCE and compares
-   * the approved tool's definition with the owner's approved hash. Called for an `approved` basis
-   * ONLY, and LAST (step 5c), so every other refusal is free of connector I/O. Absent: every
-   * `approved` proposal is refused (fail closed). Injected (this module imports nothing from
-   * `connectors/`, D32(f)).
-   */
-  verifyActionDefinition?(actionType: string, proposedAt?: number): Promise<ActionDefinitionCheck>;
-  /**
-   * Called once after an ACTION proposal is queued, with the number now waiting. A number and
-   * nothing else, so no request-derived string can reach the owner's toast. A throw is swallowed.
-   */
-  onActionProposed?(pending: number): void;
-}
-
-/** The answer of {@link CaptureGateDeps.verifyActionDefinition}. */
-export type ActionDefinitionCheck =
-  | { readonly ok: true }
-  | {
-      readonly ok: false;
-      readonly code: "ERR_AGENT_TOOL_SUSPENDED" | "ERR_CAPTURE_ACTION_NOT_PROPOSABLE";
-      readonly detail: string;
-    };
-
-export interface CaptureCaller {
-  readonly clientId: string;
-  readonly kind: ClientKind;
-}
-
-export interface CaptureSummary {
-  readonly id: string;
-  readonly kind: CaptureKind;
-  readonly state: CaptureState;
-  readonly title: string;
-  readonly clientLabel: string | null;
-  readonly createdAt: number;
-  readonly decidedAt: number | null;
-  readonly expiresAt: number | null;
-}
-
-export type CaptureDetail = CaptureSummary & {
-  readonly payload: unknown;
-  readonly payloadBytes: number;
-  readonly itemId: string | null;
-  readonly nativeRef: string | null;
-  readonly nativeStatus: NativeStatus | null;
-  readonly outcomeRef: string | null;
-  readonly errorCode: string | null;
-};
-
-export interface CaptureStatus {
-  readonly enabled: boolean;
-  readonly kinds: readonly CaptureKind[];
-  readonly pending: number;
-  readonly maxPending: number;
-  readonly maxPerHour: number;
-  readonly refusedSinceStart: Readonly<Record<string, number>>;
-  readonly actionEnabled: boolean;
-  readonly proposableActionTypes: readonly string[];
-  readonly actionPending: number;
-  readonly actionMaxPending: number;
-  readonly actionTtlHours: number;
-  readonly actionExpiringWithinHour: number;
-  readonly disabledReason?: string;
-}
-
-/** One of the caller's own captures (`capture.mine`): ids and states only, never a payload. */
-export interface CaptureMineView {
-  readonly id: string;
-  readonly kind: CaptureKind;
-  readonly state: CaptureState;
-  readonly createdAt: number;
-  readonly expiresAt?: number;
-  readonly outcomeRef?: string;
-  readonly errorCode?: string;
-}
-
-/** A waiting action proposal as the gate stores it; the RPC layer escapes the strings (once). */
-export interface ActionProposalRow {
-  readonly id: string;
-  readonly actionType: string;
-  readonly summary: string;
-  readonly clientLabel: string | null;
-  readonly labelSource: LabelSource;
-  readonly createdAt: number;
-  readonly expiresAt: number;
-}
-
-export interface CaptureStateView {
-  readonly kind: CaptureKind;
-  readonly state: CaptureState;
-  readonly expiresAt?: number;
-  readonly outcomeRef?: string;
-  readonly errorCode?: string;
-}
-
-// ---- helpers -------------------------------------------------------------------------------------
-
-function asRecord(v: unknown): Record<string, unknown> {
-  if (typeof v !== "object" || v === null || Array.isArray(v)) {
-    throw new CaptureError("ERR_CAPTURE_INVALID", "params must be an object");
-  }
-  return v as Record<string, unknown>;
-}
-
-/** Steps 1–3 refuse without an audit row: counted instead, so the attempt limit stays a bound. */
-function refuseUnaudited(deps: CaptureGateDeps, code: CaptureErrorCode, detail: string): never {
-  deps.refusals.bump(code);
-  throw new CaptureError(code, detail);
-}
-
-/** Steps 4–8 refuse WITH an audit row — their rate is bounded by step 3. */
-function refuseAudited(
-  deps: CaptureGateDeps,
-  caller: CaptureCaller,
-  kind: string,
-  clientLabel: string | null,
-  code: CaptureErrorCode,
-  detail: string,
-): never {
-  appendAuditEntry(deps.db, {
-    actionType: "capture.submit",
-    hitlStatus: "rejected",
-    actionJson: JSON.stringify({ kind, clientLabel, connection: caller.clientId, outcome: code }),
-    timestamp: deps.now(),
-    sessionId: caller.clientId,
-  });
-  throw new CaptureError(code, detail);
-}
-
-function requireOwner(caller: CaptureCaller): void {
-  if (CAPTURE_ROLE_BY_KIND[caller.kind] !== "owner") {
-    throw new CaptureError(
-      "ERR_CAPTURE_FORBIDDEN_CLIENT",
-      `a ${caller.kind} client cannot review captures`,
-    );
-  }
-}
-
-function requireId(raw: unknown): string {
-  if (typeof raw !== "string" || !raw.startsWith("cap_")) {
-    throw new CaptureError("ERR_CAPTURE_INVALID", "id must be a capture id (cap_…)");
-  }
-  return raw;
-}
-
-function missingItem(deps: CaptureGateDeps, ids: readonly string[]): string | undefined {
-  for (const id of ids) {
-    const exists = deps.db.query("SELECT 1 FROM item WHERE id = ?").get(id) !== null;
-    if (!exists) return id;
-    const st = deps.store.stateOfItem(id);
-    if (st !== undefined && st !== "live" && st !== "accepted") return id;
-  }
-  return undefined;
-}
-
-function titleOf(row: CaptureRow): string {
-  if (row.payloadJson === null) return "(revoked)";
-  const p = JSON.parse(row.payloadJson) as Record<string, unknown>;
-  if (row.kind === "action") {
-    const a = p as Partial<ActionPayload>;
-    return `${String(a.actionType)}: ${String(a.summary)}`.slice(0, 120);
-  }
-  if (row.kind === "link") {
-    const rel = typeof p["relation"] === "string" ? p["relation"] : "link";
-    const from = typeof p["fromItemId"] === "string" ? p["fromItemId"] : "";
-    const to = typeof p["toItemId"] === "string" ? p["toItemId"] : "";
-    return `${rel}: ${from} → ${to}`.slice(0, 120);
-  }
-  const t = p["title"] ?? p["statement"] ?? p["term"];
-  return typeof t === "string" ? t.slice(0, 120) : "";
-}
-
-function summarize(row: CaptureRow): CaptureSummary {
-  return {
-    id: row.id,
-    kind: row.kind,
-    state: row.state,
-    title: titleOf(row),
-    clientLabel: row.clientLabel,
-    createdAt: row.createdAt,
-    decidedAt: row.decidedAt,
-    expiresAt: row.expiresAt,
-  };
-}
-
-// ---- submit (spec § 5.1) -------------------------------------------------------------------------
-
-/** Who is submitting what, once step 4 has fixed the kind: every audited refusal names these. */
-interface SubmitContext {
-  readonly deps: CaptureGateDeps;
-  readonly caller: CaptureCaller;
-  readonly kind: CaptureKind;
-  readonly clientLabel: string | null;
-  /** Display only (D-AD-13): stored and shown, never read by a step of this gate. */
-  readonly labelSource: LabelSource;
-}
 
 type ActionCapture = Extract<ValidatedCapture, { readonly kind: "action" }>;
 
@@ -326,34 +117,6 @@ function requireSubmitParams(
     refuseAudited(deps, caller, "unknown", null, "ERR_CAPTURE_INVALID", "params must be an object");
   }
   return input as Record<string, unknown>;
-}
-
-function refuseKindNotAllowed(
-  deps: CaptureGateDeps,
-  caller: CaptureCaller,
-  kindRaw: unknown,
-  clientLabel: string | null,
-): never {
-  const kindName = typeof kindRaw === "string" ? kindRaw.slice(0, 20) : "unknown";
-  refuseAudited(
-    deps,
-    caller,
-    kindName,
-    clientLabel,
-    "ERR_CAPTURE_KIND_NOT_ALLOWED",
-    `kind ${kindName} is not enabled`,
-  );
-}
-
-/** Runs one step; a `CaptureError` it throws becomes an audited refusal, anything else rethrows. */
-function auditedStep<T>(ctx: SubmitContext, step: () => T): T {
-  try {
-    return step();
-  } catch (e) {
-    if (e instanceof CaptureError)
-      refuseAudited(ctx.deps, ctx.caller, ctx.kind, ctx.clientLabel, e.code, e.message);
-    throw e;
-  }
 }
 
 /**
@@ -504,39 +267,6 @@ async function requireDefinitionVerified(
   }
 }
 
-/** Step 8b's refusal: this connection already holds its share of the action queue (AD2). */
-function refuseConnectionFull(ctx: SubmitContext, held: number): never {
-  refuseAudited(
-    ctx.deps,
-    ctx.caller,
-    ctx.kind,
-    ctx.clientLabel,
-    "ERR_CAPTURE_QUEUE_FULL",
-    `this connection already has ${String(held)} proposed actions waiting for the owner`,
-  );
-}
-
-/** Step 8's refusal: the action queue or the native-proposal queue is full. */
-function refuseQueueFull(ctx: SubmitContext, v: ValidatedCapture, cap: CaptureCapability): never {
-  refuseAudited(
-    ctx.deps,
-    ctx.caller,
-    ctx.kind,
-    ctx.clientLabel,
-    "ERR_CAPTURE_QUEUE_FULL",
-    v.kind === "action"
-      ? `${String(cap.config.actionMaxPending)} proposed actions already await the owner`
-      : `the review queue is full (${String(cap.config.maxPending)} proposals await the owner)`,
-  );
-}
-
-/** What `submitCapture` returns. */
-export type SubmitResult = {
-  id: string;
-  state: CaptureState;
-  expiresAt?: number;
-};
-
 export async function submitCapture(
   deps: CaptureGateDeps,
   caller: CaptureCaller,
@@ -629,216 +359,6 @@ export async function submitCapture(
   const written = writeSubmittedCapture(ctx, v, cap, now, basis);
   if (v.kind === "action") notifyActionProposed(deps, now);
   return written;
-}
-
-/** The count-only hook: after commit, and a failing toast never fails a submit. */
-function notifyActionProposed(deps: CaptureGateDeps, now: number): void {
-  try {
-    deps.onActionProposed?.(deps.store.countPendingActions(now));
-  } catch {
-    // a missed notification loses nothing: `nimbus approvals` and `nimbus doctor` show the queue
-  }
-}
-
-/**
- * Steps 9 + 10: one transaction — capture row, item (notes only), audit. An audit failure rolls all
- * of it back. A proposal gets no item, no native row and no embedding until accept (spec § 4.3).
- */
-function writeSubmittedCapture(
-  ctx: SubmitContext,
-  v: ValidatedCapture,
-  cap: CaptureCapability,
-  now: number,
-  basis: ActionBasis | undefined,
-): SubmitResult {
-  const { deps, caller, kind, clientLabel, labelSource } = ctx;
-  const proposal = v.kind !== "note";
-  const id = deps.newId();
-  const itemId = proposal ? null : itemPrimaryKey(CAPTURE_ITEM_SERVICE, id);
-  const payloadJson = JSON.stringify(v.payload);
-  const payloadBytes = Buffer.byteLength(payloadJson, "utf8");
-  const state: CaptureState = proposal ? "proposed" : "live";
-  const expiresAt = v.kind === "action" ? now + cap.config.actionTtlHours * HOUR_MS : null;
-  deps.db.transaction(() => {
-    deps.store.insert({
-      id,
-      kind,
-      state,
-      itemId,
-      payloadJson,
-      payloadBytes,
-      clientLabel,
-      labelSource,
-      sessionId: caller.clientId,
-      createdAt: now,
-      expiresAt,
-    });
-    if (v.kind === "note") {
-      const payload = v.payload;
-      upsertIndexedItem(deps.db, {
-        service: CAPTURE_ITEM_SERVICE,
-        type: CAPTURE_ITEM_TYPE,
-        externalId: id,
-        title: payload.title,
-        body: payload.body,
-        modifiedAt: now,
-        syncedAt: now,
-        metadata: {
-          captureKind: kind,
-          captureId: id,
-          agentAuthored: true,
-          clientLabel,
-          tags: payload.tags,
-          relatesTo: payload.relatesTo,
-        },
-      });
-    }
-    appendAuditEntry(deps.db, {
-      actionType: "capture.submit",
-      hitlStatus: "not_required",
-      actionJson: JSON.stringify({
-        captureId: id,
-        kind,
-        ...(v.kind === "action" ? { actionType: v.payload.actionType } : {}),
-        ...(v.kind === "action" && basis !== undefined ? { basis } : {}),
-        payloadBytes,
-        clientLabel,
-        // AD4 (OR-AD-20): the submitting connection's id, so a report can count connections per label.
-        connection: caller.clientId,
-        outcome: proposal ? "proposed" : "captured",
-      }),
-      timestamp: now,
-      sessionId: caller.clientId,
-    });
-  })();
-  if (itemId !== null) deps.scheduleEmbedding?.(itemId);
-  if (expiresAt === null) return { id, state };
-  return { id, state, expiresAt };
-}
-
-// ---- revoke (spec § 5.3) -------------------------------------------------------------------------
-
-export function revokeCapture(
-  deps: CaptureGateDeps,
-  caller: CaptureCaller,
-  idRaw: unknown,
-): { id: string; state: "revoked" } {
-  requireOwner(caller);
-  const id = requireId(idRaw);
-  const row = deps.store.get(id);
-  if (row === undefined) throw new CaptureError("ERR_CAPTURE_NOT_FOUND", `no capture ${id}`);
-  if (row.kind === "action") {
-    throw new CaptureError(
-      "ERR_CAPTURE_STATE",
-      "an executed action cannot be undone; reject a proposed one with `nimbus captures reject`",
-    );
-  }
-  if (row.state === "revoked") return { id, state: "revoked" };
-  if (row.state !== "live" && row.state !== "accepted") {
-    throw new CaptureError(
-      "ERR_CAPTURE_STATE",
-      `capture ${id} is ${row.state}; only a live note or an accepted capture can be revoked`,
-    );
-  }
-  const from = row.state;
-  const now = deps.now();
-  let won = false;
-  deps.db.transaction(() => {
-    won = deps.store.markRevoked(id, from, now);
-    if (!won) return; // lost a race to another revoke: nothing to write
-    if (from === "accepted" && row.nativeRef !== null) {
-      revokeCaptureNative(
-        deps.db,
-        { id, kind: row.kind, nativeRef: row.nativeRef },
-        deps.store.countAcceptedWithNativeRef(row.nativeRef, id) > 0,
-      );
-    }
-    if (row.itemId !== null) {
-      // No evidence row may keep pointing at an item that is about to disappear (spec § 5.3).
-      deleteEvidenceCitingItem(deps.db, row.itemId);
-      deleteItemByPrimaryKey(deps.db, row.itemId);
-    }
-    appendAuditEntry(deps.db, {
-      actionType: "capture.revoke",
-      hitlStatus: "not_required",
-      actionJson: JSON.stringify({
-        captureId: id,
-        kind: row.kind,
-        nativeRef: row.nativeRef,
-        outcome: "revoked",
-      }),
-      timestamp: now,
-      sessionId: caller.clientId,
-    });
-  })();
-  if (!won && deps.store.get(id)?.state !== "revoked") {
-    throw new CaptureError("ERR_CAPTURE_STATE", `capture ${id} changed state concurrently`);
-  }
-  return { id, state: "revoked" };
-}
-
-// ---- purge (an action row's owner deletion path) -------------------------------------------------
-
-/** Action states with no further transition: the only ones `purgeCapture` deletes. */
-const PURGEABLE_ACTION_STATES: ReadonlySet<CaptureState> = new Set([
-  "executed",
-  "failed",
-  "rejected",
-  "expired",
-]);
-
-/**
- * Delete a FINISHED action capture's row, and with it the agent's verbatim input. Revoke cannot do
- * this: an action has no `revoked` state and V69 ties a NULL payload to that state. What it does
- * NOT do, by construction: undo the action (it already ran, or never will), or remove the executor's
- * own redacted audit row for it — the audit chain is append-only. No capability check, like reject:
- * the owner can always delete what is stored about them.
- */
-export function purgeCapture(
-  deps: CaptureGateDeps,
-  caller: CaptureCaller,
-  idRaw: unknown,
-): { id: string; state: "purged" } {
-  requireOwner(caller);
-  const id = requireId(idRaw);
-  const row = deps.store.get(id);
-  if (row === undefined) throw new CaptureError("ERR_CAPTURE_NOT_FOUND", `no capture ${id}`);
-  if (row.kind !== "action") {
-    throw new CaptureError(
-      "ERR_CAPTURE_STATE",
-      `capture ${id} is a ${row.kind}; only an action is purged — use \`nimbus captures revoke\``,
-    );
-  }
-  if (!PURGEABLE_ACTION_STATES.has(row.state)) {
-    throw new CaptureError(
-      "ERR_CAPTURE_STATE",
-      row.state === "proposed"
-        ? `capture ${id} is proposed; reject it with \`nimbus captures reject\` first`
-        : `capture ${id} is ${row.state}; only a finished action can be purged`,
-    );
-  }
-  const now = deps.now();
-  let won = false;
-  deps.db.transaction(() => {
-    won = deps.store.deleteFinishedAction(id, row.state);
-    if (!won) return;
-    appendAuditEntry(deps.db, {
-      actionType: "capture.purge",
-      hitlStatus: "not_required",
-      // Never the payload: removing it is the point.
-      actionJson: JSON.stringify({
-        captureId: id,
-        kind: row.kind,
-        actionType: actionTypeOfPayload(row.payloadJson),
-        priorState: row.state,
-        outcome: "purged",
-      }),
-      timestamp: now,
-      sessionId: caller.clientId,
-    });
-  })();
-  if (!won) throw new CaptureError("ERR_CAPTURE_STATE", `capture ${id} changed state concurrently`);
-  return { id, state: "purged" };
 }
 
 // ---- accept / reject (spec § 5.2) ---------------------------------------------------------------
@@ -972,191 +492,3 @@ export function rejectCapture(
 }
 
 // ---- owner reads ---------------------------------------------------------------------------------
-
-export function listCaptures(
-  deps: CaptureGateDeps,
-  caller: CaptureCaller,
-  paramsRaw: unknown,
-): { captures: CaptureSummary[] } {
-  requireOwner(caller);
-  expireDueActionsAudited(deps, deps.now(), caller.clientId);
-  const p = paramsRaw === undefined ? {} : asRecord(paramsRaw);
-  const state = p["state"];
-  const kind = p["kind"];
-  const order = p["order"];
-  const limit = p["limit"] ?? LIST_LIMIT_DEFAULT;
-  if (state !== undefined && !isCaptureState(state))
-    throw new CaptureError("ERR_CAPTURE_INVALID", "unknown state");
-  if (kind !== undefined && !isCaptureKind(kind))
-    throw new CaptureError("ERR_CAPTURE_INVALID", "unknown kind");
-  if (order !== undefined && order !== "asc" && order !== "desc")
-    throw new CaptureError("ERR_CAPTURE_INVALID", "order must be asc or desc");
-  if (
-    typeof limit !== "number" ||
-    !Number.isInteger(limit) ||
-    limit < 1 ||
-    limit > LIST_LIMIT_MAX
-  ) {
-    throw new CaptureError(
-      "ERR_CAPTURE_INVALID",
-      `limit must be an integer 1..${String(LIST_LIMIT_MAX)}`,
-    );
-  }
-  const filter: {
-    state?: CaptureState;
-    kind?: CaptureKind;
-    limit: number;
-    order?: CaptureListOrder;
-  } = { limit };
-  if (state !== undefined) filter.state = state;
-  if (kind !== undefined) filter.kind = kind;
-  if (order !== undefined) filter.order = order;
-  return { captures: deps.store.list(filter).map(summarize) };
-}
-
-export function getCapture(
-  deps: CaptureGateDeps,
-  caller: CaptureCaller,
-  idRaw: unknown,
-): CaptureDetail {
-  requireOwner(caller);
-  expireDueActionsAudited(deps, deps.now(), caller.clientId);
-  const id = requireId(idRaw);
-  const row = deps.store.get(id);
-  if (row === undefined) throw new CaptureError("ERR_CAPTURE_NOT_FOUND", `no capture ${id}`);
-  return {
-    ...summarize(row),
-    payload: row.payloadJson === null ? null : (JSON.parse(row.payloadJson) as unknown),
-    payloadBytes: row.payloadBytes,
-    itemId: row.itemId,
-    nativeRef: row.nativeRef,
-    nativeStatus:
-      row.state === "accepted" && row.nativeRef !== null
-        ? captureNativeStatus(deps.db, { id: row.id, kind: row.kind, nativeRef: row.nativeRef })
-        : null,
-    outcomeRef: row.outcomeRef,
-    errorCode: row.errorCode,
-  };
-}
-
-/** `capture.state` (spec § 10): the agent polls a capture whose id it holds — never its payload. */
-export function captureStateFor(
-  deps: CaptureGateDeps,
-  caller: CaptureCaller,
-  idRaw: unknown,
-): CaptureStateView {
-  if (CAPTURE_ROLE_BY_KIND[caller.kind] !== "submit") {
-    throw new CaptureError(
-      "ERR_CAPTURE_FORBIDDEN_CLIENT",
-      "capture.state is for MCP clients; the owner uses captures.get",
-    );
-  }
-  const id = requireId(idRaw);
-  expireDueActionsAudited(deps, deps.now(), caller.clientId);
-  const row = deps.store.get(id);
-  // Agent door AD2 (D-AD-11): a row another connection submitted answers exactly like an absent id,
-  // so the answer is no oracle for another agent's ids.
-  if (row === undefined || row.sessionId !== caller.clientId) {
-    throw new CaptureError("ERR_CAPTURE_NOT_FOUND", `no capture ${id}`);
-  }
-  return {
-    kind: row.kind,
-    state: row.state,
-    ...(row.expiresAt === null ? {} : { expiresAt: row.expiresAt }),
-    ...(row.outcomeRef === null ? {} : { outcomeRef: row.outcomeRef }),
-    ...(row.errorCode === null ? {} : { errorCode: row.errorCode }),
-  };
-}
-
-/** `capture.mine`: the asking connection's own captures, newest first. State only, never a payload. */
-export function captureMine(
-  deps: CaptureGateDeps,
-  caller: CaptureCaller,
-): { captures: CaptureMineView[] } {
-  if (CAPTURE_ROLE_BY_KIND[caller.kind] !== "submit") {
-    throw new CaptureError(
-      "ERR_CAPTURE_FORBIDDEN_CLIENT",
-      "capture.mine is for MCP clients; the owner uses captures.list",
-    );
-  }
-  expireDueActionsAudited(deps, deps.now(), caller.clientId);
-  const captures = deps.store.listBySession(caller.clientId, MINE_LIMIT).map(
-    (row): CaptureMineView => ({
-      id: row.id,
-      kind: row.kind,
-      state: row.state,
-      createdAt: row.createdAt,
-      ...(row.expiresAt === null ? {} : { expiresAt: row.expiresAt }),
-      ...(row.outcomeRef === null ? {} : { outcomeRef: row.outcomeRef }),
-      ...(row.errorCode === null ? {} : { errorCode: row.errorCode }),
-    }),
-  );
-  return { captures };
-}
-
-/**
- * The owner's queue of waiting action proposals, oldest first (`approvals.list`). Raw strings: the
- * RPC layer escapes them once. A row whose payload does not parse is skipped, never thrown.
- */
-export function listActionProposals(
-  deps: CaptureGateDeps,
-  caller: CaptureCaller,
-): { proposals: ActionProposalRow[] } {
-  requireOwner(caller);
-  expireDueActionsAudited(deps, deps.now(), caller.clientId);
-  const rows = deps.store.list({
-    state: "proposed",
-    kind: "action",
-    order: "asc",
-    limit: PROPOSALS_LIMIT,
-  });
-  const proposals: ActionProposalRow[] = [];
-  for (const row of rows) {
-    const p = parseActionPayload(row);
-    if (p === undefined || row.expiresAt === null) continue;
-    proposals.push({
-      id: row.id,
-      actionType: p.actionType,
-      summary: p.summary,
-      clientLabel: row.clientLabel,
-      createdAt: row.createdAt,
-      expiresAt: row.expiresAt,
-      labelSource: row.labelSource,
-    });
-  }
-  return { proposals };
-}
-
-function parseActionPayload(row: CaptureRow): ActionPayload | undefined {
-  if (row.payloadJson === null) return undefined;
-  try {
-    const p = JSON.parse(row.payloadJson) as Partial<ActionPayload>;
-    return typeof p.actionType === "string" && typeof p.summary === "string"
-      ? (p as ActionPayload)
-      : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-export async function captureStatus(deps: CaptureGateDeps): Promise<CaptureStatus> {
-  const now = deps.now();
-  expireDueActionsAudited(deps, now, "capture-status");
-  const cap = deps.capability();
-  const types = cap.actionEnabled ? ((await deps.listProposableActionTypes?.()) ?? []) : [];
-  const base = {
-    enabled: cap.enabled,
-    kinds: cap.enabled ? cap.kinds : [],
-    pending: deps.store.countPendingNative(),
-    maxPending: cap.config.maxPending,
-    maxPerHour: cap.config.maxPerHour,
-    refusedSinceStart: deps.refusals.snapshot(),
-    actionEnabled: cap.actionEnabled,
-    proposableActionTypes: types.slice(0, 200),
-    actionPending: deps.store.countPendingActions(now),
-    actionExpiringWithinHour: deps.store.countPendingActionsExpiringBy(now, now + HOUR_MS),
-    actionMaxPending: cap.config.actionMaxPending,
-    actionTtlHours: cap.config.actionTtlHours,
-  };
-  return cap.enabled ? base : { ...base, disabledReason: cap.reason };
-}

@@ -16,6 +16,9 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
       "packages/gateway/src/ipc/capture-rpc.ts",
       "packages/gateway/src/mcp-sink/capture-act.ts",
       "packages/gateway/src/mcp-sink/capture-gate.ts",
+      "packages/gateway/src/mcp-sink/capture-gate/contract.ts",
+      "packages/gateway/src/mcp-sink/capture-gate/reads.ts",
+      "packages/gateway/src/mcp-sink/capture-gate/submit-support.ts",
       "packages/gateway/src/mcp-sink/capture-store.ts",
       "packages/gateway/src/mcp-sink/capture-types.ts",
     ]);
@@ -25,6 +28,9 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
       /^(readonly labelSource: LabelSource;|labelSource,|labelSource: (row|proposer|p)\.labelSource,|const labelSource = sanitizeLabelSource\(params\["labelSource"\], clientLabel\);|const ctx: SubmitContext = \{ deps, caller, kind: kindRaw, clientLabel, labelSource \};|const \{ deps, caller, kind, clientLabel, labelSource \} = ctx;|proposer\?: Pick<AgentProposer, "door" \| "captureId" \| "label" \| "labelSource">;)$/;
     for (const rel of [
       "mcp-sink/capture-gate.ts",
+      "mcp-sink/capture-gate/contract.ts",
+      "mcp-sink/capture-gate/reads.ts",
+      "mcp-sink/capture-gate/submit-support.ts",
       "mcp-sink/capture-act.ts",
       "engine/executor.ts",
     ]) {
@@ -427,7 +433,7 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
   });
 
   test("AD2: capture.state answers only its submitter, and APPROVER_BY_KIND is cli and ui", async () => {
-    const gate = stripComments(await read("packages/gateway/src/mcp-sink/capture-gate.ts"));
+    const gate = stripComments(await read("packages/gateway/src/mcp-sink/capture-gate/reads.ts"));
     expect(gate).toContain("row.sessionId !== caller.clientId");
     const { APPROVER_BY_KIND } = await import("../mcp-sink/capture-client-policy.ts");
     expect(
@@ -436,5 +442,22 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
         .map(([k]) => k)
         .sort((a, b) => a.localeCompare(b)),
     ).toEqual(["cli", "ui"]);
+  });
+
+  test("the gate's split modules (mcp-sink/capture-gate/) name no ChatOps module, no approval store and no connectors import, and every one is read", async () => {
+    const mods = await readDirFiles("packages/gateway/src/mcp-sink/capture-gate");
+    expect(mods.map((m) => m.rel.split("/").pop()).sort()).toEqual([
+      "contract.ts",
+      "owner-verbs.ts",
+      "reads.ts",
+      "shared.ts",
+      "submit-support.ts",
+    ]);
+    for (const { rel, contents } of mods) {
+      const src = stripComments(contents);
+      expect(src.toLowerCase().includes("chatops"), rel).toBe(false);
+      expect(src, rel).not.toMatch(/door-approval-store|listDoorApprovals|getDoorApproval/);
+      expect(src, rel).not.toMatch(/from "(?:\.\.\/)+connectors\//);
+    }
   });
 });

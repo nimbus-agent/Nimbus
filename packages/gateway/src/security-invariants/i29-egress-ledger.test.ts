@@ -1023,8 +1023,7 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     expect(src).toMatch(
       /proposer:\s*\{\s*door:\s*proposer\.door,\s*captureId:\s*proposer\.captureId,\s*label:\s*proposer\.label,\s*labelSource:\s*proposer\.labelSource,\s*\},\s*\.\.\.others,/,
     );
-    // The three sub-step sites pass the parent's attribution in their scope.
-    expect(src.split("...subStepAttribution(action, scope)").length - 1).toBe(3);
+    expect(src.split("...subStepAttribution(action, scope)").length - 1).toBe(3); // the three sub-step sites pass the parent's attribution
   });
 
   test("AD4: the agent: source prefix is written only by egress-record.ts and read only by the proof reader", async () => {
@@ -1051,9 +1050,10 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
   });
 
   test("AD4: the submit and accept rows carry the label and the SUBMITTING connection's id inside their hashed JSON", async () => {
-    const gate = stripComments(await read("packages/gateway/src/mcp-sink/capture-gate.ts"));
+    const sink = "packages/gateway/src/mcp-sink/";
+    const gate = stripComments(await read(`${sink}capture-gate/submit-support.ts`));
     expect(gate).toContain("connection: caller.clientId,");
-    const act = stripComments(await read("packages/gateway/src/mcp-sink/capture-act.ts"));
+    const act = stripComments(await read(`${sink}capture-act.ts`));
     expect(act).toContain('door: "agent",');
     expect(act).toContain("clientLabel: row.clientLabel,");
     expect(act).toContain("connection: row.sessionId,");

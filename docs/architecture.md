@@ -3331,7 +3331,7 @@ and value; nothing is clamped.
 
 **Static D32** has seven clauses; the first three arrived with PR 1, (d) with PR 2 and (e)–(g) with PR 3 (each described below): (a) the `capture` table identifier only in `capture-store.ts` and
 the V67 SQL module; (b) `submitCapture`/`acceptCapture`/`rejectCapture`/`revokeCapture` named only in
-`ipc/capture-rpc.ts`, `ipc/approvals-rpc.ts` (Phase 28 AD2) and `capture-gate.ts`; (c) `capture-gate.ts` value-imported (or re-exported, or
+`ipc/capture-rpc.ts`, `ipc/approvals-rpc.ts` (Phase 28 AD2), `capture-gate.ts` and `capture-gate/owner-verbs.ts` (the revoke and purge definitions); (c) `capture-gate.ts` value-imported (or re-exported, or
 dynamically imported) by no gateway module except those two RPC modules.
 
 **Not shipped, and recorded as such.** The desktop has a Captures page (2026-10-16) but it is read-only: it lists and shows captures, and accepting, rejecting, revoking and purging happen only in a terminal (an action proposal is approved there with `nimbus approvals <id>`). Opening it runs the same action-expiry sweep `captures.list` always runs, so an overdue proposed action can turn `expired` (with its `capture.action.expire` audit row) just as it does under `nimbus captures list`. Batch accept (`nimbus captures accept --all`, 2026-10-16) is a CLI loop over `captures.list` and `captures.accept` with no gateway method of its own; it takes decisions, terms and links only, never an action. `data.delete --service nimbus` removes
@@ -3383,7 +3383,7 @@ than by `PRAGMA foreign_key_check`, so an orphan that pre-dates V68 is dropped i
 
 **Static D32(d)** (`agent-provenance-writers`) confines the four agent-row writers (`insertAgentDecision`,
 `deleteAgentDecision`, `upsertAgentTerm`, `deleteAgentTerm`) to their definitions and `capture-native.ts`, and
-`writeCaptureNative`/`revokeCaptureNative` to `capture-native.ts` and `capture-gate.ts`. It confines writer
+`writeCaptureNative`/`revokeCaptureNative` to `capture-native.ts`, `capture-gate.ts` and `capture-gate/owner-verbs.ts`. It confines writer
 FUNCTIONS rather than a SQL `'agent'` literal, because a literal scan cannot tell `SET definition_source =
 'agent'` from a guard such as `NOT IN ('manual','agent')`. Bound: a hand-written SQL write evades it, so
 capability confinement is the real defense.
