@@ -107,7 +107,7 @@ describe("I35 — computer-use actuation only inside an approved envelope", () =
     // `engine/agent.ts`. Removing the capability is the fix rather than a third static rule over
     // it: a layer that cannot NAME a lane constructor cannot construct one, and that holds for code
     // nobody has written yet.
-    const gate = await read("packages/gateway/src/computer-use/cu-gate.ts");
+    const gate = await read("packages/gateway/src/computer-use/cu-gate/types.ts");
     // Sliced to the END OF THE DECLARATION, not to the next named interface. It used to run to
     // `export interface CuGateDeps`, which silently widened to cover everything declared in
     // between — and the moment the per-lane seam groups landed there, the slice contained the very
@@ -141,19 +141,19 @@ describe("I35 — computer-use actuation only inside an approved envelope", () =
     // The gate now builds ONE launch policy, asserts it, and passes the SAME binding to
     // `openLane`; the driver spawns its `argv` verbatim.
     const gate = stripComments(await read("packages/gateway/src/computer-use/cu-gate.ts"));
-    expect(gate).not.toContain("browserLanePolicy");
-    // The gate never probes the runner itself. The TERMINAL lane's assertion IS `canConfine`, but
-    // it is reached through the injected `assertLaunchable` seam, which is what keeps this file
-    // free of both the PAL and `cu-lanes/`.
-    expect(gate).not.toContain("canConfine");
-
-    // PER LANE, and asserted as the PROPERTY rather than as one lane's literal source line: each
-    // lane builds ONE launch policy, asserts THAT binding, and carries it to `openLane` on the
-    // `PreparedLane` it returns. Pinning a source string instead made this test fail the moment
-    // the seams were grouped per lane, even though the property it exists to protect was intact.
+    // Lane preparation moved to `cu-gate/prepare-lane.ts`; the negatives cover every gate module.
+    const sib = (n: string) => read(`packages/gateway/src/computer-use/cu-gate/${n}.ts`);
+    const prepare = stripComments(await sib("prepare-lane"));
+    const others = ["action-audit", "browser-input", "kinds", "live-sessions", "types"].map(sib);
+    for (const src of [gate, prepare, ...(await Promise.all(others)).map(stripComments)]) {
+      expect(src).not.toContain("browserLanePolicy");
+      // The terminal lane's `canConfine` is reached only through the injected `assertLaunchable`.
+      expect(src).not.toContain("canConfine");
+    }
+    // PER LANE, as the PROPERTY (each lane builds ONE policy, asserts it, and carries it to `openLane`).
     for (const lane of ["browser", "terminal"]) {
-      expect(gate).toContain(`deps.lanes.${lane}.buildLaunchPolicy(`);
-      expect(gate).toContain(`deps.lanes.${lane}.assertLaunchable(launch)`);
+      expect(prepare).toContain(`deps.lanes.${lane}.buildLaunchPolicy(`);
+      expect(prepare).toContain(`deps.lanes.${lane}.assertLaunchable(launch)`);
     }
     // The SAME binding, not a rebuild: both `openLane` calls take the prepared object. A
     // `buildLaunchPolicy` call inside an `openLane` argument would typecheck and silently

@@ -368,7 +368,7 @@ Everything else follows the standard triple. These break from it in a way worth 
 | `packages/cli/src/commands/prove.ts` | `nimbus prove "<query>"` + `nimbus egress [verify\|prune]` CLI |
 | `packages/gateway/src/index/egress-ledger-v44-sql.ts` | V44 `egress_ledger` migration SQL |
 | `packages/gateway/src/exec/exec-gate.ts` | `runExecution` — invariant `I33`/`D23` sole sandboxed-code-execution path (config + policy refusal BEFORE consent, `canConfine(policy)`, read-once body, `network: []` by construction) |
-| `packages/gateway/src/computer-use/cu-gate.ts` | `runAction` / `openSession` — invariant `I35`/`D26` computer-use chokepoint; branch count IS the ordered gate sequence, so refactor by PHASE, never suppress |
+| `packages/gateway/src/computer-use/cu-gate.ts` | `runAction` / `openSession` — invariant `I35`/`D26` computer-use chokepoint; branch count IS the ordered gate sequence, so refactor by PHASE, never suppress; supporting modules (types, lane preparation, live sessions, audit mapping) in `computer-use/cu-gate/`, and both `performActuation` calls stay in `cu-gate.ts` |
 | `packages/gateway/src/computer-use/cu-lanes/*` | The `browser` (raw CDP, no dependency) and `terminal` (pipe-backed shell) lane drivers — `D26(b)`/`D26(c)`; the browser lane is confined by Chromium's own sandbox, NOT `SandboxRunner` |
 | `packages/gateway/src/multimodal/media-gate.ts` | `understandArtifact` — invariant `I37`/`D27` local-vs-remote decision; locality DERIVED from `provider.isLocal` (`I34`), never a caller flag |
 | `packages/gateway/src/multimodal/media-grant-store.ts` | `createGrant` / `hasActiveGrant` — the SOLE writer of the V59 `media_grant` table (`D27(b)`); REFUSES an `av`-modality row, which is one of the two mechanisms keeping audio/video local |
