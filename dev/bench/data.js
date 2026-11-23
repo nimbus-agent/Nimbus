@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795450096498,
+  "lastUpdate": 1795450608216,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "c98cc510a3f70d3ab2d05e38fc20bec1a253b5dd",
-          "message": "chore: release main (#1484)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.16.0</summary>\n\n##\n[7.16.0](https://github.com/nimbus-agent/Nimbus/compare/v7.15.1...v7.16.0)\n(2026-09-10)\n\n\n### Features\n\n* **toolgen:** draft a tool body and its input schema, and bind\ncredentials at create time\n([#1481](https://github.com/nimbus-agent/Nimbus/issues/1481))\n([ecd1a04](https://github.com/nimbus-agent/Nimbus/commit/ecd1a04f8c8f47032992b2475cd67334f8afe0dd))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-09-10T09:32:23+03:00",
-          "tree_id": "67ca68b3951113757d53e1401673199aadb546f7",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/c98cc510a3f70d3ab2d05e38fc20bec1a253b5dd"
-        },
-        "date": 1789022674664,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 353.47221590000333,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 353.54145415001113,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 181.4103001499996,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "adc2007ca2205f23331d53f97c265a1649a12f3e",
+          "message": "test(gateway): real tests for platform/assemble federation, policy, team-credential, ChatOps and extension-observation boots (#2105)\n\n## What\n\nReal tests for five of the 18 boot helpers PR #2098 moved into\n`packages/gateway/src/platform/assemble/`. They kept the coverage\nexemption `assemble.ts` had; this PR gives them tests so a follow-up can\nremove it. **Tests only, no source change.**\n\n## Coverage (Istanbul lcov, the way CI measures it; not Bun's own\nreporter)\n\n\"Before\" is what the existing `assemble.test.ts` and\n`chatops-agent-invoker-boot.test.ts` give these files (measured on their\nown). \"After\" is the new test files on their own (the existing tests\nonly add to it). Floor: 85% line and 80% branch.\n\n| module | lines before | lines after | branches before | branches after\n|\n| --- | --- | --- | --- | --- |\n| `federation-boot.ts` | 42/106 (40%) | 103/106 (97%) | 9/50 (18%) |\n42/50 (84%) |\n| `policy-identity-boot.ts` | 18/43 (42%) | 42/43 (98%) | 2/10 (20%) |\n10/10 (100%) |\n| `team-credentials.ts` | 8/25 (32%) | 24/25 (96%) | 3/16 (19%) | 14/16\n(88%) |\n| `chatops-boot.ts` | 35/50 (70%) | 46/50 (92%) | 35/54 (65%) | 53/54\n(98%) |\n| `extension-observation.ts` | 5/12 (42%) | 11/12 (92%) | no branches |\nno branches |\n\nEvery module is over the floor. None needs a source seam.\n\n## What each test file covers\n\n- `federation-boot.test.ts`: pure helpers; `bindFederationBroadcasts`\nreaches the owner through all four request brokers; the boot against a\nreal loopback LAN server (port 0): wiring into the IPC options, `[lan]\nmin_protocol`, stops that release the listener, the team vault's quorum\nand connector allowlist, the fail-closed secret check, peer resolution\n(paired id, canonical 32-byte key, garbage and non-canonical spellings\nrefused), forward deps (stored share rebuilt, queued pending forwards,\naudit append).\n- `federation-boot.wire.test.ts`: a second gateway pairs over the real\nwire and calls the closures the boot handed the LAN server: share\nreceive (signed accepted, tampered refused, inert), delegated approval,\nGDPR purge (approved revokes the peer's grants and signs a record;\ndenied deletes nothing), inbound preflight (grant, local command, owner\napproval, denial), the I18 operator-validity guard (unbooted holder\nrefuses, live session serves, expired session refuses again), and\ndrain-on-pair (delivered once the peer pairs; a refused delivery stays\nqueued).\n- `policy-identity-boot.test.ts`: I22 gate boot (ungoverned allows all\nand audits nothing; a stored policy blocks and audits each other\nconnector, tightens retention, reads live; local `[hitl.quorum]`\nbaseline), identity boot into the IPC and HTTP options, and the policy\nRPC context (show, trust, refetch with no bundle / valid / bad\nsignature, sign, purge with grant revocation and numbered jobs, fail\nclosed for an unknown user).\n- `team-credentials.test.ts`: credential selection, I22 allowlist\npass-through, the local-operator list and write paths (no entry, other\nservice, drained pages through the warehouse sink, missing secret\nrefused before any spawn, unsupported service), and the late-bound I18\nguard (unbooted, populated later, expired, grace, non-active status).\n- `chatops-boot.test.ts` and `chatops-boot.assembly.test.ts`: the\non-call push and watcher-notice settlement, the agent-invoker binding,\nthe local-owner consent leg through the real broker, and the real\n`bootChatopsIntoAssembly` (disabled, demo boot policy, Teams surface\nonly with an app id, tribal rebinding, the pinned watcher channel under\nI23/I22 including the ledger row, and identity mapping for a chat user).\n- `extension-observation.test.ts`: directory creation and its failure,\nthe boot pass ingesting a real window file, the undeclared-lookup\nnotification, rejection of an uninstalled extension, and a throwing\nnotification service.\n\n## Verification\n\n- Mutation checks: flipping the unbooted-identity guard to \"valid\" in\n`federation-boot.ts` fails the wire test; the same flip in\n`team-credentials.ts` fails three tests. Both were reverted.\n- `bun run typecheck`, `bun run typecheck:tests` (0 new), the new tests,\n`bun test packages/gateway/src/security-invariants` (676 pass), `bun run\naudit:file-size` (none grew; each new file is under 500 lines).\n- No `mock.module`. The one environment variable the tests set\n(`NIMBUS_LAN_PORT=0`, `NIMBUS_CHATOPS_E2E_SINK_DIR`,\n`NIMBUS_WAREHOUSE_E2E_SINK_DIR`) is restored in `afterEach`. No pin in\n`packages/gateway/src/security-invariants/` was touched.\n\n## Not in this PR\n\nThe exemptions in `scripts/coverage-floor/exclusions.ts` and\n`sonar-project.properties` are removed in one follow-up PR once the\nthree parallel test PRs have merged.\n\n## Docs\n\nCLAUDE.md, GEMINI.md, roadmap, architecture, docs/README and\ncli-reference are unchanged: no behaviour, schema, IPC method, invariant\nor command changed; this adds tests only.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrGFPLqt8C3Ybzk2dHq\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Tests**\n* Expanded automated coverage for ChatOps, federation, policy and\nidentity, team credentials, and extension observation.\n* Added checks for boot and cleanup behavior, access controls, identity\nand session validation, sharing and forwarding, audit outcomes, and\nfailure handling.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Sonnet 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-23T16:02:02Z",
+          "tree_id": "fe59b7616a8dc2be1ce8ff8d9e623c3940e77ddc",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/adc2007ca2205f23331d53f97c265a1649a12f3e"
+        },
+        "date": 1795450604491,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 179.7132559000025,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 177.93383115000432,
             "unit": "ms"
           }
         ]
