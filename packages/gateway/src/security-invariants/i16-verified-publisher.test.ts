@@ -2,8 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { read } from "../../test/helpers/security-invariants.ts";
 
 describe("I16 — Verified-publisher invariant", () => {
-  test("static: install-from-local.ts and verify-extensions.ts both call verifyManifestSignature", async () => {
-    const install = await read("packages/gateway/src/extensions/install-from-local.ts");
+  test("static: install-from-local/copy-and-verify.ts and verify-extensions.ts both call verifyManifestSignature", async () => {
+    const install = await read(
+      "packages/gateway/src/extensions/install-from-local/copy-and-verify.ts",
+    );
     const verify = await read("packages/gateway/src/extensions/verify-extensions.ts");
     expect(install).toContain("verifyManifestSignature(");
     expect(verify).toContain("verifyManifestSignature(");

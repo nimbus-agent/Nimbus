@@ -127,7 +127,7 @@ Install and run are **different consents**. Install records what arrived; a run 
 
 **Run states** (`extensions/run-state.ts`'s `extensionRunState`, cheap — no re-hash): `disabled` → `no_grant` → `grant_stale` (grant's version or tree digest ≠ row's) → `running` (mesh holds a live client, consulted LAST) / `ready`.
 
-**I16** (`extensions/verify-extensions.ts`, `install-from-local.ts`): a `publisher` manifest is verified with `verifyManifestSignature` (from `@nimbus-dev/sdk`, re-exported by `extensions/verify-signature.ts`); the pubkey lives only at Vault key `extension.publisher_key.<id>`. A failure flips `enabled = 0` and records the reason in `SignatureDisabledRegistry` (`extensions/hard-disable.ts`), which `extension list|info` render. `(unverified)` means "no publisher", not "failed".
+**I16** (`extensions/verify-extensions.ts`, `install-from-local/copy-and-verify.ts`; the install door stays `install-from-local.ts`): a `publisher` manifest is verified with `verifyManifestSignature` (from `@nimbus-dev/sdk`, re-exported by `extensions/verify-signature.ts`); the pubkey lives only at Vault key `extension.publisher_key.<id>`. A failure flips `enabled = 0` and records the reason in `SignatureDisabledRegistry` (`extensions/hard-disable.ts`), which `extension list|info` render. `(unverified)` means "no publisher", not "failed".
 
 **Static D33** (`scripts/structure-audit/check-nimbus-invariants.ts`):
 
@@ -196,7 +196,7 @@ Flow: `nimbus scaffold extension <name> [--publisher <id>]` (a publishable templ
 | `packages/gateway/src/extensions/spawn-env.ts` | `extensionProcessEnv` (I1) |
 | `packages/gateway/src/extensions/{extension-runtime,verified-extension,extension-stage,run-extension-entry}.ts` | I43 spawn path |
 | `packages/gateway/src/extensions/{approve-run,run-grant-store,extension-run-grants,run-grant-env,run-grant-error,run-state,extension-service-id}.ts` | run grants |
-| `packages/gateway/src/extensions/{install-from-local,verify-extensions,hard-disable,tree-digest}.ts` | install, I16, digest |
+| `packages/gateway/src/extensions/{install-from-local,verify-extensions,hard-disable,tree-digest}.ts` + `install-from-local/*.ts` | install door, I16 (`copy-and-verify.ts`), plan install, digest |
 | `packages/gateway/src/connectors/{owner-code-server,user-mcp-store,user-mcp-registration,user-mcp-model-capability,registry}.ts` | I42 helpers + dispatcher check |
 | `packages/gateway/src/platform/spawn-capture.ts` · `scripts/audit/check-windows-console-hide.ts` | hidden spawns (D25, `audit:windows-console`) |
 | `scripts/structure-audit/check-nimbus-invariants.ts` | D10, D25, D33 |

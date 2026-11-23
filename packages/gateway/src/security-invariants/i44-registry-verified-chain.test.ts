@@ -17,6 +17,8 @@ const signTrustStatementDyn = async (
   seed: Uint8Array,
 ) => (await import("@nimbus-dev/registry-format")).signTrustStatement(s, seed);
 
+const readExt = async (rel: string) =>
+  stripComments(await read(`packages/gateway/src/extensions/${rel}`));
 describe("I44 — registry-sourced extension code arrives only through the verified chain, from its source registry", () => {
   // Real local-folder registries built by the shared fixture, a real migrated database, the real
   // installer and the real update runtime. A local registry makes no network request, so nothing
@@ -399,16 +401,13 @@ describe("I44 — registry-sourced extension code arrives only through the verif
     expect(installBody).toMatch(/sourceRegistry: reg\.name,/);
     // ...and inside it the I16 signature of the COPIED manifest is re-verified against that key
     // before the extension row is written: the install lands only after verification.
-    const local = stripComments(
-      await read("packages/gateway/src/extensions/install-from-local.ts"),
-    );
-    const afterCopy = local.slice(
-      local.indexOf("async function completeExtensionInstallAfterCopy("),
-    );
+    const copySrc = await readExt("install-from-local/copy-and-verify.ts");
+    const [, afterCopy = ""] = copySrc.split("async function completeExtensionInstallAfterCopy(");
     const reverifyAt = afterCopy.indexOf("await verifyAndRecordSignature(options, destManifest");
     const rowAt = afterCopy.indexOf("insertExtensionRow(options.db,");
     expect(reverifyAt).toBeGreaterThan(-1);
     expect(rowAt).toBeGreaterThan(reverifyAt);
+    const local = await readExt("install-from-local/plan-install.ts");
     // The plan installer: every installed registry package's entry hash (each dependency against
     // its index entry, the root against expectedRootEntryHash) is checked before the edges and the
     // audit row are recorded, and any failure rolls back every package the plan created.
@@ -501,12 +500,10 @@ describe("I44 — registry-sourced extension code arrives only through the verif
       .map((f) => f.rel)
       .sort();
     expect(setSourceCallers).toEqual([
-      "extensions/install-from-local.ts",
+      "extensions/install-from-local/plan-install.ts",
       "extensions/registry/install-from-registry.ts",
     ]);
-    const localSrc = stripComments(
-      await read("packages/gateway/src/extensions/install-from-local.ts"),
-    );
+    const localSrc = await readExt("install-from-local/plan-install.ts");
     expect(localSrc.match(/\bsetExtensionSource\(/g)).toHaveLength(1);
     const stagedDepFn = localSrc.slice(localSrc.indexOf("async function installStagedDependency("));
     expect(stagedDepFn.slice(0, stagedDepFn.indexOf("\n}\n"))).toMatch(
@@ -514,11 +511,13 @@ describe("I44 — registry-sourced extension code arrives only through the verif
     );
     // `StagedDependency` is a structural type and `registryPlan` an option, so what makes the
     // dependency source write above verified-chain-only is WHO can hand the plan installer a
-    // resolver: only the registry installer names `registryPlan` (besides install-from-local.ts,
-    // which declares and reads it) or the resolver factory (besides its defining module).
+    // resolver: only the registry installer names `registryPlan` (besides the install-from-local
+    // modules below, which declare and read it) or the resolver factory (besides its defining module).
     const production = files.filter((f) => !f.rel.endsWith(".test.ts"));
+    const localModules =
+      /^extensions\/install-from-local(\/(approval-request|plan-install|promotion|solver-inputs|types))?\.ts$/;
     const namingPlan = production
-      .filter((f) => f.rel !== "extensions/install-from-local.ts")
+      .filter((f) => !localModules.test(f.rel))
       .filter((f) => /\bregistryPlan\b/.test(stripComments(f.contents)))
       .map((f) => f.rel);
     expect(namingPlan).toEqual(["extensions/registry/install-from-registry.ts"]);
@@ -904,12 +903,12 @@ describe("I44 — registry-sourced extension code arrives only through the verif
   });
 
   test("source pin: installExtensionFromLocalDirectory asks the owner before anything is staged", async () => {
-    const local = stripComments(
-      await read("packages/gateway/src/extensions/install-from-local.ts"),
+    const doorSrc = await readExt("install-from-local.ts");
+    const [, door = ""] = doorSrc.split(
+      "export async function installExtensionFromLocalDirectory(",
     );
-    const doorAt = local.indexOf("export async function installExtensionFromLocalDirectory(");
-    expect(doorAt).toBeGreaterThan(-1);
-    const door = local.slice(doorAt);
+    expect(door).not.toBe("");
+    const local = await readExt("install-from-local/plan-install.ts");
     const askAt = door.indexOf("await requireInstallApproval(");
     const installAt = door.indexOf("await installApprovedPlan(");
     expect(askAt).toBeGreaterThan(-1);
@@ -945,6 +944,7 @@ describe("I44 — registry-sourced extension code arrives only through the verif
       .sort();
     expect(namingHalf).toEqual([
       "extensions/install-from-local.ts",
+      "extensions/install-from-local/plan-install.ts",
       "extensions/registry/install-from-registry.ts",
     ]);
     const registrySrc = stripComments(

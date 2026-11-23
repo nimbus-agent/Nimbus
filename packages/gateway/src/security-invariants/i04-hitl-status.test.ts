@@ -17,7 +17,7 @@ describe("I4 — hitlStatus is consent-output-only in production paths", () => {
   const APPROVED_ROW_IS_EARNED: ReadonlyMap<string, string> = new Map([
     ["packages/gateway/src/egress/egress-prune.ts", "egress.prune ∈ HITL_REQUIRED (I2 frozen set)"],
     [
-      "packages/gateway/src/extensions/install-from-local.ts",
+      "packages/gateway/src/extensions/install-from-local/plan-install.ts",
       "extension.install_complete records the executor-gated extension.install approval (approve hook)",
     ],
     [
