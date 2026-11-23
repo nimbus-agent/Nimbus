@@ -1231,7 +1231,7 @@ nimbus cost anomalies --service vantage --json
 
 | Flag | Description |
 |---|---|
-| `--service <id>` | One cost service (`vantage` today). Omit it for every indexed cost service. |
+| `--service <id>` | One cost service (`vantage`, `opencost` or `kubecost`). Omit it for every indexed cost service. |
 | `--days <1-30>` | Judge each of the newest N complete UTC days, each against its own baseline (default 1). |
 | `--json` | Print the result object (`status`, `judgedDayMs`, `daysChecked`, `baseline`, `thresholds`, `counts`, `anomalies`, `anomaliesTruncated`, `gaps`) on one line, with the same exit codes. |
 
@@ -1253,7 +1253,7 @@ nimbus cost waste --service vantage --json
 
 | Flag | Description |
 |---|---|
-| `--service <id>` | One cost service (`vantage` today). Omit it for every indexed cost service. |
+| `--service <id>` | One cost service (`vantage`, `opencost` or `kubecost`). Omit it for every indexed cost service. |
 | `--kind <kind>` | List only one kind: `unattached`, `idle`, `orphaned_snapshot` or `empty_environment`. The waste count still covers every kind. |
 | `--json` | Print the result object (`status`, `lastSyncedMs`, `counts`, `byKind`, `totals`, `candidates`, `candidatesTruncated`, `gaps`) on one line, with the same exit codes. |
 
@@ -3338,7 +3338,7 @@ Use this for scripts and headless environments; `nimbus tui` is the richer alter
 
 ### `[finops]` (Phase 10 FO2)
 
-Limits for the FinOps cost data the Vantage sync indexes (`nimbus config explain finops.max_series`). A bad value falls back to that key's own default and `nimbus config explain` names it; nothing is clamped.
+Limits for the FinOps cost data the Vantage, OpenCost and Kubecost syncs index (`nimbus config explain finops.max_series`). A bad value falls back to that key's own default and `nimbus config explain` names it; nothing is clamped.
 
 | Key | Default | Range |
 |---|---|---|
@@ -3348,6 +3348,8 @@ Limits for the FinOps cost data the Vantage sync indexes (`nimbus config explain
 | `[finops] anomaly_min_amount` | `10` | 0 to 1000000000 (a plain decimal): ... and only when it also exceeds the baseline by this much, in the series' currency |
 
 The data comes from `vantage.api_token` (set with `nimbus vault set vantage.api_token`; every 6 hours the sync reads 45 days on the first run, then from three days before the last success). `vantage.group_by` is a comma-separated grouping (default `provider,service,account_id`); a `tag:` entry is refused because where Vantage returns a tag value is undocumented. `nimbus connector auth vantage` prints the keys.
+
+**OpenCost and Kubecost** (owner ruling OR-S4-FINOPS, 2026-11-23). The data comes from your own cluster service: `nimbus vault set opencost.url http://opencost.opencost.svc:9003` (or `kubecost.url`, default port 9090; reach it with a port-forward or an ingress, Nimbus never starts one). `<service>.token` (optional) is sent as a bearer token, and the connector refuses it over plain `http` unless the host is loopback; `<service>.cluster` (optional) labels the series so a second cluster stays apart; `<service>.aggregate` (optional) is `namespace` (default) or `controller`. Every 6 hours the sync reads the Allocation API (`GET /allocation` for OpenCost, `GET /model/allocation` for Kubecost) for 45 days on the first run, then from three days before the last success, one row per namespace (or controller) per UTC day (`opencost:cost_allocation`, `kubecost:cost_allocation`), through the same roll-up as Vantage (`[finops] max_series`, `[finops] retain_days`, the last three days provisional). The total cost is the API's `totalCost` (CPU, RAM, GPU, volumes, network, load balancers, shared and external cost); idle cost is not requested. The rows carry no currency, since neither API reports one, and are never embedded. The one host and port you stored is the only network the connector gets; on Windows a sandboxed connector cannot reach a service on this machine (a loopback port-forward), so expose it on a cluster-reachable address. `nimbus cost anomalies --service opencost` and `--service kubecost` read the same series. The Allocation reply shapes were written from the projects' documentation and are not verified against a running instance.
 
 ### `nimbus connector auth <service>`
 
@@ -3439,6 +3441,8 @@ nimbus connector auth zoom           # OAuth 3-legged PKCE — opens browser
 | `databricks` | `databricks.host`, `databricks.token` |
 | `mlflow` | `mlflow.host`, `mlflow.token` |
 | `vantage` | `vantage.api_token` (required; a Read-scope token is enough), `vantage.cost_report_token`, `vantage.workspace_token`, `vantage.group_by` (optional; see `[finops]`) |
+| `opencost` | `opencost.url` (required), `opencost.token`, `opencost.cluster`, `opencost.aggregate` (optional; see `[finops]`) |
+| `kubecost` | `kubecost.url` (required), `kubecost.token`, `kubecost.cluster`, `kubecost.aggregate` (optional; see `[finops]`) |
 | `vercel` | `vercel.token`, `vercel.team_id` |
 | `netlify` | `netlify.token` |
 | `stripe` | `stripe.api_key` |
