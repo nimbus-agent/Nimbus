@@ -27,6 +27,7 @@ import { TRIGGER_SERVICES } from "../incident/trigger-sources.ts";
 import type { ServiceConfig } from "../metrics/dora-config.ts";
 import { RunbookError, type Runbooks } from "../runbook/runbook-run.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
+import { undoOrLatest } from "./incident-undo.ts";
 import type { ClientKind } from "./server/client-kind.ts";
 
 /**
@@ -40,7 +41,7 @@ import type { ClientKind } from "./server/client-kind.ts";
  *   incident.proposals { id }                          -> { recordId, version, advisory, proposals, unavailable }  (IC5a)
  *   incident.remediate { id, proposalId }              -> { proposalId, actionId, status, reason?, nonHuman, undoable }  (IC5a)
  *   incident.dryRun { id, proposalId }                 -> { proposalId, toolId, before, prediction, label }  (Phase 17 dry run)
- *   incident.undo { actionId }                         -> { actionId, status, reason?, nonHuman }  (IC5a)
+ *   incident.undo { actionId? }                        -> { actionId, status, reason?, nonHuman }  (IC5a; no actionId: the latest undoable one, V106)
  *   incident.advisory {}                               -> { advisory }  (IC5a)
  *   incident.advisorySet { on }                        -> { advisory }  (IC5a)
  *   incident.debt { since?, untouched?, minIncidents?, limit? } -> DebtResult   (IC7b; runs `git log` under debt/, never from incident/)
@@ -618,14 +619,6 @@ function parseProposalId(method: string, p: Record<string, unknown>): string {
   return raw;
 }
 
-function parseActionId(p: Record<string, unknown>): string {
-  const raw = p["actionId"];
-  if (typeof raw !== "string" || raw === "" || raw.length > 64) {
-    throw new IncidentRpcError(-32602, "incident.undo: actionId must be a non-empty string");
-  }
-  return raw;
-}
-
 function callerClient(method: string, caller: IncidentRpcCaller): string {
   if (caller.clientId === undefined || caller.clientId === "") {
     throw new IncidentRpcError(-32602, `${method}: no connection to ask the owner on`);
@@ -697,9 +690,9 @@ export async function dispatchIncidentRpc(
     "incident.undo": async (raw) => {
       requireOwnerKind(caller.kind);
       const p = requireKeys("incident.undo", raw, ["actionId"]);
-      const actionId = parseActionId(p);
+      const actionId = p["actionId"];
       const clientId = callerClient("incident.undo", caller);
-      return remediationCall(() => remediationOf(ctx).undo({ actionId, clientId }));
+      return remediationCall(() => undoOrLatest(remediationOf(ctx), ctx.db, actionId, clientId));
     },
     "incident.runbooks": async (raw) => {
       requireOwnerKind(caller.kind);

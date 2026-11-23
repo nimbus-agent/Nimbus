@@ -51,7 +51,6 @@ import { V31_EXTENSION_DEPENDENCY_SQL } from "../extension-dependency-v31-sql.ts
 import { EXTENSION_KIND_V79_SQL } from "../extension-kind-v79-sql.ts";
 import { EXTENSION_OBSERVATION_NOTICE_V82_SQL } from "../extension-observation-notice-v82-sql.ts";
 import { EXTENSION_OBSERVATION_V81_SQL } from "../extension-observation-v81-sql.ts";
-import { EXTENSION_PROVENANCE_V105_SQL } from "../extension-provenance-v105-sql.ts";
 import { EXTENSION_REGISTRY_V71_SQL } from "../extension-registry-v71-sql.ts";
 import { EXTENSION_RUN_GRANT_CREDENTIALS_V72_SQL } from "../extension-run-grant-credentials-v72-sql.ts";
 import { EXTENSION_RUN_GRANT_V70_SQL } from "../extension-run-grant-v70-sql.ts";
@@ -140,6 +139,7 @@ import { WORKFLOW_IMPORT_V101_SQL } from "../workflow-import-v101-sql.ts";
 import { WORKFLOW_RUN_COLUMNS_V23_SQL } from "../workflow-run-columns-v23-sql.ts";
 import { WORKFLOW_SCHEDULE_V89_SQL } from "../workflow-schedule-v89-sql.ts";
 import { WORKFLOW_V9_MIGRATION_SQL } from "../workflow-v9-sql.ts";
+import { migrateIndexedV104ToV105, migrateIndexedV105ToV106 } from "./column-steps.ts";
 
 const MIGRATIONS_LEDGER_SQL = `
 CREATE TABLE IF NOT EXISTS _schema_migrations (
@@ -304,27 +304,6 @@ function migrateIndexedV97ToV98(db: Database, now: number): void {
     }
     dbExec(db, "PRAGMA user_version = 98");
     recordMigration(db, 98, "user MCP write directories (Phase 28 AD5b)", now);
-  })();
-}
-
-function extensionHasColumn(db: Database, columnName: string): boolean {
-  const rows = db.query("PRAGMA table_info(extension)").all() as Array<{ name: string }>;
-  return rows.some((r) => r.name === columnName);
-}
-
-/**
- * V105 - `extension.provenance_json` and `extension.provenance_bundle` (offline provenance
- * re-verification, slice 2; I51). Each column guarded by a probe, as V98 is.
- */
-function migrateIndexedV104ToV105(db: Database, now: number): void {
-  db.transaction(() => {
-    const [jsonSql, bundleSql] = EXTENSION_PROVENANCE_V105_SQL;
-    if (jsonSql !== undefined && !extensionHasColumn(db, "provenance_json")) dbExec(db, jsonSql);
-    if (bundleSql !== undefined && !extensionHasColumn(db, "provenance_bundle")) {
-      dbExec(db, bundleSql);
-    }
-    dbExec(db, "PRAGMA user_version = 105");
-    recordMigration(db, 105, "installed extension provenance and Sigstore bundle", now);
   })();
 }
 
@@ -951,6 +930,7 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
   ),
   simpleStep(103, 104, "incident runbook step state (Phase 10 IC6)", INCIDENT_RUNBOOK_V104_SQL),
   { fromVersion: 104, toVersion: 105, apply: migrateIndexedV104ToV105 },
+  { fromVersion: 105, toVersion: 106, apply: migrateIndexedV105ToV106 },
 ];
 
 /**

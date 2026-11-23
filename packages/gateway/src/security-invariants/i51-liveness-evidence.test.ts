@@ -286,7 +286,7 @@ describe("I51 — liveness and baseline evidence is inert", () => {
       "automation/extension-store.ts", // clears it on every version change, never reads it
       "extensions/registry/installed-provenance.ts",
       "index/extension-provenance-v105-sql.ts",
-      "index/migrations/runner.ts",
+      "index/migrations/column-steps.ts",
     ]);
     // Calls, not names: an import left behind after a call is removed must not satisfy the pin.
     only(/\b(?:readInstalledProvenance|reverifyInstalledProvenance)\s*\(/, [

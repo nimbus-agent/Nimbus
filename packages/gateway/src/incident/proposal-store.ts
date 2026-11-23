@@ -60,6 +60,8 @@ export type ProposalRow = {
   readonly captured_json: string | null;
   readonly undo_status: UndoStatus | null;
   readonly undone_at_ms: number | null;
+  /** When the action finished running (V106); null for a proposal that never ran or an older undone one. */
+  readonly executed_at_ms: number | null;
 };
 
 export type SyncOutcome = {
@@ -219,9 +221,16 @@ export function finishProposal(
   return (
     dbRun(
       db,
-      `UPDATE incident_proposal SET status = ?, updated_at_ms = ?, captured_json = ?
+      `UPDATE incident_proposal
+          SET status = ?, updated_at_ms = ?, captured_json = ?, executed_at_ms = ?
         WHERE id = ? AND status = 'executing'`,
-      [to, nowMs, captured === undefined ? null : JSON.stringify(captured), id],
+      [
+        to,
+        nowMs,
+        captured === undefined ? null : JSON.stringify(captured),
+        to === "executed" ? nowMs : null,
+        id,
+      ],
     ).changes === 1
   );
 }
@@ -235,6 +244,22 @@ export function supersedeProposal(db: Database, id: string, nowMs: number): bool
       [nowMs, id],
     ).changes === 1
   );
+}
+
+/**
+ * The executed, not-yet-undone actions that kept a before-state, newest run first (V106 `executed_at_ms`; the
+ * action id breaks a tie). `nimbus incident undo` with no id walks this list and takes the first one whose row
+ * is declared reversible; it is a READ and decides nothing by itself.
+ */
+export function listUndoCandidates(db: Database, limit: number): ProposalRow[] {
+  return db
+    .query(
+      `SELECT * FROM incident_proposal
+        WHERE status = 'executed' AND undo_status IS NULL AND action_id IS NOT NULL
+          AND captured_json IS NOT NULL AND executed_at_ms IS NOT NULL
+        ORDER BY executed_at_ms DESC, action_id DESC LIMIT ?`,
+    )
+    .all(limit) as ProposalRow[];
 }
 
 /** Take the single undo of an executed action: `executed` with no undo yet to `undoing`. False if not claimable. */

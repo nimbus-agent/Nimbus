@@ -1265,6 +1265,14 @@ ALTER TABLE builtin_registry_state ADD COLUMN last_index_sha256 TEXT;
 ALTER TABLE extension ADD COLUMN publisher_key_fingerprint TEXT;
 ALTER TABLE extension_run_grant ADD COLUMN trust_ack_json TEXT NOT NULL DEFAULT '[]';
 
+-- V106 -- `incident_proposal.executed_at_ms`: the stable time an action finished running (2026-11-23;
+-- `nimbus incident undo` with no id). Set once by `finishProposal` when a claimed proposal becomes
+-- `executed`; NULL for a proposal that never ran and for an executed row from before V106 that was
+-- already undone. Backfilled from `updated_at_ms` for executed rows with no undo. Written only by
+-- `incident/proposal-store.ts` (static D46(c)). Authoritative source:
+-- packages/gateway/src/index/incident-executed-at-v106-sql.ts
+ALTER TABLE incident_proposal ADD COLUMN executed_at_ms INTEGER;
+
 -- V105 -- installed copies carry their offline-verified build provenance (2026-11-18; offline
 -- provenance re-verification, slice 2; I51 bound 6). `provenance_json`: what a registry install showed
 -- ({ v: 1, version, registry, packageSha256, provenance, recheck?, checkedAt }); read only for the

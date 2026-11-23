@@ -10,9 +10,9 @@ const columns = (db: Database): ColRow[] =>
   db.query("PRAGMA table_info(extension)").all() as ColRow[];
 
 describe("V105 extension provenance columns (offline provenance re-verification, slice 2)", () => {
-  test("the schema constant and the registered chain end at 105", () => {
-    expect(CURRENT_SCHEMA_VERSION).toBe(105);
-    expect(maxRegisteredIndexedSchemaVersion()).toBe(105);
+  test("the registered chain reaches 105 and the constant is at least 105", () => {
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(105);
+    expect(maxRegisteredIndexedSchemaVersion()).toBeGreaterThanOrEqual(105);
   });
 
   test("a fresh database has both columns, nullable with no default", () => {
