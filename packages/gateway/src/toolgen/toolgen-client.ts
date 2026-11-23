@@ -107,8 +107,8 @@ export function ioFromSpawnedChild<Err extends "pipe" | "inherit" | "ignore" = "
 
   return {
     writeLine: (line) => {
-      child.stdin.write(`${line}\n`);
-      child.stdin.flush();
+      void child.stdin.write(`${line}\n`);
+      void child.stdin.flush();
     },
     onStdoutData: (cb) => {
       onData = cb;

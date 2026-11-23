@@ -84,11 +84,8 @@ export function startMetricsServer(getDb: () => Database, port: number): Metrics
     port: actualPort,
     stop(): void {
       unregisterListener();
-      try {
-        server.stop();
-      } catch {
-        /* ignore */
-      }
+      // Called now, as before; a synchronous throw or a rejection of the returned promise is ignored.
+      Promise.try(() => server.stop()).catch(() => {});
     },
   };
 }

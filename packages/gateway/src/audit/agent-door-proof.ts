@@ -283,8 +283,8 @@ function scanAudit(db: Database, w: Window, visit: (r: AuditRow) => boolean): vo
 
 /** Stream every `task` row in the reserved `agent:` range of `w` (served by `idx_egress_ledger_source`). */
 function scanEgress(db: Database, w: Window, visit: (r: EgressRow) => boolean): void {
-  const upper = `${AGENT_SOURCE_PREFIX.slice(0, -1)}${String.fromCharCode(
-    AGENT_SOURCE_PREFIX.charCodeAt(AGENT_SOURCE_PREFIX.length - 1) + 1,
+  const upper = `${AGENT_SOURCE_PREFIX.slice(0, -1)}${String.fromCodePoint(
+    (AGENT_SOURCE_PREFIX.codePointAt(AGENT_SOURCE_PREFIX.length - 1) as number) + 1,
   )}`;
   const stmt = db.query<
     {

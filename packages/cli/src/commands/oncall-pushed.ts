@@ -251,12 +251,18 @@ async function runPushedRemediate(
   }
 }
 
+/** No terminal: the default when the caller passes none. */
+const NO_TTY: { readonly stdin: boolean; readonly stdout: boolean } = Object.freeze({
+  stdin: false,
+  stdout: false,
+});
+
 export async function runOncallPushedWith(
   c: OncallPushedIpc,
   a: OncallPushedArgs,
   sink: OncallPushedSink,
   demo: boolean,
-  tty: { readonly stdin: boolean; readonly stdout: boolean } = { stdin: false, stdout: false },
+  tty: { readonly stdin: boolean; readonly stdout: boolean } = NO_TTY,
 ): Promise<number> {
   try {
     if (a.mode === "one" && a.remediate === true) {

@@ -6,7 +6,11 @@ import {
 } from "../connectors/connector-sync-test-helpers.ts";
 import { upsertOncallShift } from "../connectors/oncall-shift-items.ts";
 import { LocalIndex } from "../index/local-index.ts";
-import { createOncallNowTool, ONCALL_NOW_TOOL_MAX_SERVICE_CHARS } from "./oncall-now-tool.ts";
+import {
+  createOncallNowTool,
+  ONCALL_NOW_TOOL_MAX_SERVICE_CHARS,
+  withheld,
+} from "./oncall-now-tool.ts";
 
 const origFetch = globalThis.fetch;
 
@@ -122,5 +126,28 @@ describe("oncall_now tool", () => {
     const tool = createOncallNowTool({ localIndex, serviceConfigs: () => [] });
     await run(tool, {});
     expect(db.query("SELECT total_changes() AS n").get()).toEqual(before);
+  });
+});
+
+describe("withheld equals the former e-mail regex", () => {
+  const former = (s: string): string => s.replace(/([^\s@]+)@[^\s@]+/g, "$1");
+
+  test("every string of up to 7 characters over name, @, ASCII and Unicode spaces and a lone surrogate", () => {
+    const alphabet = ["a", "@", " ", "\u00a0", "\n", "\ud83d"];
+    let level = [""];
+    for (let len = 1; len <= 7; len += 1) {
+      level = level.flatMap((p) => alphabet.map((c) => p + c));
+      for (const s of level) {
+        if (withheld(s) !== former(s)) expect([s, withheld(s)]).toEqual([s, former(s)]);
+      }
+    }
+  });
+
+  test("examples, and a long run with no domain stays linear", () => {
+    expect(withheld("bob@acme.com and p@q.io, x@ @y a@b@c@d")).toBe("bob and p x@ @y a@c");
+    const long = `${"a".repeat(200_000)}@`;
+    const t0 = performance.now();
+    expect(withheld(long)).toBe(long);
+    expect(performance.now() - t0).toBeLessThan(1000);
   });
 });

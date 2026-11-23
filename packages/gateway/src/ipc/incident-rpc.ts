@@ -726,12 +726,12 @@ export async function dispatchIncidentRpc(
       const step = parseStep("incident.runbookDone", p);
       return await runbookCall(() => runbooksOf(ctx).done({ ref: id, runbook, step }));
     },
-    "incident.advisory": async (raw) => {
+    "incident.advisory": (raw) => {
       requireOwnerKind(caller.kind);
       requireKeys("incident.advisory", raw, []);
       return { advisory: remediationOf(ctx).advisory() };
     },
-    "incident.advisorySet": async (raw) => {
+    "incident.advisorySet": (raw) => {
       requireOwnerKind(caller.kind);
       const p = requireKeys("incident.advisorySet", raw, ["on"]);
       if (typeof p["on"] !== "boolean") {

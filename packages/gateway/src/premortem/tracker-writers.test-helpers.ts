@@ -83,16 +83,17 @@ export async function seedJiraViaSync(
     ...boundTestCapabilities(db, vault, "jira"),
   };
   const realFetch = globalThis.fetch;
-  globalThis.fetch = (async (input2: unknown): Promise<Response> => {
-    const url = typeof input2 === "string" ? input2 : String((input2 as { url?: string }).url);
-    if (url.includes("/rest/api/3/search")) {
-      return new Response(
-        JSON.stringify({ issues, startAt: 0, maxResults: 50, total: issues.length }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      );
-    }
-    return new Response("{}", { status: 200 });
-  }) as unknown as typeof fetch;
+  globalThis.fetch = ((input2: unknown): Promise<Response> =>
+    Promise.try(() => {
+      const url = typeof input2 === "string" ? input2 : String((input2 as { url?: string }).url);
+      if (url.includes("/rest/api/3/search")) {
+        return new Response(
+          JSON.stringify({ issues, startAt: 0, maxResults: 50, total: issues.length }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response("{}", { status: 200 });
+    })) as unknown as typeof fetch;
   try {
     const cursor = encodeNimbusJsonCursor("nimbus-jra1:", {
       v: 1,
@@ -182,38 +183,39 @@ export async function seedLinearViaSync(
   };
   // A limiter that never waits: this seeds fixtures, it does not test the token bucket.
   (ctx as { rateLimiter: unknown }).rateLimiter = {
-    acquire: async () => undefined,
-    tryAcquire: async () => true,
+    acquire: () => Promise.resolve(undefined),
+    tryAcquire: () => Promise.resolve(true),
     penalise: () => undefined,
   };
   const realFetch = globalThis.fetch;
-  globalThis.fetch = (async (_input: unknown, init?: { body?: unknown }): Promise<Response> => {
-    const req = JSON.parse(String(init?.body)) as { query: string };
-    if (req.query === PROJECTS_QUERY) {
+  globalThis.fetch = ((_input: unknown, init?: { body?: unknown }): Promise<Response> =>
+    Promise.try(() => {
+      const req = JSON.parse(String(init?.body)) as { query: string };
+      if (req.query === PROJECTS_QUERY) {
+        return new Response(
+          JSON.stringify({
+            data: {
+              projects: {
+                nodes: input.projects.map(linearProjectNode),
+                pageInfo: { hasNextPage: false, endCursor: null },
+              },
+            },
+          }),
+          { status: 200 },
+        );
+      }
       return new Response(
         JSON.stringify({
           data: {
-            projects: {
-              nodes: input.projects.map(linearProjectNode),
+            issues: {
+              nodes: (input.issues ?? []).map(linearIssueNode),
               pageInfo: { hasNextPage: false, endCursor: null },
             },
           },
         }),
         { status: 200 },
       );
-    }
-    return new Response(
-      JSON.stringify({
-        data: {
-          issues: {
-            nodes: (input.issues ?? []).map(linearIssueNode),
-            pageInfo: { hasNextPage: false, endCursor: null },
-          },
-        },
-      }),
-      { status: 200 },
-    );
-  }) as unknown as typeof fetch;
+    })) as unknown as typeof fetch;
   try {
     // A fresh snapshot attempt, so only the issue and project requests are made.
     const cursor = encodeNimbusJsonCursor("nimbus-lnr1:", {
