@@ -237,7 +237,7 @@
     "packages/gateway/src/engine/executor-iac-rows.test.ts": 562,
     "packages/gateway/src/engine/executor-incident-link.test.ts": 835,
     "packages/gateway/src/engine/executor.agent-proof.test.ts": 557,
-    "packages/gateway/src/engine/executor.ts": 2460,
+    "packages/gateway/src/engine/executor.ts": 1957,
     "packages/gateway/src/engine/iac-settle.test.ts": 939,
     "packages/gateway/src/engine/iac-settle.ts": 506,
     "packages/gateway/src/engine/negation-tools.test.ts": 508,

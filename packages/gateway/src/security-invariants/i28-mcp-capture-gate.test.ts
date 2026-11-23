@@ -9,7 +9,7 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
     );
     expect(files).toEqual([
       "packages/gateway/src/audit/agent-door-proof.ts",
-      "packages/gateway/src/engine/executor.ts",
+      "packages/gateway/src/engine/executor/audit-shape.ts",
       "packages/gateway/src/engine/proposer-block.ts",
       "packages/gateway/src/engine/types.ts",
       "packages/gateway/src/ipc/approvals-rpc.ts",
@@ -32,7 +32,7 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
       "mcp-sink/capture-gate/reads.ts",
       "mcp-sink/capture-gate/submit-support.ts",
       "mcp-sink/capture-act.ts",
-      "engine/executor.ts",
+      "engine/executor/audit-shape.ts",
     ]) {
       const src = stripComments(await read(`packages/gateway/src/${rel}`));
       const lines = src

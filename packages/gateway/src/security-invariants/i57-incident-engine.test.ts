@@ -523,8 +523,6 @@ describe("I57 (b) - an engine-proposed action reaches dispatch only as the local
   test("3: the executor refuses an engine proposal without a valid link, never delegates a linked action, and names the proposer and the label in the prompt", async () => {
     const exec = await read("packages/gateway/src/engine/executor.ts");
     expect(exec).toContain('if (action.incident !== undefined) return "fallback";');
-    expect(exec).toContain('"Proposed by: the incident engine"');
-    expect(exec).toContain("Reversibility: IRREVERSIBLE - this cannot be undone through Nimbus");
     const link = await read("packages/gateway/src/engine/incident-link.ts");
     expect(link).toContain("an engine proposal is carried only by an incident-linked action");
     // The engineProposal check precedes the early return for an unlinked action.
@@ -535,10 +533,12 @@ describe("I57 (b) - an engine-proposed action reaches dispatch only as the local
   });
 
   test("3b (Phase 17 one-tap rollback): the blast radius is shown in the executor's own prompt, derived fresh for a remediation, and only configuration ids reach it (anything else reads unverified)", async () => {
-    const exec = await read("packages/gateway/src/engine/executor.ts");
-    const branch = exec.slice(exec.indexOf("if (action.engineProposal !== undefined) {"));
+    const display = await read("packages/gateway/src/engine/executor/consent-display.ts");
+    expect(display).toContain('"Proposed by: the incident engine"');
+    expect(display).toContain("Reversibility: IRREVERSIBLE - this cannot be undone through Nimbus");
+    const branch = display.slice(display.indexOf("if (action.engineProposal !== undefined) {"));
     expect(branch.slice(0, 300)).toContain("...blastPromptLines(action.engineProposal)");
-    expect(exec).toContain('return ["Blast radius: not recorded"];');
+    expect(display).toContain('return ["Blast radius: not recorded"];');
     const link = await read("packages/gateway/src/engine/incident-link.ts");
     expect(link).toContain("export const BLAST_NAME_RE = /^[A-Za-z0-9._:/@+-]{1,128}$/;");
     const rem = await read("packages/gateway/src/incident/remediation.ts");
@@ -783,7 +783,7 @@ describe("I57 (c) - a runbook parameter interpolates only typed record fields, a
     ]) {
       expect(await read(rel), rel).not.toContain("runbook/");
     }
-    const exec = await read("packages/gateway/src/engine/executor.ts");
+    const exec = await read("packages/gateway/src/engine/executor/consent-display.ts");
     // The executor's own template text, spelled in parts so this file holds no template placeholder.
     expect(exec).toContain(
       ["Proposed by: runbook $", "{r.runbook}, step $", "{String(r.step)}"].join(""),

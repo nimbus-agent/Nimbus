@@ -195,7 +195,7 @@ export function readVerifiedManifest(row: ExtensionRow): ExtensionManifest {
  * What the owner sees under `extension.run`. Exported for its redaction test.
  *
  * The publisher field is `fingerprint`, NOT `keyFingerprint`: the consent display and the audit row
- * both redact any field whose NAME contains "key" (`executor.ts` `SENSITIVE_PAYLOAD_KEY`), which
+ * both redact any field whose NAME contains "key" (`engine/executor/consent-display.ts` `SENSITIVE_PAYLOAD_KEY`), which
  * would hide the one value that tells two publishers with the same id apart. Same name and shape as
  * the install prompt's (`install-from-local.ts`), which hit this first.
  */

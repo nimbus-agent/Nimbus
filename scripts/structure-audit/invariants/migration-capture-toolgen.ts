@@ -71,6 +71,8 @@ const D34_LITERAL_RE = /["'`]extension\.migrate["'`]/g;
 const D34_LITERAL_ALLOWED: readonly string[] = [
   D34_ENGINE,
   "packages/gateway/src/engine/executor.ts",
+  // The consent prompt's display copy of an `extension.migrate` payload (split out of the executor).
+  "packages/gateway/src/engine/executor/consent-display.ts",
 ];
 
 export function checkMigrationConfinement(files: readonly FileEntry[]): Violation[] {

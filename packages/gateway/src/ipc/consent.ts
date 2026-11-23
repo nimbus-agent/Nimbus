@@ -227,7 +227,7 @@ export class ConsentCoordinatorImpl implements ConsentCoordinator {
       // asked, who may answer, and what they see) are untouched.
       //
       // The broadcast below carries `{requestId, actionType}`, never `prompt`. `prompt` is built
-      // by `engine/executor.ts`'s `formatConsentPrompt`, which stringifies the redacted `details`
+      // by `engine/executor/consent-display.ts`'s `formatConsentPrompt`, which stringifies the redacted `details`
       // object straight into its text (channel names, message bodies, recipients, file paths —
       // whatever the action payload carries); `redactPayloadForConsentDisplay` masks only
       // secret-LOOKING key names (token/key/secret/password/credential/bearer/auth), so
