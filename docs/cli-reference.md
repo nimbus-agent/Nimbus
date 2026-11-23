@@ -2014,6 +2014,7 @@ configuration, and check later that they are still there.
 
 ```bash
 nimbus agent install <claude-code|codex|cursor|vscode> [--scope user|project] [--dry-run] [--yes]
+nimbus agent uninstall <claude-code|codex|cursor|vscode> [--scope user|project] [--dry-run] [--yes]
 nimbus agent status [--json]
 ```
 
@@ -2038,12 +2039,11 @@ between two `nimbus agent kit` marker lines, or Nimbus's own keys in a JSON file
 symbolic link, a JSON file that is not strict JSON (comments, a trailing comma) and a Codex config with its own
 `[mcp_servers.nimbus]` table are refused, not rewritten; a file that changed after the plan was shown is not
 written; a link at the file or at any directory between it and the scope's own tree is refused, when the plan is
-made and again just before the write; nothing is deleted. User scope writes under the home directory, or under the
+made and again just before the write; `install` deletes nothing. User scope writes under the home directory, or under the
 directory `CLAUDE_CONFIG_DIR`, `CODEX_HOME` or `COPILOT_HOME` names when set (it must be absolute). Nimbus starts
 no other vendor's program. It refuses to install from a source tree,
 because an agent's configuration must not point at a checkout. `--scope project` needs the current directory to be
-the root of a git repository. There is no uninstall command; the docs site's *Agent kits* page lists what to delete.
-
+the root of a git repository.
 The steering covers `gh pr merge`, `glab mr merge`, `terraform apply`, `kubectl apply`, `kubectl scale`,
 `kubectl rollout restart` and `aws lambda invoke` (each pointed at the matching `propose_action` type; scale and
 rollout restart for deployments only, since the door acts on nothing else) and tells
@@ -2052,12 +2052,25 @@ the agent never to run `nimbus approvals`, `nimbus connector writes` or `nimbus 
 decision about anything else; it fails open when it cannot read its input, and it does not treat a separator inside
 quotes, or an escaped one, as the start of a new command.
 
+`uninstall` is the mirror of `install` and removes only what a kit wrote: a block between the marker lines, and
+only while its body still matches the hash its marker carries; the `nimbus` server entry when its arguments are the
+kit's own; the kit's hook handler (a hook group that also holds your handlers keeps them); and the kit's deny rules
+(a rule written exactly like one of the kit's is removed even if you had added it first, since install did not
+record that). A block you edited by hand is REFUSED, not deleted: the whole command stops with the file named and
+nothing changed; delete it yourself, or run `install` again to restore it and then `uninstall`. A server entry that
+is not the kit's, and a Codex `[mcp_servers.nimbus]` table outside the block, are left. It prints every file with a
+diff, copies each file to `<file>.nimbus-bak-<UTC time>` first, and asks you to type `yes` (`--yes` and `--dry-run`
+behave as for `install`; with no terminal and no `--yes` it refuses). A file whose name is the kit's own
+(`rules/nimbus.rules`, `.cursor/rules/nimbus.mdc`) that holds nothing else afterwards is deleted, its backup kept;
+every other file stays, even when left empty or as `{}`. For Claude Code at user scope the server is a command you
+run: `claude mcp remove --scope user nimbus`. Afterwards `nimbus agent status` reads the kit as not installed.
+
 `status` reads the same files again and reports each part of each installed kit as `ok`, `drifted` (edited, or
 written by an older Nimbus), `missing`, or `manual` (a command you ran yourself, which Nimbus cannot check). It also
 prints the agent's version where it can read it without a shell, whether the gateway is running, and the limits
 above. It never writes.
 
-**Exit codes:** `install`: `0` written, nothing to change, or a dry run; `1` refused, declined or a file could not
+**Exit codes:** `install` and `uninstall`: `0` written, nothing to change, or a dry run; `1` refused, declined or a file could not
 be written; `2` usage. `status`: `0` every installed kit is as written (a `manual` part never counts), or none is
 installed; `1` an installed kit has a `drifted` or `missing` part, or a file Nimbus can no longer read as its own
 (`cannot tell`, with the reason). Such a file for a kit with nothing else installed is not reported.

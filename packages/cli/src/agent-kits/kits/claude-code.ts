@@ -51,14 +51,14 @@ function hookGroup(nimbus: string): JsonObject {
 }
 
 /** True for a handler a Nimbus kit wrote: it runs `<x> agent hook claude-code`. */
-function isNimbusHandler(h: unknown): boolean {
+export function isNimbusHandler(h: unknown): boolean {
   if (!isJsonObject(h) || !Array.isArray(h["args"])) return false;
   const args = h["args"];
   return args.length === HOOK_ARGS.length && HOOK_ARGS.every((a, i) => args[i] === a);
 }
 
 /** True for a hook group that holds a Nimbus handler (alone, or beside the owner's own). */
-function isNimbusHookGroup(group: unknown): boolean {
+export function isNimbusHookGroup(group: unknown): boolean {
   return (
     isJsonObject(group) && Array.isArray(group["hooks"]) && group["hooks"].some(isNimbusHandler)
   );
@@ -99,7 +99,7 @@ function settingsHoldKit(before: string): boolean {
   );
 }
 
-const hasServer = (before: string): boolean =>
+export const hasServer = (before: string): boolean =>
   jsonAt(before, ["mcpServers", "nimbus"]) !== undefined;
 
 function editMcp(before: string | null, path: string, nimbus: string): string {

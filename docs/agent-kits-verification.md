@@ -7,6 +7,14 @@ the owner's: it needs the agent's own account, and no test in this repository ca
 Nothing here touches your real Nimbus state or your real agent configuration. Every step runs against a scratch
 home directory and a scratch Nimbus profile.
 
+## A helper
+
+`bun scripts/agent-kits/verify-kit.ts plan <claude-code|codex>` prints this procedure's order with the commands for the kit
+and scope, `check installed|drifted|clean|removed <kit>` runs `nimbus agent status --json` in your shell and says PASS or
+FAIL for the status-driven steps (3, 5 and the uninstall in step 6), and `row <kit> --agent-version ...` prints the matrix
+row from the results you give it. It runs no agent and writes nothing; the transcript columns stay your judgement, and a
+run it helps with is not a pass until you have filled the row.
+
 ## What you need
 
 - A released `nimbus` binary on `PATH` (the kits refuse to install from a source tree).
@@ -88,7 +96,13 @@ Do these three things in order and report what happened for each.
 5. **Drift**: edit one line inside a Nimbus block or key the kit wrote, run `nimbus agent status`, and confirm it
    reports `drifted` and exits 1. Run `nimbus agent install <kit>` again and confirm status is clean.
 
-## 6. Publish the row
+## 6. Uninstall (optional)
+
+Once the results are recorded, `nimbus agent uninstall <kit>` (type `yes`) takes the kit out again, and for Claude Code at
+user scope `claude mcp remove --scope user nimbus`. Confirm with `nimbus agent status`: the kit reads as not installed.
+This checks the removal against the real agent's own files, which the in-memory tests cannot.
+
+## 7. Publish the row
 
 Fill the kit's row in `packages/docs/src/content/docs/user-guide/agent-kits.mdx` (agent version, OS, the four
 results, the date, who ran it) and open a pull request. When two rows are filled, tick *Agent kits* in

@@ -58,6 +58,12 @@ export interface FileEdit {
   readonly root: string;
   /** Why this file could not be planned (tolerant planning only). Such an edit is never applied. */
   readonly refusal?: string;
+  /**
+   * Set by an uninstall plan only: the file is a Nimbus-named file that holds nothing else after
+   * the kit's part is taken out, so it is deleted (its backup stays beside it) rather than left
+   * empty. `after` is then the empty string.
+   */
+  readonly remove?: boolean;
 }
 
 /** A step the OWNER runs. Nimbus never starts another vendor's program to change its settings. */

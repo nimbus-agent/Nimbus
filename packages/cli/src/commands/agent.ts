@@ -21,6 +21,7 @@ import {
 import { DEFAULT_SCOPE, planKit } from "../agent-kits/kits/index.ts";
 import { unifiedDiff } from "../agent-kits/line-diff.ts";
 import { KitRefusal } from "../agent-kits/plan-files.ts";
+import { planKitRemoval } from "../agent-kits/removal.ts";
 import { allKitStatuses, type KitStatus, needsAttention } from "../agent-kits/status.ts";
 import { AGENT_DOOR_BOUNDS } from "../lib/agent-door-bounds.ts";
 import { quoteForPrintedCommand } from "../lib/shell-quote.ts";
@@ -29,10 +30,13 @@ import { stripControlChars } from "../lib/strip-control-chars.ts";
 export const AGENT_USAGE = [
   "Usage: nimbus agent <subcommand>",
   `  nimbus agent install <${KIT_IDS.join("|")}> [--scope user|project] [--dry-run] [--yes]`,
+  `  nimbus agent uninstall <${KIT_IDS.join("|")}> [--scope user|project] [--dry-run] [--yes]`,
   "  nimbus agent status [--json]",
   "",
   "install writes the Nimbus MCP server entry and steering rules into that agent's own",
   "configuration. It prints every change first and writes only after you type yes.",
+  "uninstall removes only what install wrote (an unedited block, the kit's own keys), the same way:",
+  "it prints every change, keeps a backup of each file, and asks for yes.",
   "status reports whether those entries are still as Nimbus wrote them. It never writes.",
 ].join("\n");
 
@@ -51,10 +55,11 @@ export const OUTSIDE_THE_DOOR =
 
 export type AgentArgs =
   | { verb: "install"; kit: KitId; scope: KitScope | undefined; dryRun: boolean; yes: boolean }
+  | { verb: "uninstall"; kit: KitId; scope: KitScope | undefined; dryRun: boolean; yes: boolean }
   | { verb: "status"; json: boolean }
   | { verb: "hook"; kit: "claude-code" };
 
-function parseInstall(rest: string[]): AgentArgs | undefined {
+function parseInstall(rest: string[], verb: "install" | "uninstall"): AgentArgs | undefined {
   let kit: KitId | undefined;
   let scope: KitScope | undefined;
   let dryRun = false;
@@ -71,12 +76,12 @@ function parseInstall(rest: string[]): AgentArgs | undefined {
     } else if (isKitId(a) && kit === undefined) kit = a;
     else return undefined;
   }
-  return kit === undefined ? undefined : { verb: "install", kit, scope, dryRun, yes };
+  return kit === undefined ? undefined : { verb, kit, scope, dryRun, yes };
 }
 
 export function parseAgentArgs(argv: string[]): AgentArgs | undefined {
   const [verb, ...rest] = argv;
-  if (verb === "install") return parseInstall(rest);
+  if (verb === "install" || verb === "uninstall") return parseInstall(rest, verb);
   if (verb === "status") {
     if (rest.length === 0) return { verb: "status", json: false };
     return rest.length === 1 && rest[0] === "--json" ? { verb: "status", json: true } : undefined;
@@ -109,23 +114,25 @@ function printable(text: string): string {
   return text.split("\n").map(stripControlChars).join("\n");
 }
 
-function planText(plan: KitPlan): string {
-  const lines = [
-    `Nimbus agent kit: ${plan.kit} (${plan.scope} scope)`,
-    `Steering: ${plan.enforcement}. ${NOT_A_BOUNDARY}`,
-    "",
-  ];
+function planText(plan: KitPlan, removal = false): string {
+  const lines = removal
+    ? [`Remove the Nimbus agent kit: ${plan.kit} (${plan.scope} scope)`, ""]
+    : [
+        `Nimbus agent kit: ${plan.kit} (${plan.scope} scope)`,
+        `Steering: ${plan.enforcement}. ${NOT_A_BOUNDARY}`,
+        "",
+      ];
   const pending = pendingEdits(plan);
   for (const f of pending) {
-    lines.push(
-      f.before === null
-        ? `Create ${printable(f.path)}`
-        : `Change ${printable(f.path)} (the file as it is now is kept beside it as a .nimbus-bak-<time> copy)`,
-      printable(unifiedDiff(f.before, f.after)),
-      "",
-    );
+    const kept = "the file as it is now is kept beside it as a .nimbus-bak-<time> copy";
+    let heading = `Change ${printable(f.path)} (${kept})`;
+    if (f.before === null) heading = `Create ${printable(f.path)}`;
+    else if (f.remove === true) heading = `Delete ${printable(f.path)} (${kept})`;
+    lines.push(heading, printable(unifiedDiff(f.before, f.after)), "");
   }
-  if (pending.length === 0) lines.push("No file needs to change.", "");
+  if (pending.length === 0) {
+    lines.push(removal ? "Nothing of this kit is installed here." : "No file needs to change.", "");
+  }
   for (const m of plan.manual) {
     lines.push(
       `Run this yourself (${m.why}):`,
@@ -133,18 +140,22 @@ function planText(plan: KitPlan): string {
       "",
     );
   }
-  for (const n of plan.notes) lines.push(`Note: ${n}`);
-  lines.push("", AGENT_DOOR_BOUNDS, "", OUTSIDE_THE_DOOR, "");
+  for (const n of plan.notes) lines.push(`Note: ${printable(n)}`);
+  if (!removal) lines.push("", AGENT_DOOR_BOUNDS, "", OUTSIDE_THE_DOOR, "");
   return lines.join("\n");
 }
 
-async function runInstall(
-  a: Extract<AgentArgs, { verb: "install" }>,
+/**
+ * Shows `plan`, then writes it after a typed `yes`. Install and uninstall share this on purpose:
+ * the same prompt rules, the same backups, the same refusal with no terminal.
+ */
+async function showAskApply(
+  plan: KitPlan,
+  a: { dryRun: boolean; yes: boolean },
   deps: AgentCmdDeps,
+  verb: "install" | "uninstall",
 ): Promise<number> {
-  const scope = a.scope ?? DEFAULT_SCOPE[a.kit];
-  const plan = planKit(a.kit, deps.env(), scope);
-  deps.out(`${planText(plan)}\n`);
+  deps.out(`${planText(plan, verb === "uninstall")}\n`);
   const pending = pendingEdits(plan);
   if (a.dryRun) {
     deps.out("Dry run: nothing was written.\n");
@@ -154,7 +165,7 @@ async function runInstall(
   if (!a.yes) {
     if (!(deps.tty.stdin && deps.tty.stdout)) {
       deps.err(
-        "nimbus agent install changes another program's configuration and asks first. Run it in a terminal, or read `--dry-run` and pass `--yes`.\n",
+        `nimbus agent ${verb} changes another program's configuration and asks first. Run it in a terminal, or read \`--dry-run\` and pass \`--yes\`.\n`,
       );
       return 1;
     }
@@ -166,18 +177,34 @@ async function runInstall(
   }
   const result = await deps.apply(plan);
   for (const w of result.written) {
-    deps.out(
-      w.backup === undefined
-        ? `Created ${printable(w.path)}\n`
-        : `Changed ${printable(w.path)} (before: ${printable(w.backup)})\n`,
-    );
+    let line = `Changed ${printable(w.path)} (before: ${printable(w.backup ?? "")})`;
+    if (w.backup === undefined) line = `Created ${printable(w.path)}`;
+    else if (w.deleted === true)
+      line = `Deleted ${printable(w.path)} (before: ${printable(w.backup)})`;
+    deps.out(`${line}\n`);
   }
   if (result.failure !== undefined) {
     deps.err(`${printable(result.failure.message)}\n`);
     return 1;
   }
-  deps.out(`Check it any time with: nimbus agent status\n`);
+  deps.out("Check it any time with: nimbus agent status\n");
   return 0;
+}
+
+async function runInstall(
+  a: Extract<AgentArgs, { verb: "install" }>,
+  deps: AgentCmdDeps,
+): Promise<number> {
+  const scope = a.scope ?? DEFAULT_SCOPE[a.kit];
+  return showAskApply(planKit(a.kit, deps.env(), scope), a, deps, "install");
+}
+
+async function runUninstall(
+  a: Extract<AgentArgs, { verb: "uninstall" }>,
+  deps: AgentCmdDeps,
+): Promise<number> {
+  const scope = a.scope ?? DEFAULT_SCOPE[a.kit];
+  return showAskApply(planKitRemoval(a.kit, deps.env(), scope), a, deps, "uninstall");
 }
 
 const VERSION_PROGRAM: Partial<Record<KitId, string>> = { "claude-code": "claude", codex: "codex" };
@@ -295,7 +322,8 @@ export async function runAgentWith(argv: string[], deps: AgentCmdDeps): Promise<
   }
   if (a.verb === "hook") return runHook(deps);
   try {
-    return a.verb === "install" ? await runInstall(a, deps) : await runStatus(a, deps);
+    if (a.verb === "install") return await runInstall(a, deps);
+    return a.verb === "uninstall" ? await runUninstall(a, deps) : await runStatus(a, deps);
   } catch (e) {
     if (!(e instanceof KitRefusal)) throw e;
     deps.err(`${printable(e.message)}\n`);

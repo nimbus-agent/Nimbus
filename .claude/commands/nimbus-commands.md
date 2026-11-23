@@ -697,5 +697,6 @@ When all three checks pass, include the package's published age and maintainer i
 ## `nimbus agent` (Phase 28 AD7b)
 
 `nimbus agent install <claude-code|codex|cursor|vscode> [--scope user|project] [--dry-run] [--yes]` and
+`nimbus agent uninstall <kit> [--scope user|project] [--dry-run] [--yes]` (`agent-kits/removal.ts`) and
 `nimbus agent status [--json]`. Tests run on an in-memory machine
 (`packages/cli/src/agent-kits/fake-env.test-helpers.ts`); never point a kit test at a real home directory.
