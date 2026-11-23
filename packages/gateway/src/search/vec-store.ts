@@ -108,7 +108,9 @@ export function buildVectorChunkQuery(options: VectorSearchChunkOptions): {
   }
   if (options.metadataChannelIn !== undefined && options.metadataChannelIn.length > 0) {
     const placeholders = options.metadataChannelIn.map(() => "?").join(", ");
-    sql += ` AND json_extract(i.metadata, '$.channel') IN (${placeholders})`;
+    // json_extract RAISES on malformed JSON, which would fail the whole query for one bad row; the
+    // CASE (guaranteed lazy, unlike AND) makes a malformed row yield NULL, so it simply never matches.
+    sql += ` AND CASE WHEN json_valid(i.metadata) THEN json_extract(i.metadata, '$.channel') END IN (${placeholders})`;
     for (const ch of options.metadataChannelIn) params.push(ch);
   }
   if (options.at !== undefined) {

@@ -186,6 +186,19 @@ export async function runBriefSourceRoute(
   if (found instanceof Response) return found;
   try {
     const input = validateSourceInput(parsed);
+    // Re-check synchronously, right before the mutation: `requireBriefRunInState` resolved the
+    // state, then the async return handed control back through the microtask queue, and a run
+    // started in that gap (another request's `startRun`) must not receive a source after it
+    // left `collecting`. Nothing awaits between this check and `addSource`.
+    if (found.status !== "collecting") {
+      recordRejection(ctx, {
+        actionType: route.rejectAction,
+        tokenFingerprint: fingerprint,
+        resultCode: 409,
+        reason: "invalid_state",
+      });
+      return jsonResponse({ error: "invalid_state" }, 409, rateLimitHeaders(limit));
+    }
     const out = briefs.controller.addSource(found, input);
     if ("error" in out) {
       if (out.error === "undeclared") {

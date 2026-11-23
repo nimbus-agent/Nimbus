@@ -219,6 +219,54 @@ describe("bootTribalKnowledge — recall and drafting from the index", () => {
     },
   );
 
+  test.skipIf(!VEC_AVAILABLE)(
+    "a message with malformed metadata is skipped; it does not fail the whole recall",
+    async () => {
+      new TribalClusterStore(db).upsertOccurrence({
+        clusterId: "cl-1",
+        question: "How do I rotate the deploy key?",
+        vec: unit(0),
+        channelId: "C-watched",
+        platform: "slack",
+        now: 1,
+      });
+      // json_extract RAISES on malformed JSON: an unguarded channel filter would throw for the
+      // whole query (the capture then fails with "malformed JSON") because of this one row.
+      seedMessage({
+        id: "slack:badjson",
+        service: "slack",
+        metadata: "{not json",
+        url: null,
+        chunks: ["malformed metadata"],
+      });
+      seedMessage({
+        id: "slack:nul",
+        service: "slack",
+        // Valid JSON then a NUL: SQLite's parser stops at the NUL, so json_valid admits it, but
+        // JSON.parse throws.
+        metadata: `{"channel":"C-watched"}${String.fromCharCode(0)}`,
+        url: null,
+        chunks: ["nul metadata"],
+      });
+      seedMessage({
+        id: "slack:good",
+        service: "slack",
+        metadata: JSON.stringify({ channel: "C-watched" }),
+        url: "https://slack.example/good",
+        chunks: ["rotate it in the vault"],
+      });
+      const replies: string[] = [];
+      const { tribalInterceptCommand } = boot(runtime(unit(0)), replies);
+      expect(await tribalInterceptCommand(captureMsg)).toBe(true);
+      expect(replies[0]).toContain("Captured cl-1");
+      const payload = writtenPayload();
+      expect(payload.bodyMarkdown).toContain("Drafted from 1 source message(s)");
+      expect(payload.bodyMarkdown).toContain("rotate it in the vault");
+      expect(payload.bodyMarkdown).not.toContain("malformed metadata");
+      expect(payload.bodyMarkdown).not.toContain("nul metadata");
+    },
+  );
+
   test("a cluster with no stored vector drafts from no sources", async () => {
     new TribalClusterStore(db).upsertOccurrence({
       clusterId: "cl-1",

@@ -339,6 +339,34 @@ describe("write seams — an option given to the server reaches its route", () =
     expect(calls).toEqual([["expert", { topic: "billing" }, "full"]]);
   });
 
+  test("agents: the two reads answer agents_disabled with runs but no invoker (no names, no version leak)", async () => {
+    const agentRuns = new AgentRunController({ nowMs: () => 1_000 });
+    agentRuns.observe("agents.expert.briefReady", {
+      sessionId: "expert_9",
+      brief: "# Expert",
+      findings: {},
+      synthesis: { attempted: false, reason: "synthesis_off" },
+    });
+    const base = serve({ clipsVault: tokenVault(), agentRuns });
+    const headers = { authorization: `Bearer ${TOKEN}` };
+    for (const path of ["/v1/agents", "/v1/agents/runs/expert_9"]) {
+      const res = await fetch(`${base}${path}`, { headers });
+      expect(res.status).toBe(404);
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(body["error"]).toBe("agents_disabled");
+      expect(body["version"]).toBeUndefined();
+      expect(body["agents"]).toBeUndefined();
+    }
+    const mounted = serve({
+      clipsVault: tokenVault(),
+      agentRuns,
+      agentInvoke: async () => ({ ok: true, runId: "expert_9" }),
+    });
+    const list = await fetch(`${mounted}/v1/agents`, { headers });
+    expect(list.status).toBe(200);
+    expect(((await list.json()) as { agents: string[] }).agents.length).toBeGreaterThan(0);
+  });
+
   test("a finished agent run reports its synthesis provenance once one lands", async () => {
     const agentRuns = new AgentRunController({ nowMs: () => 1_000 });
     agentRuns.observe("agents.expert.briefReady", {
@@ -347,7 +375,11 @@ describe("write seams — an option given to the server reaches its route", () =
       findings: { people: 2 },
       synthesis: { attempted: false, reason: "synthesis_off" },
     });
-    const base = serve({ clipsVault: tokenVault(), agentRuns });
+    const base = serve({
+      clipsVault: tokenVault(),
+      agentRuns,
+      agentInvoke: async () => ({ ok: true, runId: "expert_7" }),
+    });
     const res = await fetch(`${base}/v1/agents/runs/expert_7`, {
       headers: { authorization: `Bearer ${TOKEN}` },
     });

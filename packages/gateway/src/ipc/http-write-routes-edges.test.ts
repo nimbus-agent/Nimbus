@@ -444,3 +444,55 @@ describe("POST /v1/briefs — validation vs internal failure", () => {
     ]);
   });
 });
+
+describe("POST /v1/briefs/{id}/sources — a run that starts after the state check", () => {
+  test("is 409 invalid_state, audited, and receives no source", async () => {
+    // `get` returns the run still `collecting`, then flips it to `running` on a microtask queued
+    // BEFORE the async return of the state check resumes the route: exactly a concurrent
+    // `startRun` landing between the check and the mutation.
+    class RacingController extends BriefRunController {
+      override get(id: string) {
+        const run = super.get(id);
+        if (run !== null) queueMicrotask(() => (run.status = "running"));
+        return run;
+      }
+    }
+    const controller = new RacingController({ nowMs: () => 1_000 });
+    const created = controller.create({
+      brief: "q",
+      sources: [{ url: "https://ex.com/a", title: "A" }],
+      useIndex: false,
+    });
+    if (!("run" in created)) throw new Error("test setup: concurrency cap");
+    const run = created.run;
+    const ctx = baseCtx({
+      briefs: {
+        controller,
+        verifyToken: async (t) =>
+          t === "brief-token" ? { label: "chrome", scopes: ["clip", "briefs"] } : null,
+        startRun: () => {},
+        save: () => ({ itemId: "nimbus:research_brief:x" }),
+      },
+    });
+    const res = await dispatchWriteRoute(
+      post(
+        `/v1/briefs/${run.id}/sources`,
+        JSON.stringify({
+          url: "https://ex.com/a",
+          title: "A",
+          body: "body text",
+          capturedAt: 1_700_000_000_000,
+          truncated: false,
+        }),
+        "brief-token",
+      ),
+      ctx,
+    );
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "invalid_state" });
+    expect(run.sources.size).toBe(0);
+    expect(rejections(ctx.writeDb, "brief.source_rejected")).toEqual([
+      { result_code: 409, reason: "invalid_state" },
+    ]);
+  });
+});

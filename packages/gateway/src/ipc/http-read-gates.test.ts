@@ -18,6 +18,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readHttpServerCode } from "../../test/helpers/http-server-sources.ts";
+import type { AgentHttpInvoker } from "../agent-runs/agent-http-invoke.ts";
 import { AgentRunController } from "../agent-runs/agent-run-store.ts";
 import { BriefRunController } from "../briefs/brief-run-store.ts";
 import type { ApiScope } from "../clips/api-scopes.ts";
@@ -125,11 +126,9 @@ function serve(opts: ReadOnlyHttpServerOptions = {}, toml?: string): string {
   dirs.push(dir);
   const dbPath = join(dir, "nimbus.db");
   materializeMigratedDb(dbPath);
-  // WAL on the FILE before the server opens anything, as a real index has been since long before
-  // any given gateway start. The template copy is rollback-journal, and a server mounting a write
-  // seam (clipsVault, the run stores) flips it to WAL underneath its own already-open read-only
-  // handle — which raced on macOS, failing that handle's next read with SQLITE_CANTOPEN (see
-  // http-egress-routes.test.ts). The in-scope test reads the index through exactly that handle.
+  // WAL on the FILE before the server opens anything: the template copy is rollback-journal, and a
+  // server mounting a write seam flips it to WAL under its own open read-only handle, which raced
+  // on macOS with SQLITE_CANTOPEN (see http-egress-routes.test.ts).
   const setup = new Database(dbPath);
   try {
     expect(applyWritablePragmas(setup)).toBe("wal");
@@ -137,11 +136,11 @@ function serve(opts: ReadOnlyHttpServerOptions = {}, toml?: string): string {
     setup.close();
   }
   if (toml !== undefined) writeFileSync(join(dir, "nimbus.toml"), toml);
-  const handle = startReadOnlyHttpServer(
-    dbPath,
-    0,
-    toml === undefined ? opts : { ...opts, configDir: dir },
-  );
+  // The agents surface mounts only with the run store AND the invoker; these gates test the pair.
+  const agentInvoke: AgentHttpInvoker = async () => ({ ok: true, runId: "x" });
+  const wired = opts.agentRuns === undefined ? opts : { agentInvoke, ...opts };
+  const cfg = toml === undefined ? wired : { ...wired, configDir: dir };
+  const handle = startReadOnlyHttpServer(dbPath, 0, cfg);
   handles.push(handle);
   return `http://127.0.0.1:${String(handle.port)}`;
 }

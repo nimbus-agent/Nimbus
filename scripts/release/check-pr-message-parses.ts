@@ -178,7 +178,7 @@ function main(): void {
     "::error::release-please parses the squash commit, and the PR BODY is that commit's body. A message it cannot parse is DROPPED from the changelog silently — the release still ships, just without this entry, and the tag is immutable afterwards.",
   );
   console.error(
-    "::error::Most often this is an unbalanced `(` inside a code span — write `` `.run(…)` `` rather than `` `.run(` ``. Edit the PR description and this check re-runs.",
+    "::error::Most often this is an unbalanced `(` inside a code span — write `` `.run(…)` `` rather than `` `.run(` ``. Fix the PR description, then push a commit or add a label to re-run this check: editing the description alone does not re-run it, and a re-run replays the old event body.",
   );
   process.exit(1);
 }
