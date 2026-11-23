@@ -305,7 +305,7 @@
     "packages/gateway/src/index/local-index.test.ts": 2246,
     "packages/gateway/src/index/local-index.ts": 1115,
     "packages/gateway/src/index/migrations/runner.test.ts": 1122,
-    "packages/gateway/src/index/migrations/runner.ts": 1255,
+    "packages/gateway/src/index/migrations/runner.ts": 1253,
     "packages/gateway/src/index/negation-predicates.test.ts": 529,
     "packages/gateway/src/index/oncall-handoff-query.test.ts": 595,
     "packages/gateway/src/index/oncall-handoff-query.ts": 950,
