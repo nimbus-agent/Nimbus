@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   regexLiteralEnd,
@@ -345,7 +345,15 @@ describe("tokenizeMarkup: does not tokenize (undefined, refused)", () => {
 // `RegExp(` construction (which could hide a `<` in a string), and no regex literal containing `<`.
 // ---------------------------------------------------------------------------------------------
 
-const PINNED_FILES: string[] = ["markup-tokens.ts", "remote-content.ts"];
+const PINNED_FILES: string[] = [
+  "markup-tokens.ts",
+  "remote-content.ts",
+  // The detectors were split by format into this folder; every file in it is pinned.
+  ...readdirSync(join(import.meta.dir, "remote-content"))
+    .filter((f) => f.endsWith(".ts"))
+    .sort()
+    .map((f) => `remote-content/${f}`),
+];
 
 /**
  * `text-normalise.ts` (the shared normalisation the detectors read) is pinned too (final review
