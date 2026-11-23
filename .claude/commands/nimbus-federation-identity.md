@@ -82,6 +82,10 @@ Phase 6 Slice 6a (2026-06-11) added an **asker-side fan-out layer** on top of th
 
 **Schema:** V38 (`federation_known_namespaces`). See `nimbus-db-migrations`.
 
+## Free/busy scheduling (Phase 10, OR-S4-SCHED, `I17` (b), static `D13(b)`)
+
+A paired peer asks `federation.freeBusy { fromMs, toMs }` for the owner's 30-minute free/busy blocks. It is a SECOND answering gate beside `query-gate.ts`, not a query kind: the query gate is namespace-scoped (grant + role + declared filter over item rows), a free/busy answer has no namespace and reads calendar events, so it sits in `federation/free-busy-gate.ts` (`answerFederatedFreeBusy`, the only answerer), served from `federation-server.ts`. The LOCAL owner approves EACH request (`ScheduleConsentBroker`, prompt `federation.scheduleRequest`, answered in `nimbus team listen` through `scheduling.respond`, human answers on `cli`/`ui` only; no standing grant, no delegate); a denial, a timeout and an invalid operator identity are the same `declined`, which is distinguishable from an empty calendar on purpose. The reply is `{ fromMs, blockMs, blocks }` and nothing else; `_lib/free-busy-read.ts` selects only `metadata` and reads five keys. Asking side: `nimbus team schedule <peer> --from --to --duration` (`scheduling.ask`, `federation/schedule-ask.ts`). The approval is a consent broker, so the frozen HITL set does not grow.
+
 ## Gotchas
 
 - **Identity gates federation ONLY.** A common wrong assumption is that enabling `[identity]` affects local `ask`/`search` — it does not. Identity validity is consulted by the federation query gate, nowhere else.

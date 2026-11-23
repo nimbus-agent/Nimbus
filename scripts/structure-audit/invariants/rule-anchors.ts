@@ -43,6 +43,7 @@ export const RULE_ANCHORS: readonly string[] = [
   "packages/gateway/src/federation/query-gate.ts", // D13
   "packages/gateway/src/federation/invoke-gate.ts", // D15, D20
   "packages/gateway/src/federation/preflight-gate.ts", // D18
+  "packages/gateway/src/federation/free-busy-gate.ts", // D13(b) - the only answer to a peer's free/busy request
   "packages/gateway/src/identity/verifier.ts", // D14
   "packages/gateway/src/policy/policy-gate.ts", // D16
   "packages/gateway/src/chatops/reply-dispatcher.ts", // D17

@@ -383,6 +383,46 @@ export const LANE_EXEMPTIONS: readonly LaneExemption[] = [
       "Google Calendar and Outlook write attendee_count through normalizedEventKeys in connectors/_lib/calendar-event-normalize.ts, called from google-calendar-event-mapping.ts and outlook-calendar-mapping.ts: the census writer scan does not follow a spread across files, so only iCloud's direct write is seen. selectCalendarDay (the morning briefing) reads it from all three.",
   },
   {
+    file: "packages/gateway/src/federation/_lib/free-busy-read.ts",
+    key: "status",
+    category: "census-blind",
+    reads: 1,
+    reason:
+      "Google Calendar and Outlook write status through normalizedEventKeys in connectors/_lib/calendar-event-normalize.ts, called from google-calendar-event-mapping.ts and outlook-calendar-mapping.ts: the census writer scan does not follow a spread across files, so only iCloud's direct write is seen. readBusyBlocks (federated free/busy, I17 (b)) reads it from all three.",
+  },
+  {
+    file: "packages/gateway/src/federation/_lib/free-busy-read.ts",
+    key: "self_response",
+    category: "census-blind",
+    reads: 1,
+    reason:
+      "Google Calendar and Outlook write self_response through normalizedEventKeys in connectors/_lib/calendar-event-normalize.ts, called from google-calendar-event-mapping.ts and outlook-calendar-mapping.ts: the census writer scan does not follow a spread across files, so only iCloud's direct write is seen. readBusyBlocks (federated free/busy, I17 (b)) reads it from all three.",
+  },
+  {
+    file: "packages/gateway/src/federation/_lib/free-busy-read.ts",
+    key: "start_ms",
+    category: "census-blind",
+    reads: 2,
+    reason:
+      "Google Calendar and Outlook write start_ms through normalizedEventKeys in connectors/_lib/calendar-event-normalize.ts, called from google-calendar-event-mapping.ts and outlook-calendar-mapping.ts: the census writer scan does not follow a spread across files, so only iCloud's direct write is seen. readBusyBlocks (federated free/busy, I17 (b)) reads it from all three.",
+  },
+  {
+    file: "packages/gateway/src/federation/_lib/free-busy-read.ts",
+    key: "end_ms",
+    category: "census-blind",
+    reads: 2,
+    reason:
+      "Google Calendar and Outlook write end_ms through normalizedEventKeys in connectors/_lib/calendar-event-normalize.ts, called from google-calendar-event-mapping.ts and outlook-calendar-mapping.ts: the census writer scan does not follow a spread across files, so only iCloud's direct write is seen. readBusyBlocks (federated free/busy, I17 (b)) reads it from all three.",
+  },
+  {
+    file: "packages/gateway/src/federation/_lib/free-busy-read.ts",
+    key: "all_day",
+    category: "census-blind",
+    reads: 1,
+    reason:
+      "Google Calendar and Outlook write all_day through normalizedEventKeys in connectors/_lib/calendar-event-normalize.ts, called from google-calendar-event-mapping.ts and outlook-calendar-mapping.ts: the census writer scan does not follow a spread across files, so only iCloud's direct write is seen. readBusyBlocks (federated free/busy, I17 (b)) reads it from all three.",
+  },
+  {
     file: "packages/gateway/src/agents/_lib/briefing-queries.ts",
     key: "repo",
     category: "by-design",

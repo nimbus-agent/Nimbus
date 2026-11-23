@@ -194,8 +194,8 @@ const FORBIDDEN_OVER_LAN = new Set([
   // This is a DENYLIST, so the admitted set is "every served handler minus what is listed here"
   // and it GROWS whenever a handler is added to federation-rpc.ts. Until 2026-08-16 this comment
   // named only the first two answering methods — true when written, wrong by eleven by the time
-  // anyone read it again. The real admitted set is thirteen, including invoke, preflight, purge
-  // and shareReceive, each with its own gate
+  // anyone read it again. The real admitted set is fourteen, including invoke, preflight, purge,
+  // shareReceive and freeBusy, each with its own gate
   // (see the notes further down). `audit:status-drift` now derives the set and fails if this
   // comment or the I17 section claims a smaller one, because prose was the only place it was
   // written down.
@@ -220,6 +220,11 @@ const FORBIDDEN_OVER_LAN = new Set([
   // quorum; federation.requestApproval is the delegate answering an owner's routed HITL approval —
   // it forces the owner peerId from the authenticated session (I17/R1), audits its own decision, and
   // returns only { approved }, never secret material; the owner re-checks delegate authority via I20).
+  // `scheduling.*` (Phase 10, OR-S4-SCHED, I17 (b)): the WHOLE namespace. `scheduling.ask` is the local asker
+  // entrypoint (it sends `federation.freeBusy` to a peer) and `scheduling.respond` is the LOCAL owner answering a
+  // free/busy prompt: admitting it over the wire would let a paired peer approve its own request. The answering
+  // method itself, `federation.freeBusy`, is admitted and goes through the gate in `federation/free-busy-gate.ts`.
+  "scheduling",
   "team", // team.auditMerged — local-only asker entrypoint (fans out federation.auditExport); not answerable over LAN
   "teamvault", // teamvault.put/delete/grant/revoke/list — secret + RBAC management, never over LAN
   "hitl", // hitl.delegate/revokeDelegation/listDelegations/pendingQueue — local owner control only

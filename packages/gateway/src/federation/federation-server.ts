@@ -9,6 +9,7 @@ import { LanError } from "../ipc/lan-rpc.ts";
 import { LanServer, type PairingService } from "../ipc/lan-server.ts";
 import type { ReceiveShareDeps } from "../share/share-forward.ts";
 import type { DiscoveryProvider } from "./discovery.ts";
+import { answerFederatedFreeBusy, type FreeBusyGateCtx } from "./free-busy-gate.ts";
 import type { PeerPairing } from "./peer-pairing.ts";
 
 export interface FederationLanConfig {
@@ -45,6 +46,9 @@ export interface BuildFederationLanServerDeps {
   // I24 (Slice 6b): downstream preflight gate deps — present so an upstream peer's federation.preflight
   // is served over the wire (behind THIS owner's local HITL approval; command from local config).
   readonly preflight?: FederationRpcContext["preflight"];
+  // I17 (b) (OR-S4-SCHED): the free/busy gate's deps (the per-peer limiter and the LOCAL owner's
+  // approval). Absent -> an inbound federation.freeBusy fails closed (ERR_FREEBUSY_UNAVAILABLE).
+  readonly freeBusy?: Omit<FreeBusyGateCtx, "identity">;
   // Share receiving (Slice 8d): answerer-side deps for federation.shareReceive — inbound forwarded
   // shares from a peer are stored INERT (viewable artifact only, no HITL needed, spec §9.4).
   readonly receiveShareDeps?: ReceiveShareDeps;
@@ -137,6 +141,20 @@ export function buildFederationLanServer(deps: BuildFederationLanServerDeps): Fe
       const body =
         typeof params === "object" && params !== null ? (params as Record<string, unknown>) : {};
       const forced = { ...body, peerId: peer.peerId };
+      if (method === "federation.freeBusy") {
+        // I17 (b): the ONLY answering path for a free/busy request. peerId is the authenticated
+        // session's; the window fields are untrusted and validated inside the gate.
+        if (deps.freeBusy === undefined) {
+          throw new LanError(-32603, "ERR_FREEBUSY_UNAVAILABLE: not configured to answer");
+        }
+        return answerFederatedFreeBusy(
+          {
+            ...deps.freeBusy,
+            ...(deps.identityGuard === undefined ? {} : { identity: deps.identityGuard }),
+          },
+          { peerId: peer.peerId, fromMs: body["fromMs"], toMs: body["toMs"] },
+        );
+      }
       const ctx: FederationRpcContext = {
         db: deps.db,
         consentTimeoutMs: deps.consentTimeoutMs,

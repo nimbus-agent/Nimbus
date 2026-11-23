@@ -21,6 +21,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { readInvariantsSource } from "./invariants-source.ts";
+import { servedFederationMethods } from "./lan-served-methods.ts";
 
 export interface AuditResult {
   ok: boolean;
@@ -458,15 +459,14 @@ function auditLanAdmittedSet(repoRoot: string): string[] {
     "packages/gateway/src/ipc/lan-rpc.ts",
     "packages/gateway/src/ipc/federation-rpc.ts",
     "docs/SECURITY-INVARIANTS.md",
+    "packages/gateway/src/federation/federation-server.ts",
   ]);
   if (sources === undefined) return [];
-  const [lan, fed] = sources as [string, string, string];
+  const [lan, fed, , server] = sources as [string, string, string, string];
   const forbidden = new Set(
     [...lan.matchAll(/"(federation(?:\.[A-Za-z]+)*)"/g)].map((m) => m[1] as string),
   );
-  const served = [
-    ...new Set([...fed.matchAll(/^\s*"(federation\.[A-Za-z]+)"\s*:/gm)].map((m) => m[1] as string)),
-  ];
+  const served = servedFederationMethods(fed, server);
   if (served.length === 0) return ["resolved zero federation handlers — the scan is broken"];
   const admitted = forbidden.has("federation")
     ? []
