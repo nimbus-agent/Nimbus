@@ -235,9 +235,14 @@ export const PLATFORM_BRANCHING_ALLOWLIST: readonly PlatformFileEntry[] = [
   },
   { file: "packages/cli/src/commands/config.ts", gate: "none", why: "per-OS config path display" },
   {
-    file: "packages/cli/src/commands/extension.ts",
+    file: "packages/cli/src/commands/extension/dispatch.ts",
     gate: "none",
     why: "per-OS extension paths",
+  },
+  {
+    file: "packages/cli/src/commands/extension/keys.ts",
+    gate: "none",
+    why: "per-OS key file mode",
   },
   {
     file: "packages/cli/src/commands/scaffold.ts",
