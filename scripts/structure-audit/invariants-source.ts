@@ -19,8 +19,10 @@ export function readInvariantsSource(repoRoot: string): string {
     names = readdirSync(dir)
       .filter((n) => n.endsWith(".ts") && !n.endsWith(".test.ts"))
       .sort();
-  } catch {
-    // No invariants/ directory (a fixture tree): the entry alone is the auditor.
+  } catch (err) {
+    // No invariants/ directory (a fixture tree): the entry alone is the auditor. Any other failure
+    // (EACCES, an I/O error) is rethrown: a ceiling computed from part of the auditor would be wrong.
+    if ((err as { code?: unknown }).code !== "ENOENT") throw err;
   }
   for (const n of names) parts.push(readFileSync(join(dir, n), "utf8"));
   return parts.join("\n");
