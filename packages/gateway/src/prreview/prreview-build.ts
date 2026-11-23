@@ -13,6 +13,21 @@ import type {
   PrereviewTerm,
 } from "../agents/_lib/prreview-types.ts";
 import { resolveItemByUrl } from "../index/resolve-by-url.ts";
+import {
+  byString,
+  numOrNull,
+  parseMeta,
+  recurringTerms,
+  reviewsFor,
+  strOrNull,
+} from "./prreview-notes.ts";
+
+export {
+  MIN_REVIEWS_FOR_TERM,
+  REVIEWS_SCANNED,
+  recurringTerms,
+  TERMS_MAX,
+} from "./prreview-notes.ts";
 
 /**
  * The deterministic core of `nimbus pre-review` (Phase 10 "Automated PR pre-review"). READS the local index
@@ -36,14 +51,10 @@ export const MIN_COHORT = 4;
 export const MIN_SUPPORT = 0.6;
 export const FINDINGS_MAX = 10;
 export const EXAMPLES_MAX = 3;
-export const REVIEWS_SCANNED = 200;
 export const REVIEWS_SHOWN = 6;
 export const REVIEWS_PER_PR = 2;
-export const TERMS_MAX = 8;
-export const MIN_REVIEWS_FOR_TERM = 2;
 
 const DAY_MS = 86_400_000;
-const REVIEW_STATES = new Set(["CHANGES_REQUESTED", "COMMENTED"]);
 const PR_SERVICES = new Set(["github", "gitlab", "bitbucket"]);
 
 export type PrereviewMissReason = "not_indexed" | "ambiguous" | "not_a_pr" | "unresolvable_url";
@@ -67,13 +78,6 @@ const MISS_TEXT: Readonly<Record<PrereviewMissReason, string>> = {
   unresolvable_url: "that is not an http or https URL",
 };
 
-/** Code-unit order: deterministic and locale-free. */
-function byString(a: string, b: string): number {
-  if (a < b) return -1;
-  if (a > b) return 1;
-  return 0;
-}
-
 /** The parent directory of a POSIX repo-relative path; a root file's area is `.`. */
 export function areaOf(path: string): string {
   const i = path.lastIndexOf("/");
@@ -93,26 +97,6 @@ type ItemRow = {
   url: string | null;
   metadata: string | null;
 };
-
-function parseMeta(raw: string | null): Record<string, unknown> {
-  if (raw === null) return {};
-  try {
-    const v: unknown = JSON.parse(raw);
-    return typeof v === "object" && v !== null && !Array.isArray(v)
-      ? (v as Record<string, unknown>)
-      : {};
-  } catch {
-    return {};
-  }
-}
-
-function numOrNull(v: unknown): number | null {
-  return typeof v === "number" && Number.isFinite(v) ? v : null;
-}
-
-function strOrNull(v: unknown): string | null {
-  return typeof v === "string" && v !== "" ? v : null;
-}
 
 /**
  * The indexed PR a URL names. One ambiguity is resolved rather than refused: a GitHub review is stored with its
@@ -299,64 +283,6 @@ function rankCoChanges(a: PrereviewCoChange, b: PrereviewCoChange): number {
     byString(a.companion, b.companion) ||
     byString(a.area, b.area)
   );
-}
-
-type ReviewRow = { body: string | null; modified_at: number; metadata: string | null };
-
-// lane-census: scope=review service=github
-function reviewsFor(
-  db: Database,
-  repo: string,
-  prs: ReadonlyMap<number, PrereviewPrRef>,
-): PrereviewReviewNote[] {
-  if (prs.size === 0) return [];
-  const rows = db
-    .query(
-      `SELECT body, modified_at, metadata FROM item
-        WHERE service = 'github' AND type = 'review'
-          AND json_extract(metadata, '$.repo') = ?
-          AND upper(json_extract(metadata, '$.state')) IN ('CHANGES_REQUESTED', 'COMMENTED')
-          AND body IS NOT NULL AND trim(body) <> ''
-        ORDER BY modified_at DESC, id ASC
-        LIMIT ?`,
-    )
-    .all(repo, REVIEWS_SCANNED) as ReviewRow[];
-  const out: PrereviewReviewNote[] = [];
-  for (const r of rows) {
-    const meta = parseMeta(r.metadata);
-    const num = numOrNull(meta["pr_number"]);
-    const state = strOrNull(meta["state"])?.toUpperCase() ?? "";
-    const pr = num === null ? undefined : prs.get(num);
-    if (pr === undefined || !REVIEW_STATES.has(state) || r.body === null) continue;
-    out.push({ pr, state, reviewedAtMs: r.modified_at, body: r.body });
-  }
-  return out;
-}
-
-const STOPWORDS = new Set(
-  (
-    "this that with from have will would could should there their they them then than what when where which " +
-    "while also just like here into only some more most such very your yours about after before again being " +
-    "does done each every make made need needs please thanks thank maybe still think looks look good great " +
-    "nice small minor nits nit change changes changed code file files line lines test tests pull request"
-  ).split(" "),
-);
-
-/** Words in at least {@link MIN_REVIEWS_FOR_TERM} distinct reviews, top {@link TERMS_MAX}. A count, not a summary. */
-export function recurringTerms(bodies: readonly string[]): PrereviewTerm[] {
-  const seen = new Map<string, number>();
-  for (const body of bodies) {
-    const words = new Set(body.toLowerCase().match(/[a-z0-9_-]{4,32}/g) ?? []);
-    for (const w of words) {
-      if (STOPWORDS.has(w) || /^[0-9_-]+$/.test(w)) continue;
-      seen.set(w, (seen.get(w) ?? 0) + 1);
-    }
-  }
-  return [...seen.entries()]
-    .filter(([, n]) => n >= MIN_REVIEWS_FOR_TERM)
-    .sort((a, b) => b[1] - a[1] || byString(a[0], b[0]))
-    .slice(0, TERMS_MAX)
-    .map(([term, reviews]) => ({ term, reviews }));
 }
 
 function sizeOf(
