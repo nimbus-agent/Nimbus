@@ -38,9 +38,9 @@ function timeText(t: TimeValue, noneText: string): string {
   return t.ms === null ? noneText : `${utcLabel(t.ms)} (${t.basis})`;
 }
 
-const plain = (s: string): string => hardenedPlain(s, PLAIN_MAX);
+export const plain = (s: string): string => hardenedPlain(s, PLAIN_MAX);
 
-function section(title: string, lines: readonly string[]): string {
+export function section(title: string, lines: readonly string[]): string {
   return [`## ${title}`, "", ...lines].join("\n");
 }
 
@@ -153,7 +153,7 @@ function personText(p: OnCallLane["current"][number]): string {
   return `${who}${p.isMe ? " (you)" : ""}${where}${until}`;
 }
 
-function onCallLines(o: OnCallLane): string[] {
+export function onCallLines(o: OnCallLane): string[] {
   switch (o.status) {
     case "skipped":
       return ["_Not looked up: no bound service._"];
@@ -215,7 +215,7 @@ function dataLines(d: DataLane): string[] {
   return lines;
 }
 
-function historyLines(h: HistoryLane): string[] {
+export function historyLines(h: HistoryLane): string[] {
   if (h.rows.length === 0) return ["_No recorded state change._"];
   const rows = h.rows.map(
     (r) =>

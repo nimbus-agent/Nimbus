@@ -13,7 +13,7 @@ import type {
 } from "./findings.ts";
 import type { GlossaryBrief } from "./glossary-types.ts";
 import type { IncidentPostmortemBrief } from "./incident-postmortem-types.ts";
-import type { IncidentBrief } from "./incident-types.ts";
+import type { IncidentBrief, IncidentDataBrief } from "./incident-types.ts";
 import type { NegotiateBrief } from "./negotiate-types.ts";
 import type { OncallBrief } from "./oncall-types.ts";
 import type { OwnershipBrief } from "./ownership-types.ts";
@@ -41,6 +41,7 @@ export type SynthInput =
   | OncallBrief
   | BriefingBrief
   | IncidentBrief
+  | IncidentDataBrief
   | IncidentPostmortemBrief;
 
 /**

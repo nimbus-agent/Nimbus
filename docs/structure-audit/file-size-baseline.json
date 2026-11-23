@@ -81,7 +81,7 @@
     "packages/gateway/src/agents/_lib/render.test.ts": 810,
     "packages/gateway/src/agents/_lib/reserved-sections.coverage.test.ts": 586,
     "packages/gateway/src/agents/_lib/synthesize.test.ts": 780,
-    "packages/gateway/src/agents/_lib/synthesize.ts": 555,
+    "packages/gateway/src/agents/_lib/synthesize.ts": 527,
     "packages/gateway/src/agents/changelog.test.ts": 515,
     "packages/gateway/src/agents/decisions.test.ts": 604,
     "packages/gateway/src/agents/expert.test.ts": 1173,
