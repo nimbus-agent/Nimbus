@@ -263,7 +263,6 @@
     "packages/gateway/src/extensions/extension-credential-set.test.ts": 549,
     "packages/gateway/src/extensions/extension-runtime.test.ts": 731,
     "packages/gateway/src/extensions/install-from-local.test.ts": 2267,
-    "packages/gateway/src/extensions/install-from-local.ts": 1513,
     "packages/gateway/src/extensions/installed-eval.test.ts": 595,
     "packages/gateway/src/extensions/migration/migration-engine.test.ts": 2386,
     "packages/gateway/src/extensions/migration/migration-engine.ts": 1249,
