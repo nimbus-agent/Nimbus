@@ -1,5 +1,5 @@
 // E2E over a REAL gateway socket for the extension credential methods (Readwise unbundling pilot,
-// PR 2). The handlers live in `ipc/automation-rpc.ts`; a real client reaches them only through
+// PR 2). The handlers live in `ipc/automation-rpc/`; a real client reaches them only through
 // `ipc/server/dispatchers.ts`'s `tryDispatchAutomationRpc` prefix match, which also supplies the Vault
 // and — for `credentialSet` only — the owner gate. A unit test calling `dispatchAutomationRpc`
 // directly bypasses all of that. "Extension not found" (-32602) proves the request reached the

@@ -94,14 +94,14 @@ export function checkIncidentConfinement(files: readonly FileEntry[]): Violation
 //     "workflow.export" only by the executor, the import module, the RPC module,
 //     `connectors/proposable-actions.ts`, `ipc/lan-rpc.ts` and `ipc/server/demo-gate.ts`.
 // (c) Rule `workflow-import-upsert-confined`: `upsertWorkflowByName` is called only by its definition
-//     (`automation/workflow-store.ts`), the `workflow.save` handler (`ipc/automation-rpc.ts`) and
+//     (`automation/workflow-store.ts`), the `workflow.save` handler (`ipc/automation-rpc/workflow.ts`) and
 //     `automation/workflow-import.ts`, so nothing else (an agent door, a template path) becomes a second way
 //     to write a workflow.
 // (d) Rule `workflow-import-rule-isolation`: the rule and learning path (`engine/standing-rule-step.ts`,
 //     `standing/standing-rule-derive.ts`, `standing/approval-learning.ts`, `standing/standing-rule-store.ts`)
 //     names neither `workflow_import` nor the import store nor any of its reads; the display reads are named
 //     only where the plan allows (`readImportSource`: the store, `ipc/standing-rpc.ts`,
-//     `automation/workflow-import.ts`; `listSources`: the store, `ipc/automation-rpc.ts`,
+//     `automation/workflow-import.ts`; `listSources`: the store, `ipc/automation-rpc/workflow.ts`,
 //     `ipc/workflow-import-rpc.ts`; `signersForName`: the store and `automation/workflow-import.ts`); and
 //     the import modules name none of `standing_rule`, `standing_rule_fire`, `standing_streak`,
 //     `standing_suggestion`, `insertRule`, `claimFire`, `standingRuleStep`. So an import can never satisfy a
@@ -153,7 +153,7 @@ const D50_IDENTIFIERS: readonly {
     re: /\bupsertWorkflowByName\b/g,
     allowed: [
       `${D50_SRC}automation/workflow-store.ts`,
-      `${D50_SRC}ipc/automation-rpc.ts`,
+      `${D50_SRC}ipc/automation-rpc/workflow.ts`,
       D50_IMPORT,
     ],
     rule: "workflow-import-upsert-confined",
@@ -165,7 +165,7 @@ const D50_IDENTIFIERS: readonly {
   },
   {
     re: /\blistSources\b/g,
-    allowed: [D50_STORE, `${D50_SRC}ipc/automation-rpc.ts`, D50_RPC],
+    allowed: [D50_STORE, `${D50_SRC}ipc/automation-rpc/workflow.ts`, D50_RPC],
     rule: "workflow-import-rule-isolation",
   },
   {

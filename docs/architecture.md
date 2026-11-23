@@ -1735,7 +1735,7 @@ The watcher engine evaluates post-sync conditions and fires configured automatio
 could never evaluate cannot be created. It also rejects a `condition_json` that declares a
 `filter.affectedService` on a `condition_type` whose kind has no timeline graph entity to match
 it against — `alert_fired` today, since `incident_opened` and `deploy_failed` both support the
-filter. The check (`ipc/automation-rpc.ts`'s `declaresAffectedServiceFilter`) is a narrow,
+filter. The check (`ipc/automation-rpc/watcher.ts`'s `declaresAffectedServiceFilter`) is a narrow,
 purpose-built parse, not a general `condition_json` validator: unparseable JSON, a non-object
 `filter`, or a non-string `affectedService` all leave the pre-existing, more permissive behavior
 unchanged.
@@ -2829,7 +2829,7 @@ skipped). Nothing leaves the machine and no Vault, DB or IPC is opened, so there
 **Evaluating an INSTALLED extension (`extension.eval`, I49's second half).** `nimbus eval --extension <id>` goes through
 the gateway: the CLI sends one id, `extension.eval { ids: [id] }` (the IPC method accepts 1 to 50), on a terminal-only consent client (`--yes`/`-y` and a
 non-TTY stdin/stdout are refused before connecting) and exits 0 when the eval ran, 2 otherwise. The handler
-(`ipc/automation-rpc.ts`, owner-gated through the per-call gate-only `buildExtensionGateExecutor`, so consent goes to the
+(`ipc/automation-rpc/extension-install.ts`, owner-gated through the per-call gate-only `buildExtensionGateExecutor`, so consent goes to the
 calling client; with `[extensions] runtime = false` it refuses first, `ERR_EXTENSION_EVAL_RUNTIME_DISABLED`, `-32603`, with no
 prompt) hands the ids to `extensions/installed-eval.ts` `evaluateInstalledExtensions`, which works in three phases.
 (1) Pre-consent, no extension code runs: each id is verified by `verified-extension.ts` `readVerifiedExtensionForEval` (the

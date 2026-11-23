@@ -324,7 +324,6 @@
     "packages/gateway/src/ipc/automation-rpc.edges.test.ts": 845,
     "packages/gateway/src/ipc/automation-rpc.run-grant.test.ts": 781,
     "packages/gateway/src/ipc/automation-rpc.test.ts": 2076,
-    "packages/gateway/src/ipc/automation-rpc.ts": 1653,
     "packages/gateway/src/ipc/capture-rpc.test.ts": 2213,
     "packages/gateway/src/ipc/clip-rpc.test.ts": 593,
     "packages/gateway/src/ipc/computer-rpc.test.ts": 664,

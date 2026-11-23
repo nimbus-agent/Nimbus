@@ -179,7 +179,8 @@ describe("each dispatcher reaches the rpc-params.ts helper it has always matched
       .filter((rel) =>
         /from "(?:\.\.?\/)+(?:ipc\/)?rpc-params\.ts"/.test(readFileSync(join(ipcDir, rel), "utf8")),
       )
-      .map((rel) => basename(rel, ".ts"))
+      // The automation dispatcher's helpers live in `automation-rpc/`; its row is the one module.
+      .map((rel) => (rel.startsWith("automation-rpc") ? "automation-rpc" : basename(rel, ".ts")))
       .sort();
     expect(importers.length).toBeGreaterThan(0);
     expect(importers).toEqual(REFUSALS.map((r) => r.module).sort());

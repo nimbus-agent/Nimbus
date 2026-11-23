@@ -105,7 +105,7 @@ describe("ruling B1: the built-in registry and continuity table are injected, ne
       const args = dispatchers.slice(at, dispatchers.indexOf("});", at));
       expect(args, callee).toMatch(/continuityTable: ctx\.options\.continuityTable/);
     }
-    const automation = strip(join("ipc", "automation-rpc.ts"));
+    const automation = strip(join("ipc", "automation-rpc", "extension-run.ts"));
     const argsOf = (callee: string): string => {
       const at = automation.indexOf(`await ${callee}(`);
       expect(at, callee).toBeGreaterThan(-1);
@@ -125,12 +125,15 @@ describe("ruling B1: the built-in registry and continuity table are injected, ne
       /liveCredentials: \(x\) => currentRunCredentials\(ctx\.db, x, ctx\.continuityTable\)/,
     );
     // `continuityTableOf` forwards the composed table itself, never a default of its own.
-    const tableOfAt = automation.indexOf("function continuityTableOf(");
+    const shared = strip(join("ipc", "automation-rpc", "shared.ts"));
+    const tableOfAt = shared.indexOf("function continuityTableOf(");
     expect(tableOfAt).toBeGreaterThan(-1);
-    expect(automation.slice(tableOfAt, automation.indexOf("\n}\n", tableOfAt))).toMatch(
+    expect(shared.slice(tableOfAt, shared.indexOf("\n}\n", tableOfAt))).toMatch(
       /ctx\.continuityTable === undefined \? \{\} : \{ continuityTable: ctx\.continuityTable \}/,
     );
-    expect(automation).toMatch(/continuityTable: options\.continuityTable/);
+    expect(strip(join("ipc", "automation-rpc.ts"))).toMatch(
+      /continuityTable: options\.continuityTable/,
+    );
     const connectorRpc = strip(join("ipc", "connector-rpc.ts"));
     expect(connectorRpc).toMatch(/\{ continuityTable \}/);
     const removal = strip(join("ipc", "connector-rpc-handlers", "removal.ts"));
