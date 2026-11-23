@@ -211,7 +211,7 @@ Everything else follows the standard triple. These break from it in a way worth 
 | `packages/gateway/src/deployment/external-id.ts` | Stable `external_id` derivation (provider + sha + env) |
 | `packages/gateway/src/deployment/types.ts` | `DeploymentAnnotateInput` / `DeploymentAnnotateResult` |
 | `packages/gateway/src/ipc/deployment-rpc.ts` | `dispatchDeploymentRpc` — internal `deployment.annotate` (NOT in renderer allowlist) |
-| `packages/gateway/src/ipc/http-write-routes.ts` | `WRITE_ROUTE_ALLOWLIST` + `dispatchWriteRoute` — invariant `I13` |
+| `packages/gateway/src/ipc/http-write-routes.ts` | `dispatchWriteRoute` — invariant `I13` (allow-list in `ipc/http-write-routes/allowlist.ts`, handlers in `ipc/http-write-routes/`) |
 | `packages/gateway/src/ipc/http-auth.ts` | `requireBearer` + `tokenFingerprint` — reads `http_api.deployment_token` |
 | `packages/gateway/src/ipc/http-rate-limit.ts` | `HttpWriteRateLimiter` — per-token sliding window (60 req/min) |
 | `packages/cli/src/commands/deploy-annotate.ts` | `nimbus deploy annotate --service --sha --target-ref --env --status` |

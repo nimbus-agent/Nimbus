@@ -30,6 +30,7 @@
 # HTTP write surface — I13
 /packages/gateway/src/ipc/http-server.ts                            @asafgolombek
 /packages/gateway/src/ipc/http-write-routes.ts                      @asafgolombek
+/packages/gateway/src/ipc/http-write-routes/                     @asafgolombek
 /packages/gateway/src/ipc/http-auth.ts                              @asafgolombek
 /packages/gateway/src/ipc/http-rate-limit.ts                        @asafgolombek
 
