@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
-import { fakeVault, read } from "../../test/helpers/security-invariants.ts";
+import { fakeVault, read, readAssembleFamily } from "../../test/helpers/security-invariants.ts";
 import { ConsentCoordinatorImpl } from "../ipc/consent.ts";
 import { createStreamRegistry } from "../ipc/engine-ask-stream.ts";
 import { dispatchIndexReembedRpc } from "../ipc/index-reembed-rpc.ts";
@@ -320,7 +320,10 @@ describe("I41 — a demo-rooted process never reaches the real install", () => {
   });
 
   test("clause 6 wiring: assemble.ts starts the sync scheduler exactly once, and only inside `if (syncEnabled)`", async () => {
-    const src = await read("packages/gateway/src/platform/assemble.ts");
+    // The scheduler is built and started in `platform/assemble/scheduler-mesh.ts`.
+    const src = await read("packages/gateway/src/platform/assemble/scheduler-mesh.ts");
+    const family = Object.values(await readAssembleFamily()).join("\n");
+    expect(family.match(/syncScheduler\.start\(\);/g)?.length).toBe(1);
     expect(src.match(/syncScheduler\.start\(\);/g)?.length).toBe(1);
     // Bounded quantifier, not `[\s\S]*?` unbounded: assemble.ts has TWO `if (syncEnabled) {`
     // blocks, and the first (filesystem-root registration) closes long before `start()`. An
@@ -334,7 +337,9 @@ describe("I41 — a demo-rooted process never reaches the real install", () => {
     // `.finally → tick()` bypass `start()` entirely, so a demo scheduler is inert only because it
     // is BUILT with `syncDisabled`. Deleting this spread would leave a never-started scheduler that
     // `connector.sync`'s `forceSync` still drives — and no other test here would notice.
-    const src = await read("packages/gateway/src/platform/assemble.ts");
+    const src = await read("packages/gateway/src/platform/assemble/scheduler-mesh.ts");
+    const family = Object.values(await readAssembleFamily()).join("\n");
+    expect(family.match(/new SyncScheduler\(/g)?.length).toBe(1);
     expect(src.match(/new SyncScheduler\(/g)?.length).toBe(1);
     expect(src).toContain("const syncEnabled = bootPolicyFor(paths).syncScheduler;");
     // Inside the constructor call itself: sliced from `new SyncScheduler(` to the call's own close
@@ -348,10 +353,13 @@ describe("I41 — a demo-rooted process never reaches the real install", () => {
   });
 
   test("clause 6 wiring: ChatOps boots only when the boot policy allows it", async () => {
-    const src = await read("packages/gateway/src/platform/assemble.ts");
+    const root = await read("packages/gateway/src/platform/assemble.ts");
+    const src = await read("packages/gateway/src/platform/assemble/chatops-boot.ts");
+    const family = Object.values(await readAssembleFamily()).join("\n");
     // One call (plus the definition), handed the policy flag; the guard returns before building anything.
-    expect(src.match(/(?<!function )bootChatopsIntoAssembly\(/g)?.length).toBe(1);
-    expect(src).toContain("chatopsAllowedByBootPolicy: bootPolicy.chatops,");
+    expect(family.match(/(?<!function )bootChatopsIntoAssembly\(/g)?.length).toBe(1);
+    expect(root.match(/(?<!function )bootChatopsIntoAssembly\(/g)?.length).toBe(1);
+    expect(root).toContain("chatopsAllowedByBootPolicy: bootPolicy.chatops,");
     expect(src).toMatch(
       /if \(!chatopsCfg\.enabled \|\| !chatopsAllowedByBootPolicy\) return undefined;/,
     );
@@ -359,25 +367,28 @@ describe("I41 — a demo-rooted process never reaches the real install", () => {
 
   test("clause 6 wiring: assemble.ts gates the updater startup check, the telemetry flush and the extensions auto-update daemon on the boot policy", async () => {
     const src = await read("packages/gateway/src/platform/assemble.ts");
+    const updater = await read("packages/gateway/src/platform/assemble/updater-boot.ts");
+    const family = Object.values(await readAssembleFamily()).join("\n");
     // Call COUNTS first, like the reap/sidecar pins: a guarded call proves nothing if a second,
-    // unguarded one sits elsewhere in the file. `wireUpdaterIntoIpc`'s own definition is excluded
-    // by the lookbehind; `startTelemetryFlushScheduler` is only imported here, with no paren.
-    expect(src.match(/(?<!function )wireUpdaterIntoIpc\(/g)?.length).toBe(1);
-    expect(src.match(/function wireUpdaterIntoIpc\(/g)?.length).toBe(1);
-    expect(src.match(/startTelemetryFlushScheduler\(/g)?.length).toBe(1);
+    // unguarded one sits elsewhere in the assembly. `wireUpdaterIntoIpc`'s own definition (in
+    // `assemble/updater-boot.ts`) is excluded by the lookbehind.
+    expect(family.match(/(?<!function )wireUpdaterIntoIpc\(/g)?.length).toBe(1);
+    expect(family.match(/function wireUpdaterIntoIpc\(/g)?.length).toBe(1);
+    expect(family.match(/startTelemetryFlushScheduler\(/g)?.length).toBe(1);
     expect(src).toMatch(/if \(bootPolicy\.updaterStartupCheck\) \{\s*wireUpdaterIntoIpc\(/);
     expect(src).toMatch(
       /if \(bootPolicy\.telemetryFlush\) \{\s*const telemetryStop = startTelemetryFlushScheduler\(/,
     );
     // `extensionsAutoUpdate` is one of two ANDed preconditions (not env-disabled), not a lone
     // `if (bootPolicy.X)` — pin the exact conjunction, not just presence. The daemon is built ONCE.
-    expect(src).toMatch(
+    expect(updater).toMatch(
       /if \(!autoUpdateDisabled && bootPolicyFor\(paths\)\.extensionsAutoUpdate\) \{/,
     );
-    expect(src.match(/createAutoUpdateRuntime\(/g)?.length).toBe(1);
+    expect(family.match(/createAutoUpdateRuntime\(/g)?.length).toBe(1);
+    expect(updater.match(/createAutoUpdateRuntime\(/g)?.length).toBe(1);
     // One air-gap switch (spec § 8.8): the daemon and the `registry.*` IPC methods share the SAME
     // registry fetch deps object, whose `enforceAirGap` is the LLM router's.
-    expect(src).toMatch(/fetch: registryFetch,/);
+    expect(updater).toMatch(/fetch: registryFetch,/);
     expect(src).toMatch(/^\s*registryFetch,$/m);
     expect(src).toMatch(/enforceAirGap: \(\) => llmRegistry\.llmRouter\.enforcesAirGap\(\),/);
   });
@@ -393,10 +404,12 @@ describe("I41 — a demo-rooted process never reaches the real install", () => {
 
   test("clause 6 wiring: assemble.ts builds the ONE extension slot source only behind the runtime predicate, and hands the IPC server the same answer", async () => {
     const src = await read("packages/gateway/src/platform/assemble.ts");
+    const scheduler = await read("packages/gateway/src/platform/assemble/scheduler-mesh.ts");
+    const family = Object.values(await readAssembleFamily()).join("\n");
     // Count first: a guarded construction proves nothing if a second, unguarded one sits elsewhere.
-    expect(src.match(/createExtensionSlotSource\(/g)?.length).toBe(1);
-    expect(src).toMatch(/extensionRuntimeEnabled\s*\?\s*createExtensionSlotSource\(/);
-    expect(src.match(/isExtensionRuntimeEnabled\(/g)?.length).toBe(1);
+    expect(family.match(/createExtensionSlotSource\(/g)?.length).toBe(1);
+    expect(scheduler).toMatch(/extensionRuntimeEnabled\s*\?\s*createExtensionSlotSource\(/);
+    expect(family.match(/isExtensionRuntimeEnabled\(/g)?.length).toBe(1);
     expect(src).toMatch(
       /const extensionRuntimeEnabled = isExtensionRuntimeEnabled\(\s*\{ runtime: loadNimbusExtensionsRuntimeFromConfigDir\(paths\.configDir\) \},\s*paths,\s*\);/,
     );

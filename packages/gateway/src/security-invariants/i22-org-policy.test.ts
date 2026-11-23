@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { readdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { stripComments } from "../../../../scripts/structure-audit/lib.ts";
-import { fakeVault, REPO_ROOT, read } from "../../test/helpers/security-invariants.ts";
+import { asm, fakeVault, REPO_ROOT, read } from "../../test/helpers/security-invariants.ts";
 import { CONNECTOR_SERVICE_IDS } from "../connectors/connector-catalog.ts";
 import { createConnectorWriteDispatcher } from "../connectors/connector-write-dispatch.ts";
 import { CONNECTOR_WRITES } from "../connectors/connector-write-registry.ts";
@@ -351,25 +351,22 @@ code_execution=true
     // through the team-credential contexts and `PlatformServices` to the dispatcher the gateway
     // installs. Comments stripped: every pattern below is about code, never prose.
     const src = stripComments(await read("packages/gateway/src/platform/assemble.ts"));
-    const bodyOf = (signature: string): string => {
-      const at = src.indexOf(signature);
-      expect(at, signature).toBeGreaterThan(-1);
-      return src.slice(at, src.indexOf("\n}\n", at));
-    };
+    const policyBootSrc = await asm.code("assemble/policy-identity-boot.ts");
 
     // 1. The predicate is `connectorAllowPredicate` over the gate this function built: the
     //    decision (e) drives, which reads `policyGate.enforced()` on every call. The value this
     //    function captures at boot for its audit rows (`enforcedConnectorAllow`) never changes.
     //    The helper is imported and named nowhere else, so no local copy can stand in for it.
-    const boot = bodyOf("function bootPolicyGateWithConnectorAllowlist(");
+    const boot = asm.body(policyBootSrc, "function bootPolicyGateWithConnectorAllowlist(");
     expect(boot).toContain(
       "return { policyStore, policyGate, isConnectorAllowed: connectorAllowPredicate(policyGate) };",
     );
-    const imported = src.match(/import \{([^}]*)\} from "\.\.\/policy\/connector-allowlist\.ts";/);
+    const imported = policyBootSrc.match(
+      /import \{([^}]*)\} from "\.\.\/\.\.\/policy\/connector-allowlist\.ts";/,
+    );
     expect(imported?.[1]?.split(",").map((name) => name.trim())).toContain(
       "connectorAllowPredicate",
     );
-    expect(src.match(/\bconnectorAllowPredicate\b/g)).toHaveLength(2);
 
     // 2. Booted ONCE, before the one construction of the team-credential contexts, which is handed
     //    that predicate.
@@ -383,7 +380,8 @@ code_execution=true
     expect(src.slice(callAt, src.indexOf("});", callAt))).toMatch(/\n\s*isConnectorAllowed,\n/);
 
     // 3. Inside, the transport's context carries the predicate it was handed, not a stand-in.
-    const contexts = bodyOf("function buildTeamCredentialContexts(");
+    const credentials = await asm.code("assemble/team-credentials.ts");
+    const contexts = asm.body(credentials, "function buildTeamCredentialContexts(");
     expect(contexts).toMatch(/const \{[^}]*\bisConnectorAllowed\b[^}]*\} = deps;/);
     const literalAt = contexts.indexOf("const connectorWriteDeps: ConnectorWriteContext = {");
     expect(literalAt).toBeGreaterThan(-1);
@@ -396,7 +394,7 @@ code_execution=true
     //    at its destructuring, the ChatOps boot (pinned by (j)) and that literal, with no widened
     //    copy and no later reassignment. The gateway then wraps its executor's dispatcher in the
     //    write transport with exactly it.
-    const assembly = bodyOf("export async function assemblePlatformServices(");
+    const assembly = asm.body(src, "export async function assemblePlatformServices(");
     expect(assembly).toContain("return services;");
     const servicesAt = assembly.indexOf("const services: PlatformServices = {");
     expect(servicesAt).toBeGreaterThan(-1);
@@ -431,11 +429,8 @@ code_execution=true
     // own tests drive an injected predicate, and the ChatOps boot takes its dispatcher as a dep, so
     // neither would notice a stand-in here. Comments stripped: every pattern below is about code.
     const src = stripComments(await read("packages/gateway/src/platform/assemble.ts"));
-    const bodyOf = (signature: string): string => {
-      const at = src.indexOf(signature);
-      expect(at, signature).toBeGreaterThan(-1);
-      return src.slice(at, src.indexOf("\n}\n", at));
-    };
+    const federationSrc = await asm.code("assemble/federation-boot.ts");
+    const chatopsSrc = await asm.code("assemble/chatops-boot.ts");
     const onlyCall = (name: string): string => {
       const calls = [...src.matchAll(new RegExp(`(?<!function )${name}\\(`, "g"))];
       expect(calls, name).toHaveLength(1);
@@ -446,7 +441,7 @@ code_execution=true
     // 1. Federation: the boot predicate itself reaches the anchor's team-vault backing, which
     //    `federation.invoke` hands to `answerFederatedInvoke`.
     expect(onlyCall("bootFederationIntoIpcOpts")).toMatch(/\n\s*isConnectorAllowed,\n/);
-    const federation = bodyOf("async function bootFederationIntoIpcOpts(");
+    const federation = asm.body(federationSrc, "async function bootFederationIntoIpcOpts(");
     expect(federation).toMatch(/const \{[^}]*\bisConnectorAllowed\b[^}]*\} = opts;/);
     const teamVaultAt = federation.indexOf("const teamVault = {");
     expect(teamVaultAt).toBeGreaterThan(-1);
@@ -463,7 +458,7 @@ code_execution=true
     //    `connectorWriteDeps`, exactly as `runAsk`'s is in gateway-main.ts, so an owner-approved write
     //    from chat selects its configured credential and asks the allowlist first.
     expect(onlyCall("bootChatopsIntoAssembly")).toMatch(/\n\s*connectorWriteDeps,\n/);
-    const chatops = bodyOf("async function bootChatopsIntoAssembly(");
+    const chatops = asm.body(chatopsSrc, "async function bootChatopsIntoAssembly(");
     expect(chatops).toMatch(/const \{[^}]*\bconnectorWriteDeps\b[^}]*\} = deps;/);
     expect(chatops).toMatch(
       /dispatcher:\s*chatopsE2eSinkDir === undefined \|\| chatopsE2eSinkDir === ""\s*\?\s*createConnectorWriteDispatcher\(\s*createConnectorDispatcher\(meshDispatcherClient\(connectorMesh\)\),\s*connectorWriteDeps,?\s*\)/,

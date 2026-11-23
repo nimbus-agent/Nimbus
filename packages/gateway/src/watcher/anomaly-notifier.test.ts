@@ -157,7 +157,11 @@ describe("[watcher.anomaly] config", () => {
 
 describe("production wiring", () => {
   test("assemble hands the detector the real notification service", () => {
-    const src = readFileSync(join(import.meta.dir, "..", "platform", "assemble.ts"), "utf8");
+    // Built in `platform/assemble/scheduler-mesh.ts`, which `assemble.ts` delegates to.
+    const src = readFileSync(
+      join(import.meta.dir, "..", "platform", "assemble", "scheduler-mesh.ts"),
+      "utf8",
+    );
     const at = src.indexOf("createSyncAnomalyDetector({");
     expect(at).toBeGreaterThan(0);
     const block = src.slice(at, at + 600);

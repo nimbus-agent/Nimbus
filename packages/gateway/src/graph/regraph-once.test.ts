@@ -181,9 +181,14 @@ describe("wiring", () => {
   test("platform/assemble.ts starts the one-shot with the strict loader and stops it on shutdown", async () => {
     const { readFileSync } = await import("node:fs");
     const { join } = await import("node:path");
-    const src = readFileSync(join(import.meta.dir, "..", "platform", "assemble.ts"), "utf8");
+    // `startPendingRegraph` lives in `platform/assemble/boot-misc.ts`; `assemble.ts` calls it once.
+    const root = readFileSync(join(import.meta.dir, "..", "platform", "assemble.ts"), "utf8");
+    const src = readFileSync(
+      join(import.meta.dir, "..", "platform", "assemble", "boot-misc.ts"),
+      "utf8",
+    );
     expect(src).toContain("runPendingRegraph(db, { buildResolver, logger })");
     expect(src).toContain("loadNimbusServiceConfigsFromConfigDir(configDir)");
-    expect(src).toContain("startPendingRegraph(db, paths.configDir, syncLogger, sidecarStops)");
+    expect(root).toContain("startPendingRegraph(db, paths.configDir, syncLogger, sidecarStops)");
   });
 });

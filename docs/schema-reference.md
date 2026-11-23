@@ -927,7 +927,7 @@ CREATE TABLE IF NOT EXISTS fleet_run (
 -- is a silent no-op that leaves orphans forever. `expires_at` is enforced on the READ path
 -- (fleet-store.ts filters `expires_at > now` in listBriefs/getBrief) as well as by the retention
 -- prune -- a read surface that still returned an expired brief would make retention a lie. The
--- physical delete runs at GATEWAY BOOT (platform/assemble.ts's assembleFleetRuntime) and again at
+-- physical delete runs at GATEWAY BOOT (platform/assemble/fleet-boot.ts's assembleFleetRuntime) and again at
 -- the END OF EVERY RUN (FleetScheduler's `close`, on every exit path including `deferred`, since
 -- every exit opened a row), never on a timer of its own. The boot pass runs UNCONDITIONALLY -- with
 -- the fleet disabled, and even when [fleet] failed to parse -- because rows written while it was

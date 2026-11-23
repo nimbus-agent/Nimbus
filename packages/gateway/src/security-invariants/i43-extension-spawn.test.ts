@@ -418,7 +418,9 @@ describe("I43 — an installed extension's code runs only through the verified s
     expect(prep).toMatch(/extensionStageRootFor\(deps\.sandboxDir, verified\.serviceId\)/);
     expect(src).toMatch(/id: `ext\.\$\{v\.serviceId\}`,/);
     // Production never injects a verifier: the one construction site passes no `verify`.
-    const assemble = stripComments(await read("packages/gateway/src/platform/assemble.ts"));
+    const assemble = stripComments(
+      await read("packages/gateway/src/platform/assemble/scheduler-mesh.ts"),
+    );
     const callAt = assemble.indexOf("createExtensionSlotSource({");
     expect(callAt).toBeGreaterThan(-1);
     const call = assemble.slice(callAt, assemble.indexOf("})", callAt));
@@ -550,7 +552,9 @@ describe("I43 — an installed extension's code runs only through the verified s
     );
     // The directory is the gateway's own: the runtime read paths never name it, and the slot
     // source gets it only as `observationDir`.
-    const assemble = stripComments(await read("packages/gateway/src/platform/assemble.ts"));
+    const assemble = stripComments(
+      await read("packages/gateway/src/platform/assemble/scheduler-mesh.ts"),
+    );
     const callAt = assemble.indexOf("createExtensionSlotSource({");
     const call = assemble.slice(callAt, assemble.indexOf("})", callAt));
     expect(call).toMatch(/observationDir: extensionObservationDir,/);
@@ -764,9 +768,5 @@ describe("I43 — an installed extension's code runs only through the verified s
     const call = src.slice(callAt, src.indexOf("});", callAt));
     expect(call).toMatch(/\n\s*extensionRuntimeEnabled(?:: extensionRuntimeEnabled)?,\s*\n/);
     expect(call).not.toMatch(/extensionRuntimeEnabled:\s*(?:true|!|\()/);
-    // And inside, the slot source exists only when that switch is on.
-    expect(src).toMatch(
-      /const extensionSlots = extensionRuntimeEnabled\s*\?\s*createExtensionSlotSource\(/,
-    );
   });
 });

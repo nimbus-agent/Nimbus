@@ -73,12 +73,13 @@ export function checkChatopsReplySurfaceInvariant(files: readonly FileEntry[]): 
 
 // D17(c) (I23) — `postWatcherNotice` is the one handle that turns a string into a channel post for a
 // fired watcher. It may appear in production code ONLY in `chatops/chatops-boot.ts` (its home) and
-// `platform/assemble.ts` (the one wiring site, `settleWatcherChatops`, which binds it to the owner's
-// `[watcher.chatops]` namespace). The notifier module receives the poster by injection and imports
+// `platform/assemble.ts` and its `platform/assemble/chatops-boot.ts` (the one wiring site,
+// `settleWatcherChatops`, which binds it to the owner's `[watcher.chatops]` namespace). The notifier module receives the poster by injection and imports
 // nothing from `chatops/`, so no watcher, row or event can reach a destination through it.
 const WATCHER_NOTICE_ALLOWED = new Set([
   "packages/gateway/src/chatops/chatops-boot.ts",
   "packages/gateway/src/platform/assemble.ts",
+  "packages/gateway/src/platform/assemble/chatops-boot.ts",
 ]);
 const WATCHER_NOTICE_RE = /\bpostWatcherNotice\b/;
 
@@ -107,7 +108,9 @@ export function checkChatopsWatcherNoticeCaller(files: readonly FileEntry[]): Vi
 // production code ONLY in the four files that define, resolve and wire them: the kind (`types.ts`),
 // the dispatcher that refuses it unless built with the resolver (`reply-dispatcher.ts`), the boot
 // that builds the target and the resolver (`chatops-boot.ts`), and the one wiring site that hands the
-// boot-time config value over (`assemble.ts`). No watcher, row, pack, IPC handler or other module can
+// boot-time config value over (`assemble.ts` and, since the 2026-11 split, the `platform/assemble/`
+// modules `chatops-boot.ts`, `scheduler-mesh.ts` and `scheduler-mesh-opts.ts` it delegates the config
+// read, the hand-over and the option type to). No watcher, row, pack, IPC handler or other module can
 // build or pass the target, so a channel never reaches the dispatcher from anywhere but the owner's
 // own config.
 const WATCHER_PINNED_ALLOWED = new Set([
@@ -115,6 +118,9 @@ const WATCHER_PINNED_ALLOWED = new Set([
   "packages/gateway/src/chatops/reply-dispatcher.ts",
   "packages/gateway/src/chatops/chatops-boot.ts",
   "packages/gateway/src/platform/assemble.ts",
+  "packages/gateway/src/platform/assemble/chatops-boot.ts",
+  "packages/gateway/src/platform/assemble/scheduler-mesh.ts",
+  "packages/gateway/src/platform/assemble/scheduler-mesh-opts.ts",
 ]);
 const WATCHER_PINNED_RE =
   /\b(?:watcherPinnedChannel|postWatcherNoticePinned)\b|["'`]watcherPinned["'`]/;

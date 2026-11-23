@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { CONTINUITY_TABLE } from "../extensions/continuity/continuity-table.ts";
@@ -70,6 +70,17 @@ describe("ruling B1: the built-in registry and continuity table are injected, ne
     // Nothing in assemble names the baked constants directly, so no consumer can bypass it.
     expect(src).not.toMatch(/\bCONTINUITY_TABLE\b/);
     expect(src).not.toMatch(/\bBUILTIN_REGISTRY\b/);
+    // ...nor does any module `assemble.ts` delegates to (`platform/assemble/`).
+    const helperDir = join(import.meta.dir, "assemble");
+    for (const f of readdirSync(helperDir).filter(
+      (n) => n.endsWith(".ts") && !n.endsWith(".test.ts"),
+    )) {
+      const helper = readFileSync(join(helperDir, f), "utf8")
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/(^|[^:])\/\/.*$/gm, "$1");
+      expect(helper, f).not.toMatch(/\bCONTINUITY_TABLE\b/);
+      expect(helper, f).not.toMatch(/\bBUILTIN_REGISTRY\b/);
+    }
     // The IPC server gets the same value (C7): `extension.approveRun`, `extension.credentialSet` /
     // `credentialStatus` and `connector.remove`'s extension-backed refusal bind through it.
     const ipcOpts = src.match(/const ipcOpts: [^=]*= \{[\s\S]*?\n {2}\};/)?.[0] ?? "";

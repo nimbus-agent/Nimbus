@@ -10,8 +10,9 @@ import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
 import { NULL_EGRESS_SINK } from "../egress/egress-ledger.ts";
 import { ToolExecutor } from "../engine/executor.ts";
 
+// The tribal in-chat executor is built in `platform/assemble/tribal-boot.ts`.
 const assemble = stripComments(
-  readFileSync(join(import.meta.dir, "../platform/assemble.ts"), "utf8"),
+  readFileSync(join(import.meta.dir, "../platform/assemble/tribal-boot.ts"), "utf8"),
 );
 
 describe("the tribal in-chat executor cannot approve a Wave 4 write", () => {

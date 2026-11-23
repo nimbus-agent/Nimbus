@@ -161,7 +161,7 @@ interval_seconds = 3600
    * the scheduler's run boundary and the invoker's cap the same object.
    */
   test("exactly ONE FleetRemoteBudget is constructed in assemble.ts — the run boundary and the cap are one object", async () => {
-    const src = await readFile(join(import.meta.dir, "assemble.ts").replaceAll("\\", "/"), "utf8");
+    const src = await readFile(join(import.meta.dir, "assemble/fleet-boot.ts"), "utf8");
     const calls = src.match(/createFleetRemoteBudget\s*\(/g) ?? [];
     expect(calls).toHaveLength(1);
   });

@@ -21,7 +21,7 @@ describe("I15 — SandboxRunner is intrinsic to every extension spawn", () => {
   });
 
   test("no sandboxed spawn runs in the data or config directory", async () => {
-    for (const rel of ["platform/assemble.ts", "connectors/lazy-mesh/mesh.ts"]) {
+    for (const rel of ["platform/assemble/team-credentials.ts", "connectors/lazy-mesh/mesh.ts"]) {
       const src = await read(`packages/gateway/src/${rel}`);
       expect(src).not.toMatch(/sandboxCwd:\s*paths\.dataDir/);
       expect(src).not.toMatch(/\bcwd:\s*paths\.(dataDir|configDir)/);
@@ -242,8 +242,8 @@ describe("I15 — SandboxRunner is intrinsic to every extension spawn", () => {
     });
 
     test("assemble wires the live approval; the connector RPC wires the restart to the mesh", async () => {
-      const assemble = stripComments(await read("packages/gateway/src/platform/assemble.ts"));
-      expect(assemble).toMatch(
+      const meshSrc = "packages/gateway/src/platform/assemble/scheduler-mesh.ts";
+      expect(stripComments(await read(meshSrc))).toMatch(
         /obsidianWriteGrantEnabled: \(\) => isObsidianWriteGrantApproved\(db\)/,
       );
       const rpc = stripComments(await read("packages/gateway/src/ipc/connector-rpc.ts"));
