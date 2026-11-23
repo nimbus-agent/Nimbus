@@ -4,6 +4,7 @@
 import { posix } from "node:path";
 import { stripComments, stripStringLiterals } from "../lib.ts";
 import type { FileEntry, Violation } from "./_shared.ts";
+import { escapeRegex } from "./spawn-vault-db-identity.ts";
 import { checkTableConfinement, sqlTableReferenceRe } from "./vlm-media-capture-door.ts";
 
 // ---- D33 (extension runtime) ---------------------------------------------------------------------
@@ -372,7 +373,10 @@ export function createToolCallRe(commentFree: string): RegExp {
     const ns = /\*\s*as\s+([A-Za-z_$][\w$]*)/.exec(clause);
     if (ns?.[1] !== undefined) namespaces.add(ns[1]);
   }
-  const alt = [...names, ...[...namespaces].map((n) => `${n}\\s*\\.\\s*createTool`)].join("|");
+  const alt = [
+    ...[...names].map(escapeRegex),
+    ...[...namespaces].map((n) => `${escapeRegex(n)}\\s*\\.\\s*createTool`),
+  ].join("|");
   return new RegExp(`(?<![.\\w$])(?:${alt})\\s*(?:<[^()]*>)?\\s*\\(|\\.\\s*createTool\\s*\\(`, "g");
 }
 
@@ -437,6 +441,12 @@ export function checkConfinement(files: readonly FileEntry[], spec: ConfinementS
     const commentFree = stripComments(f.contents);
     const code = stripStringLiterals(commentFree);
     const original = f.contents.split("\n");
+    // An import-shaped match counts only when its keyword survives string blanking: a
+    // `"require('node:http')"` in a message is text, not an import.
+    const live = (m: RegExpMatchArray): boolean => {
+      const at = (m.index ?? 0) + Math.max(0, m[0].search(/import|export|require/));
+      return code.charAt(at) === commentFree.charAt(at);
+    };
     const push = (rule: string, src: string, index: number | undefined): void => {
       const line = src.slice(0, index).split("\n").length;
       out.push({ rule, file: f.relPath, line, snippet: (original[line - 1] ?? "").trim() });
@@ -455,18 +465,21 @@ export function checkConfinement(files: readonly FileEntry[], spec: ConfinementS
       if (D45_NETWORK_MODULE_RE.test(target)) push(spec.noNetworkRule, commentFree, index);
     };
     for (const m of commentFree.matchAll(D39_STATIC_IMPORT_RE)) {
-      specifier(m[3] ?? "", clauseHasValue(m[1] !== undefined, m[2] ?? ""), m.index);
+      if (live(m)) specifier(m[3] ?? "", clauseHasValue(m[1] !== undefined, m[2] ?? ""), m.index);
     }
-    for (const m of commentFree.matchAll(D39_DYNAMIC_IMPORT_RE))
-      specifier(m[1] ?? "", true, m.index);
+    for (const m of commentFree.matchAll(D39_DYNAMIC_IMPORT_RE)) {
+      if (live(m)) specifier(m[1] ?? "", true, m.index);
+    }
     for (const m of commentFree.matchAll(CONFINEMENT_TEMPLATE_IMPORT_RE)) {
       // `code` has string bodies blanked, so an `import(` that is only text inside a string is not there.
       if (code.startsWith("import", m.index)) specifier(m[1] ?? "", true, m.index);
     }
     for (const m of commentFree.matchAll(D45_SIDE_EFFECT_IMPORT_RE)) {
-      specifier(m[1] ?? "", true, m.index);
+      if (live(m)) specifier(m[1] ?? "", true, m.index);
     }
-    for (const m of commentFree.matchAll(D45_REQUIRE_RE)) specifier(m[1] ?? "", true, m.index);
+    for (const m of commentFree.matchAll(D45_REQUIRE_RE)) {
+      if (live(m)) specifier(m[1] ?? "", true, m.index);
+    }
     for (const re of [D45_NETWORK_CALL_RE, D45_FETCH_REF_RE, D45_GLOBAL_OBJECT_RE]) {
       for (const m of code.matchAll(re)) push(spec.noNetworkRule, code, m.index);
     }

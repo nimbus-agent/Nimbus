@@ -253,6 +253,11 @@ type StripFrame =
   /** Inside a `${...}`: ordinary code. `depth` tracks nested `{}` so the right `}` closes it. */
   | { kind: "subst"; depth: number };
 
+/** A space, except that a newline stays one: blanked text must keep its line numbers. */
+function blankChar(ch: string | undefined): string {
+  return ch === "\n" ? "\n" : " ";
+}
+
 export function stripStringLiterals(src: string): string {
   const out = src.split("");
   const stack: StripFrame[] = [];
@@ -263,21 +268,21 @@ export function stripStringLiterals(src: string): string {
     if (frame?.kind === "string") {
       if (ch === "\\") {
         // Blank the escape AND the character it escapes, so a closing quote is never faked.
-        out[i] = " ";
-        if (i + 1 < out.length) out[i + 1] = " ";
+        out[i] = blankChar(ch);
+        if (i + 1 < out.length) out[i + 1] = blankChar(out[i + 1]);
         i++;
       } else if (ch === frame.quote) {
         stack.pop();
       } else {
-        out[i] = " ";
+        out[i] = blankChar(ch);
       }
       continue;
     }
 
     if (frame?.kind === "template") {
       if (ch === "\\") {
-        out[i] = " ";
-        if (i + 1 < out.length) out[i + 1] = " ";
+        out[i] = blankChar(ch);
+        if (i + 1 < out.length) out[i + 1] = blankChar(out[i + 1]);
         i++;
       } else if (ch === "$" && out[i + 1] === "{") {
         // Keep `${` verbatim and switch to code until its matching `}`.
@@ -286,7 +291,7 @@ export function stripStringLiterals(src: string): string {
       } else if (ch === "`") {
         stack.pop();
       } else {
-        out[i] = " ";
+        out[i] = blankChar(ch);
       }
       continue;
     }
