@@ -7,7 +7,6 @@ import { stripComments } from "../../../../scripts/structure-audit/lib.ts";
 import { read, readDirFiles } from "../../test/helpers/security-invariants.ts";
 import { DEFAULT_NIMBUS_LAN_TOML } from "../config/nimbus-toml.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
-import { legacyAllowedFor } from "../ipc/lan-legacy.ts";
 import {
   attackerEeCandidates,
   attackLegacyBox,
@@ -17,12 +16,12 @@ import {
   replayRecordedRequest,
 } from "../ipc/testing/lan-forward-secrecy.test-helpers.ts";
 import {
-  legacyPairUnderFloorScenario,
+  oldPairFrameScenario,
   recordPairingScenario,
   wrongCodeScenario,
 } from "../ipc/testing/lan-pairing.test-helpers.ts";
 
-describe("I56 — a LAN session's records are encrypted only under ephemeral-DH Noise keys; the v1 box path is gated", () => {
+describe("I56 — a LAN session's records are encrypted only under ephemeral-DH Noise keys; no v1 path exists", () => {
   test("FS-A1: given BOTH static secrets and the whole transcript, no record opens; the positive control opens", async () => {
     const real = await recordSession(false);
     try {
@@ -59,7 +58,7 @@ describe("I56 — a LAN session's records are encrypted only under ephemeral-DH 
     expect(out.failures).toBe(1);
   });
 
-  test("FS-A3: one v2 session ratchets the peer, and a legacy hello for it then gets no hello_ok", async () => {
+  test("FS-A3: one v2 session ratchets the peer, and an old-wire hello for it then gets no reply", async () => {
     const out = await ratchetScenario();
     expect(out.hostRowBefore).toBe(1);
     expect(out.hostRowAfter).toBe(2);
@@ -68,22 +67,38 @@ describe("I56 — a LAN session's records are encrypted only under ephemeral-DH 
     expect(out.legacyHelloBytes).toBe(0);
   });
 
-  test("the downgrade check is ONE function: never for a peer at 2, never under min_protocol 2", () => {
-    expect(legacyAllowedFor(2, 1)).toBe(false);
-    expect(legacyAllowedFor(undefined, 2)).toBe(false);
-    expect(legacyAllowedFor(1, 1)).toBe(true);
+  test("FS3: no v1 path exists - no legacy module, no downgrade check, no box seal, and the server refuses the old first byte", async () => {
+    const ipcFiles = await readDirFiles("packages/gateway/src/ipc");
+    expect(ipcFiles.filter((f) => /(?:^|\/)lan-legacy/.test(f.rel))).toEqual([]);
+    const crypto = stripComments(await read("packages/gateway/src/ipc/lan-crypto.ts"));
+    expect(crypto).not.toMatch(/\b(?:sealBoxFrame|openBoxFrame)\b/);
+    expect(crypto).not.toMatch(/\bnacl\s*\.\s*box\s*(?:\.\s*open\s*)?\(/);
+    for (const rel of ["lan-server.ts", "lan-client.ts", "lan-wire.ts", "lan-session.ts"]) {
+      const src = stripComments(await read(`packages/gateway/src/ipc/${rel}`));
+      expect(src).not.toContain("lan-legacy");
+      expect(src).not.toContain("legacyAllowedFor");
+      expect(src).not.toContain("minProtocol");
+    }
+    const link = stripComments(await read("packages/gateway/src/federation/lan-link.ts"));
+    expect(link).not.toContain("minProtocol");
+    // The one decision on the first byte: the old wire's `{` is refused (no reply, counted), never routed.
+    const server = stripComments(await read("packages/gateway/src/ipc/lan-server.ts"));
+    const branchAt = server.indexOf("OLD_WIRE_FIRST_BYTE) this.opts.onOldWireRefused");
+    const failAt = server.indexOf("this.opts.rateLimit.recordFailure(state.peerIp)", branchAt);
+    const endAt = server.indexOf("state.writer.end()", failAt);
+    expect(branchAt).toBeGreaterThan(-1);
+    expect(failAt).toBeGreaterThan(branchAt);
+    expect(endAt).toBeGreaterThan(failAt);
+    expect(server).not.toMatch(/mode\s*=\s*"legacy"/);
+    // The owner is told which peer to upgrade: the boot wires the refusal notice and the stale-config warning.
+    const boot = stripComments(
+      await read("packages/gateway/src/platform/assemble/federation-boot.ts"),
+    );
+    expect(boot).toContain("oldWireNotices(paths.logDir, lanCfg.minProtocolIgnored)");
+    expect(boot).toContain("onOldWireRefused: oldWire.refused");
   });
 
-  test("wiring: the legacy handshake calls legacyAllowedFor before it replies, and the server uses lan-session for v2", async () => {
-    const legacy = stripComments(await read("packages/gateway/src/ipc/lan-legacy.ts"));
-    const helloReply = legacy.indexOf('kind: "hello_ok"');
-    const helloCheck = legacy.indexOf("legacyAllowedFor(match.protoVersion");
-    expect(helloCheck).toBeGreaterThan(-1);
-    expect(helloCheck).toBeLessThan(helloReply);
-    // ... and again for EVERY request on an open v1 connection, before the frame is opened.
-    const perRequest = legacy.indexOf("legacyAllowedFor(ctx.isKnownPeer(session.peerPubkey)");
-    expect(perRequest).toBeGreaterThan(helloReply);
-    expect(perRequest).toBeLessThan(legacy.indexOf("openBoxFrame(frame"));
+  test("wiring: the server uses lan-session for v2, and checkLanMethodAllowed runs before onMessage", async () => {
     const server = stripComments(await read("packages/gateway/src/ipc/lan-server.ts"));
     expect(server).toContain("openResponderHandshake(");
     // checkLanMethodAllowed still runs before onMessage on the v2 path.
@@ -132,7 +147,8 @@ describe("I56 — a LAN session's records are encrypted only under ephemeral-DH 
     const audit = await read("scripts/structure-audit/check-nimbus-invariants.ts");
     const runAt = audit.indexOf("async function run(");
     expect(audit.slice(runAt)).toContain("checkLanBoxPathConfinement(files)");
-    expect(RULE_ANCHORS).toContain("packages/gateway/src/ipc/lan-legacy.ts");
+    expect(RULE_ANCHORS).toContain("packages/gateway/src/ipc/lan-session.ts");
+    expect(RULE_ANCHORS).not.toContain("packages/gateway/src/ipc/lan-legacy.ts");
     const files = (await readDirFiles("packages/gateway/src")).map((f) => ({
       relPath: `packages/gateway/src/${f.rel}`,
       contents: f.contents,
@@ -145,6 +161,16 @@ describe("I56 — a LAN session's records are encrypted only under ephemeral-DH 
     expect(checkLanBoxPathConfinement([...files, rogue]).map((v) => v.rule)).toContain(
       "lan-box-path-confined",
     );
+    // The old wire cannot come back under its old name, and no file is exempt any more.
+    const revived = { relPath: "packages/gateway/src/ipc/lan-legacy.ts", contents: "export {};" };
+    expect(checkLanBoxPathConfinement([...files, revived]).map((v) => v.file)).toContain(
+      revived.relPath,
+    );
+    const crypto = {
+      relPath: "packages/gateway/src/ipc/lan-crypto.ts",
+      contents: "export const seal = (m) => nacl.box(m, n, p, s);",
+    };
+    expect(checkLanBoxPathConfinement([crypto])).toHaveLength(1);
   });
 
   test("FS2: a recorded pairing holds no code, PSK or static key; both statics and the PSK do not open it; the control does", async () => {
@@ -167,8 +193,8 @@ describe("I56 — a LAN session's records are encrypted only under ephemeral-DH 
     expect(out.rightCodeThenPaired).toBe(true);
   });
 
-  test("FS2: under min_protocol = 2 a legacy plaintext `pair` frame gets no reply and consumes nothing", async () => {
-    const out = await legacyPairUnderFloorScenario();
+  test("FS3: the old plaintext `pair` frame gets no reply and consumes nothing", async () => {
+    const out = await oldPairFrameScenario();
     expect(out.closed).toBe(true);
     expect(out.bytesReceived).toBe(0);
     expect(out.windowStillOpen).toBe(true);
@@ -180,7 +206,7 @@ describe("I56 — a LAN session's records are encrypted only under ephemeral-DH 
       const src = stripComments(await read(`packages/gateway/src/ipc/${rel}`));
       expect(src).not.toContain("pairing_code");
       expect(src).not.toContain('kind: "pair"');
-      if (rel !== "lan-client.ts") expect(src).not.toContain("lan-legacy"); // the IK fallback lives there
+      expect(src).not.toContain("lan-legacy");
     }
     const client = stripComments(await read("packages/gateway/src/ipc/lan-pair-client.ts"));
     // The test hook is forwarded, never supplied; production callers do not pass it.
@@ -206,8 +232,8 @@ describe("I56 — a LAN session's records are encrypted only under ephemeral-DH 
     expect(server).toContain("ctx.registerPeer(finished.remoteStatic, host.peerIp, 2)");
   });
 
-  test("the protocol column and the config key exist, and the floor defaults to the compatibility window", () => {
+  test("the protocol column stays (status names a peer still on 1) and the config key is gone", () => {
     expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(95);
-    expect(DEFAULT_NIMBUS_LAN_TOML.minProtocol).toBe(1);
+    expect("minProtocol" in DEFAULT_NIMBUS_LAN_TOML).toBe(false);
   });
 });

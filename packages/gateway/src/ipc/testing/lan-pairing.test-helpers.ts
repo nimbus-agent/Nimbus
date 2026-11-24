@@ -49,7 +49,6 @@ export async function startPairingHarness(
     },
     pairing: fakePairing({
       isOpen: () => window.isOpen(),
-      consume: (c) => window.consume(c),
       currentPsk: () => window.currentPsk(),
       consumeOpen: () => window.consumeOpen(),
     }),
@@ -184,16 +183,16 @@ export async function wrongCodeScenario(): Promise<WrongCodeOutcome> {
   }
 }
 
-export interface LegacyPairOutcome {
+export interface OldPairOutcome {
   closed: boolean;
   bytesReceived: number;
   windowStillOpen: boolean;
   registered: number;
 }
 
-/** Under `min_protocol = 2` the old plaintext `pair` frame gets no reply and consumes nothing. */
-export async function legacyPairUnderFloorScenario(): Promise<LegacyPairOutcome> {
-  const h = await startPairingHarness({ minProtocol: 2 });
+/** The removed plaintext `pair` frame (FS3) gets no reply, consumes nothing and registers nothing. */
+export async function oldPairFrameScenario(): Promise<OldPairOutcome> {
+  const h = await startPairingHarness();
   try {
     const code = generatePairingCode();
     h.window.open(code);

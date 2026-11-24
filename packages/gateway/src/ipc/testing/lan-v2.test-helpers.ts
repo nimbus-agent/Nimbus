@@ -3,12 +3,6 @@
  * replay, truncate or tamper with any frame. Production clients go through `lan-client.ts`.
  */
 import type { BoxKeypair } from "../lan-crypto.ts";
-import {
-  type LegacyServerContext,
-  type LegacySession,
-  legacyHandleEncrypted,
-  legacyHandleHandshake,
-} from "../lan-legacy.ts";
 import { HandshakeState, PATTERN_IK } from "../lan-noise.ts";
 import {
   createInitiatorHandshake,
@@ -217,37 +211,21 @@ export function startStub(
   };
 }
 
-/** An OLD server: only the v1 handlers, so a v2 first frame is non-JSON and closes without a reply. */
-export function startLegacyOnlyServer(ctx: LegacyServerContext): StubServer {
-  interface State extends LegacySession {
-    reader: ReturnType<typeof makeFrameReader>;
-    n: number;
-  }
+/**
+ * A server from BEFORE LAN forward secrecy, as this version's client sees it: it speaks only the old
+ * JSON wire, so the Noise first frame is not JSON and the connection is closed with no reply.
+ */
+export function startOldWireServer(): StubServer {
   let n = 0;
-  const server = Bun.listen<State>({
+  const server = Bun.listen<undefined>({
     hostname: "127.0.0.1",
     port: 0,
     socket: {
       open(socket) {
         n += 1;
-        socket.data = {
-          peerIp: socket.remoteAddress,
-          writer: createQueuedSocketWriter(socket),
-          reader: makeFrameReader(8 * 1024 * 1024),
-          n,
-        };
+        socket.end();
       },
-      drain(socket) {
-        socket.data.writer.flush();
-      },
-      async data(socket, chunk) {
-        socket.data.reader.push(chunk);
-        for (let f = socket.data.reader.next(); f !== undefined; f = socket.data.reader.next()) {
-          if (socket.data.writer.isEnding()) return;
-          if (socket.data.peerPubkey) await legacyHandleEncrypted(socket.data, ctx, f);
-          else legacyHandleHandshake(socket.data, ctx, f);
-        }
-      },
+      data() {},
     },
   });
   return {

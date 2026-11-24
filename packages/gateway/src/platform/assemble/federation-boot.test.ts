@@ -164,10 +164,7 @@ describe("bootFederationIntoIpcOpts", () => {
     // Port 0: the OS picks a free port, so no reserve-then-release race.
     savedPort = processEnvGet("NIMBUS_LAN_PORT");
     processEnvSet("NIMBUS_LAN_PORT", "0");
-    writeFileSync(
-      join(root, "nimbus.toml"),
-      ["[lan]", 'bind = "127.0.0.1"', "min_protocol = 2"].join("\n"),
-    );
+    writeFileSync(join(root, "nimbus.toml"), ["[lan]", 'bind = "127.0.0.1"'].join("\n"));
   });
 
   afterEach(async () => {
@@ -224,9 +221,6 @@ describe("bootFederationIntoIpcOpts", () => {
     const addr = ipcOpts.lanServer?.listenAddr();
     expect(addr?.host).toBe("127.0.0.1");
     expect(addr?.port ?? 0).toBeGreaterThan(0);
-    // `[lan] min_protocol` reaches the client side of the wire through the index.
-    expect(localIndex.lanMinProtocol()).toBe(2);
-
     // Stopping releases the listener.
     for (const s of stops.splice(0).reverse()) s();
     await new Promise((r) => setTimeout(r, 20));

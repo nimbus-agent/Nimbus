@@ -98,7 +98,7 @@ test("a single approval stays locked; two distinct approvals unlock the team too
         args: {},
       },
       undefined,
-      { known: 1, minProtocol: 1 },
+      { known: 1 },
     ) as Promise<WireInvokeResult>;
 
   try {

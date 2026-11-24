@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { type BoxKeypair, generateBoxKeypair, sealBoxFrame } from "./lan-crypto.ts";
+import { type BoxKeypair, generateBoxKeypair } from "./lan-crypto.ts";
 import { LanServer, type LanServerOptions } from "./lan-server.ts";
 import {
   createInitiatorHandshake,
@@ -25,7 +25,7 @@ interface Harness {
   messages: Array<{ method: string; params: unknown; peer: LanPeerMatch }>;
   negotiated: Uint8Array[];
   lookups: Uint8Array[];
-  consumed: string[];
+  oldWire: string[];
 }
 
 let current: LanServer | undefined;
@@ -51,7 +51,7 @@ async function start(
   const messages: Harness["messages"] = [];
   const negotiated: Uint8Array[] = [];
   const lookups: Uint8Array[] = [];
-  const consumed: string[] = [];
+  const oldWire: string[] = [];
   const { protoVersion, protoBox, allowed, known, pairingOpen, reply, ...opts } = over;
   const server = new LanServer({
     bind: "127.0.0.1",
@@ -81,14 +81,8 @@ async function start(
       recordFailure: (ip) => failures.push(ip),
       recordSuccess: () => {},
     },
-    pairing: {
-      ...fakePairing(),
-      isOpen: () => pairingOpen === true,
-      consume: (code) => {
-        consumed.push(code);
-        return true;
-      },
-    },
+    pairing: { ...fakePairing(), isOpen: () => pairingOpen === true },
+    onOldWireRefused: (ip) => oldWire.push(ip),
     ...opts,
   });
   await server.start();
@@ -104,11 +98,12 @@ async function start(
     messages,
     negotiated,
     lookups,
-    consumed,
+    oldWire,
   };
 }
 
-const legacyFrame = (obj: object): Uint8Array => new TextEncoder().encode(JSON.stringify(obj));
+/** A frame of the removed v1 wire: JSON, so its first byte is `{`. */
+const oldWireFrame = (obj: object): Uint8Array => new TextEncoder().encode(JSON.stringify(obj));
 const b64 = (k: Uint8Array): string => Buffer.from(k).toString("base64");
 
 describe("LanServer v2 - the handshake", () => {
@@ -308,18 +303,6 @@ describe("LanServer - a malformed but authenticated request cannot take the gate
     expect((await readV2Reply(ok)).id).toBe(1);
     ok.conn.close();
   });
-
-  test("the same on the legacy path: an encrypted `null` request closes the session", async () => {
-    const h = await start();
-    const conn = await connectRaw(h.port);
-    conn.writeFrame(legacyFrame({ kind: "hello", client_pubkey: b64(h.client.publicKey) }));
-    await conn.nextFrame();
-    conn.writeFrame(
-      sealBoxFrame(new TextEncoder().encode("null"), h.host.publicKey, h.client.secretKey),
-    );
-    expect(await conn.closed()).toBe(true);
-    expect(h.messages).toHaveLength(0);
-  });
 });
 
 describe("LanServer - requests on one connection are answered one at a time, in order", () => {
@@ -356,45 +339,25 @@ describe("LanServer - requests on one connection are answered one at a time, in 
   });
 });
 
-describe("LanServer - an open v1 connection is rechecked against the ratchet", () => {
-  test("a v1 session opened while the peer was at 1 is closed once the peer reaches 2", async () => {
-    const box = { v: 1 as 1 | 2 };
-    const h = await start({ protoBox: box });
-    const conn = await connectRaw(h.port);
-    conn.writeFrame(legacyFrame({ kind: "hello", client_pubkey: b64(h.client.publicKey) }));
-    expect(JSON.parse(new TextDecoder().decode(await conn.nextFrame())).kind).toBe("hello_ok");
-    const req = (id: number) =>
-      sealBoxFrame(
-        new TextEncoder().encode(JSON.stringify({ id, method: "federation.ping" })),
-        h.host.publicKey,
-        h.client.secretKey,
-      );
-    conn.writeFrame(req(1));
-    expect(await conn.nextFrame()).toBeDefined(); // still served at protocol 1
-    box.v = 2; // the peer completes a v2 session on another connection
-    conn.writeFrame(req(2));
-    expect(await conn.closed()).toBe(true);
-    expect(h.messages).toHaveLength(1);
-  });
-});
-
 describe("LanServer - first byte picks the wire (D-FS-9)", () => {
-  test("0x7B still runs the legacy hello", async () => {
+  test("0x7B (the removed v1 wire) gets no reply, is counted, and names the address", async () => {
     const h = await start();
     const conn = await connectRaw(h.port);
-    conn.writeFrame(legacyFrame({ kind: "hello", client_pubkey: b64(h.client.publicKey) }));
-    const reply = await conn.nextFrame();
-    expect(JSON.parse(new TextDecoder().decode(reply))).toMatchObject({ kind: "hello_ok" });
-    conn.close();
+    conn.writeFrame(oldWireFrame({ kind: "hello", client_pubkey: b64(h.client.publicKey) }));
+    expect(await conn.closed()).toBe(true);
+    expect(conn.received()).toHaveLength(0);
+    expect(h.failures).toHaveLength(1);
+    expect(h.oldWire).toEqual(["127.0.0.1"]);
   });
 
-  test("a first byte that is neither { nor N closes with no reply and counts a failure", async () => {
+  test("a first byte that is neither { nor N closes with no reply and counts a failure, without naming an old peer", async () => {
     const h = await start();
     const conn = await connectRaw(h.port);
     conn.writeFrame(new Uint8Array([0x00, 1, 2, 3]));
     expect(await conn.closed()).toBe(true);
     expect(conn.received()).toHaveLength(0);
     expect(h.failures).toHaveLength(1);
+    expect(h.oldWire).toEqual([]);
   });
 
   test("an empty first frame closes and counts", async () => {
@@ -423,68 +386,53 @@ describe("LanServer - first byte picks the wire (D-FS-9)", () => {
   });
 });
 
-describe("LanServer - min_protocol and the downgrade ratchet (FS-A3)", () => {
-  test("min_protocol = 2 closes a legacy hello and a legacy pair with no reply, counted; v2 still works", async () => {
-    const h = await start({ minProtocol: 2, pairingOpen: true });
+describe("LanServer - the removed v1 wire (FS3)", () => {
+  // Under every recorded protocol and with a pairing window open: there is no wire left to speak,
+  // so a hello and a pair from any peer, known or not, get nothing back and consume nothing.
+  test.each([
+    ["a known peer recorded at 1", { protoVersion: 1 as const }],
+    ["a known peer recorded at 2", { protoVersion: 2 as const }],
+    ["an unknown peer", { known: false }],
+  ])("a hello and a pair from %s get no reply, are counted, and are named", async (_who, over) => {
+    const h = await start({ ...over, pairingOpen: true });
     const hello = await connectRaw(h.port);
-    hello.writeFrame(legacyFrame({ kind: "hello", client_pubkey: b64(h.client.publicKey) }));
+    hello.writeFrame(oldWireFrame({ kind: "hello", client_pubkey: b64(h.client.publicKey) }));
     expect(await hello.closed()).toBe(true);
     expect(hello.received()).toHaveLength(0);
     const pair = await connectRaw(h.port);
     pair.writeFrame(
-      legacyFrame({ kind: "pair", client_pubkey: b64(h.client.publicKey), pairing_code: "C" }),
+      oldWireFrame({ kind: "pair", client_pubkey: b64(h.client.publicKey), pairing_code: "C" }),
     );
     expect(await pair.closed()).toBe(true);
     expect(pair.received()).toHaveLength(0);
     expect(h.failures).toHaveLength(2);
-    expect(h.consumed).toEqual([]);
+    expect(h.oldWire).toHaveLength(2);
+    expect(h.lookups).toEqual([]); // nothing about the sender was even looked up
+    expect(h.messages).toEqual([]);
+  });
+
+  test("a refusal does not stop the same peer's v2 session", async () => {
+    const h = await start();
+    const old = await connectRaw(h.port);
+    old.writeFrame(oldWireFrame({ kind: "hello", client_pubkey: b64(h.client.publicKey) }));
+    expect(await old.closed()).toBe(true);
     const x = await connectV2(h.port, h.client, h.host.publicKey);
     sendV2Request(x, { id: 1, method: "federation.ping" });
     expect((await readV2Reply(x)).result).toBeDefined();
     x.conn.close();
   });
 
-  test("a legacy hello from a pubkey recorded at protocol 2 gets no hello_ok, even under min_protocol = 1", async () => {
-    const h = await start({ protoVersion: 2, minProtocol: 1 });
+  test("a refused socket parses nothing more: a second old frame in the same chunk is not counted", async () => {
+    const h = await start();
+    const one = oldWireFrame({ kind: "hello", client_pubkey: b64(h.client.publicKey) });
+    const framed = new Uint8Array(4 + one.length);
+    new DataView(framed.buffer).setUint32(0, one.length, false);
+    framed.set(one, 4);
     const conn = await connectRaw(h.port);
-    conn.writeFrame(legacyFrame({ kind: "hello", client_pubkey: b64(h.client.publicKey) }));
+    conn.write(new Uint8Array([...framed, ...framed]));
     expect(await conn.closed()).toBe(true);
-    expect(conn.received()).toHaveLength(0);
+    expect(h.oldWire).toHaveLength(1);
     expect(h.failures).toHaveLength(1);
-  });
-
-  test("a legacy hello from a pubkey at protocol 1 still works under the default min_protocol", async () => {
-    const h = await start({ protoVersion: 1 });
-    const conn = await connectRaw(h.port);
-    conn.writeFrame(legacyFrame({ kind: "hello", client_pubkey: b64(h.client.publicKey) }));
-    const reply = await conn.nextFrame();
-    expect(JSON.parse(new TextDecoder().decode(reply)).kind).toBe("hello_ok");
-    expect(h.failures).toEqual([]);
-    conn.close();
-  });
-
-  test("a legacy pair for a key recorded at protocol 2 is refused before the code is consumed", async () => {
-    const h = await start({ protoVersion: 2, pairingOpen: true });
-    const conn = await connectRaw(h.port);
-    conn.writeFrame(
-      legacyFrame({ kind: "pair", client_pubkey: b64(h.client.publicKey), pairing_code: "C" }),
-    );
-    expect(await conn.closed()).toBe(true);
-    expect(conn.received()).toHaveLength(0);
-    expect(h.consumed).toEqual([]);
-    expect(h.failures).toHaveLength(1);
-  });
-
-  test("a legacy pair for a key at protocol 1 (or unknown) proceeds to the code check", async () => {
-    const h = await start({ protoVersion: 1, pairingOpen: true });
-    const conn = await connectRaw(h.port);
-    conn.writeFrame(
-      legacyFrame({ kind: "pair", client_pubkey: b64(h.client.publicKey), pairing_code: "C" }),
-    );
-    const reply = await conn.nextFrame();
-    expect(JSON.parse(new TextDecoder().decode(reply)).kind).toBe("pair_ok");
-    expect(h.consumed).toEqual(["C"]);
-    conn.close();
   });
 });
 
@@ -507,20 +455,15 @@ describe("LanServer - the handshake deadline (D-FS-11)", () => {
     expect(h.failures).toHaveLength(1);
   });
 
-  test("a completed v2 session and a completed legacy session are not closed by the timer", async () => {
+  test("a completed v2 session is not closed by the timer", async () => {
     const h = await start({ handshakeDeadlineMs: 80 });
     const x = await connectV2(h.port, h.client, h.host.publicKey);
-    const legacy = await connectRaw(h.port);
-    legacy.writeFrame(legacyFrame({ kind: "hello", client_pubkey: b64(h.client.publicKey) }));
-    await legacy.nextFrame();
     await new Promise((r) => setTimeout(r, 300));
     expect(await x.conn.closed(50)).toBe(false);
-    expect(await legacy.closed(50)).toBe(false);
     sendV2Request(x, { id: 1, method: "federation.ping" });
     expect((await readV2Reply(x)).id).toBe(1);
     expect(h.failures).toEqual([]);
     x.conn.close();
-    legacy.close();
   });
 
   test("a socket already refused is not counted a second time by the timer", async () => {
@@ -533,7 +476,7 @@ describe("LanServer - the handshake deadline (D-FS-11)", () => {
   });
 });
 
-describe("LanServer - frame caps by wire mode", () => {
+describe("LanServer - frame caps", () => {
   test("a v2 record header over 65,535 bytes closes the session without a failure count", async () => {
     const h = await start();
     const x = await connectV2(h.port, h.client, h.host.publicKey);
@@ -544,7 +487,7 @@ describe("LanServer - frame caps by wire mode", () => {
     expect(h.failures).toEqual([]);
   });
 
-  test("a first-frame header over 4,096 bytes closes and counts, on either wire", async () => {
+  test("a first-frame header over 4,096 bytes closes and counts", async () => {
     const h = await start();
     const conn = await connectRaw(h.port);
     const header = new Uint8Array(4);

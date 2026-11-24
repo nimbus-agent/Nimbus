@@ -226,7 +226,7 @@ test("P1+P2+P3 — forwarded share arrives at B INERT with correct attribution a
     "federation.shareReceive",
     { share: originShare },
     undefined,
-    { known: 1, minProtocol: 1 },
+    { known: 1 },
   );
   // federation.shareReceive resolves ok:true when the content sig verifies.
   expect((deliverResult as { ok: boolean }).ok).toBe(true);
@@ -358,7 +358,7 @@ test("P2+P3 — re-forward via hop-chain: B re-forwards alice's share; C sees ho
     "federation.shareReceive",
     { share: forwardedByB },
     undefined,
-    { known: 1, minProtocol: 1 },
+    { known: 1 },
   );
   expect((result as { ok: boolean }).ok).toBe(true);
 
@@ -571,7 +571,7 @@ test("P4 (seam) — onPairComplete seam drives the drain end-to-end via real Pee
         "federation.shareReceive",
         { share: row.share },
         undefined,
-        { known: 1, minProtocol: 1 },
+        { known: 1 },
       );
       markDelivered(aDb, row.id);
     }

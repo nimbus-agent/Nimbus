@@ -1,6 +1,5 @@
 import { createHmac, randomBytes } from "node:crypto";
 import bs58 from "bs58";
-import { constantTimeStringEqual } from "../util/timing-safe-compare.ts";
 
 export const PAIRING_CODE_LENGTH = 20;
 /** The Bitcoin base58 alphabet, which is what `bs58` encodes with. */
@@ -114,21 +113,6 @@ export class PairingWindow {
       this.close();
       return false;
     }
-    this.close();
-    return true;
-  }
-
-  consume(code: string): boolean {
-    return this.consumeAt(code, this.now());
-  }
-
-  consumeAt(code: string, nowMs: number): boolean {
-    if (!this.code || this.openedAt === null) return false;
-    if (nowMs - this.openedAt > this.windowMs) {
-      this.close();
-      return false;
-    }
-    if (!constantTimeStringEqual(code, this.code)) return false;
     this.close();
     return true;
   }

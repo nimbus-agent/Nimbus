@@ -51,6 +51,7 @@ import { spawnTeamToolAndCall } from "../../teamvault/team-tool-spawn.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { GATEWAY_VERSION } from "../../version.ts";
 import type { PlatformPaths } from "../paths.ts";
+import { oldWireNotices } from "./lan-old-wire-notice.ts";
 
 export function asBroadcastParams(params: unknown): Record<string, unknown> {
   return typeof params === "object" && params !== null ? (params as Record<string, unknown>) : {};
@@ -202,8 +203,9 @@ export async function bootFederationIntoIpcOpts(
   ipcOpts.federationIdentity = identity;
 
   const lanCfg = loadNimbusLanFromConfigDir(paths.configDir);
-  // The client side of the LAN wire reads `[lan] min_protocol` from the index (see lanLinkFor).
-  localIndex.setLanMinProtocol(lanCfg.minProtocol);
+  // The old v1 wire is gone (FS3): tell the owner once if the config still asks for it, and tell
+  // them which address to upgrade when such a peer knocks (at most once an hour per address).
+  const oldWire = oldWireNotices(paths.logDir, lanCfg.minProtocolIgnored);
   // Team Vault (Slice 2): the anchor's invoke backing. quorumFor resolves the authoritative quorum
   // rule via EnforcedPolicy (Task 9) — max(local [hitl.quorum] baseline, org policy); ungoverned it
   // returns the local baseline verbatim, governed it tightens. runTool resolves the team secret
@@ -266,7 +268,7 @@ export async function bootFederationIntoIpcOpts(
       pairingWindowSeconds: lanCfg.pairingWindowSeconds,
       maxFailedAttempts: lanCfg.maxFailedAttempts,
       lockoutSeconds: lanCfg.lockoutSeconds,
-      minProtocol: lanCfg.minProtocol,
+      onOldWireRefused: oldWire.refused,
     },
     // I18 — the operator-validity guard for answers served OVER THE WIRE.
     //

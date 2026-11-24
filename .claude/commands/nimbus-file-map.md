@@ -236,9 +236,8 @@ Everything else follows the standard triple. These break from it in a way worth 
 | `packages/gateway/src/ipc/lan-crypto.ts` | NaCl box keypair, `sealBoxFrame` / `openBoxFrame` (legacy v1 primitives only, static D47) |
 | `packages/gateway/src/ipc/lan-noise.ts` | Noise Protocol Framework from `node:crypto`: IK, AES-256-GCM, SHA-256, X25519 (invariant `I56`) |
 | `packages/gateway/src/ipc/lan-session.ts` | v2 first frame, the IK drivers, records, chunking, rekey every 1,024 records |
-| `packages/gateway/src/ipc/lan-legacy.ts` | The v1 static-box wire (handlers + client) and `legacyAllowedFor`, the one downgrade check |
-| `packages/gateway/src/ipc/lan-wire.ts` | Frame caps, service interfaces and framing helpers shared by both wires |
-| `packages/gateway/src/federation/lan-link.ts` | `lanLinkFor` — the per-peer outbound link policy (ratchet + `min_protocol`) |
+| `packages/gateway/src/ipc/lan-wire.ts` | Frame caps, service interfaces and framing helpers for the LAN wire |
+| `packages/gateway/src/federation/lan-link.ts` | `lanLinkFor` — the per-peer outbound link policy (the protocol record write) |
 | `packages/gateway/src/ipc/testing/` | Test-only LAN scenarios (raw v2 client, recording proxy, the FS-A1 attacker); skipped by the structure audit |
 | `packages/gateway/src/ipc/lan-pairing.ts` | `PairingWindow` — single-use base58 code, 5-min expiry |
 | `packages/gateway/src/ipc/lan-rate-limit.ts` | `LanRateLimiter` — per-IP sliding window |

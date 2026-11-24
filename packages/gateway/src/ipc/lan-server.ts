@@ -2,11 +2,6 @@ import type { Socket, TCPSocketListener } from "bun";
 import { isLoopbackHost } from "../llm/base-url-locality.ts";
 import { registerListener } from "../locality/listener-registry.ts";
 import type { BoxKeypair } from "./lan-crypto.ts";
-import {
-  type LegacyServerContext,
-  legacyHandleEncrypted,
-  legacyHandleHandshake,
-} from "./lan-legacy.ts";
 import { type PairHost, pairHandleFirstFrame, pairHandleMessage3 } from "./lan-pair-server.ts";
 import { isPairFirstFrame } from "./lan-pair-session.ts";
 import { checkLanMethodAllowed, LanError } from "./lan-rpc.ts";
@@ -40,12 +35,16 @@ export interface LanServerOptions {
   hostKeypair: BoxKeypair;
   onMessage: (method: string, params: unknown, peer: LanPeerMatch) => Promise<unknown>;
   isKnownPeer: (pubkey: Uint8Array) => LanPeerMatch | null;
-  /** `protoVersion` is 2 for an XXpsk0 pairing (D-FS-17) and absent for the legacy `pair` frame. */
+  /** `protoVersion` is 2 for an XXpsk0 pairing (D-FS-17), the only way a peer is registered. */
   registerPeer: (pubkey: Uint8Array, peerIp: string, protoVersion?: 1 | 2) => string;
   rateLimit: RateLimiterService;
   pairing: PairingService;
-  /** `[lan] min_protocol`: 2 refuses the v1 wire for every peer. Default 1 (OR-FS-1). */
-  minProtocol?: 1 | 2;
+  /**
+   * Called (with the peer's address) when a connection opens with the old v1 wire's JSON first frame:
+   * the connection is closed with no reply and counted as a failure, and this lets the owner be told
+   * to upgrade that peer. Never called for a v2 handshake.
+   */
+  onOldWireRefused?: (peerIp: string) => void;
   /** D-FS-11: a socket that has not finished its handshake in this long is closed and counted. Default 10,000. */
   handshakeDeadlineMs?: number;
   /**
@@ -56,15 +55,14 @@ export interface LanServerOptions {
 }
 
 export const DEFAULT_HANDSHAKE_DEADLINE_MS = 10_000;
-/** A legacy (v1) first frame is JSON, so its first byte is `{`. */
-const LEGACY_FIRST_BYTE = 0x7b;
+/** The removed v1 wire opened with a JSON first frame, so its first byte is `{`. */
+const OLD_WIRE_FIRST_BYTE = 0x7b;
 
-/** Which wire a connection speaks, fixed by its first byte (D-FS-9). */
-type WireMode = "unknown" | "legacy" | "v2";
+/** Which wire a connection speaks, fixed by its first byte (D-FS-9): only v2 exists. */
+type WireMode = "unknown" | "v2";
 
 interface SessionState extends PairHost {
   mode: WireMode;
-  peerPubkey?: Uint8Array;
   peerMatch?: LanPeerMatch;
   /** The v2 transport once message 2 was sent. */
   v2?: Session;
@@ -83,11 +81,6 @@ export class LanServer {
   private unregisterListener: (() => void) | undefined;
 
   constructor(private readonly opts: LanServerOptions) {}
-
-  /** What the legacy (v1) handlers read: the options plus the resolved `min_protocol`. */
-  private legacyContext(): LegacyServerContext {
-    return { ...this.opts, minProtocol: this.opts.minProtocol ?? 1 };
-  }
 
   // start()/stop() do synchronous work behind a Promise contract their callers await; `Promise.try`
   // keeps a failure (e.g. a bind error from `Bun.listen`) a rejection rather than a synchronous throw.
@@ -196,27 +189,20 @@ export class LanServer {
     const state = socket.data;
     if (state.mode === "unknown") {
       const first = payload[0];
-      if (first === LEGACY_FIRST_BYTE) state.mode = "legacy";
-      else if (first === V2_FIRST_BYTE) state.mode = "v2";
+      if (first === V2_FIRST_BYTE) state.mode = "v2";
       else {
+        // The removed v1 wire (FS3): no reply (it would tell a prober which side said no), a counted
+        // failure, and the owner is told which address to upgrade.
+        if (first === OLD_WIRE_FIRST_BYTE) this.opts.onOldWireRefused?.(state.peerIp);
         this.opts.rateLimit.recordFailure(state.peerIp);
         state.writer.end();
         return;
       }
     }
-    if (state.mode === "v2") {
-      if (state.v2 !== undefined) await this.handleV2Record(socket, state.v2, payload);
-      else if (state.pair !== undefined) this.handlePairMessage3(socket, payload);
-      else if (isPairFirstFrame(payload)) this.handlePairFirstFrame(socket, payload);
-      else this.handleV2Handshake(socket, payload);
-      return;
-    }
-    if (state.peerPubkey) {
-      await this.handleEncryptedMessage(socket, payload);
-      return;
-    }
-    this.handleHandshake(socket, payload);
-    if (state.peerPubkey) this.clearHandshakeDeadline(socket);
+    if (state.v2 !== undefined) await this.handleV2Record(socket, state.v2, payload);
+    else if (state.pair !== undefined) this.handlePairMessage3(socket, payload);
+    else if (isPairFirstFrame(payload)) this.handlePairFirstFrame(socket, payload);
+    else this.handleV2Handshake(socket, payload);
   }
 
   /** Appends `chunk` to the session buffer; `false` (session ended) when it would exceed the cap. */
@@ -247,7 +233,7 @@ export class LanServer {
     const length = view.getUint32(0, false);
     const cap = this.frameCap(socket.data);
     if (length > cap) {
-      if (!this.handshakeDone(socket.data)) {
+      if (socket.data.v2 === undefined) {
         this.opts.rateLimit.recordFailure(socket.data.peerIp);
       }
       socket.data.writer.end();
@@ -259,14 +245,9 @@ export class LanServer {
     return payload;
   }
 
-  private handshakeDone(state: SessionState): boolean {
-    return state.mode === "v2" ? state.v2 !== undefined : state.peerPubkey !== undefined;
-  }
-
-  /** The largest frame a connection may declare: 4,096 until its handshake is done, then by wire mode. */
+  /** The largest frame a connection may declare: 4,096 until its handshake is done, then a record. */
   private frameCap(state: SessionState): number {
-    if (!this.handshakeDone(state)) return MAX_HANDSHAKE_FRAME;
-    return state.mode === "v2" ? MAX_RECORD_FRAME : MAX_ENCRYPTED_FRAME;
+    return state.v2 === undefined ? MAX_HANDSHAKE_FRAME : MAX_RECORD_FRAME;
   }
 
   /**
@@ -299,9 +280,7 @@ export class LanServer {
       socket.data.writer.end();
       return;
     }
-    // 4. min_protocol: a v2 session satisfies every setting, so there is nothing to refuse here; the
-    //    legacy path is where min_protocol and the ratchet bite (lan-legacy.ts legacyAllowedFor).
-    // 5. the ratchet write, then message 2, then the session becomes live.
+    // 4. the ratchet write, then message 2, then the session becomes live.
     let peerMatch = match;
     if (match.protoVersion !== 2) {
       try {
@@ -340,7 +319,7 @@ export class LanServer {
   /**
    * One v2 record. A record that does not open (a replayed request, a corrupted one) ends the session
    * and is a counted failure for the address (D-FS-14); the method denylist still runs before
-   * `onMessage`, exactly as on the v1 path.
+   * `onMessage`.
    */
   private async handleV2Record(
     socket: Socket<SessionState>,
@@ -409,13 +388,5 @@ export class LanServer {
       );
     }
     for (const record of session.sealMessage(bytes)) writeFramedBytes(socket.data.writer, record);
-  }
-
-  private handleHandshake(socket: Socket<SessionState>, payload: Uint8Array): void {
-    legacyHandleHandshake(socket.data, this.legacyContext(), payload);
-  }
-
-  private handleEncryptedMessage(socket: Socket<SessionState>, frame: Uint8Array): Promise<void> {
-    return legacyHandleEncrypted(socket.data, this.legacyContext(), frame);
   }
 }
