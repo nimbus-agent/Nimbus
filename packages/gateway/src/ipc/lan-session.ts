@@ -39,9 +39,15 @@ export const MAX_RECORDS_PER_MESSAGE = Math.ceil(MAX_LOGICAL_MESSAGE / MAX_RECOR
 
 const FLAG_MORE = 0x00;
 const FLAG_FINAL = 0x01;
-const PATTERN_BYTE_IK = 0x01;
-const VERSION = 0x02;
-const MAGIC = [0x4e, 0x4c] as const;
+export const PATTERN_BYTE_IK = 0x01;
+/** The pattern byte of a pairing (`XXpsk0`) first frame (`lan-pair-session.ts`). */
+export const PATTERN_BYTE_XXPSK0 = 0x02;
+/** The wire version byte of a v2 first frame. */
+export const V2_VERSION = 0x02;
+/** "NL": the first two bytes of every v2 first frame. */
+export const V2_MAGIC = [0x4e, 0x4c] as const;
+const VERSION = V2_VERSION;
+const MAGIC = V2_MAGIC;
 const FIRST_FRAME_HEADER_LENGTH = 4;
 
 /** D-FS-7: the only label of ours is the prologue; everything else is Noise's own schedule. */

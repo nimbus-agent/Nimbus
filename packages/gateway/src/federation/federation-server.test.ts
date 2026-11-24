@@ -566,11 +566,9 @@ test("a v2 session ratchets both rows to 2, and the old wire is then refused for
   await h.built.lanServer.start();
   stop = () => h.built.lanServer.stop();
   const port = h.built.lanServer.listenAddr()?.port as number;
-  const code = generatePairingCode();
-  h.built.pairingWindow.open(code);
   const askerKp = generateBoxKeypair();
-  await outboundPairHandshake("127.0.0.1", port, code, askerKp);
-  // A peer made by the legacy pair starts at protocol 1 on the host.
+  // A peer made before FS2 (a legacy pair, or a V19 row) starts at protocol 1 on the host.
+  h.index.addLanPeer({ peerId: "peer:asker", peerPubkey: askerKp.publicKey, direction: "inbound" });
   expect(h.index.getLanPeerByPubkey(askerKp.publicKey)?.proto_version).toBe(1);
 
   const asker = askerSide(h.identity.publicKey, port);
@@ -614,13 +612,8 @@ test("min_protocol = 2 refuses the old wire for every peer, end to end; v2 still
       sendFederatedLegacy("127.0.0.1", port, askerKp, h.identity.publicKey, "federation.query", {}),
     ),
   ).toBe("lan-client: connection closed mid-exchange");
-  // A legacy pair is refused too (pairing is still on the old frames until the next slice).
-  const code = generatePairingCode();
-  h.built.pairingWindow.open(code);
-  expect(
-    await errorOf(outboundPairHandshake("127.0.0.1", port, code, generateBoxKeypair())),
-  ).not.toBe("");
-
+  // (A legacy `pair` frame under the floor, and a v2 pairing under it, are pinned in lan-pair.test.ts
+  // and the I56 block.)
   const asker = askerSide(h.identity.publicKey, port);
   const res = (await sendFederatedOverWire(
     "127.0.0.1",

@@ -30,7 +30,7 @@ type WirePreflight =
 test("payoff: upstream sends a preflight to a downstream owner over the wire — grant + approve → pass (only the local command runs); deny → declined; ungranted → no_grant", async () => {
   // --- Downstream B: real LanServer with the I24 preflight gate deps. ---
   const bDb = new Database(":memory:");
-  runIndexedSchemaMigrations(bDb, 38);
+  runIndexedSchemaMigrations(bDb, 95);
   const bIndex = new LocalIndex(bDb);
   const bIdentity = generateBoxKeypair();
   const bNs = new NamespaceStore(bDb);
@@ -76,7 +76,7 @@ test("payoff: upstream sends a preflight to a downstream owner over the wire —
 
   // --- Upstream A: real runtime (production outbound handshake). ---
   const aDb = new Database(":memory:");
-  runIndexedSchemaMigrations(aDb, 38);
+  runIndexedSchemaMigrations(aDb, 95);
   const aIndex = new LocalIndex(aDb);
   const aRuntime = buildFederationRuntime(
     { enabled: true, consentTimeoutSeconds: 30, mdnsEnabled: false, mdnsBind: "127.0.0.1" },

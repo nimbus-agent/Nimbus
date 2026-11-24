@@ -31,7 +31,7 @@ const SECRET = "AKIA-SUPER-SECRET-TEAM-KEY";
 test("payoff: teammate invokes a team-vault tool on the anchor over the wire — grant → ok (leak-proof) → revoke → no_grant → RBAC → impersonation", async () => {
   // --- Anchor B: real LanServer with a teamVault backing whose runTool closes over the secret. ---
   const bDb = new Database(":memory:");
-  runIndexedSchemaMigrations(bDb, 35);
+  runIndexedSchemaMigrations(bDb, 95);
   const bIndex = new LocalIndex(bDb);
   const bIdentity = generateBoxKeypair();
   const bStore = new TeamVaultStore(bDb);
@@ -73,7 +73,7 @@ test("payoff: teammate invokes a team-vault tool on the anchor over the wire —
 
   // --- Teammate A: real runtime (production outbound handshake). ---
   const aDb = new Database(":memory:");
-  runIndexedSchemaMigrations(aDb, 35);
+  runIndexedSchemaMigrations(aDb, 95);
   const aIndex = new LocalIndex(aDb);
   const aRuntime = buildFederationRuntime(
     { enabled: true, consentTimeoutSeconds: 30, mdnsEnabled: false, mdnsBind: "127.0.0.1" },

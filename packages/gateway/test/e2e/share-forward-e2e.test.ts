@@ -137,7 +137,7 @@ test("P1+P2+P3 — forwarded share arrives at B INERT with correct attribution a
   // Strictly, B's LanServer needs the full federation schema for lan_peers etc.
   // Use runIndexedSchemaMigrations for B's index DB, but separate share inbox.
   const bIndexDb = new Database(":memory:");
-  runIndexedSchemaMigrations(bIndexDb, 43);
+  runIndexedSchemaMigrations(bIndexDb, 95);
   const bIndex = new LocalIndex(bIndexDb);
   const bBoxKp = generateBoxKeypair();
 
@@ -171,7 +171,7 @@ test("P1+P2+P3 — forwarded share arrives at B INERT with correct attribution a
   // SETUP: Gateway A (origin + forwarder) — real federation runtime for pairing.
   // -----------------------------------------------------------------------
   const aIndexDb = new Database(":memory:");
-  runIndexedSchemaMigrations(aIndexDb, 43);
+  runIndexedSchemaMigrations(aIndexDb, 95);
   const aIndex = new LocalIndex(aIndexDb);
   const aBoxKp = generateBoxKeypair();
 
@@ -303,7 +303,7 @@ test("P2+P3 — re-forward via hop-chain: B re-forwards alice's share; C sees ho
   // -----------------------------------------------------------------------
   const cDb = makeShareInboxDb();
   const cIndexDb = new Database(":memory:");
-  runIndexedSchemaMigrations(cIndexDb, 43);
+  runIndexedSchemaMigrations(cIndexDb, 95);
   const cIndex = new LocalIndex(cIndexDb);
   const cBoxKp = generateBoxKeypair();
 
@@ -337,7 +337,7 @@ test("P2+P3 — re-forward via hop-chain: B re-forwards alice's share; C sees ho
   // -----------------------------------------------------------------------
   const bBoxKp = generateBoxKeypair();
   const bIndexDb = new Database(":memory:");
-  runIndexedSchemaMigrations(bIndexDb, 43);
+  runIndexedSchemaMigrations(bIndexDb, 95);
   const bIndex = new LocalIndex(bIndexDb);
 
   // Register B as an inbound peer on C's side (so C's LanServer accepts B's NaCl session).
@@ -487,7 +487,7 @@ test("P4 (seam) — onPairComplete seam drives the drain end-to-end via real Pee
   // -----------------------------------------------------------------------
   const bDb = makeShareInboxDb();
   const bIndexDb = new Database(":memory:");
-  runIndexedSchemaMigrations(bIndexDb, 43);
+  runIndexedSchemaMigrations(bIndexDb, 95);
   const bIndex = new LocalIndex(bIndexDb);
   const bBoxKp = generateBoxKeypair();
 
@@ -520,7 +520,7 @@ test("P4 (seam) — onPairComplete seam drives the drain end-to-end via real Pee
   // SETUP: Gateway A (sender) — real index DB + real share_records DB.
   // -----------------------------------------------------------------------
   const aIndexDb = new Database(":memory:");
-  runIndexedSchemaMigrations(aIndexDb, 43);
+  runIndexedSchemaMigrations(aIndexDb, 95);
   const aIndex = new LocalIndex(aIndexDb);
   const aBoxKp = generateBoxKeypair();
   const aDb = makeShareDb();

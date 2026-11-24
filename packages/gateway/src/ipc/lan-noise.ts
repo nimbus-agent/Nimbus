@@ -4,211 +4,44 @@
  * AES-256-GCM for the cipher and SHA-256 / HMAC-SHA256 for the hash, so the suite is
  * `Noise_<pattern>_25519_AESGCM_SHA256`.
  *
- * Scope: exactly what the `IK` pattern needs (the pre-message `s`, the tokens `e s ee es se ss`,
- * `Split()`, `Rekey()`, the handshake hash). There is no `psk` token yet: the pairing slice adds it
- * as one more token and one more row of the pattern table, without changing the engine's shape.
- * The pattern table is data (`HandshakePattern`), so a pattern is a row, never new code.
+ * Scope: what the `IK` and `XXpsk0` patterns need (the pre-message `s`, the tokens
+ * `e s ee es se ss psk`, `MixKeyAndHash`, `Split()`, `Rekey()`, the handshake hash). The pattern
+ * table is data (`HandshakePattern`), so a pattern is a row, never new code.
  *
  * Checked against the published test vectors (`test/fixtures/noise/`) by `lan-noise.test.ts`.
  *
  * Every read-side failure (a message that does not open, a truncated message, a low-order point) is
  * the SAME fixed error, `NOISE_OPEN_FAILED`: nothing here is an oracle for which check failed.
  * Interop with other Noise stacks is not a goal; the prologue and the framing around this are
- * Nimbus-specific (`lan-session.ts`).
+ * Nimbus-specific (`lan-session.ts`). The primitives (X25519, HKDF, AES-GCM, `CipherState`) are in
+ * `lan-noise-cipher.ts`; this file is the symmetric state, the handshake state and the pattern table.
  */
-import {
-  createCipheriv,
-  createDecipheriv,
-  createHash,
-  createHmac,
-  createPrivateKey,
-  createPublicKey,
-  diffieHellman,
-  randomBytes,
-} from "node:crypto";
 import type { BoxKeypair } from "./lan-crypto.ts";
+import {
+  CipherState,
+  DHLEN,
+  defaultEphemeral,
+  HASHLEN,
+  hkdf2,
+  hkdf3,
+  MAX_NOISE_MESSAGE,
+  NOISE_OPEN_FAILED,
+  requireKeyLength,
+  sha256,
+  TAG_LEN,
+  x25519,
+} from "./lan-noise-cipher.ts";
 
-export const DHLEN = 32;
-export const HASHLEN = 32;
-const TAG_LEN = 16;
-/** Noise § 3: a Noise message, handshake or transport, is at most 65,535 bytes. */
-export const MAX_NOISE_MESSAGE = 65_535;
-/** Noise § 5.1: the nonce 2^64-1 is reserved for `Rekey()` and never used for a message. */
-const MAX_NONCE = 2n ** 64n - 1n;
-
-export const NOISE_OPEN_FAILED = "lan-noise: message failed to open";
-
-const PKCS8_X25519_PREFIX = Buffer.from("302e020100300506032b656e04220420", "hex");
-const SPKI_X25519_PREFIX = Buffer.from("302a300506032b656e032100", "hex");
-
-function requireKeyLength(key: Uint8Array): void {
-  if (key.length !== DHLEN) throw new Error("lan-noise: invalid key length");
-}
-
-/** The X25519 public key for a 32-byte secret (any 32 bytes are a valid X25519 scalar). */
-export function x25519PublicKey(secretKey: Uint8Array): Uint8Array {
-  requireKeyLength(secretKey);
-  const privateKey = createPrivateKey({
-    key: Buffer.concat([PKCS8_X25519_PREFIX, secretKey]),
-    format: "der",
-    type: "pkcs8",
-  });
-  const der = createPublicKey(privateKey).export({ format: "der", type: "spki" });
-  return new Uint8Array(der.subarray(der.length - DHLEN));
-}
-
-/** X25519 `DH(secret, public)`. An all-zero output (a low-order point) is refused (RFC 7748 § 6.1). */
-export function x25519(secretKey: Uint8Array, publicKey: Uint8Array): Uint8Array {
-  requireKeyLength(secretKey);
-  requireKeyLength(publicKey);
-  let shared: Uint8Array;
-  try {
-    shared = new Uint8Array(
-      diffieHellman({
-        privateKey: createPrivateKey({
-          key: Buffer.concat([PKCS8_X25519_PREFIX, secretKey]),
-          format: "der",
-          type: "pkcs8",
-        }),
-        publicKey: createPublicKey({
-          key: Buffer.concat([SPKI_X25519_PREFIX, publicKey]),
-          format: "der",
-          type: "spki",
-        }),
-      }),
-    );
-  } catch {
-    throw new Error("lan-noise: invalid public key");
-  }
-  return requireContributory(shared);
-}
-
-/**
- * RFC 7748 § 6.1: an all-zero shared secret means the peer sent a low-order point. Some runtimes
- * throw for it, some return zeros, so the check is made here as well (and tested directly).
- */
-export function requireContributory(shared: Uint8Array): Uint8Array {
-  if (shared.every((b) => b === 0)) throw new Error("lan-noise: invalid public key");
-  return shared;
-}
-
-function defaultEphemeral(): BoxKeypair {
-  const secretKey = new Uint8Array(randomBytes(DHLEN));
-  return { publicKey: x25519PublicKey(secretKey), secretKey };
-}
-
-function sha256(...parts: Uint8Array[]): Uint8Array {
-  const h = createHash("sha256");
-  for (const p of parts) h.update(p);
-  return new Uint8Array(h.digest());
-}
-
-function hmac(key: Uint8Array, ...parts: Uint8Array[]): Uint8Array {
-  const h = createHmac("sha256", key);
-  for (const p of parts) h.update(p);
-  return new Uint8Array(h.digest());
-}
-
-/** Noise § 4.3 HKDF with two outputs: HMAC with the chaining key as salt, empty info. */
-function hkdf2(chainingKey: Uint8Array, ikm: Uint8Array): [Uint8Array, Uint8Array] {
-  const tempKey = hmac(chainingKey, ikm);
-  const out1 = hmac(tempKey, new Uint8Array([0x01]));
-  const out2 = hmac(tempKey, out1, new Uint8Array([0x02]));
-  tempKey.fill(0);
-  return [out1, out2];
-}
-
-/** Noise § 12.4: the AESGCM nonce is 4 zero bytes then the 64-bit counter, big-endian. */
-function nonceBytes(n: bigint): Uint8Array {
-  const nonce = new Uint8Array(12);
-  new DataView(nonce.buffer).setBigUint64(4, n, false);
-  return nonce;
-}
-
-function aeadSeal(key: Uint8Array, n: bigint, ad: Uint8Array, plaintext: Uint8Array): Uint8Array {
-  const cipher = createCipheriv("aes-256-gcm", key, nonceBytes(n), { authTagLength: TAG_LEN });
-  cipher.setAAD(ad);
-  const body = cipher.update(plaintext);
-  const rest = cipher.final();
-  return new Uint8Array(Buffer.concat([body, rest, cipher.getAuthTag()]));
-}
-
-function aeadOpen(key: Uint8Array, n: bigint, ad: Uint8Array, sealed: Uint8Array): Uint8Array {
-  if (sealed.length < TAG_LEN) throw new Error(NOISE_OPEN_FAILED);
-  try {
-    const decipher = createDecipheriv("aes-256-gcm", key, nonceBytes(n), {
-      authTagLength: TAG_LEN,
-    });
-    decipher.setAAD(ad);
-    decipher.setAuthTag(sealed.subarray(sealed.length - TAG_LEN));
-    const body = decipher.update(sealed.subarray(0, sealed.length - TAG_LEN));
-    const rest = decipher.final();
-    return new Uint8Array(Buffer.concat([body, rest]));
-  } catch {
-    throw new Error(NOISE_OPEN_FAILED);
-  }
-}
-
-/** Noise § 5.1. A CipherState without a key passes data through (used before the first `ee`/`es`). */
-export class CipherState {
-  private key: Uint8Array | undefined;
-  private n: bigint;
-
-  constructor(key: Uint8Array | undefined, n = 0n) {
-    if (key !== undefined) requireKeyLength(key);
-    this.key = key === undefined ? undefined : key.slice();
-    this.n = n;
-  }
-
-  hasKey(): boolean {
-    return this.key !== undefined;
-  }
-
-  /** The next nonce to be used (the number of messages already sealed or opened). */
-  nonce(): bigint {
-    return this.n;
-  }
-
-  /** SHA-256 of the key, hex: lets a test see that a key changed without exposing the key. */
-  keyFingerprint(): string {
-    if (this.key === undefined) throw new Error("lan-noise: no key");
-    return createHash("sha256").update(this.key).digest("hex");
-  }
-
-  encryptWithAd(ad: Uint8Array, plaintext: Uint8Array): Uint8Array {
-    if (this.key === undefined) return plaintext;
-    if (this.n === MAX_NONCE) throw new Error("lan-noise: nonce space exhausted");
-    if (plaintext.length + TAG_LEN > MAX_NOISE_MESSAGE) {
-      throw new Error("lan-noise: message too large");
-    }
-    const sealed = aeadSeal(this.key, this.n, ad, plaintext);
-    this.n += 1n;
-    return sealed;
-  }
-
-  decryptWithAd(ad: Uint8Array, ciphertext: Uint8Array): Uint8Array {
-    if (this.key === undefined) return ciphertext;
-    if (this.n === MAX_NONCE) throw new Error("lan-noise: nonce space exhausted");
-    const plain = aeadOpen(this.key, this.n, ad, ciphertext);
-    this.n += 1n;
-    return plain;
-  }
-
-  /**
-   * Noise § 4.2 default REKEY, which § 12.4 leaves in force for AESGCM: the first 32 bytes of
-   * `ENCRYPT(k, maxnonce, zerolen, zeros)`. It does NOT reset `n` (§ 11.3), so a nonce is never
-   * reused under one key and never across keys. One-way: the old key cannot be recovered.
-   */
-  rekey(): void {
-    if (this.key === undefined) throw new Error("lan-noise: no key");
-    const next = aeadSeal(this.key, MAX_NONCE, new Uint8Array(0), new Uint8Array(DHLEN)).slice(
-      0,
-      DHLEN,
-    );
-    this.key.fill(0);
-    this.key = next;
-  }
-}
+export {
+  CipherState,
+  DHLEN,
+  HASHLEN,
+  MAX_NOISE_MESSAGE,
+  NOISE_OPEN_FAILED,
+  requireContributory,
+  x25519,
+  x25519PublicKey,
+} from "./lan-noise-cipher.ts";
 
 /** Noise § 5.2. */
 class SymmetricState {
@@ -243,6 +76,17 @@ class SymmetricState {
     tempK.fill(0);
   }
 
+  /** Noise § 5.2 `MixKeyAndHash`: the `psk` token (§ 9.2). */
+  mixKeyAndHash(inputKeyMaterial: Uint8Array): void {
+    const [ck, tempH, tempK] = hkdf3(this.ck, inputKeyMaterial);
+    this.ck.fill(0);
+    this.ck = ck;
+    this.mixHash(tempH);
+    this.cipher = new CipherState(tempK);
+    tempH.fill(0);
+    tempK.fill(0);
+  }
+
   encryptAndHash(plaintext: Uint8Array): Uint8Array {
     const ciphertext = this.cipher.encryptWithAd(this.h, plaintext);
     this.mixHash(ciphertext);
@@ -271,7 +115,7 @@ class SymmetricState {
   }
 }
 
-export type Token = "e" | "s" | "ee" | "es" | "se" | "ss";
+export type Token = "e" | "s" | "ee" | "es" | "se" | "ss" | "psk";
 
 /** A handshake pattern as data: pre-messages by role and message token lists (initiator first). */
 export interface HandshakePattern {
@@ -290,6 +134,21 @@ export const PATTERN_IK: HandshakePattern = {
   ],
 };
 
+/**
+ * `XXpsk0` (Noise § 7.5, § 9.4): neither side knows the other's static key; a pre-shared symmetric
+ * key is mixed in BEFORE the first DH, so a wrong key fails message 1 and a man in the middle
+ * without it can finish neither direction.
+ */
+export const PATTERN_XXPSK0: HandshakePattern = {
+  name: "XXpsk0",
+  preMessages: { initiator: [], responder: [] },
+  messages: [
+    ["psk", "e"],
+    ["e", "ee", "s", "es"],
+    ["s", "se"],
+  ],
+};
+
 export interface HandshakeOptions {
   pattern: HandshakePattern;
   initiator: boolean;
@@ -298,6 +157,8 @@ export interface HandshakeOptions {
   s: BoxKeypair;
   /** The peer's static public key when the pattern pre-shares it (the IK initiator). */
   rs?: Uint8Array;
+  /** The pre-shared keys, consumed in order by the pattern's `psk` tokens (32 bytes each). */
+  psks?: Uint8Array[];
   /** Injected so test vectors can pin the ephemeral; production code never passes it. */
   generateEphemeral?: (() => BoxKeypair) | undefined;
 }
@@ -322,6 +183,9 @@ export class HandshakeState {
   private e: BoxKeypair | undefined;
   private rs: Uint8Array | undefined;
   private re: Uint8Array | undefined;
+  private readonly psks: Uint8Array[];
+  private pskIndex = 0;
+  private readonly pskMode: boolean;
   private messageIndex = 0;
   private failed = false;
   private finished = false;
@@ -331,6 +195,13 @@ export class HandshakeState {
     this.initiator = opts.initiator;
     this.s = opts.s;
     this.generateEphemeral = opts.generateEphemeral ?? defaultEphemeral;
+    this.psks = (opts.psks ?? []).map((k) => {
+      requireKeyLength(k);
+      return k.slice();
+    });
+    const pskTokens = opts.pattern.messages.flat().filter((t) => t === "psk").length;
+    if (pskTokens !== this.psks.length) throw new Error("lan-noise: wrong number of psks");
+    this.pskMode = pskTokens > 0;
     requireKeyLength(opts.s.secretKey);
     requireKeyLength(opts.s.publicKey);
     const theirPre = opts.initiator
@@ -385,6 +256,19 @@ export class HandshakeState {
     }
   }
 
+  /** A failed handshake is dead; its pre-shared keys are overwritten (best effort). */
+  private fail(): void {
+    this.failed = true;
+    for (const psk of this.psks) psk.fill(0);
+  }
+
+  private nextPsk(): Uint8Array {
+    const psk = this.psks[this.pskIndex];
+    if (psk === undefined) throw new Error("lan-noise: missing key");
+    this.pskIndex += 1;
+    return psk;
+  }
+
   private isMyTurnToWrite(): boolean {
     return this.messageIndex % 2 === (this.initiator ? 0 : 1);
   }
@@ -405,8 +289,11 @@ export class HandshakeState {
           this.e = this.generateEphemeral();
           out.push(this.e.publicKey);
           this.symmetric.mixHash(this.e.publicKey);
+          if (this.pskMode) this.symmetric.mixKey(this.e.publicKey);
         } else if (token === "s") {
           out.push(this.symmetric.encryptAndHash(this.s.publicKey));
+        } else if (token === "psk") {
+          this.symmetric.mixKeyAndHash(this.nextPsk());
         } else {
           this.symmetric.mixKey(this.dhFor(token));
         }
@@ -417,14 +304,14 @@ export class HandshakeState {
       this.messageIndex += 1;
       return message;
     } catch (err) {
-      this.failed = true;
+      this.fail();
       throw err;
     }
   }
 
   readMessage(message: Uint8Array): Uint8Array {
     if (this.failed || message.length > MAX_NOISE_MESSAGE) {
-      this.failed = true;
+      this.fail();
       throw new Error(NOISE_OPEN_FAILED);
     }
     const tokens = this.currentTokens();
@@ -437,6 +324,9 @@ export class HandshakeState {
           this.re = rest.slice(0, DHLEN);
           rest = rest.subarray(DHLEN);
           this.symmetric.mixHash(this.re);
+          if (this.pskMode) this.symmetric.mixKey(this.re);
+        } else if (token === "psk") {
+          this.symmetric.mixKeyAndHash(this.nextPsk());
         } else if (token === "s") {
           const length = DHLEN + (this.symmetric.hasKey() ? TAG_LEN : 0);
           if (rest.length < length) throw new Error(NOISE_OPEN_FAILED);
@@ -450,7 +340,7 @@ export class HandshakeState {
       this.messageIndex += 1;
       return payload;
     } catch {
-      this.failed = true;
+      this.fail();
       throw new Error(NOISE_OPEN_FAILED);
     }
   }
@@ -480,6 +370,7 @@ export class HandshakeState {
     this.finished = true;
     const [c1, c2] = this.symmetric.split();
     if (this.e !== undefined) this.e.secretKey.fill(0);
+    for (const psk of this.psks) psk.fill(0);
     return this.initiator ? { send: c1, receive: c2 } : { send: c2, receive: c1 };
   }
 }

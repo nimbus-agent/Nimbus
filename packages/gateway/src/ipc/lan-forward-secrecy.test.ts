@@ -16,6 +16,7 @@ import {
   transcriptContains,
 } from "./testing/lan-forward-secrecy.test-helpers.ts";
 import { startLegacyOnlyServer, startStub } from "./testing/lan-v2.test-helpers.ts";
+import { fakePairing } from "./testing/pairing-fakes.ts";
 
 const stops: Array<() => void | Promise<void>> = [];
 afterEach(async () => {
@@ -122,13 +123,7 @@ describe("FS-A3 - the downgrade ratchet", () => {
       isKnownPeer: () => ({ peerId: "p", writeAllowed: false, protoVersion: 1 }),
       registerPeer: () => "p",
       rateLimit: { checkAllowed: () => true, recordFailure: () => {}, recordSuccess: () => {} },
-      pairing: {
-        isOpen: () => false,
-        consume: () => false,
-        open: () => {},
-        close: () => {},
-        getExpiresAt: () => undefined,
-      },
+      pairing: fakePairing(),
       minProtocol: 1,
     });
     stops.push(() => old.stop());
@@ -169,13 +164,7 @@ describe("FS-A4 - old and new peers interoperate during the compatibility window
           : null,
       registerPeer: () => "p",
       rateLimit: { checkAllowed: () => true, recordFailure: () => {}, recordSuccess: () => {} },
-      pairing: {
-        isOpen: () => false,
-        consume: () => false,
-        open: () => {},
-        close: () => {},
-        getExpiresAt: () => undefined,
-      },
+      pairing: fakePairing(),
       minProtocol: 1 as const,
     };
     // new client -> old server

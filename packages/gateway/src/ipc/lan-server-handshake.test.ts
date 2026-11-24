@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { type BoxKeypair, generateBoxKeypair } from "./lan-crypto.ts";
 import { LanServer, type LanServerOptions } from "./lan-server.ts";
+import { fakePairing } from "./testing/pairing-fakes.ts";
 
 let server: LanServer | undefined;
 
@@ -31,13 +32,7 @@ async function startServer(
     onMessage: async () => ({}),
     isKnownPeer: isKnown,
     rateLimit: rate,
-    pairing: {
-      isOpen: () => false,
-      consume: () => false,
-      open: () => {},
-      close: () => {},
-      getExpiresAt: () => undefined,
-    },
+    pairing: fakePairing(),
     registerPeer: () => "peer-id",
   });
   await server.start();

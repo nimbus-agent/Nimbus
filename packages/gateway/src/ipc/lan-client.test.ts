@@ -10,9 +10,11 @@ import {
 } from "./lan-client.ts";
 import { generateBoxKeypair, sealBoxFrame } from "./lan-crypto.ts";
 import { sendFederatedLegacy } from "./lan-legacy.ts";
+import { PAIR_NO_REPLY_HINT } from "./lan-pair-client.ts";
 import { generatePairingCode, PairingWindow } from "./lan-pairing.ts";
 import { LanRateLimiter } from "./lan-rate-limit.ts";
 import { LanServer } from "./lan-server.ts";
+import { fakePairing } from "./testing/pairing-fakes.ts";
 
 // ---------------------------------------------------------------------------
 // Shared server lifecycle
@@ -310,6 +312,8 @@ async function startResponder(open: boolean) {
     open: (c: string) => pairingWindow.open(c),
     close: () => pairingWindow.close(),
     getExpiresAt: () => pairingWindow.getExpiresAt() ?? undefined,
+    currentPsk: () => pairingWindow.currentPsk(),
+    consumeOpen: () => pairingWindow.consumeOpen(),
   };
   server = new LanServer({
     bind: "127.0.0.1",
@@ -338,59 +342,57 @@ test("outboundPairHandshake returns the responder host pubkey on pair_ok", async
   expect(Buffer.from(hostPub).toString("hex")).toBe(Buffer.from(hostKp.publicKey).toString("hex"));
 });
 
-test("outboundPairHandshake throws on pair_err (window closed)", async () => {
+test("outboundPairHandshake fails with no reply when the window is closed (v2: the host stays silent)", async () => {
   const { code, port } = await startResponder(false);
-  const selfKp = generateBoxKeypair();
-  // The responder's own refusal, by name — a bare `.toThrow()` would also pass on a timeout or a
-  // dropped connection, which is not what a closed pairing window answers with.
-  await expect(outboundPairHandshake("127.0.0.1", port, code, selfKp)).rejects.toThrow(
-    "lan-client: pairing rejected (pair_err)",
-  );
+  await expect(
+    outboundPairHandshake("127.0.0.1", port, code, generateBoxKeypair()),
+  ).rejects.toThrow(PAIR_NO_REPLY_HINT);
 });
 
 test("outboundPairHandshake rejects on timeout when peer never replies", async () => {
-  let silent: TCPSocketListener | undefined;
-  silent = Bun.listen({
+  const silent = Bun.listen({
     hostname: "127.0.0.1",
     port: 0,
     socket: { open() {}, data() {}, close() {}, error() {} },
   });
   try {
-    const selfKp = generateBoxKeypair();
     await expect(
-      outboundPairHandshake("127.0.0.1", silent.port, "unused-code", selfKp, 200),
-    ).rejects.toThrow("lan-client: handshake timeout");
+      outboundPairHandshake(
+        "127.0.0.1",
+        silent.port,
+        generatePairingCode(),
+        generateBoxKeypair(),
+        200,
+      ),
+    ).rejects.toThrow("lan-client: pairing timeout");
   } finally {
     silent.stop(true);
   }
 });
 
-test("outboundPairHandshake reports a pairing reply's non-token kind as 'unknown', never echoed", async () => {
-  // Pairing happens before any key is pinned, so whoever answers controls the reply.
+test("outboundPairHandshake: a plaintext reply is not a Noise message 2 and is never echoed", async () => {
+  // Whoever answers controls the reply: it must fail on the AEAD, with a fixed error.
   const responder = Bun.listen({
     hostname: "127.0.0.1",
     port: 0,
     socket: {
       open() {},
       data(socket) {
-        const reply = JSON.stringify({ kind: "pair_err\n\n## Injected heading" });
-        writeRawFrame(socket, new TextEncoder().encode(reply));
+        writeRawFrame(socket, new TextEncoder().encode(JSON.stringify({ kind: "pair_err\n## X" })));
       },
       close() {},
       error() {},
     },
   });
   try {
-    const selfKp = generateBoxKeypair();
     const err = await outboundPairHandshake(
       "127.0.0.1",
       responder.port,
-      "unused-code",
-      selfKp,
+      generatePairingCode(),
+      generateBoxKeypair(),
       500,
     ).catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(Error);
-    expect((err as Error).message).toBe("lan-client: pairing rejected (unknown)");
+    expect((err as Error).message).toBe("lan-noise: message failed to open");
   } finally {
     responder.stop(true);
   }
@@ -428,13 +430,7 @@ test("sendFederatedLegacy performs hello + encrypted RPC against a known peer", 
     bind: "127.0.0.1",
     port: 0,
     hostKeypair: hostKp,
-    pairing: {
-      isOpen: () => false,
-      consume: () => false,
-      open: () => {},
-      close: () => {},
-      getExpiresAt: () => undefined,
-    },
+    pairing: fakePairing(),
     rateLimit: new LanRateLimiter({ maxFailures: 3, windowMs: 2000, lockoutMs: 2000 }),
     isKnownPeer: (pub) =>
       Buffer.compare(Buffer.from(pub), Buffer.from(selfKp.publicKey)) === 0
@@ -788,33 +784,17 @@ describe("sendFederatedLegacy — buildRpc guard branches", () => {
 // ---------------------------------------------------------------------------
 
 describe("outboundPairHandshake — guard branches", () => {
-  // replyKindForMessage: the kind field is absent.
-  test("rejects with 'pairing rejected (unknown)' when response has no kind field", async () => {
-    // Server sends a frame with no kind field after the client's pair request.
-    const port = await startDataServer((socket, _chunk) => {
-      const msg = JSON.stringify({ host_pubkey: "somevalue" }); // no kind
-      writeRawFrame(socket, new TextEncoder().encode(msg));
+  test("a code that is not 20 base58 characters is refused before any connection (D-FS-16)", async () => {
+    let connections = 0;
+    const port = await startDataServer(() => {
+      connections += 1;
     });
-    const selfKp = generateBoxKeypair();
-    await expect(outboundPairHandshake("127.0.0.1", port, "any-code", selfKp, 500)).rejects.toThrow(
-      "lan-client: pairing rejected (unknown)",
-    );
-  });
-
-  // A token kind that is not pair_ok is covered by the "throws on pair_err (window closed)" test
-  // above, and a kind that is not a token by the injected-heading test beside it.
-
-  // BRDA line=281 block=35 branch=0: hostPub.length !== 32 → true (bad host pubkey length).
-  test("rejects with 'bad host pubkey length' when server returns a short pubkey in pair_ok", async () => {
-    const port = await startDataServer((socket, _chunk) => {
-      const shortPub = Buffer.from(new Uint8Array(16)).toString("base64"); // 16 bytes
-      const msg = JSON.stringify({ kind: "pair_ok", host_pubkey: shortPub });
-      writeRawFrame(socket, new TextEncoder().encode(msg));
-    });
-    const selfKp = generateBoxKeypair();
-    await expect(outboundPairHandshake("127.0.0.1", port, "any-code", selfKp, 500)).rejects.toThrow(
-      "lan-client: bad host pubkey length",
-    );
+    for (const bad of ["any-code", "", "0".repeat(20), generatePairingCode().slice(1)]) {
+      await expect(
+        outboundPairHandshake("127.0.0.1", port, bad, generateBoxKeypair()),
+      ).rejects.toThrow("20 base58 characters");
+    }
+    expect(connections).toBe(0);
   });
 });
 

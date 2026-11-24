@@ -7,6 +7,8 @@ import {
   legacyHandleEncrypted,
   legacyHandleHandshake,
 } from "./lan-legacy.ts";
+import { type PairHost, pairHandleFirstFrame, pairHandleMessage3 } from "./lan-pair-server.ts";
+import { isPairFirstFrame } from "./lan-pair-session.ts";
 import { checkLanMethodAllowed, LanError } from "./lan-rpc.ts";
 import {
   MAX_LOGICAL_MESSAGE,
@@ -38,7 +40,8 @@ export interface LanServerOptions {
   hostKeypair: BoxKeypair;
   onMessage: (method: string, params: unknown, peer: LanPeerMatch) => Promise<unknown>;
   isKnownPeer: (pubkey: Uint8Array) => LanPeerMatch | null;
-  registerPeer: (pubkey: Uint8Array, peerIp: string) => string;
+  /** `protoVersion` is 2 for an XXpsk0 pairing (D-FS-17) and absent for the legacy `pair` frame. */
+  registerPeer: (pubkey: Uint8Array, peerIp: string, protoVersion?: 1 | 2) => string;
   rateLimit: RateLimiterService;
   pairing: PairingService;
   /** `[lan] min_protocol`: 2 refuses the v1 wire for every peer. Default 1 (OR-FS-1). */
@@ -59,7 +62,7 @@ const LEGACY_FIRST_BYTE = 0x7b;
 /** Which wire a connection speaks, fixed by its first byte (D-FS-9). */
 type WireMode = "unknown" | "legacy" | "v2";
 
-interface SessionState {
+interface SessionState extends PairHost {
   mode: WireMode;
   peerPubkey?: Uint8Array;
   peerMatch?: LanPeerMatch;
@@ -202,8 +205,10 @@ export class LanServer {
       }
     }
     if (state.mode === "v2") {
-      if (state.v2 === undefined) this.handleV2Handshake(socket, payload);
-      else await this.handleV2Record(socket, state.v2, payload);
+      if (state.v2 !== undefined) await this.handleV2Record(socket, state.v2, payload);
+      else if (state.pair !== undefined) this.handlePairMessage3(socket, payload);
+      else if (isPairFirstFrame(payload)) this.handlePairFirstFrame(socket, payload);
+      else this.handleV2Handshake(socket, payload);
       return;
     }
     if (state.peerPubkey) {
@@ -318,6 +323,17 @@ export class LanServer {
     writeFramedBytes(socket.data.writer, accepted.message2);
     socket.data.peerMatch = peerMatch;
     socket.data.v2 = accepted.session;
+    this.clearHandshakeDeadline(socket);
+  }
+
+  /** FS2: a pairing first frame (XXpsk0); `lan-pair-server.ts` holds the ordered steps. */
+  private handlePairFirstFrame(socket: Socket<SessionState>, body: Uint8Array): void {
+    pairHandleFirstFrame(socket.data, this.opts, body);
+  }
+
+  /** FS2: message 3 of a pairing; ends the socket whatever the outcome. */
+  private handlePairMessage3(socket: Socket<SessionState>, frame: Uint8Array): void {
+    pairHandleMessage3(socket.data, this.opts, frame);
     this.clearHandshakeDeadline(socket);
   }
 

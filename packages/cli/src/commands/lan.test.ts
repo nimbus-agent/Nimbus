@@ -87,6 +87,45 @@ describe("runLan — dispatcher", () => {
     expect(out.stdout).toContain("(none)");
   });
 
+  it("status lists peers by protocol and warns while any peer is on v1 (FS2)", async () => {
+    const mock = createMockIpcClient([
+      {
+        enabled: true,
+        pairingOpen: false,
+        listenAddr: "127.0.0.1:7475",
+        minProtocol: 1,
+        peers: [
+          { peerId: "peer:aaaa", direction: "inbound", protoVersion: 2 },
+          { peerId: "peer:bbbb", direction: "outbound", protoVersion: 1 },
+        ],
+        peersByProtocol: { v1: 1, v2: 1 },
+      },
+    ]);
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+    await runLan(["status"]);
+    expect(out.stdout).toContain("Min protocol: 1");
+    expect(out.stdout).toContain("1 on v2 (forward secret), 1 on v1");
+    expect(out.stdout).toMatch(/peer:aaaa\s+inbound\s+v2/);
+    expect(out.stdout).toMatch(/peer:bbbb\s+outbound\s+v1/);
+    expect(out.stdout).toContain("WARNING: 1 peer(s) still use the v1 LAN wire");
+  });
+
+  it("status prints no warning when every peer is on v2", async () => {
+    const mock = createMockIpcClient([
+      {
+        enabled: true,
+        pairingOpen: false,
+        listenAddr: null,
+        minProtocol: 2,
+        peers: [{ peerId: "peer:aaaa", direction: "inbound", protoVersion: 2 }],
+        peersByProtocol: { v1: 0, v2: 1 },
+      },
+    ]);
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+    await runLan(["status"]);
+    expect(out.stdout).not.toContain("WARNING");
+  });
+
   it("open → lan.openPairingWindow + prints code + ISO expiry", async () => {
     const mock = createMockIpcClient([
       { pairingCode: "AB123-CD456", expiresAt: 1_747_142_500_000 },

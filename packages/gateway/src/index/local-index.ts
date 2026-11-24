@@ -59,6 +59,7 @@ import {
   itemPrimaryKey,
   upsertNimbusItemIntoItemTable,
 } from "./item-store.ts";
+import { insertLanPeer, type LanPeerInsert } from "./lan-peer-insert.ts";
 import {
   type MigrationBackupOptions,
   readIndexedUserVersion,
@@ -1002,34 +1003,8 @@ export class LocalIndex {
     return this.db.query(`SELECT * FROM lan_peers ORDER BY paired_at ASC`).all() as LanPeerRow[];
   }
 
-  public addLanPeer(params: {
-    peerId: string;
-    peerPubkey: Uint8Array;
-    direction: "inbound" | "outbound";
-    hostIp?: string;
-    hostPort?: number;
-    displayName?: string;
-  }): void {
-    dbRun(
-      this.db,
-      `INSERT INTO lan_peers (peer_id, peer_pubkey, direction, host_ip, host_port, display_name, write_allowed, paired_at)
-       VALUES (?, ?, ?, ?, ?, ?, 0, ?)
-       ON CONFLICT(peer_pubkey) DO UPDATE SET
-         host_ip = excluded.host_ip,
-         host_port = excluded.host_port,
-         display_name = excluded.display_name,
-         direction = excluded.direction,
-         paired_at = excluded.paired_at`,
-      [
-        params.peerId,
-        Buffer.from(params.peerPubkey),
-        params.direction,
-        params.hostIp ?? null,
-        params.hostPort ?? null,
-        params.displayName ?? null,
-        new Date().toISOString(),
-      ],
-    );
+  public addLanPeer(params: LanPeerInsert): void {
+    insertLanPeer(this.db, params);
   }
 
   private lanMinProtocolValue: 1 | 2 = 1;

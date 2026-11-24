@@ -18,7 +18,12 @@ export const DEFAULT_TIMEOUT_MS = 5000;
 
 export interface PairingService {
   isOpen(): boolean;
+  /** The v1 plaintext `pair` frame's check (legacy path only). */
   consume(code: string): boolean;
+  /** D-FS-15: the open window's `XXpsk0` PSK (a copy), or `undefined` when closed or expired. */
+  currentPsk(): Uint8Array | undefined;
+  /** D-FS-15: closes the window after message 3 opened; `false` if it was already closed or expired. */
+  consumeOpen(): boolean;
   open(code: string): void;
   close(): void;
   getExpiresAt(): number | undefined;

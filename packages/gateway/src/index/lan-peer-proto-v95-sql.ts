@@ -3,8 +3,9 @@
  * spec § 6, D-FS-13).
  *
  * `1` is the old static-box wire, `2` a Noise IK session. The value is written to 2 by exactly one
- * function, `LocalIndex.markLanPeerProto`, after a v2 handshake completed with that peer, and is
- * never lowered by anything (its upsert is `MAX(...)`; `addLanPeer`'s upsert does not touch it).
+ * function, `LocalIndex.markLanPeerProto`, after a v2 handshake completed with that peer, or by
+ * `addLanPeer` when an `XXpsk0` pairing inserts the row at 2 (FS2, D-FS-17), and is never lowered by
+ * anything (both upserts are `MAX(...)`).
  * Every row that exists at this migration was made over the old wire and starts at 1.
  *
  * Additive column, forward-only: `DEFAULT 1` is the correct backfill. The runner guards the `ALTER`

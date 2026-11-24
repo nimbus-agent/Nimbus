@@ -24,7 +24,7 @@ test("payoff: janitor probes a downstream over the wire — touched reports rece
   const base = Date.now();
   // --- Downstream B: real LanServer; its index mentions the resource ~3 days ago. ---
   const bDb = new Database(":memory:");
-  runIndexedSchemaMigrations(bDb, 38);
+  runIndexedSchemaMigrations(bDb, 95);
   const bIndex = new LocalIndex(bDb);
   const bIdentity = generateBoxKeypair();
   bDb.run(
@@ -53,7 +53,7 @@ test("payoff: janitor probes a downstream over the wire — touched reports rece
 
   // --- Upstream A (janitor): pairs with B, registers B as a reachable peer, fans out the probe. ---
   const aDb = new Database(":memory:");
-  runIndexedSchemaMigrations(aDb, 38);
+  runIndexedSchemaMigrations(aDb, 95);
   const aIndex = new LocalIndex(aDb);
   const aRuntime = buildFederationRuntime(
     { enabled: true, consentTimeoutSeconds: 30, mdnsEnabled: false, mdnsBind: "127.0.0.1" },
