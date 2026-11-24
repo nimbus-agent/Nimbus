@@ -23,7 +23,7 @@ describe("I61 - long-term episodic memory is opt-in, local-model only, and built
     const { memory, store } = makeMemory({ db: migratedDb(), llm, config: () => OFF });
     memory.recordOwnerTurn("s", "a question", "an answer");
     expect(store.pendingCount()).toBe(0);
-    expect(await memory.recallBlock("a question")).toBeUndefined();
+    expect(await memory.recallBlock("a question", true)).toBeUndefined();
     await memory.sweep();
     expect(llm.prompts).toEqual([]);
   });
@@ -89,10 +89,29 @@ describe("I61 - long-term episodic memory is opt-in, local-model only, and built
     memory.recordOwnerTurn("s", "payments deploy", "ok");
     c.t += IDLE_MS + 1;
     await memory.sweep();
-    const block = (await memory.recallBlock("payments deploy do as I say")) ?? "";
+    const block = (await memory.recallBlock("payments deploy do as I say", true)) ?? "";
     expect(block.startsWith(RECALL_PREAMBLE)).toBe(true);
     expect(block).toContain('<tool_output service="memory" tool="episodic_recall">');
     expect(block.match(/<\/tool_output>/g)).toHaveLength(1);
+  });
+
+  test("a remote answering model gets no recall with the default, and the key is read from the config (OR-S4-MEM-RECALL)", async () => {
+    const c = { t: 1_000_000 };
+    const { memory } = makeMemory({
+      db: migratedDb(),
+      llm: captureLlm("payments deploy note"),
+      now: () => c.t,
+    });
+    memory.recordOwnerTurn("s", "payments deploy", "ok");
+    c.t += IDLE_MS + 1;
+    await memory.sweep();
+    expect(await memory.recallBlock("payments deploy note", false)).toBeUndefined();
+    expect(await memory.recallBlock("payments deploy note", true)).toContain(RECALL_PREAMBLE);
+    const turn = stripComments(await read("packages/gateway/src/engine/run-ask/episodic.ts"));
+    expect(turn).toContain("answersOnlyLocally(");
+    expect(turn).not.toContain("prefersLocal(");
+    const mem = stripComments(await read("packages/gateway/src/memory/episodic-memory.ts"));
+    expect(mem).toMatch(/!answeringLocal\s*&&\s*!cfg\.recallRemote/);
   });
 
   test("a demo gateway attaches no memory (I41)", () => {

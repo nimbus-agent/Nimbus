@@ -32,7 +32,8 @@ export const RECALL_PREAMBLE =
 /** The two calls the ask turn makes. `EpisodicMemory` implements both. */
 export type EpisodicTurnPort = {
   recordOwnerTurn(sessionId: string, ownerText: string, answerText: string): void;
-  recallBlock(query: string): Promise<string | undefined>;
+  /** `answeringLocal`: every destination the turn's prompt can reach is a local provider (I34). */
+  recallBlock(query: string, answeringLocal: boolean): Promise<string | undefined>;
 };
 
 export type EpisodicMemoryDeps = {
@@ -80,8 +81,11 @@ export class EpisodicMemory implements EpisodicTurnPort {
     }
   }
 
-  async recallBlock(query: string): Promise<string | undefined> {
-    if (!this.enabled() || query.trim() === "") return undefined;
+  async recallBlock(query: string, answeringLocal: boolean): Promise<string | undefined> {
+    const cfg = this.deps.config();
+    if (!cfg.episodic || query.trim() === "") return undefined;
+    // OR-S4-MEM-RECALL: with the default, nothing about memory enters a prompt a remote model can read.
+    if (!answeringLocal && !cfg.recallRemote) return undefined;
     try {
       const vec = await this.deps.embedText(query);
       if (vec === null || vec.length !== this.deps.dims) return undefined;

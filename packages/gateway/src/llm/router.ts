@@ -172,6 +172,13 @@ export class LlmRouter {
     return this.firstAvailableRoute(task, (r) => this.probeAvailable(r), opts?.preferLocal);
   }
 
+  /** At least one eligible route, and every one's provider `isLocal` (I34); no probe: a down route still counts. */
+  async answersOnlyLocally(task: LlmTaskType): Promise<boolean> {
+    const routes: ModelRoute[] = [];
+    for await (const r of this.eligibleRoutes(task, async () => true)) routes.push(r);
+    return routes.length > 0 && routes.every((r) => r.provider.isLocal);
+  }
+
   async selectProvider(
     task: LlmTaskType,
     opts?: { preferLocal?: boolean },
@@ -181,21 +188,12 @@ export class LlmRouter {
   }
 
   /**
-   * Resolve the provider a `[agents]` brief synthesis attempt would use, right now, for the
-   * `"reasoning"` task — plus an `isLocal` flag read directly off the resolved route's provider
-   * instance rather than duplicating the priority walk at the call site. Reuses `selectRoute`, so
-   * air-gap and the reasoning capability floor are honored the same way they are for every other
-   * caller. Callers that must not trust a bare `remote: true`/`false` re-derive it from
-   * `providerId` here, not from `config.preferLocal`.
-   *
-   * `preferLocal` defaults to `config.preferLocal` — an omitted argument behaves exactly as
-   * before this parameter existed. A caller with its own local-preference precedent (mirroring
-   * `briefs/brief-llm-adapter.ts`'s `createBriefLlm(router, preferLocal)`) passes its own value
-   * instead of inheriting `[llm].prefer_local`: without this, `[llm] prefer_local = false` with a
-   * remote provider registered makes priority remote-first, so `resolveForSynthesis()` resolves
-   * the remote provider even with a healthy local one — and `[agents] synthesis = "local"` then
-   * refuses the whole attempt as `no_eligible_provider`, not because no local provider answered,
-   * but because a remote one was picked first.
+   * Resolve the provider a `[agents]` brief synthesis attempt would use for the `"reasoning"` task, with
+   * `isLocal` read off the resolved route's provider (not a bare `remote` flag). Reuses `selectRoute`, so
+   * air-gap and the capability floor apply. `preferLocal` defaults to `config.preferLocal`; a caller with its own
+   * local-preference precedent (`briefs/brief-llm-adapter.ts`) passes its own, because inheriting
+   * `[llm].prefer_local = false` would resolve a remote provider first and `[agents] synthesis = "local"` would
+   * then refuse the attempt as `no_eligible_provider` although a healthy local one exists.
    */
   async resolveForSynthesis(
     preferLocal: boolean = this.config.preferLocal,

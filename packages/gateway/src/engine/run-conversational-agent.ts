@@ -113,7 +113,9 @@ function isTextDeltaChunk(chunk: unknown): chunk is {
   return typeof text === "string";
 }
 
-function shouldUseLocalRouter(p: RunConversationalAgentParams): boolean {
+export function shouldUseLocalRouter(
+  p: Pick<RunConversationalAgentParams, "llmRouter" | "agent">,
+): boolean {
   if (p.llmRouter === undefined) {
     return false;
   }

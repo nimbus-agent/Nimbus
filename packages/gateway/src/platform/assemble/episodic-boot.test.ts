@@ -123,6 +123,6 @@ describe("attachEpisodicMemory", () => {
       sidecarStops: [],
     });
     expect(m).toBeDefined();
-    expect(await m?.recallBlock("anything")).toBeUndefined();
+    expect(await m?.recallBlock("anything", true)).toBeUndefined();
   });
 });

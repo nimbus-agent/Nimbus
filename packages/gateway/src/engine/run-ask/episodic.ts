@@ -1,5 +1,6 @@
 import type { EpisodicTurnPort } from "../../memory/episodic-memory.ts";
 import type { RunAskParams } from "../run-ask.ts";
+import { shouldUseLocalRouter } from "../run-conversational-agent.ts";
 
 /**
  * Long-term episodic memory at the ask turn (Phase 10, owner ruling OR-S4-MEM, invariant I61, static D52).
@@ -15,12 +16,36 @@ import type { RunAskParams } from "../run-ask.ts";
  */
 export type EpisodicTurnGate = Pick<
   RunAskParams,
-  "offerConnectorWriteTools" | "paths" | "sessionMemoryStore" | "input"
+  | "offerConnectorWriteTools"
+  | "paths"
+  | "sessionMemoryStore"
+  | "input"
+  | "llmRouter"
+  | "conversationalAgent"
 >;
 
 export function episodicFor(p: EpisodicTurnGate): EpisodicTurnPort | undefined {
   if (p.offerConnectorWriteTools !== true || p.paths.demo === true) return undefined;
   return p.sessionMemoryStore?.episodic;
+}
+
+/**
+ * Whether every destination this turn's prompt can reach is a local provider (OR-S4-MEM-RECALL). The answer is
+ * decided from `provider.isLocal` through `LlmRouter.answersOnlyLocally` (I34), never from a vendor id or from
+ * `prefersLocal()`. A turn answered by the Mastra agent alone is remote; a turn that routes through the local
+ * router but could fall back to the Mastra agent (no air-gap) is not provably local either.
+ */
+export async function answeringLocally(
+  p: Pick<RunAskParams, "llmRouter" | "conversationalAgent">,
+): Promise<boolean> {
+  const router = p.llmRouter;
+  if (router === undefined) return false;
+  const agent = p.conversationalAgent;
+  if (!shouldUseLocalRouter({ llmRouter: router, ...(agent === undefined ? {} : { agent }) })) {
+    return false;
+  }
+  if (agent !== undefined && !router.enforcesAirGap()) return false;
+  return router.answersOnlyLocally("agent_step");
 }
 
 /** The untrusted recall block for this question, or `undefined` (point-in-time, off, no match, any failure). */
@@ -30,7 +55,10 @@ export async function recallBlockFor(
 ): Promise<string | undefined> {
   if (pointInTimeMs !== undefined) return undefined;
   try {
-    return await episodicFor(p)?.recallBlock(p.input);
+    const port = episodicFor(p);
+    return port === undefined
+      ? undefined
+      : await port.recallBlock(p.input, await answeringLocally(p));
   } catch {
     return undefined;
   }

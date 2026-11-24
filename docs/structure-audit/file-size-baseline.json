@@ -367,7 +367,7 @@
     "packages/gateway/src/llm/ollama-provider.test.ts": 644,
     "packages/gateway/src/llm/registry.test.ts": 883,
     "packages/gateway/src/llm/router.test.ts": 1067,
-    "packages/gateway/src/llm/router.ts": 576,
+    "packages/gateway/src/llm/router.ts": 574,
     "packages/gateway/src/mcp-sink/capture-gate.test.ts": 1326,
     "packages/gateway/src/mcp-sink/capture-validate.test.ts": 546,
     "packages/gateway/src/memory/session-memory-store.test.ts": 512,

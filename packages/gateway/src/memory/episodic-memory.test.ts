@@ -20,7 +20,7 @@ describe("EpisodicMemory", () => {
     const { memory, store } = makeMemory({ db: migratedDb(), llm, config: () => OFF });
     memory.recordOwnerTurn("s", "how do I roll back", "use the rollback job");
     expect(store.pendingCount()).toBe(0);
-    expect(await memory.recallBlock("rollback")).toBeUndefined();
+    expect(await memory.recallBlock("rollback", true)).toBeUndefined();
     expect(await memory.sweep()).toEqual({ summarised: 0, skipped: 0 });
     expect(llm.prompts).toEqual([]);
   });
@@ -88,7 +88,7 @@ describe("EpisodicMemory", () => {
     c.t += IDLE_MS + 1;
     await memory.sweep();
     expect(memory.list(5)[0]?.embedded).toBe(false);
-    expect(await memory.recallBlock("kubernetes scaling")).toBeUndefined();
+    expect(await memory.recallBlock("kubernetes scaling", true)).toBeUndefined();
   });
 
   test("turning memory off drops what was waiting; the stored memories stay listable and forgettable", async () => {
@@ -128,15 +128,15 @@ describe("EpisodicMemory", () => {
     memory.recordOwnerTurn("s", "rolling back the payments deploy", "ok");
     c.t += IDLE_MS + 1;
     await memory.sweep();
-    const block = await memory.recallBlock("rolling back payments deploy");
+    const block = await memory.recallBlock("rolling back payments deploy", true);
     expect(block).toBeDefined();
     expect(block?.startsWith(RECALL_PREAMBLE)).toBe(true);
     expect(block).toContain('<tool_output service="memory" tool="episodic_recall">');
     // The forged closer in the summary cannot end the envelope early.
     expect(block?.match(/<\/tool_output>/g)).toHaveLength(1);
     expect(block).toContain(String.raw`<\/tool_output>`);
-    expect(await memory.recallBlock("completely unrelated gardening topic")).toBeUndefined();
-    expect(await memory.recallBlock("   ")).toBeUndefined();
+    expect(await memory.recallBlock("completely unrelated gardening topic", true)).toBeUndefined();
+    expect(await memory.recallBlock("   ", true)).toBeUndefined();
   });
 
   test("a throwing embedder or store never fails recall or record", async () => {
@@ -147,7 +147,7 @@ describe("EpisodicMemory", () => {
         throw new Error("embedder down");
       },
     });
-    expect(await memory.recallBlock("anything")).toBeUndefined();
+    expect(await memory.recallBlock("anything", true)).toBeUndefined();
     const broken = makeMemory({ db: migratedDb(), llm: captureLlm("x") });
     // An empty session id and an empty owner message are not turns.
     broken.memory.recordOwnerTurn("", "q", "a");
@@ -157,7 +157,7 @@ describe("EpisodicMemory", () => {
 
   test("prune deletes by retention_days whether or not memory is on", async () => {
     const { c, now } = clock(10 * 86_400_000);
-    let cfg = { episodic: true, retentionDays: 7 };
+    let cfg = { episodic: true, retentionDays: 7, recallRemote: false };
     const { memory, store } = makeMemory({
       db: migratedDb(),
       llm: captureLlm("note"),
@@ -169,7 +169,7 @@ describe("EpisodicMemory", () => {
     await memory.sweep();
     expect(memory.prune()).toBe(0);
     c.t += 8 * 86_400_000;
-    cfg = { episodic: false, retentionDays: 7 };
+    cfg = { episodic: false, retentionDays: 7, recallRemote: false };
     expect(memory.prune()).toBe(1);
     expect(store.count()).toBe(0);
   });
@@ -194,6 +194,7 @@ describe("EpisodicMemory", () => {
     expect(memoryConfigFor("this-dir-does-not-exist")()).toEqual({
       episodic: false,
       retentionDays: 90,
+      recallRemote: false,
     });
   });
 
@@ -287,5 +288,47 @@ describe("EpisodicMemory", () => {
     await memory.sweep();
     expect(store.count()).toBe(0);
     expect(store.pendingCount()).toBe(0);
+  });
+
+  describe("recall_remote (OR-S4-MEM-RECALL)", () => {
+    async function withMemory(
+      cfg: () => { episodic: boolean; retentionDays: number; recallRemote: boolean },
+    ) {
+      const { c, now } = clock();
+      const { memory } = makeMemory({
+        db: migratedDb(),
+        llm: captureLlm("Rolling back payments deploy"),
+        now,
+        config: cfg,
+      });
+      memory.recordOwnerTurn("s", "rolling back the payments deploy", "ok");
+      c.t += IDLE_MS + 1;
+      await memory.sweep();
+      return memory;
+    }
+    const q = "rolling back payments deploy";
+
+    test("a local answering provider gets the recall block", async () => {
+      const m = await withMemory(() => ({ ...ON, recallRemote: false }));
+      expect(await m.recallBlock(q, true)).toContain(RECALL_PREAMBLE);
+    });
+
+    test("a remote answering provider gets nothing at all with the default", async () => {
+      const m = await withMemory(() => ({ ...ON, recallRemote: false }));
+      expect(await m.recallBlock(q, false)).toBeUndefined();
+    });
+
+    test("a remote answering provider gets the block when the owner sets recall_remote", async () => {
+      const m = await withMemory(() => ({ ...ON, recallRemote: true }));
+      expect(await m.recallBlock(q, false)).toContain(RECALL_PREAMBLE);
+    });
+
+    test("the key is read on every call, not captured", async () => {
+      let on = false;
+      const m = await withMemory(() => ({ ...ON, recallRemote: on }));
+      expect(await m.recallBlock(q, false)).toBeUndefined();
+      on = true;
+      expect(await m.recallBlock(q, false)).toBeDefined();
+    });
   });
 });

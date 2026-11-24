@@ -41,8 +41,8 @@ export function captureLlm(reply: string | null): CapturedLlm {
   };
 }
 
-export const ON: NimbusMemoryToml = { episodic: true, retentionDays: 90 };
-export const OFF: NimbusMemoryToml = { episodic: false, retentionDays: 90 };
+export const ON: NimbusMemoryToml = { episodic: true, retentionDays: 90, recallRemote: false };
+export const OFF: NimbusMemoryToml = { episodic: false, retentionDays: 90, recallRemote: false };
 
 export function makeMemory(opts: {
   readonly db: Database;

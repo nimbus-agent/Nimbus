@@ -1328,9 +1328,10 @@ Served only to a CLI or desktop connection; refused for MCP, HTTP, ChatOps and L
 | Key | Default | Range |
 |---|---|---|
 | `[memory] episodic` | `false` | `true` opts in |
+| `[memory] recall_remote` | `false` | Owner ruling OR-S4-MEM-RECALL. With `false`, a recalled note goes only into a prompt whose every possible destination is a local provider (`isLocal`); with a remote answering model, or a remote provider or the cloud agent that could take over, nothing about memory is added to the prompt. `true` also allows a remote model (then the note leaves the machine like any prompt text). A bad value falls back to `false`; `nimbus config explain` names it. |
 | `[memory] retention_days` | `90` | 7 to 365, an integer; notes and waiting turns older than this are deleted daily. A value outside falls back to 90 and `nimbus config explain` names it; nothing is clamped. |
 
-**Bounds.** Only turns that carry a session id and are conversational (not a plan the gateway ran) are remembered; the answer you were given is model output and can echo what the model read; a recalled note goes to whichever model answers the turn, as session history does; a session ends by 30 minutes of silence, not by an event.
+**Bounds.** Only turns that carry a session id and are conversational (not a plan the gateway ran) are remembered; the answer you were given is model output and can echo what the model read; a recalled note goes to a remote model only if you set `[memory] recall_remote = true`; a session ends by 30 minutes of silence, not by an event.
 
 ### `nimbus iac drift [--workdir <dir>] [--json]` / `nimbus iac drift --latest [--json]`
 
