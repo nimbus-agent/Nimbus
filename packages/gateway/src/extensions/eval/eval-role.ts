@@ -189,6 +189,50 @@ export function adaptEvalClient(client: McpClientLike, readContent: ContentReade
 
 type EvalListingClientLike = ReturnType<EvalBaselineDeps["createClient"]>;
 
+/**
+ * The slice of `@mastra/mcp`'s `MCPClient` the baseline needs beyond the public listing. Its
+ * public `listToolDefinitionsWithErrors` rebuilds each server's record through
+ * `Object.fromEntries` (since 2.10, to hide MCP-app helper tools), which launders a tool named
+ * `__proto__` into nothing: the judge then never sees what the SERVER listed. The per-server
+ * connection's own `toolDefinitions()` is the record before that rebuild. The accessor is private
+ * in the client's types, so it is reached through this shape and its absence fails closed.
+ */
+export interface RawListingClient extends EvalListingClientLike {
+  getConnectedClientForServer?: (
+    serverName: string,
+  ) => Promise<{ toolDefinitions?: () => Promise<Record<string, unknown>> }>;
+}
+
+/**
+ * A listing client whose definitions are what each server listed, not the client library's
+ * filtered view of it. The public listing still supplies connection `errors`; the definitions of
+ * every server it reports healthy are re-read from that server's own connection. A client without
+ * the accessor, or a re-read that fails, rejects: the baseline then reports a runner-side fault,
+ * never a pass.
+ */
+export function withServerListing(
+  client: RawListingClient,
+  serverKeys: readonly string[],
+): EvalListingClientLike {
+  return {
+    disconnect: () => client.disconnect(),
+    listToolDefinitionsWithErrors: async () => {
+      const listing = await client.listToolDefinitionsWithErrors();
+      if (Object.keys(listing.errors).length > 0) return listing;
+      const definitions: Record<string, unknown> = {};
+      for (const key of serverKeys) {
+        const connected = await client.getConnectedClientForServer?.(key);
+        const raw = await connected?.toolDefinitions?.();
+        if (typeof raw !== "object" || raw === null) {
+          throw new Error("the MCP client does not expose a server's own tool listing");
+        }
+        definitions[key] = raw;
+      }
+      return { definitions, errors: listing.errors };
+    },
+  };
+}
+
 /** What a run loads from outside this module; injected in tests, `REAL_EVAL_LOADERS` otherwise. */
 export interface EvalRunLoaders {
   /** `@mastra/mcp`, imported only here: inside the run, after console output is redirected. */
@@ -226,7 +270,10 @@ export const REAL_EVAL_LOADERS: EvalRunLoaders = {
     const { MCPClient } = await import("@mastra/mcp");
     // The one client the baseline drives, over the same server definitions as a suite run.
     return (id, servers) =>
-      new MCPClient({ id, servers: evalServerDefs(servers) }) as unknown as EvalListingClientLike;
+      withServerListing(
+        new MCPClient({ id, servers: evalServerDefs(servers) }) as unknown as RawListingClient,
+        Object.keys(servers),
+      );
   },
 };
 

@@ -116,7 +116,7 @@ describe("renderUnifiedDiff: states and hunks", () => {
   test("two far-apart changes are two hunks; changes within six lines merge into one", () => {
     const lines = Array.from({ length: 30 }, (_, i) => `l${String(i)}`);
     const edit = (idx: number[]) =>
-      lines.map((l, i) => (idx.includes(i) ? `${l}x` : l)).join("\n") + "\n";
+      `${lines.map((l, i) => (idx.includes(i) ? `${l}x` : l)).join("\n")}\n`;
     const old = `${lines.join("\n")}\n`;
     expect(render([f("a", old, edit([2, 25]))]).diff.files[0]?.hunks).toHaveLength(2);
     // Gap of exactly six unchanged lines touches (3 + 3 of context): one hunk.
@@ -368,7 +368,7 @@ describe("renderUnifiedDiff: the step budget", () => {
 
   test("the budget is shared across files: a later file falls back once it is spent", () => {
     const mk = (n: number, tag: string) =>
-      Array.from({ length: n }, (_, i) => `${tag}${String(i)}`).join("\n") + "\n";
+      `${Array.from({ length: n }, (_, i) => `${tag}${String(i)}`).join("\n")}\n`;
     const files = [
       f("one", mk(300, "o"), mk(300, "p")),
       f("two", mk(300, "o"), mk(300, "p")),
@@ -382,7 +382,7 @@ describe("renderUnifiedDiff: the step budget", () => {
   });
 
   test("a typical small edit does not fall back", () => {
-    const old = Array.from({ length: 800 }, (_, i) => `line ${String(i)}`).join("\n") + "\n";
+    const old = `${Array.from({ length: 800 }, (_, i) => `line ${String(i)}`).join("\n")}\n`;
     const neu = old.replace("line 400", "line 400 changed");
     const r = render([f("t", old, neu)]);
     expect(r.fallbackFiles).toBe(0);

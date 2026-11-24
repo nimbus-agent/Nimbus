@@ -108,7 +108,7 @@ jobs:
       - name: Install Bencher CLI
         if: ${{ env.BENCHER_API_KEY != '' }}
         continue-on-error: true # advisory: an install hiccup must never red the reference run
-        uses: bencherdev/bencher@f80847436d7157936b40525db4c2a1064124f04a # v0.6.13
+        uses: bencherdev/bencher@b2484bc6734c8e6da4fad141bd13527a11da3988 # v0.6.17
 
       - name: Emit Bencher BMF (reference)
         id: bencher-emit

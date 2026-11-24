@@ -94,14 +94,23 @@ function formatHitlBanner(batch: NonNullable<ReturnType<typeof tuiReducer>["hitl
   );
 }
 
+/**
+ * Ink 8 types `useStdout().stdout` as a bare `NodeJS.WritableStream`; `columns` and `rows` exist
+ * only on a TTY, so they are read through an optional view and fall back to the old 120x40.
+ */
+function terminalSizeOf(stdout: NodeJS.WritableStream): { columns: number; rows: number } {
+  const tty = stdout as { columns?: number; rows?: number };
+  return { columns: tty.columns ?? 120, rows: tty.rows ?? 40 };
+}
+
 export function App({ historyPath, onExit }: Props): React.JSX.Element {
   const { client, logger } = useIpc();
   const [state, dispatch] = React.useReducer(tuiReducer, initialTuiState);
   const [entries, setEntries] = React.useState<ResultStreamEntry[]>([]);
   const [clearKey, setClearKey] = React.useState(0);
   const { stdout } = useStdout();
-  const [cols, setCols] = React.useState(stdout.columns ?? 120);
-  const [rows, setRows] = React.useState(stdout.rows ?? 40);
+  const [cols, setCols] = React.useState(terminalSizeOf(stdout).columns);
+  const [rows, setRows] = React.useState(terminalSizeOf(stdout).rows);
   const [showCancelHint, setShowCancelHint] = React.useState(false);
   const lastCtrlCRef = React.useRef<number>(0);
   const reconnectAttemptRef = React.useRef(0);
@@ -153,8 +162,8 @@ export function App({ historyPath, onExit }: Props): React.JSX.Element {
 
   React.useEffect(() => {
     const onResize = (): void => {
-      setCols(stdout.columns ?? 120);
-      setRows(stdout.rows ?? 40);
+      setCols(terminalSizeOf(stdout).columns);
+      setRows(terminalSizeOf(stdout).rows);
     };
     (stdout as { on: (e: string, cb: () => void) => void }).on("resize", onResize);
     return () => {

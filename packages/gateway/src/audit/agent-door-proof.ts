@@ -77,7 +77,7 @@ const GATE_RE = new RegExp(
 const SUB_STEP_RE = new RegExp(
   String.raw`^\{"onBehalfOf":\{"door":"agent","captureId":"(cap_[0-9a-f]{32})"\},"action":\{"type":"(${STR})"`,
 );
-const MODEL_RE = new RegExp(String.raw`^${LEADING},"origin":"model"[,}]`);
+const MODEL_RE = new RegExp(`^${LEADING},"origin":"model"[,}]`);
 // Only a workflow run's action carries a `provenance` key, and only right after the type; this
 // module names no provenance kind (static D44(a) confines that literal).
 const WORKFLOW_RE = new RegExp(String.raw`^${LEADING},"provenance":\{"kind":"[a-z_]+"`);

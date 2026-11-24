@@ -6638,7 +6638,7 @@ ${middle}}`;
         provenance.basis === 1 && door !== undefined
           ? vetoingConsent(coordinator, async () => { return 1; }, (r) => { v = r; })
           : coordinator;
-` + EXECUTOR,
+${EXECUTOR}`,
           ),
         ),
       ),

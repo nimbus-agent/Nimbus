@@ -15,7 +15,7 @@ import {
   validateContinuityEntries,
 } from "./continuity-table.ts";
 
-const KEY = "A".repeat(43) + "=";
+const KEY = `${"A".repeat(43)}=`;
 const FP = "fp-official-root";
 
 const READWISE: ContinuityEntry = {
@@ -40,7 +40,7 @@ describe("findContinuityBinding", () => {
   });
   test("publisher key mismatch", () => {
     expect(
-      findContinuityBinding({ ...good, publisherKey: "B".repeat(43) + "=" }, table),
+      findContinuityBinding({ ...good, publisherKey: `${"B".repeat(43)}=` }, table),
     ).toBeUndefined();
   });
   test("fingerprint mismatch", () => {
