@@ -74,6 +74,7 @@ import { loadGlossaryManualFromConfigDir } from "./nimbus-toml-glossary-terms.ts
 import { loadNimbusWorkdayFromConfigDir } from "./nimbus-toml-workday.ts";
 import { loadNimbusNotificationsFromConfigDir } from "./notifications-toml.ts";
 import { loadNimbusOncallPushFromConfigDir } from "./oncall-push-toml.ts";
+import { personalizationExplainNotes } from "./personalization-toml.ts";
 import { loadNimbusPreflightRiskFromConfigDir } from "./preflight-risk-toml.ts";
 import { loadNimbusSessionFromConfigDir } from "./session-toml.ts";
 import { loadNimbusStandingFromConfigDir } from "./standing-toml.ts";
@@ -82,9 +83,8 @@ import { parseString } from "./toml-primitives.ts";
 import { loadNimbusWatcherChatopsFromConfigDir } from "./watcher-chatops-toml.ts";
 
 /**
- * Each section id (unbracketed, as `sectionFallback` keys it) mapped to the config-dir loader that
- * reads it. `probeSection` runs the loader so a swallowed or refused error is on record before
- * `config explain` reports the section. Every id a loader passes to its fallback sink must be here.
+ * Each section id (unbracketed, as `sectionFallback` keys it) mapped to its config-dir loader;
+ * `probeSection` runs it so a swallowed error is on record. Every id a fallback sink uses is here.
  */
 export const SECTION_LOADERS: Readonly<Record<string, (configDir: string) => unknown>> = {
   agents: loadNimbusAgentsFromConfigDir,
@@ -147,10 +147,9 @@ export const SECTION_LOADERS: Readonly<Record<string, (configDir: string) => unk
 };
 
 /**
- * Runs `sectionId`'s own loader against `reader`'s config dir, so its fallback (if any) is
- * recorded for the current snapshot even when nothing has loaded the section since the last edit.
- * A loader that throws is recorded as `refused: <message>`. The loader reaches the reader through
- * the registry (`getLayeredConfig`), so `reader` must be the registered one for its config dir.
+ * Runs `sectionId`'s loader against `reader`'s config dir so its fallback is recorded for the
+ * current snapshot; a loader that throws is recorded as `refused: <message>`. `reader` must be the
+ * registered one for its config dir (the loader reaches it through `getLayeredConfig`).
  */
 export function probeSection(reader: LayeredConfig, sectionId: string): string | undefined {
   const load = SECTION_LOADERS[sectionId];
@@ -548,6 +547,7 @@ export function explainConfig(
   if (opts.sourceMappingNotes !== undefined && isSourcesPath(path)) {
     notes.push(...opts.sourceMappingNotes());
   }
+  notes.push(...personalizationExplainNotes(reader.configDir, path));
   const running = reader.profile.name;
   const marker = reader.markerProfile();
   if (restartWouldSwitch(reader.profile.source, running, marker)) {

@@ -1,5 +1,4 @@
 import type { Agent } from "@mastra/core/agent";
-import { resolvePersona } from "../config/persona.ts";
 import type {
   ConnectorWriteRow,
   PreviewCredentialResolver,
@@ -35,6 +34,7 @@ import {
 import { GatewayAgentUnavailableError } from "./gateway-agent-error.ts";
 import { indexCountFor, indexCountLine } from "./index-count-question.ts";
 import { createOwnerOnlyAsk } from "./owner-only-approval.ts";
+import { resolveAskStyle } from "./personalization.ts";
 import { type PlanResult, planFromIntent } from "./planner.ts";
 import type { ClassifiedIntent } from "./router.ts";
 import { classifyIntentForAskWithLocalFallback } from "./run-ask/classify.ts";
@@ -359,10 +359,8 @@ async function answerConversationally(
             fallbackHistoryStartMs: countDb === undefined ? null : earliestHistoryMs(countDb),
           },
         }),
-    // Resolved here rather than at gateway boot so an edit to the active profile's toml is
-    // picked up with no restart (D3). No logger: the boot-time resolution in
-    // `platform/assemble.ts` owns the warning — warning on every turn would be noise.
-    persona: resolvePersona(p.paths.configDir),
+    // Per turn (D3): `[persona]` with `[personalization]` tone, plus its verbosity sentence.
+    ...resolveAskStyle(p.paths.configDir),
     ...(p.notifyGasLimit === undefined ? {} : { notifyGasLimit: p.notifyGasLimit }),
   });
 
