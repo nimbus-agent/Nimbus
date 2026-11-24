@@ -135,7 +135,7 @@ describe("renderPlanPreview: shape and order", () => {
       `Plan SHA-256: ${SHA}`,
       "Reads: 1",
     ]);
-    expect(p.counts).toEqual({ create: 1, update: 1, delete: 1, replace: 1, read: 1 });
+    expect(p.counts).toEqual({ create: 1, update: 1, delete: 1, replace: 1, read: 1, move: 0 });
     expect(p.changeCount).toBe(4);
     expect(p.deleteCount).toBe(2);
   });
@@ -689,7 +689,7 @@ describe("renderPlanPreview: drift outside Terraform (resource_drift)", () => {
 
   test("drift does not change the plan's own counts", () => {
     const r = render(plan([], { resource_drift: [updated, deleted] }));
-    expect(r.counts).toEqual({ create: 0, update: 0, delete: 0, replace: 0, read: 0 });
+    expect(r.counts).toEqual({ create: 0, update: 0, delete: 0, replace: 0, read: 0, move: 0 });
     expect(r.changeCount).toBe(0);
     expect(r.deleteCount).toBe(0);
   });
