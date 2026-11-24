@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { LocalIndex } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { BLOCK_MS } from "./_lib/free-busy-blocks.ts";
 import { answerFederatedFreeBusy, type FreeBusyGateCtx } from "./free-busy-gate.ts";
@@ -55,7 +56,7 @@ const blocksOf = (r: Awaited<ReturnType<typeof ask>>): string =>
 
 beforeEach(() => {
   db = new Database(":memory:");
-  runIndexedSchemaMigrations(db, 33);
+  runIndexedSchemaMigrations(db, LocalIndex.SCHEMA_VERSION);
   db.run("INSERT INTO sync_state (connector_id,last_sync_at) VALUES ('google_calendar', ?)", [
     NOW - 3_600_000,
   ]);
@@ -130,6 +131,7 @@ describe("how an event counts", () => {
   });
 
   test("overlapping events from two services merge; an event outside the window is ignored", async () => {
+    db.run("INSERT INTO sync_state (connector_id,last_sync_at) VALUES ('apple', ?)", [NOW - 1000]);
     event(at(1, 2));
     event(at(2, 2), { service: "apple" });
     event({ start_ms: FROM - 4 * BLOCK_MS, end_ms: FROM });
@@ -229,6 +231,36 @@ describe("calendar freshness fails closed", () => {
       NOW - 25 * 3_600_000,
     ]);
     expect(await ask(ctx())).toEqual({ kind: "error", error: "calendar_unavailable" });
+  });
+});
+
+describe("connected calendars with no fresh health row", () => {
+  test("indexed events of a service with no sync_state row make the answer unavailable", async () => {
+    event(at(1, 2), { service: "outlook" });
+    expect(await ask(ctx())).toEqual({ kind: "error", error: "calendar_unavailable" });
+  });
+  test("an unconfigured service with no events does not block the connected one", async () => {
+    db.run(
+      "INSERT INTO sync_state (connector_id,last_sync_at,configured) VALUES ('apple', NULL, 0)",
+    );
+    expect(blocksOf(await ask(ctx()))).toBe("00000000");
+  });
+});
+
+describe("operator identity is rechecked after the approval", () => {
+  test("a session that lapses during the wait gets the fixed refusal and no read", async () => {
+    let valid = true;
+    event(at(1, 2));
+    const r = await ask(
+      ctx({
+        identity: { enabled: true, isOperatorValid: () => valid },
+        requestApproval: async () => {
+          valid = false;
+          return true;
+        },
+      }),
+    );
+    expect(r).toEqual({ kind: "error", error: "declined" });
   });
 });
 

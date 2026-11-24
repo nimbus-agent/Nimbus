@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
+import { LocalIndex } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { BLOCK_MS } from "./_lib/free-busy-blocks.ts";
 import { askPeerFreeBusy } from "./schedule-ask.ts";
@@ -11,7 +12,7 @@ let db: Database;
 
 beforeEach(() => {
   db = new Database(":memory:");
-  runIndexedSchemaMigrations(db, 33);
+  runIndexedSchemaMigrations(db, LocalIndex.SCHEMA_VERSION);
   db.run("INSERT INTO sync_state (connector_id,last_sync_at) VALUES ('outlook', ?)", [NOW - 1000]);
 });
 afterEach(() => db.close());
@@ -106,4 +107,22 @@ test("an unknown refusal, a malformed reply and a transport failure are distinct
       input,
     ),
   ).toEqual({ kind: "error", error: "peer_unreachable" });
+});
+
+test("an event synced while the peer's owner was deciding is not offered as free", async () => {
+  const r = await askPeerFreeBusy(
+    deps(async () => {
+      db.run(
+        `INSERT INTO item (id,service,type,external_id,title,modified_at,synced_at,metadata)
+         VALUES ('late','outlook','event','late','t',1,1,?)`,
+        [JSON.stringify({ start_ms: FROM, end_ms: FROM + BLOCK_MS, status: "confirmed" })],
+      );
+      return { kind: "ok", reply: { fromMs: FROM, blockMs: BLOCK_MS, blocks: "0000" } };
+    }),
+    input,
+  );
+  expect(r).toMatchObject({
+    kind: "ok",
+    slots: [{ startMs: FROM + BLOCK_MS, endMs: FROM + 4 * BLOCK_MS }],
+  });
 });

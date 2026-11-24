@@ -99,7 +99,12 @@ export function renderSchedule(reply: AskReply): string {
     return `No ${String(reply.durationMs / 60_000)}-minute slot is free for both of you in that window.\n`;
   }
   const shown = reply.slots.slice(0, MAX_SLOTS_SHOWN);
-  const lines = shown.map((s) => `  ${local(s.startMs)} - ${local(s.endMs).slice(-5)}`);
+  const lines = shown.map((s) => {
+    const start = local(s.startMs);
+    const end = local(s.endMs);
+    // Same local date: end time only. A run that crosses midnight keeps its full end date.
+    return `  ${start} - ${end.slice(4, 14) === start.slice(4, 14) ? end.slice(-5) : end}`;
+  });
   const more = reply.slots.length - shown.length;
   return `Free for both (start anywhere inside a run that fits ${String(reply.durationMs / 60_000)} minutes):\n${lines.join("\n")}\n${more > 0 ? `  ... and ${String(more)} more\n` : ""}`;
 }
@@ -215,8 +220,16 @@ export async function handleScheduleRequest(
 }
 
 /** Registers the free/busy prompt on a connection (used by `nimbus team listen`). */
-export function registerScheduleListener(client: IPCClient): void {
+export function registerScheduleListener(client: IPCClient, prompt: PromptFn = confirm): void {
+  // One prompt at a time: overlapping prompts share stdin, so one keypress would answer all of them.
+  let queue: Promise<void> = Promise.resolve();
   client.onNotification("federation.scheduleRequest", (params: unknown) => {
-    void handleScheduleRequest(client, params, confirm, isCancel);
+    queue = queue
+      .then(() => handleScheduleRequest(client, params, prompt, isCancel))
+      .catch((e: unknown) => {
+        process.stderr.write(
+          `Error handling a scheduling request: ${e instanceof Error ? e.message : String(e)}\n`,
+        );
+      });
   });
 }

@@ -233,7 +233,63 @@ describe("runTeamSchedule", () => {
   });
 });
 
+describe("a run that crosses midnight", () => {
+  test("keeps its full end date; a same-day run shows the end time only", () => {
+    const start = new Date(2026, 10, 25, 9, 0).getTime();
+    const multi = renderSchedule({
+      kind: "ok",
+      durationMs: BLOCK,
+      slots: [{ startMs: start, endMs: new Date(2026, 10, 27, 9, 0).getTime() }],
+    });
+    expect(multi).toContain("- Fri 2026-11-27 09:00");
+    const same = renderSchedule({
+      kind: "ok",
+      durationMs: BLOCK,
+      slots: [{ startMs: start, endMs: start + 2 * BLOCK }],
+    });
+    expect(same).toContain("2026-11-25 09:00 - 10:00");
+  });
+});
+
 describe("registerScheduleListener", () => {
+  test("two requests are prompted one after the other, never at once", async () => {
+    let handler: (p: unknown) => void = () => {};
+    let open = 0;
+    let maxOpen = 0;
+    const releases: Array<() => void> = [];
+    const answered: string[] = [];
+    registerScheduleListener(
+      {
+        onNotification: (_m: string, h: (p: unknown) => void) => {
+          handler = h;
+        },
+        call: async (_m: string, p: unknown) => {
+          answered.push((p as { requestId: string }).requestId);
+        },
+      } as never,
+      () => {
+        open += 1;
+        maxOpen = Math.max(maxOpen, open);
+        return new Promise<boolean>((r) =>
+          releases.push(() => {
+            open -= 1;
+            r(true);
+          }),
+        );
+      },
+    );
+    handler({ requestId: "r1", peerId: "a", fromMs: 1, toMs: 2 });
+    handler({ requestId: "r2", peerId: "b", fromMs: 1, toMs: 2 });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(releases.length).toBe(1);
+    releases[0]?.();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(releases.length).toBe(2);
+    releases[1]?.();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(maxOpen).toBe(1);
+    expect(answered).toEqual(["r1", "r2"]);
+  });
   test("registers the scheduling prompt on the notification the gateway broadcasts", () => {
     const seen: string[] = [];
     registerScheduleListener({ onNotification: (m: string) => seen.push(m) } as never);

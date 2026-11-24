@@ -79,10 +79,17 @@ export async function askPeerFreeBusy(
   const body = raw !== null && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   const theirs = body["kind"] === "ok" ? parseReply(body["reply"], window) : undefined;
   if (theirs === undefined) return { kind: "error", error: "malformed_reply" };
+  // The peer's owner took time to approve: a sync may have added an event since the first read.
+  const after = (deps.now ?? Date.now)();
+  if (calendarReadiness(deps.db, after) !== "ready") {
+    return { kind: "error", error: "own_calendar_unavailable" };
+  }
+  const latest = readBusyBlocks(deps.db, window);
+  if (latest.capped) return { kind: "error", error: "own_calendar_unavailable" };
   return {
     kind: "ok",
     window,
     durationMs: input.durationMs,
-    slots: commonFreeSlots(window, mine.blocks, theirs, input.durationMs),
+    slots: commonFreeSlots(window, latest.blocks, theirs, input.durationMs),
   };
 }

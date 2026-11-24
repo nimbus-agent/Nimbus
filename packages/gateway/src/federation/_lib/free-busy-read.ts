@@ -34,15 +34,27 @@ export type BusyRead = {
 /**
  * `ready` only when at least one calendar service is connected and EVERY connected one synced
  * within `MAX_SYNC_AGE_MS`. Without it an empty index would answer "free all day".
+ *
+ * A service counts as connected when its `sync_state` row says a credential is configured (the
+ * scheduler writes that flag every tick, so a newly connected calendar has a row, with no sync
+ * yet, within one tick), OR when events of that service are already indexed: indexed events with
+ * no configured health row are data of unknown age, never a calendar to ignore.
  */
 export function calendarReadiness(db: Database, nowMs: number): "ready" | "not_ready" {
-  const q = db.query("SELECT last_sync_at FROM sync_state WHERE connector_id = ? LIMIT 1");
+  const q = db.query(
+    "SELECT last_sync_at, configured FROM sync_state WHERE connector_id = ? LIMIT 1",
+  );
+  const hasEvents = db.query(
+    "SELECT 1 AS x FROM item WHERE type = 'event' AND service = ? LIMIT 1",
+  );
   let connected = 0;
   for (const id of CALENDAR_SERVICES) {
-    const row = q.get(id) as { last_sync_at: number | null } | null;
-    if (row === null) continue;
+    const row = q.get(id) as { last_sync_at: number | null; configured: number } | null;
+    const configured = row !== null && row.configured !== 0;
+    if (!configured && hasEvents.get(id) === null) continue;
     connected += 1;
-    if (row.last_sync_at === null || nowMs - row.last_sync_at > MAX_SYNC_AGE_MS) return "not_ready";
+    const last = row?.last_sync_at ?? null;
+    if (last === null || nowMs - last > MAX_SYNC_AGE_MS) return "not_ready";
   }
   return connected > 0 ? "ready" : "not_ready";
 }

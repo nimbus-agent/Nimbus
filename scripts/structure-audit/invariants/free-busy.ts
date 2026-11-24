@@ -21,23 +21,28 @@ const GATE = `${FB_DIR}free-busy-gate.ts`;
 const ASK = `${FB_DIR}schedule-ask.ts`;
 const SERVER = `${FB_DIR}federation-server.ts`;
 const SHAPING = [READER, `${FB_DIR}_lib/free-busy-blocks.ts`, GATE];
-const READER_IMPORT_RE = /from\s+["'][^"']*free-busy-read(?:\.ts)?["']/;
+const READER_IMPORT_RE = /from\s+["'][^"']*free-busy-read(?:\.ts)?["']/g;
 const GATE_NAME_RE = /\banswerFederatedFreeBusy\b/;
+// A forbidden field name, or an event-id access: `.id`, `["id"]`, or a destructuring that names `id`.
+// A bare `id` (a loop variable, a lookup argument, an ORDER BY column) stays allowed.
 const FIELD_RE =
-  /\b(?:title|attendees?|attendee_count|organi[sz]er(?:_email)?|location|url|body|body_preview|description|summary|calendar_name|external_id|author_id)\b/;
+  /\b(?:title|attendees?|attendee_count|organi[sz]er(?:_email)?|location|url|body|body_preview|description|summary|calendar_name|external_id|author_id)\b|\.id\b|\[\s*["']id["']\s*\]|\{[^{}]*\bid\b[^{}]*\}\s*=(?!=)/;
 
-function scan(
-  f: FileEntry,
-  re: RegExp,
-  rule: string,
-  out: Violation[],
-  keepOnlyImports = false,
-): void {
-  const stripped = stripComments(f.contents).split("\n");
+function scan(f: FileEntry, re: RegExp, rule: string, out: Violation[]): void {
   const original = f.contents.split("\n");
-  for (let i = 0; i < stripped.length; i++) {
-    const line = stripped[i] ?? "";
-    if (re.test(line) && (!keepOnlyImports || /\bfrom\b|\bimport\b/.test(line))) {
+  const stripped = stripComments(f.contents);
+  if (re.global) {
+    // Match the whole comment-stripped source, so a statement split over lines is still seen; the
+    // line comes from the match offset.
+    for (const m of stripped.matchAll(re)) {
+      const line = stripped.slice(0, m.index).split("\n").length;
+      out.push({ rule, file: f.relPath, line, snippet: (original[line - 1] ?? "").trim() });
+    }
+    return;
+  }
+  const lines = stripped.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    if (re.test(lines[i] ?? "")) {
       out.push({ rule, file: f.relPath, line: i + 1, snippet: (original[i] ?? "").trim() });
     }
   }

@@ -108,6 +108,11 @@ export async function answerFederatedFreeBusy(
     audit(ctx, q, "declined");
     return { kind: "error", error: "declined" };
   }
+  // The operator session may have lapsed while the owner was deciding: check again before any read.
+  if (ctx.identity?.enabled === true && !ctx.identity.isOperatorValid()) {
+    audit(ctx, q, "identity_invalid");
+    return { kind: "error", error: "declined" };
+  }
   const read =
     calendarReadiness(ctx.db, (ctx.now ?? Date.now)()) === "ready"
       ? readBusyBlocks(ctx.db, window)
