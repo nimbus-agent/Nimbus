@@ -3,8 +3,8 @@
 
 import { CO_OWNED_ENTITY_TYPES } from "../../../packages/gateway/src/graph/relationship-graph.ts";
 import type { FileEntry, Mode } from "./_shared.ts";
-import { checkFreeBusyConfinement } from "./free-busy.ts";
 import { checkEpisodicMemoryConfinement } from "./episodic-memory.ts";
+import { checkFreeBusyConfinement } from "./free-busy.ts";
 import {
   checkBrokeredFetchLiteralConfinement,
   checkGeneratedManifestConfinement,
