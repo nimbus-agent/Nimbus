@@ -349,17 +349,8 @@ async function openRun(r: IacRunner): Promise<{ release: () => void }> {
 const PLAN_INPUT = { workingDirectory: work };
 
 describe("the runner: routing, spawn shape and the per-run policy", () => {
-  test("routes the eight tools and nothing else", () => {
-    expect(Object.keys(IAC_TOOL_PROFILE).sort()).toEqual([
-      "iac_cloudformation_changeset_create",
-      "iac_cloudformation_changeset_discard",
-      "iac_cloudformation_deploy",
-      "iac_terraform_apply",
-      "iac_terraform_destroy",
-      "iac_terraform_destroy_plan",
-      "iac_terraform_plan",
-      "iac_terraform_show_json",
-    ]);
+  test("routes the ten tools and nothing else (the exact names: iac-tool-profile.test.ts)", () => {
+    expect(Object.keys(IAC_TOOL_PROFILE)).toHaveLength(10);
     const { r } = runner("answer");
     const merged: Record<string, { execute?: (i: unknown) => Promise<unknown> }> = {
       iac_iac_terraform_plan: { execute: async () => "original" },

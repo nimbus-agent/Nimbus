@@ -86,6 +86,8 @@ export const CONNECTOR_CATALOG_META = Object.freeze({
   kubernetes: m("Kubernetes", "cloud", "An open-source system for running containerised workloads"),
   aws: m("AWS", "cloud", "Amazon's cloud computing platform"),
   vantage: m("Vantage", "cloud", "A cloud cost management and reporting platform"),
+  opencost: m("OpenCost", "cloud", "An open-source Kubernetes cost monitoring tool"),
+  kubecost: m("Kubecost", "cloud", "A Kubernetes cost monitoring and allocation tool"),
   azure: m("Microsoft Azure", "cloud", "Microsoft's cloud computing platform"),
   gcp: m("Google Cloud", "cloud", "Google's cloud computing platform"),
   iac: m(

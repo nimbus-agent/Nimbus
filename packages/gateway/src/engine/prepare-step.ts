@@ -13,8 +13,7 @@
  *    need approval is refused without asking anyone ({@link PREPARE_HITL_REFUSAL});
  *  - is subject to ONE timer (the row's `budgetMs`) over its gate and dispatch together, after
  *    which a late reply is dropped, and to the row's input and reply size caps;
- *  - fails closed on EVERY door: a refusal is one of the fixed reasons in {@link PREPARE_REFUSALS}
- *    (never error text), and it ends the gate before any prompt;
+ *  - fails closed on EVERY door: a refusal is a fixed {@link PREPARE_REFUSALS} reason, ends the gate before any prompt;
  *  - never reaches the model: only the selected, sanitised facts reach the approver's preview.
  *
  * The caller can never supply a bound field: an action that arrives holding one, at the payload
@@ -77,6 +76,7 @@ export const PREPARE_REFUSALS = Object.freeze({
   diffTooLarge: "prepare: the change is too large to show in full",
   nothingToCommit: "prepare: the change would change nothing",
   nothingToApply: "prepare: the plan would change nothing",
+  notRefreshOnly: "prepare: the plan changes infrastructure, so it cannot be accepted as drift",
   settleFailed: "prepare: the plan could not be fixed and shown",
   capabilityMissing: "prepare: this connection cannot fix and show the plan",
 });

@@ -4,9 +4,9 @@
 // runs only inside the executor's prepare step (`engine/prepare-step.ts`), under a
 // `<service>.write.prepare` action type, never as a model tool and never as a write.
 //
-// Seven ids since D2 (connectors 0.9.0): the GitHub and GitLab multi-file commit prepare tools (D1c),
-// the four iac ones (Terraform plan, destroy plan, show-json; CloudFormation change-set create) and
-// D3's `k8s_manifest_plan`. The connector's own `shared/prepare-tool-ids.ts` lists exactly these; a
+// Eight ids since the refresh-only plan (connectors 0.16.0): the GitHub and GitLab multi-file commit
+// prepare tools (D1c), the five iac ones (Terraform plan, destroy plan, refresh-only plan,
+// show-json; CloudFormation change-set create) and D3's `k8s_manifest_plan`. The connector's own `shared/prepare-tool-ids.ts` lists exactly these; a
 // test pins the two lists equal, so a further prepare tool fails the gateway until a row classifies
 // it, with a test that it is registered, not a read verb and not a write id. Tests exercise the mechanism with synthetic ids through the executor's and the
 // dispatcher's constructor seams, which static rule D42(c) forbids production code to use.
@@ -15,6 +15,7 @@ const PREPARE_TOOL_ID_BACKING: ReadonlySet<string> = new Set<string>([
   "gitlab_commit_prepare",
   "iac_terraform_plan",
   "iac_terraform_destroy_plan",
+  "iac_terraform_plan_refresh_only",
   "iac_terraform_show_json",
   "iac_cloudformation_changeset_create",
   // D3's: classified here because the equality test pins this list to the connector's own; no row

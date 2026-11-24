@@ -2,7 +2,7 @@
 // Re-run: bun run gen:connector-registry
 //
 // Every first-party connector entrypoint, as a lazy dynamic import. The imports are static enough
-// for the bundler to retain all 95 in the compiled gateway binary, and lazy enough that
+// for the bundler to retain all 97 in the compiled gateway binary, and lazy enough that
 // only the requested connector is ever evaluated.
 
 export const BUNDLED_CONNECTORS: Readonly<Record<string, () => Promise<unknown>>> = {
@@ -53,6 +53,7 @@ export const BUNDLED_CONNECTORS: Readonly<Record<string, () => Promise<unknown>>
   intercom: () => import("@nimbus-dev/connectors/intercom"),
   jenkins: () => import("@nimbus-dev/connectors/jenkins"),
   jira: () => import("@nimbus-dev/connectors/jira"),
+  kubecost: () => import("@nimbus-dev/connectors/kubecost"),
   kubernetes: () => import("@nimbus-dev/connectors/kubernetes"),
   launchdarkly: () => import("@nimbus-dev/connectors/launchdarkly"),
   lever: () => import("@nimbus-dev/connectors/lever"),
@@ -70,6 +71,7 @@ export const BUNDLED_CONNECTORS: Readonly<Record<string, () => Promise<unknown>>
   notion: () => import("@nimbus-dev/connectors/notion"),
   obsidian: () => import("@nimbus-dev/connectors/obsidian"),
   onedrive: () => import("@nimbus-dev/connectors/onedrive"),
+  opencost: () => import("@nimbus-dev/connectors/opencost"),
   outlook: () => import("@nimbus-dev/connectors/outlook"),
   pagerduty: () => import("@nimbus-dev/connectors/pagerduty"),
   pipedrive: () => import("@nimbus-dev/connectors/pipedrive"),

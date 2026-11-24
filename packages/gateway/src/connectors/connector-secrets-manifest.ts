@@ -87,6 +87,11 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
     "vantage.workspace_token",
     "vantage.group_by",
   ],
+  // OpenCost and Kubecost run in the owner's own cluster: the URL is the one required key. `token` (an
+  // ingress that wants a bearer token), `cluster` (a label for the series scope) and `aggregate`
+  // (`namespace` or `controller`) are optional.
+  opencost: ["opencost.url", "opencost.token", "opencost.cluster", "opencost.aggregate"],
+  kubecost: ["kubecost.url", "kubecost.token", "kubecost.cluster", "kubecost.aggregate"],
   zoom: ["zoom.oauth"],
   hubspot: ["hubspot.oauth"],
   miro: ["miro.oauth"],
@@ -249,6 +254,9 @@ export const OPTIONAL_SECRET_KEYS: Partial<Record<ConnectorServiceId, readonly s
   github: ["github.api_base"],
   // Only the token makes Vantage "configured"; the report, workspace and grouping keys select what to read.
   vantage: ["vantage.cost_report_token", "vantage.workspace_token", "vantage.group_by"],
+  // Only the URL makes OpenCost or Kubecost "configured".
+  opencost: ["opencost.token", "opencost.cluster", "opencost.aggregate"],
+  kubecost: ["kubecost.token", "kubecost.cluster", "kubecost.aggregate"],
 };
 
 /** The manifest keys a credential for `service` must hold: the full list minus the optional keys. */
