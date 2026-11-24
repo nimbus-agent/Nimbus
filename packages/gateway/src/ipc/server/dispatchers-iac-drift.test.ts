@@ -46,10 +46,13 @@ describe("tryDispatchIacDriftRpc (IaC drift D2)", () => {
     });
   });
 
-  test("the desktop's connection is refused with a domain error code", async () => {
+  test("the desktop's connection reads the latest findings but is refused the check", async () => {
+    expect(
+      await tryDispatchIacDriftRpc(makeCtx({ kind: "ui" }), "iac.driftLatest", {}, "c1"),
+    ).toEqual({ findings: [] });
     const err = await tryDispatchIacDriftRpc(
       makeCtx({ kind: "ui" }),
-      "iac.driftLatest",
+      "iac.driftCheck",
       {},
       "c1",
     ).catch((e: unknown) => e);

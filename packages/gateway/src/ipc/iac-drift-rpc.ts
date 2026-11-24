@@ -5,10 +5,13 @@
  *     stored spelling) or each in turn, and returns the findings (`{ findings }`).
  *   - `iac.driftLatest` returns the stored latest finding per workdir (`{ findings }`).
  *
- * CLI ONLY: answered only to a connection that declared `cli` (the dispatcher passes the CONNECTION's
- * kind, never a param), so never the desktop, an MCP agent, ChatOps, HTTP or a fleet peer. The whole
- * `iac` namespace is LAN-forbidden (I5, `ipc/lan-rpc.ts`, a DENYLIST) and absent from the Tauri
- * allowlist (I7). No runner is bound on a demo gateway (I41): both methods then refuse.
+ * `iac.driftCheck` is CLI ONLY: answered only to a connection that declared `cli` (the dispatcher
+ * passes the CONNECTION's kind, never a param), so never the desktop, an MCP agent, ChatOps, HTTP or a
+ * fleet peer, and it is absent from the Tauri allowlist (I7). `iac.driftLatest` is a READ of the
+ * stored findings and also answers a connection that declared `ui` (the desktop's Infrastructure
+ * page; it is the one `iac.` entry on the allowlist). The whole `iac` namespace is LAN-forbidden
+ * (I5, `ipc/lan-rpc.ts`, a DENYLIST). No runner is bound on a demo gateway (I41): both methods then
+ * refuse.
  */
 
 import type { DriftFinding } from "../iac-drift/drift-findings.ts";
@@ -27,6 +30,8 @@ export class IacDriftRpcError extends Error {
 
 export const IAC_DRIFT_CLI_ONLY =
   "ERR_IAC_DRIFT_CLI_ONLY: the drift check is available only to the owner's CLI on the local socket";
+export const IAC_DRIFT_OWNER_ONLY =
+  "ERR_IAC_DRIFT_OWNER_ONLY: the latest drift findings are available only to the owner's CLI or desktop on the local socket";
 export const IAC_DRIFT_UNAVAILABLE =
   "ERR_IAC_DRIFT_UNAVAILABLE: the drift check is not available on this gateway";
 export const IAC_DRIFT_BAD_PARAMS = "ERR_IAC_DRIFT_BAD_PARAMS: workdir must be a non-empty string";
@@ -36,8 +41,13 @@ export interface IacDriftRpcCtx {
   readonly runner: () => IacDriftRunner | undefined;
 }
 
-function runnerOf(ctx: IacDriftRpcCtx, kind: ClientKind): IacDriftRunner {
-  if (kind !== "cli") throw new IacDriftRpcError(-32000, IAC_DRIFT_CLI_ONLY);
+function runnerOf(
+  ctx: IacDriftRpcCtx,
+  kind: ClientKind,
+  allowed: readonly ClientKind[],
+  refusal: string,
+): IacDriftRunner {
+  if (!allowed.includes(kind)) throw new IacDriftRpcError(-32000, refusal);
   const runner = ctx.runner();
   if (runner === undefined) throw new IacDriftRpcError(-32000, IAC_DRIFT_UNAVAILABLE);
   return runner;
@@ -62,7 +72,7 @@ export async function dispatchIacDriftRpc(
 ): Promise<RpcMissOrHit<{ findings: DriftFinding[] }>> {
   return dispatchByMethod<IacDriftRpcCtx, { findings: DriftFinding[] }>(method, params, ctx, {
     "iac.driftCheck": async (p, c) => {
-      const runner = runnerOf(c, caller.kind);
+      const runner = runnerOf(c, caller.kind, ["cli"], IAC_DRIFT_CLI_ONLY);
       const workdir = workdirParam(p);
       try {
         const findings = await runner.check({
@@ -75,6 +85,8 @@ export async function dispatchIacDriftRpc(
         throw e;
       }
     },
-    "iac.driftLatest": (_p, c) => ({ findings: runnerOf(c, caller.kind).latest() }),
+    "iac.driftLatest": (_p, c) => ({
+      findings: runnerOf(c, caller.kind, ["cli", "ui"], IAC_DRIFT_OWNER_ONLY).latest(),
+    }),
   });
 }

@@ -166,10 +166,18 @@ describe("tryDispatchIacDriftRpc", () => {
   });
 
   test("a non-CLI kind keeps its code; any other error is re-thrown as it is", async () => {
+    // the desktop (ui) may READ the latest findings but never start a check
+    expect(await tryDispatchIacDriftRpc(ctx(undefined, "ui"), "iac.driftLatest", {}, "c1")).toEqual(
+      { findings: [] },
+    );
     const e = await rpcError(
-      tryDispatchIacDriftRpc(ctx(undefined, "ui"), "iac.driftLatest", {}, "c1"),
+      tryDispatchIacDriftRpc(ctx(undefined, "ui"), "iac.driftCheck", {}, "c1"),
     );
     expect(e.message).toContain("ERR_IAC_DRIFT_CLI_ONLY");
+    const m = await rpcError(
+      tryDispatchIacDriftRpc(ctx(undefined, "mcp"), "iac.driftLatest", {}, "c1"),
+    );
+    expect(m.message).toContain("ERR_IAC_DRIFT_OWNER_ONLY");
     await expect(tryDispatchIacDriftRpc(ctx(boom), "iac.driftLatest", {}, "c1")).rejects.toThrow(
       "boom",
     );

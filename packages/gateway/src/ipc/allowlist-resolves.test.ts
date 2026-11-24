@@ -112,6 +112,10 @@ beforeAll(async () => {
     // kind, so the handler refuses with ERR_INCIDENT_FORBIDDEN_CLIENT (-32000) before it reads
     // anything; that proves the arm resolved the name.
     incidentRpcCtx: { db, engine: { assembleNow: t }, dependsOn: t } as never,
+    // `iac.driftLatest` (IaC drift desktop view): this connection declared no kind, so the handler
+    // refuses with ERR_IAC_DRIFT_OWNER_ONLY (-32000) before it reads the runner; that proves the arm
+    // resolved the name.
+    iacDriftRpcCtx: { runner: () => undefined } as never,
   } as never);
   await server.start();
 });

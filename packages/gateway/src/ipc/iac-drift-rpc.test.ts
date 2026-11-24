@@ -5,6 +5,7 @@ import {
   dispatchIacDriftRpc,
   IAC_DRIFT_BAD_PARAMS,
   IAC_DRIFT_CLI_ONLY,
+  IAC_DRIFT_OWNER_ONLY,
   IAC_DRIFT_UNAVAILABLE,
   IacDriftRpcError,
 } from "./iac-drift-rpc.ts";
@@ -73,12 +74,22 @@ describe("iac.* (OR-DRIFT-1: the owner's CLI only)", () => {
       },
     };
     for (const kind of ["ui", "mcp", "chatops", "http", "fleet", "push", "unknown"] as const) {
-      for (const m of ["iac.driftCheck", "iac.driftLatest"]) {
-        const e = await err(dispatchIacDriftRpc(m, {}, ctx, { kind }));
-        expect(e.message).toBe(IAC_DRIFT_CLI_ONLY);
-      }
+      const e = await err(dispatchIacDriftRpc("iac.driftCheck", {}, ctx, { kind }));
+      expect(e.message).toBe(IAC_DRIFT_CLI_ONLY);
+    }
+    for (const kind of ["mcp", "chatops", "http", "fleet", "push", "unknown"] as const) {
+      const e = await err(dispatchIacDriftRpc("iac.driftLatest", {}, ctx, { kind }));
+      expect(e.message).toBe(IAC_DRIFT_OWNER_ONLY);
     }
     expect(lookups).toBe(0);
+    expect(h.calls).toEqual([]);
+  });
+
+  test("the desktop (ui) reads the latest findings and is still refused the check", async () => {
+    const h = runner();
+    const ctx = { runner: () => h.r };
+    const latest = await dispatchIacDriftRpc("iac.driftLatest", {}, ctx, { kind: "ui" });
+    expect(latest).toEqual({ kind: "hit", value: { findings: [F] } });
     expect(h.calls).toEqual([]);
   });
 

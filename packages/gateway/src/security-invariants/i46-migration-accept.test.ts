@@ -222,7 +222,7 @@ describe("I46 — a renderer can create an extension run grant only through migr
     }
     expect(rust).toContain('assert!(is_method_allowed("migration.list"));');
     expect(rust).toContain('assert!(is_method_allowed("migration.accept"));');
-    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*140\s*\)/);
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*141\s*\)/);
   });
 
   // ---- the positive control ------------------------------------------------------------------
