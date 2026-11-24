@@ -166,7 +166,7 @@ describe("extractWriterEmissions", () => {
 
   test("a malformed template-literal value does not hang on catastrophic regex backtracking", () => {
     const escapedRun = "\\_".repeat(5_000);
-    const src = "ctx.upsertItem({ service: `" + escapedRun + '`x, type: "y" });';
+    const src = `ctx.upsertItem({ service: \`${escapedRun}\`x, type: "y" });`;
     const out = extractWriterEmissions("redos-template.ts", src);
     expect(out[0]?.service).toBe("__UNRESOLVED__");
   });

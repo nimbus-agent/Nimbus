@@ -154,14 +154,14 @@ describe("buildScaffoldFiles", () => {
         .update(JSON.stringify(buildScaffoldFiles("echo", platform, dir)))
         .digest("hex");
     expect(digest("linux", "/w/echo")).toBe(
-      "d0dc20f3dbf07159e9763e3d9be2a85716e7e9e7f127a58cf0092125d8b8749f",
+      "81a229e7f39fd1c22c53c81a092dad4314dd9063b8edbef1cc850d5f05d122e5",
     );
     expect(digest("darwin", "/w/echo")).toBe(
-      "4ebc36fc15940c33e8855f03cc7564c6d237083354198807efa9835aa43fe52c",
+      "eaab95a4a1f64e4ecbbf8eabde0a4b9aeea501dfb8a07d1bb3855490cb78bf82",
     );
     expect(digest("win32", "C:wecho")).toBe(
       // cross-platform-ok
-      "a58878ecc7fbe7d2d47d7484c735e6259f464730ffa3e5f439c534850bb1fa76",
+      "1dd2ab2d5cae0eedd1a97304fa813e71d58b5434bc26d75830138080248123ec",
     );
   });
 
@@ -464,9 +464,9 @@ describe("buildExtensionScaffoldFiles", () => {
         .update(JSON.stringify(buildExtensionScaffoldFiles("echo", publisher, "linux", "/w/echo")))
         .digest("hex");
     expect(digest(undefined)).toBe(
-      "033a2a0c7ef747f1cf2d89212725a09e82d0ff9228d6243385e2a0e5567ef8c3",
+      "25c9e23b07104218246bc7b3c81e5d3122e57d366c9f92d9196d33519ab635b9",
     );
-    expect(digest("acme")).toBe("9ac844396018b08b3ab6662bb8bf8515825f7457c55ff5c3c7024aa8201cae49");
+    expect(digest("acme")).toBe("d210d3b215bbe203a5bbbf9a92d18c2f85bdf07d0f8cb5687d0cd78d76c2e6fe");
   });
 
   it("emits the manifest, sources, README and .gitignore", () => {

@@ -16,10 +16,10 @@ export const CHECKOUT_VERSION = "v7.0.1";
 
 /** `actions/upload-artifact`, pinned (with its version comment) as this repository's workflows pin it. */
 export const UPLOAD_ARTIFACT_ACTION =
-  "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1";
+  "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2";
 /** `actions/download-artifact`, pinned (with its version comment) as this repository's workflows pin it. */
 export const DOWNLOAD_ARTIFACT_ACTION =
-  "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1";
+  "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2";
 
 /** The artifact the score job uploads `scores.json` as, and the sign job downloads. */
 export const SCORES_ARTIFACT = "registry-scores";

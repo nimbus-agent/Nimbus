@@ -95,7 +95,7 @@ jobs:
       BENCHER_API_KEY: ${{ secrets.BENCHER_API_KEY }}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
 
@@ -221,7 +221,7 @@ jobs:
           matrix.os == 'ubuntu-24.04' ||
           github.event_name != 'schedule' ||
           github.event.schedule == '0 4 * * 0'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           # MUST match the format `perf-${runner_id}-${sha}` that
           # bench-ci.ts constructs for `gh run download --name ...`.
@@ -244,7 +244,7 @@ jobs:
             github.event.schedule == '0 4 * * 0'
           )
         continue-on-error: true # advisory: an install hiccup on any leg must never red the perf job
-        uses: bencherdev/bencher@f80847436d7157936b40525db4c2a1064124f04a # v0.6.13
+        uses: bencherdev/bencher@b2484bc6734c8e6da4fad141bd13527a11da3988 # v0.6.17
 
       - name: Emit Bencher BMF
         id: bencher-emit

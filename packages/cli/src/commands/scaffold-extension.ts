@@ -15,7 +15,7 @@ import {
  * scaffolded project against); a test enforces equality. The CLI itself no longer runs on that
  * package: its MCP server is built on `@nimbus-dev/sdk/mcp-server`.
  */
-export const SCAFFOLD_MCP_SDK_VERSION = "1.32.0";
+export const SCAFFOLD_MCP_SDK_VERSION = "1.32.2";
 
 export type ScaffoldFile = { readonly path: readonly string[]; readonly content: string };
 

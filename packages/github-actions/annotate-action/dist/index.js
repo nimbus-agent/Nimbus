@@ -130,9 +130,9 @@ async function postAnnotation(gatewayUrl, token, payload, timeoutMs) {
     if (res.status === 503) {
       let hint;
       try {
-        const body2 = await res.json();
-        if (typeof body2.hint === "string")
-          hint = body2.hint;
+        const body = await res.json();
+        if (typeof body.hint === "string")
+          hint = body.hint;
       } catch {}
       return hint === undefined ? { status: "surface_disabled" } : { status: "surface_disabled", hint };
     }
@@ -240,12 +240,12 @@ if (__require.main == __require.module) {
   await main();
 }
 export {
-  safeString,
-  safeInt,
-  safeBool,
-  safeAnnotateEnvelope,
-  main,
-  getIntInput,
+  getBooleanInput,
   getInput,
-  getBooleanInput
+  getIntInput,
+  main,
+  safeAnnotateEnvelope,
+  safeBool,
+  safeInt,
+  safeString
 };

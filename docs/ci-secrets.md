@@ -111,7 +111,7 @@ job that used to consume one of those PATs now runs a mint step first:
 ```yaml
 - name: Mint release-bot token
   id: app-token
-  uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+  uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
   with:
     client-id: ${{ secrets.RELEASE_BOT_CLIENT_ID }}
     private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
@@ -635,7 +635,7 @@ org-admin rights:
    - `RELEASE_BOT_PRIVATE_KEY` (the full PEM block)
 5. **Allow-list the mint action.** `Nimbus` requires SHA-pinned third-party
    actions, so add
-   `actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1`
+   `actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc`
    (`v3.2.0`) to the org's (or repo's) allowed-actions list, or the mint step
    fails closed with an "action not allowed" error before ever reaching the
    App.

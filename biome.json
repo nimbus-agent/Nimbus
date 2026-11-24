@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.5.15/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.6.9/schema.json",
   "vcs": {
     "enabled": true,
     "clientKind": "git",
@@ -21,6 +21,10 @@
       "!**/src-tauri",
       "!**/*.d.ts",
       "!**/*.svg",
+      "!**/*.md",
+      "!**/*.mdx",
+      "!**/*.yml",
+      "!**/*.yaml",
       "!packages/cli/src/nimbus.js",
       "!packages/gateway/src/nimbus-gateway.js"
     ]
@@ -88,6 +92,9 @@
       ],
       "linter": {
         "rules": {
+          "correctness": {
+            "noComponentHookFactories": "off"
+          },
           "suspicious": {
             "noConsole": "off"
           },

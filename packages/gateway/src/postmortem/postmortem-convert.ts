@@ -56,11 +56,11 @@ function scrub(s: string): string {
 
 const INLINE_RE = new RegExp(
   [
-    String.raw`\\([!-/:-@\[-` + "`" + String.raw`{-~])`, // 1: backslash escape
+    "\\\\([!-/:-@\\[-`{-~])", // 1: backslash escape
     String.raw`\[((?:[^\]\\]|\\.)*)\]\(([^)\s]*)\)`, // 2,3: link
     "`([^`]+)`", // 4: code
     String.raw`\*\*([^*]+)\*\*`, // 5: bold
-    String.raw`(?<![A-Za-z0-9])_([^_]+)_(?![A-Za-z0-9])`, // 6: italic
+    "(?<![A-Za-z0-9])_([^_]+)_(?![A-Za-z0-9])", // 6: italic
     String.raw`\*([^*\s][^*]*)\*`, // 7: italic
   ].join("|"),
   "g",
