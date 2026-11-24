@@ -293,10 +293,10 @@ describe.skipIf(!sandboxAvailable)("the __nimbus-eval role over a real sandboxed
   // What the real `MCPClient` does to a listing the docs state limits for. A fake cannot show it.
   test.each([
     [
-      "a tool named __proto__ never reaches the judge: @mastra/mcp 2.10 drops it, so only the other tool counts: the stated limit",
+      "a tool named __proto__ is invalid-tool, though the client's record shows no such key",
       "e2e.rawproto",
       [GOOD_RAW_TOOL, { name: "__proto__", inputSchema: { type: "object", properties: { x: 1 } } }],
-      { scorer: 1, passed: true, tools: 1 },
+      { scorer: 1, passed: false, tools: 2, failure: "invalid-tool" },
     ],
     [
       "a duplicate name leaves only the last tool: the stated limit",
