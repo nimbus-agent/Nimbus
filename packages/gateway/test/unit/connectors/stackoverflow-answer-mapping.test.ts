@@ -42,9 +42,7 @@ describe("mapStackOverflowAnswerToItem", () => {
     expect(row?.service).toBe("stackoverflow");
     expect(row?.type).toBe("answer");
     expect(row?.externalId).toBe("answer/9001");
-    expect(row?.body).toBe(
-      "Use full jitter : sleep a random time up to the capped backoff.",
-    );
+    expect(row?.body).toBe("Use full jitter : sleep a random time up to the capped backoff.");
     expect(row?.title).toBe(
       "Answer: How do we handle exponential backoff with jitter for queue retries?",
     );
