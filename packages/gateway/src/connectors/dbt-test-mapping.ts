@@ -1,4 +1,5 @@
 import { clampSyncTitle } from "../sync/pass-cursor-sync-result.ts";
+import { byCodeUnit } from "../util/canonical-json.ts";
 import { trimTrailingSlash } from "./_lib/field-helpers.ts";
 import { normalizeDataModelKey } from "./data-model-key.ts";
 import type { MappedRow } from "./mapped-row.ts";
@@ -58,6 +59,31 @@ function relationKey(node: Record<string, unknown>): string | null {
   return normalizeDataModelKey(`${database}.${schema}.${object}`);
 }
 
+/** The warehouse keys of the models, seeds, snapshots and sources a test node depends on. */
+function parentKeys(
+  test: Record<string, unknown>,
+  nodes: Record<string, unknown>,
+  sources: Record<string, unknown> | undefined,
+): Set<string> {
+  const parents = asRecord(test["depends_on"])?.["nodes"];
+  const keys = new Set<string>();
+  for (const parentId of Array.isArray(parents) ? parents : []) {
+    if (typeof parentId !== "string") {
+      continue;
+    }
+    const parent = asRecord(nodes[parentId]) ?? asRecord(sources?.[parentId]);
+    const resource = parent === undefined ? undefined : stringField(parent, "resource_type");
+    if (parent === undefined || (resource !== undefined && !MODEL_RESOURCES.has(resource))) {
+      continue;
+    }
+    const key = relationKey(parent);
+    if (key !== null) {
+      keys.add(key);
+    }
+  }
+  return keys;
+}
+
 /**
  * The tested models of each wanted test, from `manifest.json` (`nodes` and `sources`: their
  * `depends_on.nodes` and the relation each parent builds). Names and identifiers only.
@@ -78,25 +104,10 @@ export function indexDbtManifest(
     if (test === undefined) {
       continue;
     }
-    const parents = asRecord(test["depends_on"])?.["nodes"];
-    const keys = new Set<string>();
-    for (const parentId of Array.isArray(parents) ? parents : []) {
-      if (typeof parentId !== "string") {
-        continue;
-      }
-      const parent = asRecord(nodes[parentId]) ?? asRecord(sources?.[parentId]);
-      const resource = parent === undefined ? undefined : stringField(parent, "resource_type");
-      if (parent === undefined || (resource !== undefined && !MODEL_RESOURCES.has(resource))) {
-        continue;
-      }
-      const key = relationKey(parent);
-      if (key !== null) {
-        keys.add(key);
-      }
-    }
+    const keys = parentKeys(test, nodes, sources);
     out.set(uid, {
       name: stringField(test, "name") ?? null,
-      modelKeys: [...keys].sort().slice(0, MAX_KEYS_PER_TEST),
+      modelKeys: [...keys].sort(byCodeUnit).slice(0, MAX_KEYS_PER_TEST),
     });
   }
   return out;
@@ -138,14 +149,13 @@ export function mapDbtTestResultToItem(
   const executionTime = numberField(result, "execution_time") ?? null;
   const url = runUrl(ctx.apiBase, ctx.accountId, ctx.run);
   const { runId, jobId, projectId, finishedAtMs } = ctx.run;
+  const failingText = failures === null ? "" : `, ${String(failures)} failing`;
   return {
     service: "dbt",
     type: "data_quality_test",
     externalId: `${String(ctx.accountId)}:${String(runId)}:${uniqueId}`,
     title: clampSyncTitle(`dbt test ${testName} - ${status}`),
-    bodyPreview: clampSyncTitle(
-      `${testName}: ${status}${failures === null ? "" : `, ${String(failures)} failing`} (run ${String(runId)})`,
-    ),
+    bodyPreview: clampSyncTitle(`${testName}: ${status}${failingText} (run ${String(runId)})`),
     url,
     canonicalUrl: url,
     modifiedAt: finishedAtMs,

@@ -119,13 +119,8 @@ async function syncTestResults(
   for (const accountId of accountIds) {
     const key = String(accountId);
     try {
-      const out = await syncDbtTestResults(
-        ctx,
-        creds,
-        accountId,
-        since[key] ?? now - FIRST_PASS_WINDOW_MS,
-        now,
-      ); // NOSONAR S9382: one account at a time through the shared dbt Cloud rate limiter
+      const from = since[key] ?? now - FIRST_PASS_WINDOW_MS;
+      const out = await syncDbtTestResults(ctx, creds, accountId, from, now); // NOSONAR S9382: one account at a time through the shared dbt Cloud rate limiter
       since[key] = out.sinceMs;
       upserted += out.upserted;
       bytes += out.bytes;

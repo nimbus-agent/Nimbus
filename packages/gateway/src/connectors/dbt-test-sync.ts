@@ -168,9 +168,8 @@ export async function syncDbtTestResults(
   if (!listed.ok) {
     return { upserted, bytes, sinceMs };
   }
-  const queue = listed.runs
-    .sort((a, b) => a.finishedAtMs - b.finishedAtMs || a.runId - b.runId)
-    .slice(0, MAX_RUNS_PER_PASS);
+  listed.runs.sort((a, b) => a.finishedAtMs - b.finishedAtMs || a.runId - b.runId);
+  const queue = listed.runs.slice(0, MAX_RUNS_PER_PASS);
   for (const run of queue) {
     const outcome = await indexRun(ctx, creds, accountId, run, now); // NOSONAR S9382: runs are read one at a time through the shared dbt Cloud rate limiter
     bytes += outcome.bytes;
