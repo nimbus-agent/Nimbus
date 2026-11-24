@@ -11,6 +11,7 @@ import { dispatchOncallNowRpc, OncallNowRpcError } from "../../oncall-now-rpc.ts
 import { dispatchOncallPushRpc, OncallPushRpcError } from "../../oncall-push-rpc.ts";
 import { dispatchPostmortemRpc } from "../../postmortem-rpc.ts";
 import { dispatchStatuspageRpc, StatuspageRpcError } from "../../statuspage-rpc.ts";
+import { dispatchUpdateSynthesisRpc } from "../../update-synthesis-rpc.ts";
 import { phase4RpcSkipped, type ServerCtx } from "../context.ts";
 import { RpcMethodError } from "../rpc-error.ts";
 
@@ -147,6 +148,46 @@ export async function tryDispatchIncidentRpc(
       kind: ctx.getClientKind(clientId),
       clientId,
     });
+    if (out.kind === "hit") return out.value;
+  } catch (e) {
+    if (e instanceof IncidentRpcError) throw new RpcMethodError(e.rpcCode, e.message);
+    throw e;
+  }
+  return phase4RpcSkipped;
+}
+
+/**
+ * `incident.updateSynthesize` (Phase 10 IC9b, owner ruling OR-S4-SCRIBE): an update draft whose lead paragraph a
+ * model writes, only when the owner asked (`nimbus incident update --synthesize`). Owner kinds only; off the LAN
+ * and the renderer like the rest of the `incident` namespace. It posts nothing; a send is a separate, approved call.
+ */
+export async function tryDispatchUpdateSynthesisRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+  clientId: string,
+): Promise<unknown> {
+  if (method !== "incident.updateSynthesize") return phase4RpcSkipped;
+  const localIndex = ctx.options.localIndex;
+  if (localIndex === undefined) return phase4RpcSkipped;
+  const db = localIndex.getDatabase();
+  try {
+    const out = await dispatchUpdateSynthesisRpc(
+      method,
+      params,
+      {
+        db,
+        now: () => Date.now(),
+        runner: () =>
+          buildAgentSynthesisRunner({
+            configDir: ctx.options.configDir,
+            db,
+            router: ctx.options.llmRegistry?.llmRouter,
+            method: "agents.incident_update",
+          }),
+      },
+      { clientId, kind: ctx.getClientKind(clientId) },
+    );
     if (out.kind === "hit") return out.value;
   } catch (e) {
     if (e instanceof IncidentRpcError) throw new RpcMethodError(e.rpcCode, e.message);

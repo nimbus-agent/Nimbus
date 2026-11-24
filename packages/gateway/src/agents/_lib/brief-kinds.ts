@@ -17,6 +17,7 @@ import type {
   IncidentBrief,
   IncidentDataBrief,
   IncidentInvestigationBrief,
+  IncidentUpdateBrief,
 } from "./incident-types.ts";
 import type { NegotiateBrief } from "./negotiate-types.ts";
 import type { OncallBrief } from "./oncall-types.ts";
@@ -47,6 +48,7 @@ export type SynthInput =
   | IncidentBrief
   | IncidentDataBrief
   | IncidentInvestigationBrief
+  | IncidentUpdateBrief
   | IncidentPostmortemBrief;
 
 /**

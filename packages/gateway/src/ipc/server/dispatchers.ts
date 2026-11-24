@@ -57,6 +57,7 @@ export {
   tryDispatchOncallPushRpc,
   tryDispatchPostmortemRpc,
   tryDispatchStatuspageRpc,
+  tryDispatchUpdateSynthesisRpc,
 } from "./dispatchers/ops-rpcs.ts";
 export { tryDispatchPhase4Rpc, tryDispatchSessionRpc } from "./dispatchers/phase4-router.ts";
 export {
