@@ -226,6 +226,53 @@ describe("settleTerraformPlan for a refresh-only plan", () => {
     );
   });
 
+  // Terraform puts a move-only object in a refresh-only plan's resource_drift as a no-op with
+  // previous_address (jsonplan/plan.go, v1.9.5): accepting the plan moves it in the state.
+  const movedOnly = (from: string, to: string) => ({ ...noOp(to), previous_address: from });
+
+  test("a move-only object beside attribute drift is shown with both addresses and counted", async () => {
+    const plan = refreshPlan({
+      resource_drift: [
+        drifted("aws_instance.web"),
+        movedOnly("aws_instance.old", "aws_instance.db"),
+      ],
+    });
+    const out = await settleTerraformPlan(ops(plan), request(writePlan()));
+    expect(out.plan?.driftCount).toBe(2);
+    expect(out.plan?.text).toContain(
+      `[moved in the state] aws_instance.old -> aws_instance.db (aws_instance, ${PROVIDER})`,
+    );
+    await out.cleanup();
+  });
+
+  test("a plan that only moves objects is shown, not refused as nothing to apply", async () => {
+    const plan = refreshPlan({ resource_drift: [movedOnly("aws_instance.a", "aws_instance.b")] });
+    const out = await settleTerraformPlan(ops(plan), request(writePlan()));
+    expect(out.plan?.driftCount).toBe(1);
+    expect(out.plan?.text).toContain("[moved in the state] aws_instance.a -> aws_instance.b");
+    await out.cleanup();
+  });
+
+  test("a drifted object that also moved names where it moved from", async () => {
+    const both = { ...drifted("aws_instance.new"), previous_address: "aws_instance.prev" };
+    const out = await settleTerraformPlan(
+      ops(refreshPlan({ resource_drift: [both] })),
+      request(writePlan()),
+    );
+    expect(out.plan?.text).toContain(
+      `[changed outside Terraform] aws_instance.new (aws_instance, ${PROVIDER}) (moved from aws_instance.prev)`,
+    );
+    await out.cleanup();
+  });
+
+  test("a previous_address that is not a string cannot be shown", async () => {
+    const bad = { ...noOp("aws_instance.b"), previous_address: 7 };
+    const plan = refreshPlan({ resource_drift: [drifted("aws_instance.web"), bad] });
+    expect(await refusal(settleTerraformPlan(ops(plan), request(writePlan())))).toBe(
+      PREPARE_REFUSALS.unshowable,
+    );
+  });
+
   test("hasChanges false (the state would not change) is nothingToApply", async () => {
     const p = writePlan();
     const req = request(p, { reply: { planId: PLAN_ID, planFile: p, hasChanges: false } });

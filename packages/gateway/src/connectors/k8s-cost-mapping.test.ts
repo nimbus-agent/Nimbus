@@ -31,6 +31,10 @@ describe("mapK8sCostRow", () => {
     expect(a?.seriesKey).not.toBe(c?.seriesKey);
   });
 
+  test("a leap day is a real day", () => {
+    expect(mapK8sCostRow({ ...ROW, date: "2024-02-29" }, ctx)?.dayMs).toBe(Date.UTC(2024, 1, 29));
+  });
+
   test("a long key is bounded and keeps a hash suffix", () => {
     const p = mapK8sCostRow({ ...ROW, key: "n".repeat(500) }, ctx);
     expect(p?.dimensionValue.length).toBeLessThanOrEqual(200);
@@ -41,6 +45,11 @@ describe("mapK8sCostRow", () => {
     ["no date", { key: "a", totalCost: 1 }],
     ["date not YYYY-MM-DD", { ...ROW, date: "2026-11-20T00:00:00Z" }],
     ["impossible date", { ...ROW, date: "2026-13-45" }],
+    [
+      "a day the month does not have (Date.parse rolls it to March 2)",
+      { ...ROW, date: "2026-02-30" },
+    ],
+    ["April 31", { ...ROW, date: "2026-04-31" }],
     ["empty key", { ...ROW, key: "" }],
     ["string amount", { ...ROW, totalCost: "3" }],
     ["NaN amount", { ...ROW, totalCost: Number.NaN }],

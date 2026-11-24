@@ -178,6 +178,24 @@ describe("rollUpCostPoints", () => {
     expect(out.rows[0]?.metadata.amount).toBe(4);
   });
 
+  test("a day that folds nothing names the __other__ row to delete; a day that still folds does not", () => {
+    const points = [point("A", 0, 10), point("B", 0, 5), point("A", 1, 10), point("C", 1, 1)];
+    // Cap 2 with A and C already named: day 1 folds nothing, day 0 still folds B.
+    const out = rollUpCostPointsDetailed(
+      points,
+      opts(2, [point("A", 0, 0).seriesHash, point("C", 0, 0).seriesHash]),
+    );
+    expect(names(out.rows)).toEqual(["A", "C", OTHER_VALUE]);
+    const otherRow = out.rows.find((r) => r.metadata.dimensionValue === OTHER_VALUE);
+    expect(otherRow?.dayMs).toBe(DAY0);
+    expect(out.staleOtherIds).toHaveLength(1);
+    expect(out.staleOtherIds[0]).not.toBe(otherRow?.externalId);
+    // The id is the one a day-1 `__other__` row would have had.
+    const folded = rollUpCostPointsDetailed([point("Z", 1, 1)], opts(0));
+    expect(out.staleOtherIds).toEqual(folded.rows.map((r) => r.externalId));
+    expect(folded.staleOtherIds).toEqual([]);
+  });
+
   test("an empty input yields no rows", () => {
     expect(rollUpCostPoints([], opts(5))).toEqual([]);
   });

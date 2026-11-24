@@ -33,12 +33,24 @@ s.once("connect", () => {
   clearTimeout(t);
   report({ localPort: s.localPort, remoteIp: s.remoteAddress });
 });
-// After the connect the peer may drop the idle socket; nothing the test reads depends on it.
+// The test needs this socket open until the driver has recorded it: a poll lists only live sockets.
+// If the peer drops it first, that is said on stderr and in the exit code (4), so it reads as a
+// lost connection rather than as a row the source failed to find.
+let lost = null;
 s.on("error", (e) => {
   if (!connected) { clearTimeout(t); report({ error: e.code ?? e.message }); process.exit(3); }
+  lost ??= e.code ?? e.message;
 });
+s.on("close", () => { if (connected) lost ??= "closed by the peer"; });
 process.stdin.resume();
-process.stdin.once("end", () => { s.destroy(); process.exit(0); });
+process.stdin.once("end", () => {
+  if (lost !== null) {
+    process.stderr.write("the connection ended before the driver released it: " + lost);
+    process.exit(4);
+  }
+  s.destroy();
+  process.exit(0);
+});
 `;
 
 /** Runs under sandbox-exec (or, with --control, outside it). Imports nothing from the repo. */
@@ -280,6 +292,8 @@ describe.skipIf(!IS_DARWIN)("openDarwinConnectionSource (real macOS)", () => {
         expect(keys).toContain(rowKey(child.pid, conn.localPort, conn.remoteIp, 443));
       }
       // The grandchild: found through the process tree, owned by the grandchild's own PID.
+      // Empty unless the grandchild's connection ended before the driver released it (exit 4).
+      expect(child.grand?.stderr).toBe("");
       expect(child.grand).toMatchObject({ exit: 0 });
       const g = child.grand;
       expect(g?.localPort).toBeGreaterThan(0);

@@ -1,6 +1,7 @@
 import { DEFAULT_FINOPS_CONFIG } from "../config/finops-toml.ts";
 import { FIRST_WINDOW_DAYS } from "../finops/cost-item-contract.ts";
 import { rollUpCostPointsDetailed, scopeSeriesOf } from "../finops/cost-rollup.ts";
+import { itemPrimaryKey } from "../index/item-key.ts";
 import type { Syncable, SyncContext } from "../sync/types.ts";
 import { createFinopsSyncable } from "./finops-sync-transport.ts";
 import {
@@ -116,6 +117,7 @@ export function createVantageSyncable(options: VantageSyncableOptions = {}): Syn
         rows: rolled,
         mixedCurrencyBuckets,
         mixedCurrencyIds,
+        staleOtherIds,
       } = rollUpCostPointsDetailed(points, {
         service: SERVICE_ID,
         scopeId: prepared.scopeId,
@@ -151,12 +153,21 @@ export function createVantageSyncable(options: VantageSyncableOptions = {}): Syn
         for (const id of mixedCurrencyIds) {
           ctx.deleteItem(SERVICE_ID, id);
         }
+        // A re-read day that folds nothing now must not keep an earlier sync's `__other__` row.
+        let staleOther = 0;
+        for (const id of staleOtherIds) {
+          if (!ctx.itemExists(itemPrimaryKey(SERVICE_ID, id))) continue;
+          ctx.deleteItem(SERVICE_ID, id);
+          staleOther += 1;
+        }
         // The recommendation drain has no window: it is the whole active set, so a row Vantage no
         // longer lists is stale and goes.
-        deleted = ctx.replaceItemSet(
-          "cost_recommendation",
-          recommendations.map((r) => r.externalId),
-        );
+        deleted =
+          staleOther +
+          ctx.replaceItemSet(
+            "cost_recommendation",
+            recommendations.map((r) => r.externalId),
+          );
       });
       return { written: rows.length, deleted };
     },

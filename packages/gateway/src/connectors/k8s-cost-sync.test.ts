@@ -229,6 +229,36 @@ for (const service of ["opencost", "kubecost"] as const) {
       ]);
     });
 
+    test("a cap that grows names folded series and deletes the day's stale __other__ row", async () => {
+      fakeSession([
+        [
+          ...rows(["big1"], 1, 100),
+          ...rows(["big2"], 1, 90),
+          ...rows(["s1"], 1, 2),
+          ...rows(["s2"], 1, 1),
+        ],
+      ]);
+      const { db, ctx } = setup(service);
+      const total = () =>
+        (
+          db
+            .query("SELECT SUM(json_extract(metadata,'$.amount')) AS t FROM item WHERE service = ?")
+            .get(service) as { t: number }
+        ).t;
+      await createK8sCostSyncable(service, { maxSeries: () => 2 }).sync(ctx, null);
+      expect(total()).toBe(193);
+      const r = await createK8sCostSyncable(service, { maxSeries: () => 4 }).sync(ctx, null);
+      // 193, not 196: the `__other__` = 3 row of that day would otherwise count s1 and s2 twice.
+      expect(total()).toBe(193);
+      expect(r.itemsDeleted).toBe(1);
+      const values = db
+        .query(
+          "SELECT json_extract(metadata,'$.dimensionValue') AS v FROM item WHERE service = ? ORDER BY v",
+        )
+        .all(service);
+      expect(values).toEqual([{ v: "big1" }, { v: "big2" }, { v: "s1" }, { v: "s2" }]);
+    });
+
     test("a drain that throws indexes nothing and the sync rejects", async () => {
       __setFinopsSessionRunnerForTest(async (_req, body) =>
         body({

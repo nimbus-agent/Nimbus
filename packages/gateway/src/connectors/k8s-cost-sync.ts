@@ -1,6 +1,7 @@
 import { DEFAULT_FINOPS_CONFIG } from "../config/finops-toml.ts";
 import { FIRST_WINDOW_DAYS, sanitiseScopeId } from "../finops/cost-item-contract.ts";
 import { rollUpCostPointsDetailed, scopeSeriesOf } from "../finops/cost-rollup.ts";
+import { itemPrimaryKey } from "../index/item-key.ts";
 import type { Syncable, SyncContext } from "../sync/types.ts";
 import { createFinopsSyncable } from "./finops-sync-transport.ts";
 import {
@@ -105,7 +106,7 @@ export function createK8sCostSyncable(
         );
       }
       const scope = seriesScopeOf(prepared);
-      const { rows: rolled } = rollUpCostPointsDetailed(points, {
+      const { rows: rolled, staleOtherIds } = rollUpCostPointsDetailed(points, {
         service,
         scopeId: prepared.scopeId,
         maxSeries: options.maxSeries?.() ?? DEFAULT_FINOPS_CONFIG.maxSeries,
@@ -115,12 +116,19 @@ export function createK8sCostSyncable(
         syncedAt,
       });
       const rows = rolled.map((r) => k8sCostAllocationItem(service, r, syncedAt));
+      let deleted = 0;
       ctx.writeBatch(() => {
         for (const row of rows) {
           ctx.upsertItem(row);
         }
+        // A re-read day that folds nothing now must not keep an earlier sync's `__other__` row.
+        for (const id of staleOtherIds) {
+          if (!ctx.itemExists(itemPrimaryKey(service, id))) continue;
+          ctx.deleteItem(service, id);
+          deleted += 1;
+        }
       });
-      return { written: rows.length, deleted: 0 };
+      return { written: rows.length, deleted };
     },
   });
 }

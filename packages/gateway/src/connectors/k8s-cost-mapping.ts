@@ -36,7 +36,7 @@ export interface K8sCostMapContext {
 
 /**
  * One row of `<service>_allocation_list` to a {@link CostPoint}, or null when it cannot be one (not
- * an object, a day that is not `YYYY-MM-DD`, no key, no finite `totalCost`). The row has already
+ * an object, a day that is not a real `YYYY-MM-DD` date, no key, no finite `totalCost`). The row has already
  * been normalised by the connector; this re-checks it, because it crossed a process boundary.
  * Nothing about a dropped row is logged by value. The currency is not reported by either API.
  */
@@ -59,7 +59,8 @@ export function mapK8sCostRow(raw: unknown, ctx: K8sCostMapContext): CostPoint |
     return null;
   }
   const parsed = Date.parse(`${date}T00:00:00Z`);
-  if (!Number.isFinite(parsed)) {
+  // Date.parse rolls a day the month lacks into the next month (2026-02-30 is March 2): refused.
+  if (!Number.isFinite(parsed) || new Date(parsed).toISOString().slice(0, 10) !== date) {
     return null;
   }
   const kind = KIND_BY_AGGREGATE[ctx.aggregate];
