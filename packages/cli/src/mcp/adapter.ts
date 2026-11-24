@@ -10,6 +10,7 @@ import { IPCClient } from "../ipc-client/index.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { parseSearchRankedResponse } from "../lib/search-ranked-response.ts";
 import { type CliPlatformPaths, getCliPlatformPaths } from "../paths.ts";
+import { NIMBUS_VERSION } from "../version.ts";
 import { AGENT_TOOL_SPECS, failBriefsForClient } from "./agent-tools.ts";
 import {
   type CaptureToolSpec,
@@ -655,8 +656,7 @@ function toolFor(
 }
 
 /**
- * Build the MCP server.
- *
+ * Build the MCP server, reporting the CLI's own version as its server version.
  * `includeAgentTools: false` registers ONLY the nine read-only index tools — the fail-closed shape
  * for a gateway that rejects `session.declareKind`. Serving unrecorded briefs while `nimbus prove`
  * reports a clean scope is the exact failure this feature exists to close, so the honest answer is
@@ -672,7 +672,7 @@ export function buildMcpServer(
   includeAgentTools = true,
   captureTools: readonly CaptureToolSpec[] = [],
 ): McpServer {
-  const server = createMcpServer({ name: "nimbus", version: "0.1.0" });
+  const server = createMcpServer({ name: "nimbus", version: NIMBUS_VERSION });
   for (const s of includeAgentTools ? TOOL_SPECS : INDEX_TOOL_SPECS) {
     server.tool(toolFor(s, undefined, (args) => s.run(deps, args)));
   }
