@@ -723,7 +723,7 @@ describe("buildCandidateSql - excluded types (FinOps cost rows)", () => {
 describe("buildCandidateSql - a remote model never gets cost_recommendation", () => {
   test("openai: excludes it, local does not", () => {
     expect(buildCandidateSql({ model: "openai:text-embedding-3-small" }).sql).toContain(
-      "NOT IN ('cost_allocation', 'cost_recommendation')",
+      "NOT IN ('cost_allocation', 'dag_run', 'job_run', 'flow_run', 'cost_recommendation')",
     );
     expect(buildCandidateSql({ model: "local" }).sql).not.toContain("'cost_recommendation'");
   });

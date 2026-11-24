@@ -3,6 +3,7 @@ import { connectorFetch } from "./_lib/fetch-outcome.ts";
 import { trimTrailingSlash } from "./_lib/field-helpers.ts";
 import { runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
 import { mapAirflowDagToItem } from "./airflow-dag-mapping.ts";
+import { syncAirflowRuns } from "./airflow-runs.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 
 const SERVICE_ID = "airflow";
@@ -75,8 +76,8 @@ export function createAirflowSyncable(options: AirflowSyncableOptions): Syncable
     serviceId: SERVICE_ID,
     defaultIntervalMs: 10 * 60 * 1000,
     initialSyncDepthDays: 30,
-    sync: (ctx, cursor) =>
-      runSinglePassPaginatedSync(ctx, cursor, {
+    async sync(ctx, cursor) {
+      const result = await runSinglePassPaginatedSync(ctx, cursor, {
         ensureRunning: options.ensureAirflowMcpRunning,
         loadCreds: () => loadCreds(ctx),
         pass1Cursor,
@@ -86,6 +87,28 @@ export function createAirflowSyncable(options: AirflowSyncableOptions): Syncable
         parsePage: (parsed, page) => parseAirflowPage(parsed, page),
         map: (raw, creds, now) =>
           mapAirflowDagToItem(raw, { baseUrl: creds.baseUrl, syncedAt: now }),
-      }),
+      });
+      // DAG runs are a best-effort second pass: a failure here never fails the DAG sync.
+      const creds = await loadCreds(ctx);
+      if (creds === null) {
+        return result;
+      }
+      try {
+        const runs = await syncAirflowRuns(
+          ctx,
+          (path) => airflowGet(ctx, creds, path),
+          creds.baseUrl,
+          Date.now(),
+        );
+        return {
+          ...result,
+          itemsUpserted: result.itemsUpserted + runs.upserted,
+          bytesTransferred: (result.bytesTransferred ?? 0) + runs.bytes,
+        };
+      } catch (err) {
+        ctx.logger.warn({ serviceId: SERVICE_ID, err }, "airflow run sync failed");
+        return result;
+      }
+    },
   };
 }

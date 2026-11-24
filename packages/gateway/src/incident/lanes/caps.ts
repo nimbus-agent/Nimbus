@@ -131,18 +131,24 @@ export function capRecordSize(
   if (data !== null) {
     shrink(
       "data",
-      () => data.orchestration.length + data.prs.length + data.lineage.length,
+      () =>
+        data.orchestration.length +
+        data.prs.length +
+        data.lineage.length +
+        (data.runs?.length ?? 0),
       (n) => {
-        const [lin, orch, prs] = allocate(n, [
+        const [lin, orch, prs, runs] = allocate(n, [
           data.lineage.length,
           data.orchestration.length,
           data.prs.length,
+          data.runs?.length ?? 0,
         ]);
         work.data = {
           ...data,
           lineage: data.lineage.slice(0, lin),
           orchestration: data.orchestration.slice(0, orch),
           prs: data.prs.slice(0, prs),
+          ...(data.runs === undefined ? {} : { runs: data.runs.slice(0, runs) }),
         };
       },
     );

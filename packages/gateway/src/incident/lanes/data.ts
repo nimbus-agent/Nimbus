@@ -3,14 +3,16 @@ import { matchesDataModelGlob } from "../../metrics/data-model-glob.ts";
 import type { ServiceConfig } from "../../metrics/dora-config.ts";
 import type { DataItemView, DataLane, DataLineageView, GapNote } from "../incident-record-types.ts";
 import { CHAT_WINDOW_BEFORE_MS, codeUnitCompare, DATA_LIST_CAP, gap, oneLine } from "./caps.ts";
+import { runsOfJobs } from "./data-runs.ts";
 
 /**
  * Lane 6, data (Phase 10 IC3, design C step 8), for Monte Carlo and Bigeye triggers only: the monitored model
  * keys, one hop of lineage (the `derived_from` edges FROM the model), orchestration items (dbt jobs, Airflow
  * DAGs, Dagster jobs, Prefect deployments) whose TITLE holds the model's last identifier segment as a whole
  * token (a name match, not lineage: those items carry no model reference), and pull requests merged in the 24 h
- * before the trigger whose title or branch holds the same token. The run-level lanes the spec names (DAG-run
- * logs, dbt test results, warehouse schema deltas) are not indexed, and are always listed as gaps.
+ * before the trigger whose title or branch holds the same token. Runs of the Airflow, Dagster and Prefect items so matched
+ * (failed, or running inside the incident window) are listed beside them (`data-runs.ts`); the other run-level
+ * lanes the spec names (dbt test results, warehouse schema deltas) are not indexed, and are always listed as gaps.
  */
 
 export type DataResult = { readonly lane: DataLane; readonly gaps: readonly GapNote[] };
@@ -206,7 +208,7 @@ export function dataSubstrateGaps(): GapNote[] {
   return [
     gap(
       "missing_entity_type",
-      "DAG-run logs, dbt test results and warehouse schema deltas are not indexed, so what a failing run or a schema change did is absent here.",
+      "dbt test results and warehouse schema deltas are not indexed, so what a failing test or a schema change did is absent here. Orchestrator run logs are never indexed: a run shows its state, timing and failed task names only.",
     ),
     gap(
       "missing_relation_emit",
@@ -260,7 +262,9 @@ export function dataLane(
   const orch = orchestration(db, tokens, truncated);
   const prs =
     input.openedAtMs === null ? { items: [] } : mergedPrs(db, tokens, input.openedAtMs, truncated);
-  const gaps = dataSubstrateGaps();
+  const runs = runsOfJobs(db, orch, input.openedAtMs, SCAN_ROW_CAP);
+  if (runs.truncated) truncated.value = true;
+  const gaps = [...dataSubstrateGaps(), ...runs.gaps];
   if (allModels.length > MODEL_KEY_CAP) {
     gaps.push(
       gap(
@@ -291,7 +295,13 @@ export function dataLane(
       lineage: lin.slice(0, DATA_LIST_CAP),
       orchestration: orch.slice(0, DATA_LIST_CAP),
       prs: prs.items.slice(0, DATA_LIST_CAP),
-      totals: { lineage: lin.length, orchestration: orch.length, prs: prs.items.length },
+      runs: runs.runs.slice(0, DATA_LIST_CAP),
+      totals: {
+        lineage: lin.length,
+        orchestration: orch.length,
+        prs: prs.items.length,
+        runs: runs.total,
+      },
     },
     gaps,
   };
