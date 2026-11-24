@@ -1,6 +1,15 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, test } from "bun:test";
 
-import { type IncidentIpc, runIncidentWith } from "./incident.ts";
+import {
+  clearFixture,
+  FAKE_SOCKET_PATH,
+  type RecordedClientConstruction,
+  setFixture,
+} from "../../test/helpers/cli-mocks.ts";
+import { createStreamCapture } from "../../test/helpers/stream-capture.ts";
+import { BATCH_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
+
+import { type IncidentIpc, runIncidentCommand, runIncidentWith } from "./incident.ts";
 import { INCIDENT_USAGE, parseIncidentArgs } from "./incident-format.ts";
 
 const REC = "inc_0123456789abcdef";
@@ -120,5 +129,38 @@ describe("nimbus incident investigate --synthesize", () => {
       0,
     );
     expect(JSON.parse(h.out.join(""))).toEqual(reply);
+  });
+});
+
+describe("runIncidentCommand request budget", () => {
+  const capture = createStreamCapture();
+  afterAll(() => capture.restore());
+  afterEach(() => {
+    clearFixture();
+    capture.restore();
+    process.exitCode = 0;
+  });
+
+  async function budgetOf(args: string[]): Promise<number | undefined> {
+    const constructions: RecordedClientConstruction[] = [];
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      clientConstructions: constructions,
+      ipcClient: {
+        call: async () => ({}),
+        connect: async () => {},
+        disconnect: async () => {},
+        onNotification: () => {},
+      },
+    });
+    capture.install();
+    await runIncidentCommand(args).catch(() => undefined);
+    expect(constructions).toHaveLength(1);
+    return constructions[0]?.opts?.requestTimeoutMs;
+  }
+
+  test("a synthesis takes the long budget; a plain investigation does not", async () => {
+    expect(await budgetOf(["investigate", REC, "--synthesize"])).toBe(BATCH_RPC_TIMEOUT_MS);
+    expect(await budgetOf(["investigate", REC])).not.toBe(BATCH_RPC_TIMEOUT_MS);
   });
 });

@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
-import { buildInvestigationBriefFixture } from "../../incident/__fixtures__/investigation-brief.ts";
+import {
+  buildInvestigationBriefFixture,
+  buildInvestigationFixture,
+} from "../../incident/__fixtures__/investigation-brief.ts";
 import { investigationBrief } from "../../investigation/investigation-synthesis.ts";
 import { renderIncidentInvestigation } from "./incident-investigation-render.ts";
 import { renderInvestigation } from "./investigation-render.ts";
@@ -8,6 +11,11 @@ import { RESERVED_HEADINGS_BY_KIND, reservedBlocksFor } from "./reserved-section
 import { synthesize } from "./synthesize.ts";
 
 describe("renderIncidentInvestigation", () => {
+  test("the investigation fixture takes no override and accepts one", () => {
+    expect(buildInvestigationFixture().version).toBe(2);
+    expect(buildInvestigationFixture({ version: 5 }).version).toBe(5);
+  });
+
   test("says exactly what the plain investigation says, in the same order", () => {
     const brief = buildInvestigationBriefFixture();
     expect(renderIncidentInvestigation(brief)).toBe(renderInvestigation(brief.investigation));

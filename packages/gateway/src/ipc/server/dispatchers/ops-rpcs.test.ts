@@ -23,6 +23,7 @@ import { RpcMethodError } from "../rpc-error.ts";
 import {
   tryDispatchCostRpc,
   tryDispatchIncidentUpdateRpc,
+  tryDispatchInvestigationRpc,
   tryDispatchNotificationsRpc,
   tryDispatchOncallNowRpc,
   tryDispatchPostmortemRpc,
@@ -378,5 +379,57 @@ describe("tryDispatchNotificationsRpc", () => {
     expect(await tryDispatchNotificationsRpc(ctxOf(), "notifications.status", {})).toBe(
       phase4RpcSkipped,
     );
+  });
+});
+
+describe("tryDispatchInvestigationRpc", () => {
+  const wiring = (db: Database) => ({
+    incidentRpcCtx: {
+      db,
+      engine: { assembleNow: async () => ({}) },
+      dependsOn: () => new Map(),
+    },
+  });
+
+  test("other methods and missing wiring are skipped", async () => {
+    const { db } = await seeded(false);
+    const m = "incident.investigateSynthesize";
+    expect(await tryDispatchInvestigationRpc(ctxOf({ db }), "incident.get", {}, "c1")).toBe(
+      phase4RpcSkipped,
+    );
+    expect(await tryDispatchInvestigationRpc(ctxOf({ db }), m, {}, "c1")).toBe(phase4RpcSkipped);
+    expect(
+      await tryDispatchInvestigationRpc(ctxOf({ noIndex: true, options: wiring(db) }), m, {}, "c1"),
+    ).toBe(phase4RpcSkipped);
+  });
+
+  test("answers the deterministic investigation when no model is reachable", async () => {
+    const { db, recordId } = await seeded(false);
+    const out = (await tryDispatchInvestigationRpc(
+      ctxOf({ db, options: wiring(db) }),
+      "incident.investigateSynthesize",
+      { id: recordId },
+      "c1",
+    )) as { recordId: string; markdown: string; synthesis: { attempted: boolean } };
+    expect(out.recordId).toBe(recordId);
+    expect(typeof out.markdown).toBe("string");
+    expect(out.synthesis.attempted).toBe(false);
+  });
+
+  test("a domain error keeps its code; any other error is re-thrown as it is", async () => {
+    const { db } = await seeded(false);
+    const e = await rpcError(
+      tryDispatchInvestigationRpc(
+        ctxOf({ db, options: wiring(db) }),
+        "incident.investigateSynthesize",
+        "bad",
+        "c1",
+      ),
+    );
+    expect(e.rpcCode).toBe(-32602);
+    const failing = ctxOf({ db, options: wiring(db), kind: boom });
+    await expect(
+      tryDispatchInvestigationRpc(failing, "incident.investigateSynthesize", { id: "x" }, "c1"),
+    ).rejects.toThrow("boom");
   });
 });
