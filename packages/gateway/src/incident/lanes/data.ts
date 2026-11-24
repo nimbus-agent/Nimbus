@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
-
+import { matchesDataModelGlob } from "../../metrics/data-model-glob.ts";
+import type { ServiceConfig } from "../../metrics/dora-config.ts";
 import type { DataItemView, DataLane, DataLineageView, GapNote } from "../incident-record-types.ts";
 import { CHAT_WINDOW_BEFORE_MS, codeUnitCompare, DATA_LIST_CAP, gap, oneLine } from "./caps.ts";
 
@@ -212,6 +213,39 @@ export function dataSubstrateGaps(): GapNote[] {
       "Orchestration jobs listed here are matched by NAME only (they carry no model reference), so a job that builds the model under another name is absent.",
     ),
   ];
+}
+
+/**
+ * A PAGERDUTY incident is a data incident when its bound `[ci.service.<id>]` declares `data_models` (owner
+ * ruling OR-S4-DATA: PagerDuty incidents carry no tag the index keeps, so the owner's own configuration is the
+ * tag). The monitored models are the indexed warehouse models (`data_model` graph entities) whose key one of
+ * the globs matches, in key order and at most {@link SCAN_ROW_CAP} scanned; then the lane is the one a Monte
+ * Carlo or Bigeye trigger gets. Any other trigger, an unbound incident and a service with no `data_models`
+ * return null (the general incident brief).
+ */
+export function pagerdutyDataLane(
+  db: Database,
+  input: {
+    readonly service: string;
+    readonly cfg: ServiceConfig | null;
+    readonly openedAtMs: number | null;
+  },
+): DataResult | null {
+  if (input.service !== "pagerduty" || input.cfg === null || input.cfg.dataModels.length === 0) {
+    return null;
+  }
+  const rows = db
+    .query(
+      `SELECT external_id AS ext FROM graph_entity WHERE type = 'data_model'
+        ORDER BY external_id ASC LIMIT ${String(SCAN_ROW_CAP)}`,
+    )
+    .all() as { ext: string }[];
+  const globs = input.cfg.dataModels;
+  const keys = rows.map((r) => r.ext).filter((k) => globs.some((g) => matchesDataModelGlob(g, k)));
+  return dataLane(db, {
+    metadata: { monitoredDataModelKeys: keys },
+    openedAtMs: input.openedAtMs,
+  });
 }
 
 export function dataLane(
