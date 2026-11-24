@@ -65,20 +65,31 @@ export async function runPreReviewWith(
   }
 }
 
-export async function runPreReviewCommand(args: string[]): Promise<void> {
+/** The gateway seam of the command; the defaults are the real ones. */
+export interface PreReviewDeps {
+  readonly withIpc: (fn: (c: IPCClient) => Promise<number>) => Promise<number>;
+  readonly stdout: (s: string) => void;
+  readonly stderr: (s: string) => void;
+}
+
+const DEFAULT_DEPS: PreReviewDeps = {
+  withIpc: (fn) => withGatewayIpc(fn, getCliPlatformPaths()),
+  stdout: (s) => process.stdout.write(s),
+  stderr: (s) => process.stderr.write(s),
+};
+
+export async function runPreReviewCommand(
+  args: string[],
+  deps: PreReviewDeps = DEFAULT_DEPS,
+): Promise<void> {
   const a = parsePreReviewArgs(args);
   if (a === undefined) {
-    process.stderr.write(`${PRE_REVIEW_USAGE}\n`);
+    deps.stderr(`${PRE_REVIEW_USAGE}
+`);
     throw new CliExit(2);
   }
-  const paths = getCliPlatformPaths();
-  const code = await withGatewayIpc(
-    (c) =>
-      runPreReviewWith(c, a, {
-        out: (s) => process.stdout.write(s),
-        err: (s) => process.stderr.write(s),
-      }),
-    paths,
+  const code = await deps.withIpc((c) =>
+    runPreReviewWith(c, a, { out: deps.stdout, err: deps.stderr }),
   );
   if (code !== 0) throw new CliExit(code);
 }
