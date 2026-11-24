@@ -101,7 +101,11 @@ describe("the data cut with dbt tests", () => {
       totals: { lineage: 1, orchestration: 1, prs: 1, dbtTests: 300 },
     });
     const out = capRecordSize({ ...buildRecord(), data }, 20_000);
-    expect(out.cuts.some((c) => c.lane === "data")).toBe(true);
+    const dataCuts = out.cuts.filter((c) => c.lane === "data");
+    expect(dataCuts.length).toBeGreaterThan(0);
+    // each cut is measured on the lane as the previous cut left it
+    expect(dataCuts.every((c) => c.after < c.before)).toBe(true);
+    expect(dataCuts[0]?.before).toBe(303);
     expect((out.record.data?.dbtTests ?? []).length).toBeLessThan(300);
     expect(out.record.data?.totals.dbtTests).toBe(300);
   });

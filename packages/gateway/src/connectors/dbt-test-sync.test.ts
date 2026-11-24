@@ -205,6 +205,48 @@ describeWithFetchRestore("dbt test results", () => {
     expect(testRows(db)).toHaveLength(0);
   });
 
+  test("a transient manifest failure retries the run and stores nothing without model keys", async () => {
+    const db = createMemoryIndexDb();
+    globalThis.fetch = route((u) => {
+      if (u.includes("run_results.json")) return json(RESULTS);
+      if (u.includes("manifest.json")) return json({}, 503);
+      if (u.includes("/runs/?")) return json({ data: [run(21, 5)] });
+      return undefined;
+    });
+    const r = await syncable().sync(syncTestContext(db, vault(), "dbt"), null);
+    expect(testRows(db)).toHaveLength(0);
+    expect(testsCursor(r.cursor)["42"]).toBeLessThan(finishedMs(run(21, 5)));
+  });
+
+  test("runs that finished in the same millisecond are all handled across passes", async () => {
+    const db = createMemoryIndexDb();
+    const same = new Date(NOW - 60_000).toISOString();
+    const total = MAX_RUNS_PER_PASS + 1;
+    const runs = Array.from({ length: total }, (_, i) => ({
+      ...run(200 + i, 1),
+      finished_at: same,
+    }));
+    const seen: number[] = [];
+    globalThis.fetch = route((u) => {
+      const m = /\/runs\/(\d+)\/artifacts\/run_results\.json/.exec(u);
+      if (m !== null) {
+        seen.push(Number(m[1]));
+        return json({ results: [] });
+      }
+      if (u.includes("/runs/?")) return json({ data: runs });
+      return undefined;
+    });
+    const fast = (): SyncContext => ({
+      ...syncTestContext(db, vault(), "dbt"),
+      rateLimiter: { acquire: async () => {} } as unknown as SyncContext["rateLimiter"],
+    });
+    const r = await syncable().sync(fast(), null);
+    expect(seen).toHaveLength(MAX_RUNS_PER_PASS);
+    seen.length = 0;
+    await syncable().sync(fast(), r.cursor);
+    expect(seen).toEqual([200 + total - 1]);
+  });
+
   test("a pass handles the oldest runs first, at most the per-pass cap, and resumes after the last", async () => {
     const db = createMemoryIndexDb();
     const total = MAX_RUNS_PER_PASS + 5;

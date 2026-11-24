@@ -60,9 +60,10 @@ function orchestrationLines(d: DataLane): string[] {
 
 function dbtLines(d: DataLane): string[] {
   const tests = d.dbtTests ?? [];
-  if (tests.length === 0) return ["_No failing or warning dbt test found for these models._"];
+  const total = d.totals.dbtTests ?? tests.length;
+  if (total === 0) return ["_No failing or warning dbt test found for these models._"];
   const rows = tests.map(dbtTestLine);
-  const more = (d.totals.dbtTests ?? tests.length) - tests.length;
+  const more = total - tests.length;
   return more > 0 ? [...rows, `_and ${String(more)} more_`] : rows;
 }
 

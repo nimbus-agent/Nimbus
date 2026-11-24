@@ -133,25 +133,25 @@ export function capRecordSize(
   );
   const data = work.data;
   if (data !== null) {
-    shrink(
-      "data",
-      () => data.orchestration.length + data.prs.length + data.lineage.length + dbtCount(data),
-      (n) => {
-        const [lin, orch, prs, dbt] = allocate(n, [
-          data.lineage.length,
-          data.orchestration.length,
-          data.prs.length,
-          dbtCount(data),
-        ]);
-        work.data = {
-          ...data,
-          lineage: data.lineage.slice(0, lin),
-          orchestration: data.orchestration.slice(0, orch),
-          prs: data.prs.slice(0, prs),
-          ...(data.dbtTests === undefined ? {} : { dbtTests: data.dbtTests.slice(0, dbt) }),
-        };
-      },
-    );
+    const dataLength = (): number => {
+      const d = work.data ?? data;
+      return d.orchestration.length + d.prs.length + d.lineage.length + dbtCount(d);
+    };
+    shrink("data", dataLength, (n) => {
+      const [lin, orch, prs, dbt] = allocate(n, [
+        data.lineage.length,
+        data.orchestration.length,
+        data.prs.length,
+        dbtCount(data),
+      ]);
+      work.data = {
+        ...data,
+        lineage: data.lineage.slice(0, lin),
+        orchestration: data.orchestration.slice(0, orch),
+        prs: data.prs.slice(0, prs),
+        ...(data.dbtTests === undefined ? {} : { dbtTests: data.dbtTests.slice(0, dbt) }),
+      };
+    });
   }
   return { record: work, cuts };
 }

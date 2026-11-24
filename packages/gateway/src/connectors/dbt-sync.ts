@@ -16,20 +16,29 @@ const CURSOR_PREFIX = "nimbus-dbt1:";
 const PAGE_SIZE = 100;
 const MAX_PAGES_PER_ACCOUNT = 20;
 
-/** `tests` maps an account id to the finished-at its test-result pass resumes after. */
-type DbtCursorV1 = { pass: number; tests?: Record<string, number> };
+/** Per account id: `tests` is the finished-at and `testRuns` the run id its test-result pass resumes after. */
+type DbtCursorV1 = {
+  pass: number;
+  tests?: Record<string, number>;
+  testRuns?: Record<string, number>;
+};
+type TestPositions = { tests: Record<string, number>; testRuns: Record<string, number> };
 
-function pass1Cursor(tests: Record<string, number> = {}): string {
-  return encodeNimbusJsonCursor(CURSOR_PREFIX, { pass: 1, tests } satisfies DbtCursorV1);
+function pass1Cursor(pos: TestPositions = { tests: {}, testRuns: {} }): string {
+  return encodeNimbusJsonCursor(CURSOR_PREFIX, { pass: 1, ...pos } satisfies DbtCursorV1);
 }
 
-function readTestSince(cursor: string | null): Record<string, number> {
-  const raw = decodeNimbusJsonCursorObject(cursor, CURSOR_PREFIX)?.["tests"];
+function numberMap(raw: unknown): Record<string, number> {
   const out: Record<string, number> = {};
   for (const [k, v] of Object.entries(asRecord(raw) ?? {})) {
     if (typeof v === "number" && Number.isFinite(v)) out[k] = v;
   }
   return out;
+}
+
+function readTestPositions(cursor: string | null): TestPositions {
+  const parsed = decodeNimbusJsonCursorObject(cursor, CURSOR_PREFIX);
+  return { tests: numberMap(parsed?.["tests"]), testRuns: numberMap(parsed?.["testRuns"]) };
 }
 
 export type DbtSyncableOptions = {
@@ -112,16 +121,20 @@ async function syncTestResults(
   accountIds: readonly number[],
   cursor: string | null,
   now: number,
-): Promise<{ since: Record<string, number>; upserted: number; bytes: number }> {
-  const since = readTestSince(cursor);
+): Promise<{ since: TestPositions; upserted: number; bytes: number }> {
+  const since = readTestPositions(cursor);
   let upserted = 0;
   let bytes = 0;
   for (const accountId of accountIds) {
     const key = String(accountId);
     try {
-      const from = since[key] ?? now - FIRST_PASS_WINDOW_MS;
+      const from = {
+        ms: since.tests[key] ?? now - FIRST_PASS_WINDOW_MS,
+        runId: since.testRuns[key] ?? -1,
+      };
       const out = await syncDbtTestResults(ctx, creds, accountId, from, now); // NOSONAR S9382: one account at a time through the shared dbt Cloud rate limiter
-      since[key] = out.sinceMs;
+      since.tests[key] = out.since.ms;
+      since.testRuns[key] = out.since.runId;
       upserted += out.upserted;
       bytes += out.bytes;
     } catch (err) {

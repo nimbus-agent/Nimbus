@@ -21,12 +21,20 @@ export const FIRST_PASS_WINDOW_MS = 7 * 24 * 3_600_000;
 const RUN_STATUS_SUCCESS = 10;
 const RUN_STATUS_ERROR = 20;
 
+/** Where a pass stopped: runs are handled in (finished-at, run id) order, so a tie on the time keeps its place. */
+export type DbtTestPosition = { readonly ms: number; readonly runId: number };
+
 export type DbtTestPassOutcome = {
   readonly upserted: number;
   readonly bytes: number;
-  /** The finished-at the next pass resumes after (unchanged when nothing could be read). */
-  readonly sinceMs: number;
+  /** The position the next pass resumes after (unchanged when nothing could be read). */
+  readonly since: DbtTestPosition;
 };
+
+/** A 4xx other than 429 will not change on a retry; a 5xx, a 429 or a dropped request might. */
+function permanentStatus(status: number): boolean {
+  return status >= 400 && status < 500 && status !== 429;
+}
 
 function runsPath(accountId: number, offset: number): string {
   const params = new URLSearchParams({
@@ -68,7 +76,7 @@ async function listNewRuns(
   ctx: SyncContext,
   creds: DbtCreds,
   accountId: number,
-  sinceMs: number,
+  since: DbtTestPosition,
 ): Promise<{ runs: DbtTestRun[]; bytes: number; ok: boolean }> {
   const runs: DbtTestRun[] = [];
   let bytes = 0;
@@ -83,7 +91,9 @@ async function listNewRuns(
     for (const raw of rows) {
       const run = readRun(raw);
       if (run === null) continue;
-      if (run.finishedAtMs > sinceMs) runs.push(run);
+      const after =
+        run.finishedAtMs > since.ms || (run.finishedAtMs === since.ms && run.runId > since.runId);
+      if (after) runs.push(run);
       else reachedOld = true;
     }
     if (reachedOld || rows.length < RUN_PAGE_SIZE) break;
@@ -112,8 +122,9 @@ async function indexRun(
   let bytes = bytes0;
   if (results.kind === "http_error") {
     // 404: a run with no artifacts (no test step); other 4xx: not readable with this token, never retried.
-    const permanent = results.status >= 400 && results.status < 500 && results.status !== 429;
-    return permanent ? { kind: "done", upserted: 0, bytes } : { kind: "retry", bytes };
+    return permanentStatus(results.status)
+      ? { kind: "done", upserted: 0, bytes }
+      : { kind: "retry", bytes };
   }
   if (results.kind !== "ok") {
     return { kind: "done", upserted: 0, bytes };
@@ -137,6 +148,9 @@ async function indexRun(
     true,
   );
   bytes += manifest.bytes;
+  if (manifest.kind === "http_error" && !permanentStatus(manifest.status)) {
+    return { kind: "retry", bytes }; // without the manifest the tests would be stored with no model, for good
+  }
   const nodes = manifest.kind === "ok" ? indexDbtManifest(manifest.parsed, wanted) : new Map();
   const upserted = upsertMapped(ctx, flagged, (e) =>
     mapDbtTestResultToItem(e, base(creds, accountId, run, nodes, now)),
@@ -158,15 +172,15 @@ export async function syncDbtTestResults(
   ctx: SyncContext,
   creds: DbtCreds,
   accountId: number,
-  sinceMs: number,
+  since: DbtTestPosition,
   now: number,
 ): Promise<DbtTestPassOutcome> {
-  const listed = await listNewRuns(ctx, creds, accountId, sinceMs);
+  const listed = await listNewRuns(ctx, creds, accountId, since);
   let bytes = listed.bytes;
   let upserted = 0;
-  let nextSince = sinceMs;
+  let next = since;
   if (!listed.ok) {
-    return { upserted, bytes, sinceMs };
+    return { upserted, bytes, since };
   }
   listed.runs.sort((a, b) => a.finishedAtMs - b.finishedAtMs || a.runId - b.runId);
   const queue = listed.runs.slice(0, MAX_RUNS_PER_PASS);
@@ -175,7 +189,7 @@ export async function syncDbtTestResults(
     bytes += outcome.bytes;
     if (outcome.kind === "retry") break; // resume at this run next pass
     upserted += outcome.upserted;
-    nextSince = run.finishedAtMs;
+    next = { ms: run.finishedAtMs, runId: run.runId };
   }
-  return { upserted, bytes, sinceMs: nextSince };
+  return { upserted, bytes, since: next };
 }
