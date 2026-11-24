@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795511089617,
+  "lastUpdate": 1795512502294,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "bc1139b813040248de0a594de07a04a62a57bb61",
-          "message": "feat(agents): nimbus changelog — the fifteenth built-in agent (#1496)\n\nSecond row of the v0.1.1 CLI batch, after `nimbus index health`. A\nMarkdown changelog assembled from the local index over a window: merged\nPRs, deployments, incidents opened and resolved.\n\n```\nnimbus changelog --service payment-service --since 7d\nnimbus changelog --since 30d --format slack\n```\n\n**No migration, no new security invariant, no new egress coverage class,\nno new HITL action type.** It is a fifteenth instance of a shape that\nalready ships fourteen times.\n\n## Why an agent rather than a command\n\n`nimbus index health` and `nimbus stats` are CLI-plus-IPC commands. This\nis a built-in agent because the output is a brief, it wants `[agents]\nsynthesis` for prose release notes, and it wants to be fleet-eligible —\nwhich a non-agent command cannot be, since fleet jobs invoke `agents.*`\nmethods.\n\n## The load-bearing correctness decision\n\n**`item.modified_at` means \"last touched\", not \"when it happened.\"** A\nPR merged in June that got a comment yesterday windows as yesterday, so\na changelog keyed on that column reports what *moved in the index*\nrather than what *happened*. Every category therefore windows on its own\nevent time, half-open `[from, to)`:\n\n| Category | Time source |\n|---|---|\n| Merged PRs | `metadata.merged_at` — a real event field |\n| Incidents opened | `metadata.opened_at_ms` — a real event field |\n| Annotated deploys | `COALESCE(finished_at_ms, started_at_ms)` — a\ntyped V28 column |\n| CI-run deploys, incident resolution | `modified_at`, the same basis\n`nimbus metrics dora` ships |\n\nThe obvious optimisation — pre-filter on the indexed `modified_at` and\nrefine in TypeScript — is **unsound**: `item-store.ts` writes a\nwholesale replacement rather than a `MAX()`, so monotonicity is an\nupstream property and the failure mode is a merged PR silently missing.\nEach lane filters on its event field directly, as `dora.ts` already\ndoes, guarded by `json_valid` with values re-checked in TypeScript.\n\n## What it will not tell you, and says so\n\n- **Dependency updates and config changes have no indexed item type.**\nDisclosed unconditionally, following `ownership`'s precedent — a\nconditional note is absent exactly when a reader needs it.\n- **`metadata.merged_at` is written by the GitHub connector alone**, so\nmerged GitLab MRs and Bitbucket PRs are invisible. Counted and\ndisclosed, reusing the `github_only_merge_data` gap name `nimbus stats`\nalready ships.\n- **`counts` are TRUE PRE-CAP totals** while entry lists cap at 50, so\n`counts.mergedPrs` can exceed `mergedPrs.length` — that difference is\nhow a reader recovers what was truncated.\n- A `--service` that reaches no rows gets its own gap, so an empty\nchangelog is distinguishable from a quiet week.\n\n## Surface\n\nSix registration sites are compiler-forced — `SynthInput`,\n`RESERVED_HEADINGS_BY_KIND`, `AGENTS_RPC_HANDLERS`, `FLEET_ELIGIBILITY`,\n`FLEET_DIGEST_EXTRACTORS`, and `brief-contract.ts`, the sixth found\nduring implementation whose arm returning `[]` would have compiled while\nleaving every interleaved I31 disclosure unguarded.\n\nExternally excluded (not on HTTP/MCP/ChatOps, not on the Tauri\nallowlist) for sequencing — the brief's shape settles against one\nconsumer first. Fleet-eligible, reasoned independently, since\n`agents-rpc.ts` records that the external set \"was reasoned about for an\narbitrary network caller; a fleet is a different principal.\"\n\n`--format slack|plain` are text transforms over the Markdown, never a\nre-render from `findings` — a re-render would silently discard\nsynthesized prose.\n\n## Review\n\nSeven task reviews, a whole-branch review, and a fix wave. Defects\ncaught that tests alone would not have:\n\n- **A cross-task seam no per-task review could see:** the gateway\nescapes `[` → `\\[` in entry titles, and the CLI's link regex could not\ncross the escaped bracket — so both non-default formats shipped links\nunconverted, dumping raw URLs in the one output path whose doc comment\npromises not to. `[WIP]` and `[PROJ-123]` prefixes trigger it, silently.\n- `latencyMs` was evaluated before any work ran, publishing a fabricated\nnumber.\n- A sub-day `--since` rendered `last 0d` directly above the disclosure\n\"counts below cover only this window\".\n- The e2e seeded one row per category and asserted only that headings\nexisted — true of an empty index.\n- `counts` initially meant \"entries shown\", reaching the synthesis\nprompt as authoritative.\n- The PR item type is `pr`; `pull_request` exists here only as an API\npayload key, so a query on it returns zero rows silently.\n\n## Verification\n\n`preflight:fast` PASSED · `typecheck` clean · 5959 tests green across\nevery touched suite, 0 fail · `audit:doc-refs` 1515 refs resolve ·\n`audit:agent-param-kinds` and `audit:invariants` pass.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01XtDxpJSXKwXKMWQnaRsLee\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added the `nimbus changelog` command to generate service-specific or\nfleet-wide changelogs from pull requests, deployments, and incidents.\n* Supports configurable lookback periods, Markdown, Slack, plain-text,\nand JSON output.\n* Includes category totals, truncation notices, timestamp details, and\nunsupported-data disclosures.\n  * Changelogs are available through the CLI and configured fleet runs.\n\n* **Documentation**\n* Documented changelog usage, output formats, service filters,\nlimitations, and availability.\n* Updated agent and security documentation for the fifteenth built-in\nbrief type.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-11T20:14:18Z",
-          "tree_id": "f9de15187231d4b16b2f878627f2f43831a2e985",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/bc1139b813040248de0a594de07a04a62a57bb61"
-        },
-        "date": 1789158264367,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 249.67453860000094,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 251.34687965000157,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 269.24416975000605,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "973c19e12f4cb357ac28f7105cf2e4231c8bbe6c",
+          "message": "feat(gateway): nimbus incident investigate --synthesize rewrites an investigation's prose with the model, keeping actions, leads, gaps and freshness verbatim (#2126)\n\nIncident engine, Phase 10 \"Deep automated investigation\"\n(`--synthesize`). Stream C3 of 3. **Based on C2 (#2124)**: it adds the\n22nd brief kind beside C2's 21st, and both touch the brief-kind\nregistry. Merge C2 first, or merge this into C2's branch; the diff here\nis only the C3 commit.\n\n## What\n- `nimbus incident investigate <id> --synthesize` (IPC\n`incident.investigateSynthesize { id }`) offers the FINISHED\ninvestigation to the existing `synthesize()` and returns `{ recordId,\nversion, markdown, synthesis }`. The investigation itself is unchanged:\nbuilt from the local index only, no model, no live call\n(`incident/investigate.ts` untouched).\n- A new brief kind, `incident_investigation` (the 22nd). The model\nrewrites the summary, the Sentry issues, the data-quality context and\nthe other open records. Four sections are RESERVED (I31): `## What\nNimbus did` (who decided what), `## Leads` (candidates with their\ntiming, never a cause), `## Gaps` and `## Data freshness`. They are held\nback from the model, rebuilt from the brief by `reservedBlocksFor`, and\nre-attached verbatim; a rewrite that invents or edits one is stripped or\ndiscarded (a test feeds a model that invents a cause under `## Leads`).\n- Follows the post-mortem's `--synthesize` pattern exactly: attended,\nowner kinds only, the existing ledgered runner\n(`agents.incident_investigation`), the code in\n`investigation/investigation-synthesis.ts` OUTSIDE `incident/**` (static\nD46(a): no runner under `incident/`), fallback to the deterministic\nbrief with the discarded-synthesis footer on any failure, and with no\nusable model the reply is the plain investigation and\n`synthesis.attempted` is `false`.\n- CLI: `--synthesize` on `investigate` only (a second flag, or on\nanother verb, is a usage error); a line under the text says whether the\nmodel was used and by which model, or why this is the deterministic\ninvestigation; the request gets the long (batch) timeout.\n- `synthesize.ts` (a file-size baseline file) shrank 527 to 448: its\nfooters moved unchanged to `synthesis-footers.ts`, so the new arm does\nnot grow it.\n\n## Invariants\n- I57 (a) / D46(a): nothing under `incident/**` reaches a model; the\nrunner meets the investigation only in `investigation/` and the RPC.\n- I31: `RESERVED_HEADINGS_BY_KIND` and the all-kinds coverage table are\ntotal over the new kind (compile-time), and the I31 dispatch scraper\nsees the new `brief.kind === \"incident_investigation\"` arm. I11: the\nmodel's input is enveloped as `agents.incident_investigation`. I29: the\nmodel call is ledgered by the existing provider decorator.\n- LAN: the `incident` namespace is forbidden as a whole; pinned for the\nnew method. Tauri: not on the allowlist (`ALLOWED_METHODS` unchanged).\nNo migration (schema stays V105 on this branch; V106 is #2122), no new\ninvariant, HITL type, egress class or static rule number.\n\n## Stopped on an owner question: \"a model-written scribe draft\"\nTwo parts of this row are not settled by it, and I built neither.\n1. **The scribe is unattended and OR-10-8 says no model runs\nunattended.** `[incident.scribe]` queues a draft per new record version\non a timer. A model there would send record content (titles, timeline\ntext from providers) to a model with nobody present. Options: (a) **keep\nthe scribe model-free and add an owner-requested `nimbus incident update\n<id> --synthesize`** (recommended; it is the same pattern as this PR and\nthe post-mortem); (b) a new opt-in `[incident.scribe] synthesize =\ntrue`, which is a new ruling about unattended model use and should be\nlocal-model-only in the style of I38 if allowed at all.\n2. **An update draft is plain chat text, not a section brief.** The I31\nmachinery protects named sections, but `renderIncidentUpdate` produces a\nshort text with disclosure lines inside it (\"timing only, not a proven\ncause\", \"Drafted by Nimbus from the local index ... Not checked with the\nprovider.\"). Recommendation for (a): a new brief kind `incident_update`\nwhose factual block and footer are reserved and re-attached verbatim,\nwith the model writing only a short lead paragraph; the result is posted\nonly through the existing HITL-gated `--send`. Because model words would\nthen be posted to a channel under the owner's name (an injection path\nfrom provider text into a channel), this deserves an explicit ruling\nrather than my choosing it.\nI did not touch `incident-update/**` or the scribe.\n\n## Stated bounds\n- The model sees provider text (Sentry titles, the trigger title) inside\nthe I11 envelope, as the post-mortem draft does. Reply quality is the\nmodel's.\n- The deterministic fallback is the same bytes as `renderInvestigation`\nplus a footer (a test pins the equality), so `--synthesize` can only add\nprose to what the index already says. (When the brief has no gaps, the\ndeterministic render keeps an empty `## Gaps` heading as the plain\nrender does; a synthesized brief reserves `## Gaps` only with content,\nso it omits it then.)\n- The investigation is still index-only: the spec's live fan-out\n(Datadog, Grafana, New Relic, CloudWatch) and any AgentCoordinator use\nremain unbuilt.\n\n## Tests\n- `investigation-rpc.test.ts`: owner-kind gate before any read or model\nbuild, off the LAN, parameter checks, deterministic reply with no model,\na model's rewrite with a hostile `## Leads` stripped, a failing model\nfalling back with the footer, an unknown id.\n- `incident-investigation-render.test.ts`: byte equality with the plain\nrender, `omitReserved`, reserved blocks and order, the gap mirror,\n`synthesize` with no runner.\n- `incident-investigate-synthesize.test.ts` (CLI): parsing, the method\ncalled, the note.\n- The registry-total and all-kinds coverage tables now include the kind.\n\n## For the batch-docs PR\n- **roadmap.md**, rows \"Deep automated investigation\" and \"Live incident\nscribe + comms\": in the first, replace \"Still open: the live\nmulti-backend fan-out (logs, metrics, traces, dashboard snapshots) and\n`--synthesize`.\" with \"*Progress (2026-11-23):* `--synthesize` is built\n(owner-requested, I31/I11, the 22nd brief kind). Still open: the live\nmulti-backend fan-out (logs, metrics, traces, dashboard snapshots).\" In\nthe second, keep \"a model-written draft\" open and add: \"(owner question:\nthe scribe is unattended and OR-10-8 forbids a model there; recommended\n`nimbus incident update --synthesize`, owner-requested, with a reserved\nfacts block)\".\n- **CHANGELOG draft:** `feat(gateway): nimbus incident investigate\n--synthesize rewrites an investigation's prose with the model, keeping\nactions, leads, gaps and freshness verbatim (22nd brief kind)`.\n- **CLAUDE.md / GEMINI.md sentence:** \"Phase 10 investigate --synthesize\n✅ 2026-11-23 (no migration, invariant, HITL type or allowlist change;\nI31, I11 and I57 (a) extended): `nimbus incident investigate <id>\n--synthesize` offers the finished, index-only investigation to the model\non the owner's command only, as the 22nd brief kind\n`incident_investigation` whose actions, leads, gaps and freshness are\nreserved and re-attached verbatim; the scribe and every unattended path\nstay model-free (a model-written update draft is an open owner\nquestion).\"\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrGFPLqt8C3Ybzk2dHq\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Run an incident investigation with `--synthesize` to optionally\nrewrite selected prose using a model. Actions, leads, gaps, and data\nfreshness details remain unchanged.\n* Investigations remain deterministic by default. If synthesis is\nunavailable or its rewrite cannot be used, the deterministic result is\nreturned with a status note. Successful rewrites identify the model\nused.\n  * Synthesis is available only through an owner-run command.\n* **Documentation**\n* Updated the incident command and IPC references with the new option,\naccess limits, and response formats.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Sonnet 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-24T09:20:46Z",
+          "tree_id": "846260ae213808a44771cdcdc8cfed3070ff001a",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/973c19e12f4cb357ac28f7105cf2e4231c8bbe6c"
+        },
+        "date": 1795512499116,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 186.97707654999866,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 186.6303404500024,
             "unit": "ms"
           }
         ]
