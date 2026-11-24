@@ -1,7 +1,8 @@
 /**
  * `memory.*` - the owner's view of long-term episodic memory (Phase 10, owner ruling OR-S4-MEM, I61).
  *
- *   - `memory.list { limit? }` -> `{ enabled, retentionDays, pendingTurns, memories: StoredMemory[] }`
+ *   - `memory.list { limit?, offset? }` -> `{ enabled, retentionDays, pendingTurns, total, memories: StoredMemory[] }`
+ *     (`total` is every retained memory, so a caller can page with `offset` until it has them all)
  *   - `memory.forget { id }` or `memory.forget { all: true }` -> `{ forgotten }` (the count of memories removed;
  *     `all` also drops every turn still waiting to be summarised)
  *
@@ -47,6 +48,7 @@ export type MemoryListReply = {
   enabled: boolean;
   retentionDays: number;
   pendingTurns: number;
+  total: number;
   memories: StoredMemory[];
 };
 
@@ -65,6 +67,15 @@ function limitOf(params: unknown): number {
       -32602,
       `ERR_MEMORY_BAD_PARAMS: limit must be an integer 1..${String(MEMORY_LIST_LIMIT_MAX)}`,
     );
+  }
+  return raw;
+}
+
+function offsetOf(params: unknown): number {
+  const raw = asRecord(params)?.["offset"];
+  if (raw === undefined) return 0;
+  if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 0) {
+    throw new MemoryRpcError(-32602, "ERR_MEMORY_BAD_PARAMS: offset must be an integer >= 0");
   }
   return raw;
 }
@@ -91,12 +102,14 @@ export async function dispatchMemoryRpc(
     "memory.list": (p, c): MemoryListReply => {
       const m = memoryOf(c, caller.kind);
       const limit = limitOf(p);
+      const offset = offsetOf(p);
       const status = m.status();
       return {
         enabled: status.enabled,
         retentionDays: status.retentionDays,
         pendingTurns: status.pendingTurns,
-        memories: m.list(limit),
+        total: status.memories,
+        memories: m.list(limit, offset),
       };
     },
     "memory.forget": (p, c) => {

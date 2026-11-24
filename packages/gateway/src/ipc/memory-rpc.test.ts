@@ -54,6 +54,21 @@ describe("memory.* (owner kinds only, OR-S4-MEM)", () => {
     }
   });
 
+  test("list reports the total and pages with offset; a bad offset is refused", async () => {
+    const memory = await seeded();
+    const out = (await call(memory, "cli", "memory.list", { limit: 1, offset: 0 })) as {
+      value: { total: number; memories: unknown[] };
+    };
+    expect(out.value.total).toBe(1);
+    const past = (await call(memory, "cli", "memory.list", { offset: 1 })) as {
+      value: { memories: unknown[] };
+    };
+    expect(past.value.memories).toHaveLength(0);
+    await expect(call(memory, "cli", "memory.list", { offset: -1 })).rejects.toThrow(
+      "ERR_MEMORY_BAD_PARAMS",
+    );
+  });
+
   test("every other kind is refused before anything is read", async () => {
     const memory = await seeded();
     for (const kind of ["mcp", "http", "chatops", "fleet", "push", "unknown"] as const) {

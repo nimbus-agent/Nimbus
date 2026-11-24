@@ -145,6 +145,34 @@ describe("runMemoryCommand", () => {
     expect(calls).toEqual(["session.declareKind", "memory.list"]);
   });
 
+  test("list pages through every retained memory, not just the first page", async () => {
+    const mk = (i: number) => ({
+      id: `mem_${String(i).padStart(16, "0")}`,
+      sessionId: "s",
+      summary: "x",
+      turnCount: 1,
+      endedAt: 0,
+      createdAt: 0,
+      embedded: true,
+    });
+    const all = Array.from({ length: 1201 }, (_, i) => mk(i));
+    const { o, io } = ioOf(async (m, p) => {
+      if (m !== "memory.list") return {};
+      const { limit, offset } = p as { limit: number; offset: number };
+      return {
+        enabled: true,
+        retentionDays: 90,
+        pendingTurns: 0,
+        total: all.length,
+        memories: all.slice(offset, offset + limit),
+      };
+    });
+    await runMemoryCommand(["list"], io);
+    const text = o.out.join("");
+    expect(text).toContain(all[0]?.id ?? "");
+    expect(text).toContain(all[1200]?.id ?? "");
+  });
+
   test("success resolves; a failed call throws the CliExit code", async () => {
     const ok = ioOf(async () => ({
       enabled: false,

@@ -56,6 +56,7 @@ type ListReply = {
   enabled: boolean;
   retentionDays: number;
   pendingTurns: number;
+  total?: number;
   memories: MemoryView[];
 };
 
@@ -76,6 +77,23 @@ function printList(r: ListReply, sink: MemorySink): void {
   }
 }
 
+const PAGE = 500;
+/** Every retained memory: pages with `offset` until `total` is reached, so no id is hidden past a page. */
+async function listAll(c: MemoryIpc): Promise<ListReply> {
+  const first = (await c.call("memory.list", { limit: PAGE, offset: 0 })) as ListReply;
+  const memories = [...first.memories];
+  const total = first.total ?? memories.length;
+  while (memories.length < total) {
+    const next = (await c.call("memory.list", {
+      limit: PAGE,
+      offset: memories.length,
+    })) as ListReply;
+    if (next.memories.length === 0) break;
+    memories.push(...next.memories);
+  }
+  return { ...first, memories };
+}
+
 export async function runMemoryWith(
   c: MemoryIpc,
   a: MemoryArgs,
@@ -83,7 +101,7 @@ export async function runMemoryWith(
 ): Promise<number> {
   try {
     if (a.mode === "list") {
-      const r = (await c.call("memory.list", {})) as ListReply;
+      const r = await listAll(c);
       if (a.json) sink.out(`${JSON.stringify(r)}\n`);
       else printList(r, sink);
       return 0;

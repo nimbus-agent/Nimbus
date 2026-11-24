@@ -180,8 +180,8 @@ export class EpisodicMemory implements EpisodicTurnPort {
     return this.deps.store.pruneOlderThan(this.now() - days * DAY_MS);
   }
 
-  list(limit: number): StoredMemory[] {
-    return this.deps.store.list(limit);
+  list(limit: number, offset = 0): StoredMemory[] {
+    return this.deps.store.list(limit, offset);
   }
 
   forget(id: string): boolean {

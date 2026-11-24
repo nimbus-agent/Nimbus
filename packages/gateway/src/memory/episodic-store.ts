@@ -194,12 +194,12 @@ export class EpisodicStore {
   }
 
   /** Newest first. */
-  list(limit: number): StoredMemory[] {
+  list(limit: number, offset = 0): StoredMemory[] {
     const rows = this.db
       .query(
-        `SELECT ${MEMORY_COLUMNS} FROM episodic_memory ORDER BY created_at DESC, id ASC LIMIT ?`,
+        `SELECT ${MEMORY_COLUMNS} FROM episodic_memory ORDER BY created_at DESC, id ASC LIMIT ? OFFSET ?`,
       )
-      .all(limit) as MemoryRow[];
+      .all(limit, offset) as MemoryRow[];
     return rows.map(toMemory);
   }
 
