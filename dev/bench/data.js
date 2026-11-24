@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795546750991,
+  "lastUpdate": 1795548296051,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "33309a82acfff9476c7ff059d3f6d2e66ff18ed8",
-          "message": "chore: release main (#1512)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.23.0</summary>\n\n##\n[7.23.0](https://github.com/nimbus-agent/Nimbus/compare/v7.22.0...v7.23.0)\n(2026-09-15)\n\n\n### Features\n\n* **cli:** nimbus explain last — an X-ray of the most recent nimbus ask\n([#1514](https://github.com/nimbus-agent/Nimbus/issues/1514))\n([755c2b6](https://github.com/nimbus-agent/Nimbus/commit/755c2b6019479a1313ada85ab4d3db6726c4add4))\n* **cli:** nimbus tail — follow the gateway's operational event stream\n([#1511](https://github.com/nimbus-agent/Nimbus/issues/1511))\n([9f70962](https://github.com/nimbus-agent/Nimbus/commit/9f70962084caa57c3eba05d99be40f99dd58187b))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-09-15T15:10:49Z",
-          "tree_id": "7ae227d046a418adecb1c5e16bb2f0c7f3bda4cc",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/33309a82acfff9476c7ff059d3f6d2e66ff18ed8"
-        },
-        "date": 1789486092647,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 334.9431323999961,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 336.4271272000031,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 180.84775929999904,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e332582995253e24f093f740981b7f90c36a2464",
+          "message": "fix(cli): the MCP server reports the CLI's version; record the 2026-07-28 client run (#2141)\n\nCloses the last open item of the Phase 28 row **MCP revision\n2026-07-28**: a run against a real 2026-07-28 client, which neither the\ngateway's MCP server nor a standalone connector had had.\n\n## The run (2026-11-24)\n\nThe official Python MCP SDK, `mcp` 2.3.0, implements the revision as a\nclient. The TypeScript SDK's latest release, 1.32.2, stops at\n`2025-11-25`, so it cannot be one. Both servers were driven over stdio:\n\n- `nimbus mcp-server --stdio`: `mode=\"auto\"` negotiates `2026-07-28`\nthrough `server/discover`, and `\"legacy\"` gives `2025-11-25`. Both list\nthe same 21 tools. With no gateway running, a call returns the\ndocumented `Nimbus Gateway is not running` result, and an unknown tool\nis `-32602`.\n- `nimbus-connector github` (connectors 0.17.1, fake token, a write\nscope naming a repository that does not exist): 26 tools with an\nelicitation callback and 13 without, so the writes are hidden. The\nlisting is the same in both eras. A write call puts one prompt in front\nof the client, naming the operation and the exact arguments. A decline\nreturns `not approved` and sends nothing. An approval reaches GitHub\n(`401 Bad credentials`), so the approval survives the sealed-state retry\nto the dispatch.\n\nnimbus-agent/nimbus-mcp-servers#98 records the connector half in its\nclient-support matrix.\n\n## The fix the run found\n\n`nimbus mcp-server` reported a hard-coded `0.1.0` as its server version,\nthe per-package placeholder. It now reports `NIMBUS_VERSION`, the\nrelease version `nimbus --version` prints. The `adapter.ts` file-size\nbaseline is unchanged. `adapter-server-version.test.ts` checks both eras\n(the upstream SDK client's `initialize` and a raw `server/discover`).\nBoth tests fail with the fix reverted.\n\n## Docs\n\nThe roadmap row is ticked, with the run as its record. CHANGELOG has a\ndated entry. The two stated bounds in CLAUDE.md and GEMINI.md that said\nno real 2026-07-28 client had been run now name the SDK run. Stated\nbound: this is an SDK client, not a shipped application.\n\nChecks: `preflight:fast`, `audit:status-drift`, `audit:doc-refs`, and\n`bun test packages/cli/src/mcp` (236 pass).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrGFPLqt8C3Ybzk2dHq\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* MCP clients now receive the CLI’s release version when identifying the\nserver, rather than a placeholder version.\n\n* **Documentation**\n* Updated project notes and changelog with MCP compatibility test\nresults across protocol versions, including tool availability and\nwrite-consent behavior.\n  * Marked the relevant MCP roadmap milestone complete.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-24T19:17:09Z",
+          "tree_id": "1edad16c3ccc87e9c13330c2ebbf0ac8f7aea4b5",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/e332582995253e24f093f740981b7f90c36a2464"
+        },
+        "date": 1795548291651,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 174.57695239999848,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 175.08551120000266,
             "unit": "ms"
           }
         ]
