@@ -298,7 +298,6 @@
     "packages/gateway/src/graph/graph-populator-incidents.test.ts": 1025,
     "packages/gateway/src/graph/graph-populator.ts": 1248,
     "packages/gateway/src/graph/regraph.test.ts": 700,
-    "packages/gateway/src/incident/assemble.test.ts": 507,
     "packages/gateway/src/incident/incident-engine.test.ts": 573,
     "packages/gateway/src/incident/proposals.test.ts": 521,
     "packages/gateway/src/incident/remediation.test.ts": 1100,
