@@ -34,7 +34,21 @@ export function buildDataLane(over: Partial<DataLane> = {}): DataLane {
         rule: "data:pr_title_or_branch",
       },
     ],
-    totals: { lineage: 1, orchestration: 1, prs: 1 },
+    dbtTests: [
+      {
+        id: "dbt:1:1:test.shop.not_null_orders_id.ab",
+        title: "dbt test not_null_orders_id - fail",
+        url: "https://dbt.example/runs/9",
+        status: "fail",
+        failures: 4,
+        runId: 9,
+        atMs: 950_000,
+        model: "analytics.sales.orders",
+        via: "monitored",
+        rule: "data:dbt_test",
+      },
+    ],
+    totals: { lineage: 1, orchestration: 1, prs: 1, dbtTests: 1 },
     ...over,
   };
 }

@@ -3,14 +3,16 @@ import { matchesDataModelGlob } from "../../metrics/data-model-glob.ts";
 import type { ServiceConfig } from "../../metrics/dora-config.ts";
 import type { DataItemView, DataLane, DataLineageView, GapNote } from "../incident-record-types.ts";
 import { CHAT_WINDOW_BEFORE_MS, codeUnitCompare, DATA_LIST_CAP, gap, oneLine } from "./caps.ts";
+import { dbtGap, dbtTests } from "./data-dbt.ts";
 
 /**
  * Lane 6, data (Phase 10 IC3, design C step 8), for Monte Carlo and Bigeye triggers only: the monitored model
  * keys, one hop of lineage (the `derived_from` edges FROM the model), orchestration items (dbt jobs, Airflow
  * DAGs, Dagster jobs, Prefect deployments) whose TITLE holds the model's last identifier segment as a whole
  * token (a name match, not lineage: those items carry no model reference), and pull requests merged in the 24 h
- * before the trigger whose title or branch holds the same token. The run-level lanes the spec names (DAG-run
- * logs, dbt test results, warehouse schema deltas) are not indexed, and are always listed as gaps.
+ * before the trigger whose title or branch holds the same token, and the failing, erroring or warning dbt tests
+ * on the monitored models and one hop of their lineage in the incident window (`data-dbt.ts`, a model-KEY
+ * match). The run-level lanes still not indexed (DAG-run logs, warehouse schema deltas) are always gaps.
  */
 
 export type DataResult = { readonly lane: DataLane; readonly gaps: readonly GapNote[] };
@@ -206,7 +208,7 @@ export function dataSubstrateGaps(): GapNote[] {
   return [
     gap(
       "missing_entity_type",
-      "DAG-run logs, dbt test results and warehouse schema deltas are not indexed, so what a failing run or a schema change did is absent here.",
+      "DAG-run logs and warehouse schema deltas are not indexed, so what a failing run or a schema change did is absent here.",
     ),
     gap(
       "missing_relation_emit",
@@ -260,7 +262,9 @@ export function dataLane(
   const orch = orchestration(db, tokens, truncated);
   const prs =
     input.openedAtMs === null ? { items: [] } : mergedPrs(db, tokens, input.openedAtMs, truncated);
-  const gaps = dataSubstrateGaps();
+  const tests =
+    input.openedAtMs === null ? [] : dbtTests(db, models, lin, input.openedAtMs, truncated);
+  const gaps = [...dataSubstrateGaps(), dbtGap(db)];
   if (allModels.length > MODEL_KEY_CAP) {
     gaps.push(
       gap(
@@ -291,7 +295,13 @@ export function dataLane(
       lineage: lin.slice(0, DATA_LIST_CAP),
       orchestration: orch.slice(0, DATA_LIST_CAP),
       prs: prs.items.slice(0, DATA_LIST_CAP),
-      totals: { lineage: lin.length, orchestration: orch.length, prs: prs.items.length },
+      dbtTests: tests.slice(0, DATA_LIST_CAP),
+      totals: {
+        lineage: lin.length,
+        orchestration: orch.length,
+        prs: prs.items.length,
+        dbtTests: tests.length,
+      },
     },
     gaps,
   };

@@ -15,6 +15,7 @@ describe("renderIncidentData", () => {
       "## Monitored models",
       "## Built from",
       "## Jobs by name",
+      "## dbt tests",
       "## Merged before the alert",
       "## Service",
       "## Change",

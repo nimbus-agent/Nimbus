@@ -130,7 +130,7 @@ describe("lane 6, data", () => {
     expect(r.lane.orchestration.every((o) => o.rule === "name_match")).toBe(true);
     expect(r.lane.prs.map((p) => p.id)).toEqual([byTitle, byBranch]);
     expect(r.lane.prs.every((p) => p.rule === "data:pr_title_or_branch")).toBe(true);
-    expect(r.lane.totals).toEqual({ lineage: 2, orchestration: 3, prs: 2 });
+    expect(r.lane.totals).toEqual({ lineage: 2, orchestration: 3, prs: 2, dbtTests: 0 });
     expect(r.gaps.map((g) => g.detail).join(" ")).toContain("DAG-run logs");
   });
 
@@ -140,10 +140,10 @@ describe("lane 6, data", () => {
     expect(r.lane.lineage).toEqual([]);
     expect(r.lane.orchestration).toEqual([]);
     expect(r.lane.prs).toEqual([]);
-    expect(r.gaps).toHaveLength(2);
+    expect(r.gaps).toHaveLength(3);
     const none = dataLane(d, { metadata: null, openedAtMs: null });
     expect(none.lane.models).toEqual([]);
-    expect(none.gaps).toHaveLength(3);
+    expect(none.gaps).toHaveLength(4);
     expect(dataSubstrateGaps()).toHaveLength(2);
   });
 

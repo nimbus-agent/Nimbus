@@ -4,67 +4,41 @@ import {
   syncPassCursorSuccess,
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
-import { connectorFetch } from "./_lib/fetch-outcome.ts";
-import { trimTrailingSlash } from "./_lib/field-helpers.ts";
 import { upsertMapped } from "./_lib/paginated-sync.ts";
+import { DBT_SERVICE_ID, type DbtCreds, dbtGet, extractDbtData, loadDbtCreds } from "./dbt-api.ts";
 import { mapDbtJobToItem } from "./dbt-job-mapping.ts";
-import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
+import { FIRST_PASS_WINDOW_MS, syncDbtTestResults } from "./dbt-test-sync.ts";
+import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, numberField } from "./unknown-record.ts";
 
-const SERVICE_ID = "dbt";
+const SERVICE_ID = DBT_SERVICE_ID;
 const CURSOR_PREFIX = "nimbus-dbt1:";
-const DEFAULT_API_BASE = "https://cloud.getdbt.com";
 const PAGE_SIZE = 100;
 const MAX_PAGES_PER_ACCOUNT = 20;
 
-type DbtCursorV1 = { pass: number };
+/** `tests` maps an account id to the finished-at its test-result pass resumes after. */
+type DbtCursorV1 = { pass: number; tests?: Record<string, number> };
 
-function pass1Cursor(): string {
-  return encodeNimbusJsonCursor(CURSOR_PREFIX, { pass: 1 } satisfies DbtCursorV1);
+function pass1Cursor(tests: Record<string, number> = {}): string {
+  return encodeNimbusJsonCursor(CURSOR_PREFIX, { pass: 1, tests } satisfies DbtCursorV1);
+}
+
+function readTestSince(cursor: string | null): Record<string, number> {
+  const raw = decodeNimbusJsonCursorObject(cursor, CURSOR_PREFIX)?.["tests"];
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(asRecord(raw) ?? {})) {
+    if (typeof v === "number" && Number.isFinite(v)) out[k] = v;
+  }
+  return out;
 }
 
 export type DbtSyncableOptions = {
   ensureDbtMcpRunning: () => Promise<void>;
 };
 
-interface DbtCreds {
-  readonly token: string;
-  readonly apiBase: string;
-  readonly accountId: number | null;
-}
-
-async function loadCreds(ctx: SyncContext): Promise<DbtCreds | null> {
-  const token = (await ctx.getSecret("token"))?.trim() ?? "";
-  if (token === "") {
-    return null;
-  }
-  const baseRaw = (await ctx.getSecret("api_base"))?.trim() ?? "";
-  const accountRaw = (await ctx.getSecret("account_id"))?.trim() ?? "";
-  const parsedAccount = accountRaw === "" ? Number.NaN : Number.parseInt(accountRaw, 10);
-  return {
-    token,
-    apiBase: baseRaw === "" ? DEFAULT_API_BASE : trimTrailingSlash(baseRaw),
-    accountId: Number.isFinite(parsedAccount) ? parsedAccount : null,
-  };
-}
-
-function dbtGet(ctx: SyncContext, creds: DbtCreds, path: string) {
-  return connectorFetch(ctx, SERVICE_ID, `${creds.apiBase}/api/v2${path}`, {
-    headers: { Authorization: `Token ${creds.token}`, Accept: "application/json" },
-  });
-}
-
-function extractData(parsed: unknown): unknown[] {
-  const data = asRecord(parsed)?.["data"];
-  if (Array.isArray(data)) {
-    return data;
-  }
-  return Array.isArray(parsed) ? parsed : [];
-}
-
 function extractAccountIds(parsed: unknown): number[] {
   const out: number[] = [];
-  for (const a of extractData(parsed)) {
+  for (const a of extractDbtData(parsed)) {
     const row = asRecord(a);
     if (row === undefined) {
       continue;
@@ -120,7 +94,7 @@ async function syncAccountJobs(
       );
       break;
     }
-    const jobs = extractData(outcome.parsed);
+    const jobs = extractDbtData(outcome.parsed);
     upserted += upsertMapped(ctx, jobs, (raw) =>
       mapDbtJobToItem(raw, { apiBase: creds.apiBase, accountId, syncedAt: now }),
     );
@@ -131,6 +105,37 @@ async function syncAccountJobs(
   return { upserted, bytes };
 }
 
+/** The test-result pass for every account; a failure keeps that account's previous position and never fails the sync. */
+async function syncTestResults(
+  ctx: SyncContext,
+  creds: DbtCreds,
+  accountIds: readonly number[],
+  cursor: string | null,
+  now: number,
+): Promise<{ since: Record<string, number>; upserted: number; bytes: number }> {
+  const since = readTestSince(cursor);
+  let upserted = 0;
+  let bytes = 0;
+  for (const accountId of accountIds) {
+    const key = String(accountId);
+    try {
+      const out = await syncDbtTestResults(
+        ctx,
+        creds,
+        accountId,
+        since[key] ?? now - FIRST_PASS_WINDOW_MS,
+        now,
+      ); // NOSONAR S9382: one account at a time through the shared dbt Cloud rate limiter
+      since[key] = out.sinceMs;
+      upserted += out.upserted;
+      bytes += out.bytes;
+    } catch (err) {
+      ctx.logger.warn({ serviceId: SERVICE_ID, accountId, err }, "dbt test pass failed; skipped");
+    }
+  }
+  return { since, upserted, bytes };
+}
+
 export function createDbtSyncable(options: DbtSyncableOptions): Syncable {
   return {
     serviceId: SERVICE_ID,
@@ -139,7 +144,7 @@ export function createDbtSyncable(options: DbtSyncableOptions): Syncable {
     async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
       const t0 = performance.now();
       await options.ensureDbtMcpRunning();
-      const creds = await loadCreds(ctx);
+      const creds = await loadDbtCreds(ctx);
       if (creds === null) {
         return syncNoopResult(cursor, t0);
       }
@@ -160,7 +165,11 @@ export function createDbtSyncable(options: DbtSyncableOptions): Syncable {
         totalBytes += result.bytes;
       }
 
-      return syncPassCursorSuccess(t0, totalBytes, pass1Cursor(), totalUpserted);
+      const tests = await syncTestResults(ctx, creds, resolved.accountIds, cursor, now);
+      totalBytes += tests.bytes;
+      totalUpserted += tests.upserted;
+
+      return syncPassCursorSuccess(t0, totalBytes, pass1Cursor(tests.since), totalUpserted);
     },
   };
 }

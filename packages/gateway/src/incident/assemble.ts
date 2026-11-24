@@ -195,6 +195,7 @@ function citedServicesOf(record: IncidentRecordV1): string[] {
   if (record.data !== null) {
     for (const o of record.data.orchestration) out.add(o.service);
     for (const p of record.data.prs) out.add(p.service);
+    if ((record.data.dbtTests ?? []).length > 0) out.add("dbt");
   }
   return [...out].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 }
