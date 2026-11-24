@@ -112,7 +112,6 @@ async function pairA(): Promise<string> {
 function call(method: string, params: Record<string, unknown>): Promise<unknown> {
   return sendFederatedOverWire("127.0.0.1", bPort, aKp, bPub, method, params, 5000, {
     known: 1,
-    minProtocol: 1,
   });
 }
 

@@ -79,7 +79,7 @@ export function reportRulesPart2(files: readonly FileEntry[], mode: Mode): numbe
     const boxViolations = checkLanBoxPathConfinement(files);
     for (const e of boxViolations) {
       console.error(
-        `::error file=${e.file},line=${e.line}::D47 the LAN static-box seal (sealBoxFrame/openBoxFrame/nacl.box) used outside ipc/lan-legacy.ts and ipc/lan-crypto.ts — a record could be sealed under the static identity key, with no forward secrecy (I56): ${e.snippet}`,
+        `::error file=${e.file},line=${e.line}::D47 the LAN static-box seal (sealBoxFrame/openBoxFrame/nacl.box) or a lan-legacy module present — the v1 static-box LAN wire was deleted in FS3 and a record sealed under the static identity key has no forward secrecy (I56): ${e.snippet}`,
       );
     }
     if (boxViolations.length > 0) exit = 1;

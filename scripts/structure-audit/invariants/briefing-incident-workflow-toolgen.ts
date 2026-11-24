@@ -408,33 +408,43 @@ export function checkToolgenModelDoorConfinement(files: readonly FileEntry[]): V
   return out;
 }
 
-// ---- D47 (the v1 static-box LAN path, I56) -------------------------------------------------------
-// Rule id `lan-box-path-confined`. The LAN's v1 wire seals every frame under the STATIC `nacl.box`
-// secret of the two identity keys, which has no forward secrecy. Since LAN FS1 that path is reachable
-// only through `ipc/lan-legacy.ts` (which refuses a peer already at protocol 2 and everything under
-// `[lan] min_protocol = 2`); the primitives live in `ipc/lan-crypto.ts`. In every other non-test file of
-// `packages/gateway/src/`, the identifiers `sealBoxFrame` and `openBoxFrame` (a call, an import,
+// ---- D47 (no v1 static-box LAN path, I56) --------------------------------------------------------
+// Rule id `lan-box-path-confined`. The LAN's old v1 wire sealed every frame under the STATIC
+// `nacl.box` secret of the two identity keys, which has no forward secrecy. Since slice FS3 that wire
+// does not exist: `ipc/lan-legacy.ts` is deleted, `[lan] min_protocol` is gone, and the seal
+// primitives are deleted from `ipc/lan-crypto.ts`. In EVERY non-test file of `packages/gateway/src/`
+// (no file is exempt any more), the identifiers `sealBoxFrame` and `openBoxFrame` (a call, an import,
 // aliased or not) and a `nacl.box(` / `nacl.box.open(` call are violations, so a new federation module
-// cannot seal a record under the static key and skip the Noise session. `nacl.box.keyPair` is not a
-// seal and stays free (identity key creation). Comments and string literals are stripped first;
-// `*.test.ts` and `*.test-helpers.ts` are not scanned.
-// STATED BOUNDS (as D33(c)): a dynamically composed call evades a text scan, a second use INSIDE
-// `lan-legacy.ts` or `lan-crypto.ts` is exempt whole-file, and a `box` imported by name from the
-// library and called bare is not matched. After slice FS3 the legacy file is deleted and the
-// allowance with it.
+// cannot seal a record under the static key and skip the Noise session. A module named `lan-legacy*`
+// (a test included) under `packages/gateway/src/` is a violation too: the
+// old wire cannot come back under its old name. `nacl.box.keyPair` is not a seal and stays free
+// (identity key creation). Comments and string literals are stripped first; `*.test.ts` and
+// `*.test-helpers.ts` are not scanned for the identifiers.
+// STATED BOUNDS (as D33(c)): a dynamically composed call evades a text scan, a `box` imported by name
+// from the library and called bare is not matched, and the old wire returning under another file
+// name is caught only by the identifier scan.
 const D47_IDENT_RE = /\b(?:sealBoxFrame|openBoxFrame)\b/g;
 const D47_NACL_BOX_RE = /\b(?:nacl|tweetnacl)\s*\.\s*box\s*(?:\.\s*open\s*)?\(/g;
-const D47_ALLOWED: readonly string[] = [
-  "packages/gateway/src/ipc/lan-crypto.ts",
-  "packages/gateway/src/ipc/lan-legacy.ts",
-];
+const D47_LEGACY_MODULE_RE = /(?:^|\/)lan-legacy[^/]*$/;
 
 export function checkLanBoxPathConfinement(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];
   for (const f of files) {
+    if (
+      (f.relPath.startsWith("packages/gateway/src/") ||
+        f.relPath.startsWith("packages/gateway/test/")) &&
+      D47_LEGACY_MODULE_RE.test(f.relPath)
+    ) {
+      out.push({
+        rule: "lan-box-path-confined",
+        file: f.relPath,
+        line: 1,
+        snippet: "a lan-legacy module exists (the v1 LAN wire was deleted in FS3)",
+      });
+      continue;
+    }
     if (/\.test(?:-helpers)?\.ts$/.test(f.relPath)) continue;
     if (!f.relPath.startsWith("packages/gateway/src/")) continue;
-    if (D47_ALLOWED.includes(f.relPath)) continue;
     const code = stripStringLiterals(stripComments(f.contents));
     const original = f.contents.split("\n");
     for (const re of [D47_IDENT_RE, D47_NACL_BOX_RE]) {

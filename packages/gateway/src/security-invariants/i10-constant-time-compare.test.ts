@@ -17,13 +17,6 @@ describe("I10 — Constant-time compare helpers live in util/timing-safe-compare
     );
   });
 
-  test("ipc/lan-pairing.ts imports constantTimeStringEqual from util/timing-safe-compare", async () => {
-    const src = await read("packages/gateway/src/ipc/lan-pairing.ts");
-    expect(src).toMatch(
-      /import\s*\{[^}]*\bconstantTimeStringEqual\b[^}]*\}\s*from\s*["']\.\.\/util\/timing-safe-compare(?:\.ts)?["']/,
-    );
-  });
-
   test("ipc/http-auth.ts imports constantTimeStringEqual from util/timing-safe-compare", async () => {
     const src = await read("packages/gateway/src/ipc/http-auth.ts");
     expect(src).toMatch(

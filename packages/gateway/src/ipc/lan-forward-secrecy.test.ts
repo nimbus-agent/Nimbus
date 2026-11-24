@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { sendFederatedOverWire } from "./lan-client.ts";
 import { generateBoxKeypair } from "./lan-crypto.ts";
-import { sendFederatedLegacy } from "./lan-legacy.ts";
 import { NOISE_OPEN_FAILED } from "./lan-noise.ts";
+import { LanServer } from "./lan-server.ts";
 import {
   attackerEeCandidates,
   attackLegacyBox,
@@ -12,10 +12,9 @@ import {
   replayRecordedRequest,
   SECRET_REPLY,
   SECRET_REQUEST,
-  startServer,
   transcriptContains,
 } from "./testing/lan-forward-secrecy.test-helpers.ts";
-import { startLegacyOnlyServer, startStub } from "./testing/lan-v2.test-helpers.ts";
+import { connectRaw, startOldWireServer, startStub } from "./testing/lan-v2.test-helpers.ts";
 import { fakePairing } from "./testing/pairing-fakes.ts";
 
 const stops: Array<() => void | Promise<void>> = [];
@@ -95,7 +94,7 @@ describe("FS-A2 - replay", () => {
         "federation.ping",
         { secret: SECRET_REQUEST },
         1500,
-        { known: 2, minProtocol: 1 },
+        { known: 2 },
       );
     } catch (e) {
       message = (e as Error).message;
@@ -105,7 +104,7 @@ describe("FS-A2 - replay", () => {
 });
 
 describe("FS-A3 - the downgrade ratchet", () => {
-  test("one v2 session ratchets both rows to 2, and a legacy hello for that pubkey gets no reply", async () => {
+  test("one v2 session ratchets both rows to 2, and an old-wire hello for that pubkey gets no reply", async () => {
     const out = await ratchetScenario();
     expect(out.hostRowBefore).toBe(1);
     expect(out.hostRowAfter).toBe(2);
@@ -113,87 +112,75 @@ describe("FS-A3 - the downgrade ratchet", () => {
     expect(out.legacyHelloClosed).toBe(true);
     expect(out.legacyHelloBytes).toBe(0);
   });
-
-  test("a client recorded at 2 never falls back to the old wire against an old server", async () => {
-    const a = generateBoxKeypair();
-    const b = generateBoxKeypair();
-    const old = startLegacyOnlyServer({
-      hostKeypair: b,
-      onMessage: async () => ({ legacy: true }),
-      isKnownPeer: () => ({ peerId: "p", writeAllowed: false, protoVersion: 1 }),
-      registerPeer: () => "p",
-      rateLimit: { checkAllowed: () => true, recordFailure: () => {}, recordSuccess: () => {} },
-      pairing: fakePairing(),
-      minProtocol: 1,
-    });
-    stops.push(() => old.stop());
-    let message = "";
-    try {
-      await sendFederatedOverWire(
-        "127.0.0.1",
-        old.port,
-        a,
-        b.publicKey,
-        "federation.ping",
-        {},
-        1500,
-        { known: 2, minProtocol: 1 },
-      );
-    } catch (e) {
-      message = (e as Error).message;
-    }
-    expect(message).toContain("no reply");
-    expect(old.connections()).toBe(1);
-  });
 });
 
-describe("FS-A4 - old and new peers interoperate during the compatibility window", () => {
-  test("a new client reaches an old server (one v1 retry) and an old client reaches a new server", async () => {
-    const calls: string[] = [];
+describe("FS3 - the old wire is gone: a peer from before LAN forward secrecy is refused both ways", () => {
+  test("new client -> old server: ONE connection, no retry on any other wire, and the error says to upgrade", async () => {
+    const a = generateBoxKeypair();
+    const b = generateBoxKeypair();
+    for (const known of [1, 2] as const) {
+      const old = startOldWireServer();
+      stops.push(() => old.stop());
+      let message = "";
+      try {
+        await sendFederatedOverWire(
+          "127.0.0.1",
+          old.port,
+          a,
+          b.publicKey,
+          "federation.ping",
+          {},
+          1500,
+          {
+            known,
+          },
+        );
+      } catch (e) {
+        message = (e as Error).message;
+      }
+      expect(message).toContain("upgrade that peer");
+      expect(old.connections()).toBe(1);
+    }
+  });
+
+  test("old client -> new server: a v1 JSON hello gets no reply, is a counted failure, and names the address", async () => {
     const responder = generateBoxKeypair();
     const initiator = generateBoxKeypair();
-    const ctx = {
+    const refused: string[] = [];
+    const failures: string[] = [];
+    const server = new LanServer({
+      bind: "127.0.0.1",
+      port: 0,
       hostKeypair: responder,
-      onMessage: async (m: string) => {
-        calls.push(m);
-        return { served: m };
-      },
-      isKnownPeer: (pk: Uint8Array) =>
-        Buffer.compare(Buffer.from(pk), Buffer.from(initiator.publicKey)) === 0
-          ? { peerId: "p", writeAllowed: false, protoVersion: 1 as const }
-          : null,
+      onMessage: async () => ({ never: true }),
+      isKnownPeer: () => ({ peerId: "p", writeAllowed: false, protoVersion: 1 }),
       registerPeer: () => "p",
-      rateLimit: { checkAllowed: () => true, recordFailure: () => {}, recordSuccess: () => {} },
+      rateLimit: {
+        checkAllowed: () => true,
+        recordFailure: (ip) => failures.push(ip),
+        recordSuccess: () => {},
+      },
       pairing: fakePairing(),
-      minProtocol: 1 as const,
-    };
-    // new client -> old server
-    const old = startLegacyOnlyServer(ctx);
-    stops.push(() => old.stop());
-    const viaNewClient = await sendFederatedOverWire(
-      "127.0.0.1",
-      old.port,
-      initiator,
-      responder.publicKey,
-      "federation.ping",
-      {},
-      2000,
-      { known: 1, minProtocol: 1 },
-    );
-    expect(viaNewClient).toEqual({ served: "federation.ping" });
-
-    // old client -> new server
-    const { server, port } = await startServer(responder, initiator, calls);
+      onOldWireRefused: (ip) => refused.push(ip),
+    });
+    await server.start();
     stops.push(() => server.stop());
-    const viaOldClient = await sendFederatedLegacy(
-      "127.0.0.1",
-      port,
-      initiator,
-      responder.publicKey,
-      "federation.ping",
-      {},
-      2000,
-    );
-    expect(viaOldClient).toEqual({ secret: SECRET_REPLY });
+    const port = (server.listenAddr() as { port: number }).port;
+    for (const kind of ["hello", "pair"]) {
+      const conn = await connectRaw(port);
+      conn.writeFrame(
+        new TextEncoder().encode(
+          JSON.stringify({
+            kind,
+            client_pubkey: Buffer.from(initiator.publicKey).toString("base64"),
+            pairing_code: "x",
+          }),
+        ),
+      );
+      expect(await conn.closed()).toBe(true);
+      expect(conn.received().length).toBe(0);
+    }
+    expect(refused).toEqual(["127.0.0.1", "127.0.0.1"]);
+    expect(failures).toEqual(["127.0.0.1", "127.0.0.1"]);
   });
 });

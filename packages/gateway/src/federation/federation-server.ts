@@ -18,8 +18,8 @@ export interface FederationLanConfig {
   readonly pairingWindowSeconds: number;
   readonly maxFailedAttempts: number;
   readonly lockoutSeconds: number;
-  /** `[lan] min_protocol` (LAN forward secrecy): 2 refuses the old wire for every peer. Default 1. */
-  readonly minProtocol?: 1 | 2;
+  /** Called with the address of a peer that opened the removed v1 wire (FS3): it must be upgraded. */
+  readonly onOldWireRefused?: (peerIp: string) => void;
 }
 
 export interface BuildFederationLanServerDeps {
@@ -72,7 +72,6 @@ function peerIdFor(pubkey: Uint8Array): string {
 export function pairingServiceFor(pairingWindow: PairingWindow): PairingService {
   return {
     isOpen: () => pairingWindow.isOpen(),
-    consume: (code) => pairingWindow.consume(code),
     currentPsk: () => pairingWindow.currentPsk(),
     consumeOpen: () => pairingWindow.consumeOpen(),
     open: (code) => pairingWindow.open(code),
@@ -110,7 +109,9 @@ export function buildFederationLanServer(deps: BuildFederationLanServerDeps): Fe
     hostKeypair: deps.identity,
     pairing: pairingServiceFor(pairingWindow),
     rateLimit,
-    minProtocol: deps.lan.minProtocol ?? 1,
+    ...(deps.lan.onOldWireRefused === undefined
+      ? {}
+      : { onOldWireRefused: deps.lan.onOldWireRefused }),
     isKnownPeer: (pubkey) => {
       const row = deps.index.getLanPeerByPubkey(pubkey);
       return row === undefined

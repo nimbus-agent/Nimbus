@@ -87,13 +87,12 @@ describe("runLan — dispatcher", () => {
     expect(out.stdout).toContain("(none)");
   });
 
-  it("status lists peers by protocol and warns while any peer is on v1 (FS2)", async () => {
+  it("status lists peers by protocol and warns that a peer still on v1 cannot connect (FS3)", async () => {
     const mock = createMockIpcClient([
       {
         enabled: true,
         pairingOpen: false,
         listenAddr: "127.0.0.1:7475",
-        minProtocol: 1,
         peers: [
           { peerId: "peer:aaaa", direction: "inbound", protoVersion: 2 },
           { peerId: "peer:bbbb", direction: "outbound", protoVersion: 1 },
@@ -103,11 +102,12 @@ describe("runLan — dispatcher", () => {
     ]);
     setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
     await runLan(["status"]);
-    expect(out.stdout).toContain("Min protocol: 1");
-    expect(out.stdout).toContain("1 on v2 (forward secret), 1 on v1");
+    expect(out.stdout).not.toContain("Min protocol");
+    expect(out.stdout).toContain("1 on v2 (forward secret), 1 on v1 (cannot connect)");
     expect(out.stdout).toMatch(/peer:aaaa\s+inbound\s+v2/);
     expect(out.stdout).toMatch(/peer:bbbb\s+outbound\s+v1/);
-    expect(out.stdout).toContain("WARNING: 1 peer(s) still use the v1 LAN wire");
+    expect(out.stdout).toContain("WARNING: 1 paired peer(s) are still recorded on the v1 LAN wire");
+    expect(out.stdout).toContain("Upgrade each one");
   });
 
   it("status prints no warning when every peer is on v2", async () => {
@@ -116,7 +116,6 @@ describe("runLan — dispatcher", () => {
         enabled: true,
         pairingOpen: false,
         listenAddr: null,
-        minProtocol: 2,
         peers: [{ peerId: "peer:aaaa", direction: "inbound", protoVersion: 2 }],
         peersByProtocol: { v1: 0, v2: 1 },
       },

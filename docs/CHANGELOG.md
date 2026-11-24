@@ -18,6 +18,10 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
 
 ## Post-Phase-6 deliveries
 
+- **2026-11-24: the old LAN wire is removed; a paired machine on a version from before LAN forward secrecy must be upgraded (Phase 10 LAN forward secrecy FS3; no migration, new invariant or IPC method; I56 and static D47 amended).**
+  What you can do now: every LAN call between gateways is a forward-secret Noise session, and nothing else exists. **A paired machine on a version from before FS1 must be upgraded to keep LAN federation with this gateway:** the old static-key wire it speaks is no longer served or spoken. This gateway closes such a connection with no reply and logs one line per hour naming the address; a call to such a peer fails with "no reply ... upgrade that peer"; `nimbus lan status` lists every peer's protocol and warns that a peer on `v1` cannot connect (it works again after its upgrade, with no re-pairing; `nimbus lan remove <peerId>` drops one that cannot be upgraded). A new peer pairs only with the code-keyed exchange, so both sides must be upgraded for that as well. Deleted: `ipc/lan-legacy.ts`, the plaintext `pair` handler, `sealBoxFrame`/`openBoxFrame`, the v1 retry, `PairingService.consume` and `[lan] min_protocol` (a `min_protocol = 1` line left in `nimbus.toml` is ignored with one boot warning and the gateway still starts; delete it). Static D47 now exempts no file and fails on any `lan-legacy*` file.
+  Stated bounds: the availability cost above (owner ruling 2026-11-24: shipped as a minor release, not a major); sessions recorded before the upgrade stay decryptable by a static-key holder; the Noise engine is ours and unreviewed (OR-FS-4); `nimbus lan rotate-identity` stays a recorded follow-up (OR-FS-2).
+
 - **2026-11-24: Phase 17 *Approve-from-push* closed by owner ruling (docs only).**
   The row closes on the CLI door Phase 10 IC5b shipped (`nimbus oncall pushed <id> --remediate`) and the desktop view of IC10b; the device-key-signed approval from a phone moves to Phase 11's *Mobile HITL signature* row, the same shape as ruling 4's close of ChatOps Remediate. Stated bound: a pushed brief is approved at a terminal, not on the device it reached.
 - **2026-11-24: the org-wide dependency sweep is complete (owner ruling OR-S4-DEPS, the last carried-in S4 item; no user-visible change).**
@@ -61,7 +65,7 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
   Stated bounds: the 30-minute grid; freshness of at most 24 hours; an all-day out-of-office does not block; no desktop screen; provider shapes are unverified live.
 
 - **2026-11-23: LAN pairing over Noise `XXpsk0` (Phase 10 LAN forward secrecy FS2; no migration, new invariant or static rule; I56 text extended).**
-  What you can do now: pairing is keyed by the pairing code, which is never sent, so a man in the middle cannot finish a pairing; a wrong code gets no reply; a newly paired peer starts at protocol 2. `nimbus lan status` and `lan.getStatus` list each peer's protocol version and warn while any is on the old wire. `[lan] min_protocol = 2` now accepts a pairing.
+  What you can do now: pairing is keyed by the pairing code, which is never sent, so a man in the middle cannot finish a pairing; a wrong code gets no reply; a newly paired peer starts at protocol 2. `nimbus lan status` and `lan.getStatus` list each peer's protocol version and warn while any is on the old wire. `[lan] min_protocol = 2` now accepts a pairing (FS3 later removed that setting).
   Stated bounds: a new pairing needs both gateways upgraded (owner ruling 2026-11-24: no plaintext fallback); the code is about 114 bits, below Noise Â§ 14's advice (OR-FS-6).
 
 - **2026-11-23: OpenCost and Kubecost cost sync (Phase 10 FinOps; owner ruling OR-S4-FINOPS; pins `@nimbus-dev/connectors` 0.17.0, 98 exported connectors and 97 bundled; no schema change, invariant, HITL type, egress class or IPC method; static D48 kept).**

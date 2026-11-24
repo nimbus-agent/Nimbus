@@ -18,13 +18,10 @@ test("lan.getStatus lists each peer's protocol and counts the v1 peers (FS2)", a
   const b = generateBoxKeypair().publicKey;
   index.addLanPeer({ peerId: "peer:aaaa", peerPubkey: a, direction: "inbound", protoVersion: 2 });
   index.addLanPeer({ peerId: "peer:bbbb", peerPubkey: b, direction: "outbound" });
-  index.setLanMinProtocol(2);
   const out = (await tryDispatchLanRpc(ctxWith({ localIndex: index }), "lan.getStatus", {})) as {
-    minProtocol: number;
     peers: Array<{ peerId: string; direction: string; protoVersion: number }>;
     peersByProtocol: { v1: number; v2: number };
   };
-  expect(out.minProtocol).toBe(2);
   expect(out.peersByProtocol).toEqual({ v1: 1, v2: 1 });
   expect(out.peers).toEqual([
     { peerId: "peer:aaaa", direction: "inbound", protoVersion: 2 },
@@ -35,12 +32,12 @@ test("lan.getStatus lists each peer's protocol and counts the v1 peers (FS2)", a
   index.close();
 });
 
-test("lan.getStatus without an index reports no peers and the default floor", async () => {
+test("lan.getStatus without an index reports no peers and no floor (FS3)", async () => {
   const out = (await tryDispatchLanRpc(ctxWith({}), "lan.getStatus", {})) as Record<
     string,
     unknown
   >;
   expect(out["peers"]).toEqual([]);
   expect(out["peersByProtocol"]).toEqual({ v1: 0, v2: 0 });
-  expect(out["minProtocol"]).toBe(1);
+  expect("minProtocol" in out).toBe(false);
 });

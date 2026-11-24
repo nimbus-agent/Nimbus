@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import type { Socket } from "bun";
-import { type BoxKeypair, generateBoxKeypair, sealBoxFrame } from "../../../src/ipc/lan-crypto.ts";
+import { sendFederatedOverWire } from "../../../src/ipc/lan-client.ts";
+import { type BoxKeypair, generateBoxKeypair } from "../../../src/ipc/lan-crypto.ts";
+import { outboundPairHandshake } from "../../../src/ipc/lan-pair-client.ts";
 import { generatePairingCode, PairingWindow } from "../../../src/ipc/lan-pairing.ts";
 import { LanRateLimiter } from "../../../src/ipc/lan-rate-limit.ts";
 import { checkLanMethodAllowed } from "../../../src/ipc/lan-rpc.ts";
 import { LanServer } from "../../../src/ipc/lan-server.ts";
+import { connectV2 } from "../../../src/ipc/testing/lan-v2.test-helpers.ts";
 
 interface TestHost {
   server: LanServer;
@@ -29,7 +31,7 @@ async function spinUpHost(port: number): Promise<TestHost> {
     isKnownPeer: (pubkey) => {
       for (const [id, p] of peers) {
         if (Buffer.compare(Buffer.from(p.pubkey), Buffer.from(pubkey)) === 0) {
-          return { peerId: id, writeAllowed: p.writeAllowed, protoVersion: 1 };
+          return { peerId: id, writeAllowed: p.writeAllowed, protoVersion: 2 };
         }
       }
       return null;
@@ -48,14 +50,7 @@ async function spinUpHost(port: number): Promise<TestHost> {
   return { server, pairing, rateLimit, hostKp, peers };
 }
 
-function writeFrame(socket: Socket<undefined>, payload: Uint8Array): void {
-  const header = new Uint8Array(4);
-  new DataView(header.buffer).setUint32(0, payload.length, false);
-  socket.write(header);
-  socket.write(payload);
-}
-
-describe("LAN end-to-end pair → read → write → tamper", () => {
+describe("LAN end-to-end pair -> read -> write -> tamper (v2)", () => {
   let host: TestHost;
   beforeEach(async () => {
     host = await spinUpHost(0);
@@ -64,75 +59,47 @@ describe("LAN end-to-end pair → read → write → tamper", () => {
     await host.server.stop();
   });
 
-  test("full 9-step flow", async () => {
+  test("full flow", async () => {
     const listen = host.server.listenAddr();
     if (!listen) throw new Error("no listen addr");
-
     const clientKp = generateBoxKeypair();
 
+    // 1. Pair: Noise XXpsk0 keyed by the code; the window is consumed once message 3 opened.
     const code = generatePairingCode();
     host.pairing.open(code);
-
-    const sock = await Bun.connect<undefined>({
-      hostname: "127.0.0.1",
-      port: listen.port,
-      socket: { data() {}, open() {}, close() {}, error() {} },
-    });
-    writeFrame(
-      sock,
-      new TextEncoder().encode(
-        JSON.stringify({
-          kind: "pair",
-          client_pubkey: Buffer.from(clientKp.publicKey).toString("base64"),
-          pairing_code: code,
-        }),
-      ),
-    );
-
-    await Bun.sleep(50);
+    const hostPub = await outboundPairHandshake("127.0.0.1", listen.port, code, clientKp);
+    expect(Buffer.from(hostPub).equals(Buffer.from(host.hostKp.publicKey))).toBe(true);
     expect(host.peers.size).toBe(1);
-
-    const [peerId] = [...host.peers.keys()];
-    const readReq = sealBoxFrame(
-      new TextEncoder().encode(
-        JSON.stringify({ id: 1, method: "index.search", params: { q: "x" } }),
-      ),
-      host.hostKp.publicKey,
-      clientKp.secretKey,
-    );
-    writeFrame(sock, readReq);
-    await Bun.sleep(50);
-
-    expect(peerId).toBeDefined();
-    if (!peerId) throw new Error("no peerId");
-    const peer = host.peers.get(peerId);
-    if (!peer) throw new Error("peer not registered");
-    peer.writeAllowed = true;
-
-    const writeReq = sealBoxFrame(
-      new TextEncoder().encode(JSON.stringify({ id: 2, method: "engine.ask", params: {} })),
-      host.hostKp.publicKey,
-      clientKp.secretKey,
-    );
-    writeFrame(sock, writeReq);
-    await Bun.sleep(50);
-
-    const tampered = sealBoxFrame(
-      new TextEncoder().encode(JSON.stringify({ id: 3, method: "index.search", params: {} })),
-      host.hostKp.publicKey,
-      clientKp.secretKey,
-    );
-    tampered[tampered.length - 1] = (tampered.at(-1) ?? 0) ^ 0xff;
-    writeFrame(sock, tampered);
-    await Bun.sleep(50);
-    sock.end();
-
-    await Bun.sleep(2100);
     expect(host.pairing.isOpen()).toBe(false);
 
-    for (let i = 0; i < 4; i++) {
-      host.rateLimit.recordFailure("192.0.2.3");
-    }
+    const call = (method: string) =>
+      sendFederatedOverWire("127.0.0.1", listen.port, clientKp, hostPub, method, {}, 5000, {
+        known: 2,
+      });
+
+    // 2. A read method is served.
+    expect(await call("index.search")).toEqual({ ok: true, echo: "index.search" });
+
+    // 3. A write method is refused without the grant, and served with it.
+    await expect(call("engine.ask")).rejects.toThrow("ERR_LAN_WRITE_FORBIDDEN");
+    const [peerId] = [...host.peers.keys()];
+    const peer = peerId === undefined ? undefined : host.peers.get(peerId);
+    if (!peer) throw new Error("peer not registered");
+    peer.writeAllowed = true;
+    expect(await call("engine.ask")).toEqual({ ok: true, echo: "engine.ask" });
+
+    // 4. A tampered record ends the session and is a counted failure; nothing is dispatched for it.
+    const x = await connectV2(listen.port, clientKp, hostPub);
+    const [record] = x.session.sealMessage(
+      new TextEncoder().encode(JSON.stringify({ id: 3, method: "index.search", params: {} })),
+    );
+    const tampered = (record as Uint8Array).slice();
+    tampered[tampered.length - 1] = (tampered.at(-1) ?? 0) ^ 0xff;
+    x.conn.writeFrame(tampered);
+    expect(await x.conn.closed()).toBe(true);
+
+    // 5. The rate limiter locks out an address after repeated failures.
+    for (let i = 0; i < 4; i++) host.rateLimit.recordFailure("192.0.2.3");
     expect(host.rateLimit.checkAllowed("192.0.2.3")).toBe(false);
   });
 });

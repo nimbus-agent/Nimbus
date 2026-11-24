@@ -76,14 +76,6 @@ describe("XXpsk0 pairing: the happy path", () => {
     expect(h.registered).toHaveLength(1);
     expect(h.failures).toHaveLength(1);
   });
-
-  test("works under min_protocol = 2 (pairing no longer needs the v1 frames)", async () => {
-    const h = await startHarness({ minProtocol: 2 });
-    const code = generatePairingCode();
-    h.window.open(code);
-    await outboundPairHandshake("127.0.0.1", h.port, code, generateBoxKeypair());
-    expect(h.registered).toHaveLength(1);
-  });
 });
 
 describe("XXpsk0 pairing: a wrong or absent code", () => {
