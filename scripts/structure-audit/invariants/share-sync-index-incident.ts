@@ -367,13 +367,14 @@ export function checkIncidentRecordConfinement(files: readonly FileEntry[]): Vio
 const D46E_SRC = "packages/gateway/src/";
 const D46E_MINT = `${D46E_SRC}incident/incident-link-mint.ts`;
 // The files that may NAME the minter: its own module and each module that runs a linked owner action (IC5a's
-// remediation, IC7a's post-mortem push, IC9b's incident update send, IC6's runbook steps).
+// remediation, IC7a's post-mortem push, IC9b's incident update send, IC6's runbook steps, and owner ruling 9's live investigation reads).
 const D46E_MINT_USERS: readonly string[] = [
   D46E_MINT,
   `${D46E_SRC}incident/remediation.ts`,
   `${D46E_SRC}postmortem/postmortem-push.ts`,
   `${D46E_SRC}incident-update/update-send.ts`,
   `${D46E_SRC}runbook/runbook-run.ts`,
+  `${D46E_SRC}investigation/investigation-live.ts`,
 ];
 const D46E_LINK = `${D46E_SRC}engine/incident-link.ts`;
 const D46E_READERS: readonly string[] = [

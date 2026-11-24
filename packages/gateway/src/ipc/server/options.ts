@@ -21,6 +21,7 @@ import type { PeerPairing } from "../../federation/peer-pairing.ts";
 import type { GlossaryRefresher } from "../../glossary/glossary-refresh.ts";
 import type { IdentityStore } from "../../identity/identity-store.ts";
 import type { LocalIndex } from "../../index/local-index.ts";
+import type { LiveInvestigator } from "../../investigation/investigation-live.ts";
 import type { LlmRegistry } from "../../llm/registry.ts";
 import type { SessionMemoryStore } from "../../memory/session-memory-store.ts";
 import type { OwnershipRefresher } from "../../ownership/ownership-refresh.ts";
@@ -249,6 +250,9 @@ export type CreateIpcServerOptions = {
   // Incident records (Phase 10 IC3). Backs incident.list / get / assemble: served only to a `cli` or `ui`
   // connection; LAN-forbidden (I5), not Tauri-exposed (I7). The dispatcher skips when unset.
   incidentRpcCtx?: IncidentRpcCtx;
+  // `nimbus incident investigate --live` (owner ruling 9): the live Sentry reader. Bound by `gateway-main.ts`; unset on a
+  // demo gateway (I41). `cli` connections only (checked per call); LAN-forbidden (I5), not Tauri-exposed (I7).
+  investigationLive?: LiveInvestigator;
   // OS notifications (pre-S3 item E). Backs notifications.status / notifications.test; CLI-only —
   // LAN-forbidden (I5) and not Tauri-exposed (I7). Present once assembled at boot (a demo or an
   // unsupported platform still reports its inactive status); the dispatcher skips when unset.

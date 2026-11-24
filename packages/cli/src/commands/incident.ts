@@ -27,7 +27,7 @@ import { runRunbookCommand } from "./incident-runbook.ts";
 import { runUpdateCommand } from "./incident-update.ts";
 
 /**
- * `nimbus incident list | show <id> | timeline <id> | investigate <id>` (Phase 10 IC3, IC4, IC9a): the incident records the gateway assembled from the local
+ * `nimbus incident list | show <id> | timeline <id> | investigate <id> [--live]` (Phase 10 IC3, IC4, IC9a): the incident records the gateway assembled from the local
  * index, with no model and nothing leaving the machine. The three `incident.*` methods answer only a connection
  * that DECLARED `cli` or `ui`, so every subcommand declares `cli` before its first call. The Markdown may carry
  * text from the index (a title, a chat message), so every line is stripped of control characters before it
@@ -127,8 +127,12 @@ async function investigateRecord(
   sink: IncidentSink,
 ): Promise<number> {
   await declareCliClientKind(c);
-  if (a.synthesize === true) return investigateSynthesized(c, a.id, a.json, sink);
-  const r = await c.call<InvestigateReply>("incident.investigate", { id: a.id });
+  const live = a.live === true ? { live: true, ...budgetParam(a.liveBudget) } : {};
+  if (a.synthesize === true) return investigateSynthesized(c, a.id, a.json, sink, live);
+  const r = await c.call<InvestigateReply>(
+    a.live === true ? "incident.investigateLive" : "incident.investigate",
+    a.live === true ? { id: a.id, ...budgetParam(a.liveBudget) } : { id: a.id },
+  );
   if (a.json) sink.out(`${JSON.stringify(r)}\n`);
   else sink.out(`${cleanMarkdown(r.markdown).trimEnd()}\n`);
   return 0;
@@ -150,13 +154,18 @@ function synthesisNote(s: SynthesizedReply["synthesis"]): string {
   return `The model's rewrite was not used (${stripTerminalText(s.reason ?? "unknown")}); this is the deterministic investigation.`;
 }
 
+function budgetParam(seconds: number | undefined): { budgetSeconds?: number } {
+  return seconds === undefined ? {} : { budgetSeconds: seconds };
+}
+
 async function investigateSynthesized(
   c: IncidentIpc,
   id: string,
   json: boolean,
   sink: IncidentSink,
+  live: { live?: boolean; budgetSeconds?: number },
 ): Promise<number> {
-  const r = await c.call<SynthesizedReply>("incident.investigateSynthesize", { id });
+  const r = await c.call<SynthesizedReply>("incident.investigateSynthesize", { id, ...live });
   if (json)
     sink.out(`${JSON.stringify(r)}
 `);
@@ -295,8 +304,8 @@ export async function runIncidentCommand(args: string[]): Promise<void> {
   // A run or an undo blocks on the executor's prompt, which only a person answers: the long budget and a
   // consent choice that ignores NIMBUS_SCRIPT_CONSENT_SOURCE (as `nimbus approvals <id>`).
   const asksOwner = (a.verb === "remediate" && a.pick !== undefined) || a.verb === "undo";
-  // A synthesis waits on a model, as a run waits on the owner's answer: the long budget for both.
-  const asksModel = a.verb === "investigate" && a.synthesize === true;
+  // A synthesis waits on a model, and a live read on the backend: the long budget for each, as a run waits on the owner.
+  const asksModel = a.verb === "investigate" && (a.synthesize === true || a.live === true);
   const gatewayOptions = asksOwner
     ? { consent: { kind: "human" as const }, requestTimeoutMs: BATCH_RPC_TIMEOUT_MS }
     : asksModel

@@ -772,8 +772,8 @@ describe("I57 (c) - a runbook parameter interpolates only typed record fields, a
     expect(run).toContain("const incident = mintIncidentLink(db, recordId);");
     const asm = await read("packages/gateway/src/platform/assemble.ts");
     const at = asm.indexOf("const runbooks = createRunbooks({");
-    expect(at).toBeGreaterThan(-1);
-    expect(asm.slice(at, at + 500)).toContain("return incidentExecutorFactory(o);");
+    expect(asm.slice(at, at + 500)).toContain("makeExecutor: incidentExecutor,");
+    expect(asm).toContain("return incidentExecutorFactory(o);");
     // Nothing the model, an outside agent or a workflow reaches imports the runbook module.
     for (const rel of [
       "packages/gateway/src/engine/connector-write-agent-tools.ts",

@@ -117,6 +117,7 @@ import { createRemediation, type MakeExecutor } from "../incident/remediation.ts
 import { readUnreadChatThreads } from "../index/chat-unread-query.ts";
 import { startItemHistoryRetention } from "../index/item-history-retention.ts";
 import { gitAwareRootPaths, loadRegisteredRoots } from "../index/registered-roots-store.ts";
+import { createLiveInvestigator } from "../investigation/investigation-live.ts";
 import { resumePendingRemovals } from "../ipc/connector-rpc-handlers/index.ts";
 import type { EgressRpcCtx } from "../ipc/egress-rpc.ts";
 import { emitGatewayEvent, setGatewayEventBroadcast } from "../ipc/gateway-events.ts";
@@ -1431,12 +1432,13 @@ export async function assemblePlatformServices(
   // IC5a: the remediation service. The executor factory is bound by `gateway-main.ts` (it owns the connector
   // dispatcher and the egress sink); until then, and on a demo gateway (I41), remediate and undo refuse.
   let incidentExecutorFactory: MakeExecutor | undefined;
+  const incidentExecutor: MakeExecutor = (o) => {
+    if (incidentExecutorFactory === undefined) throw new Error("no remediation executor");
+    return incidentExecutorFactory(o);
+  };
   const remediation = createRemediation({
     db,
-    makeExecutor: (o) => {
-      if (incidentExecutorFactory === undefined) throw new Error("no remediation executor");
-      return incidentExecutorFactory(o);
-    },
+    makeExecutor: incidentExecutor,
     ready: () => incidentExecutorFactory !== undefined,
     bindingsFor: (service) => loadServiceBindings(paths.configDir, service),
     // A malformed block degrades to an empty blast radius here (the listing must still work).
@@ -1452,14 +1454,12 @@ export async function assemblePlatformServices(
   // factory as remediation (human-only consent on the asking connection, no delegation, no standing rule).
   const runbooks = createRunbooks({
     db,
-    makeExecutor: (o) => {
-      if (incidentExecutorFactory === undefined) throw new Error("no remediation executor");
-      return incidentExecutorFactory(o);
-    },
+    makeExecutor: incidentExecutor,
     ready: () => incidentExecutorFactory !== undefined,
     configDir: () => paths.configDir,
     bindingsFor: (service) => loadServiceBindings(paths.configDir, service),
   });
+  ipcOpts.investigationLive = createLiveInvestigator({ db, makeExecutor: incidentExecutor });
   // IC5b (approve-from-push): the push carries its record's top proposal, read through the owner listing only.
   oncallPush.bindTopProposal((recordId) => remediation.topProposal(recordId));
   ipcOpts.incidentRpcCtx = {

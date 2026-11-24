@@ -22,7 +22,7 @@ export const INCIDENT_USAGE =
   "Usage: nimbus incident list [--open] [--service <id>] [--source <service>] [--limit <n>] [--cascade] [--json]\n" +
   "       nimbus incident show <id> [--json]\n" +
   "       nimbus incident timeline <id> [--version <n>] [--json]\n" +
-  "       nimbus incident investigate <id> [--synthesize] [--json]\n" +
+  "       nimbus incident investigate <id> [--live [--live-budget <seconds>]] [--synthesize] [--json]\n" +
   `${REMEDIATE_USAGE}
 ` +
   `${DEBT_USAGE_LINE}\n` +
@@ -50,6 +50,9 @@ export type IncidentArgs =
       readonly json: boolean;
       readonly id: string;
       readonly synthesize?: boolean;
+      /** Owner ruling 9: read the bound backend (Sentry) now, through the gateway's gate, in addition to the index. */
+      readonly live?: boolean;
+      readonly liveBudget?: number;
     }
   | {
       readonly verb: "timeline";
@@ -127,25 +130,56 @@ export function parseIncidentArgs(argv: readonly string[]): IncidentArgs | undef
       ...(flags.limit === undefined ? {} : { limit: flags.limit }),
     };
   }
-  if (verb === "show" || verb === "investigate") {
+  if (verb === "show") {
     const json = rest.filter((a) => a === "--json");
-    // --synthesize belongs to investigate only: the model is asked only when the owner types it.
-    const synth: string[] = verb === "investigate" ? rest.filter((a) => a === "--synthesize") : [];
-    const ids = rest.filter((a) => a !== "--json" && !synth.includes(a));
+    const ids = rest.filter((a) => a !== "--json");
     const [id] = ids;
-    if (json.length > 1 || synth.length > 1) return undefined;
+    if (json.length > 1) return undefined;
     if (ids.length !== 1 || id === undefined || id.startsWith("--")) return undefined;
-    return {
-      verb,
-      json: json.length === 1,
-      id,
-      ...(synth.length === 1 ? { synthesize: true } : {}),
-    };
+    return { verb, json: json.length === 1, id };
   }
+  if (verb === "investigate") return parseInvestigateArgs(rest);
   if (verb === "timeline") return parseTimelineArgs(rest);
   if (verb === "debt") return parseDebtArgs(rest);
   if (verb === "findings") return parseFindingsArgs(rest);
   return parseRemediationArgs(verb, rest);
+}
+
+/** `investigate <id> [--live [--live-budget <seconds>]] [--synthesize] [--json]`; each flag at most once. */
+function parseInvestigateArgs(rest: readonly string[]): IncidentArgs | undefined {
+  let json = false;
+  let synthesize = false;
+  let live = false;
+  let liveBudget: number | undefined;
+  let id: string | undefined;
+  for (let i = 0; i < rest.length; i += 1) {
+    const a = rest[i] as string;
+    if (a === "--json" || a === "--synthesize" || a === "--live") {
+      if (a === "--json" ? json : a === "--live" ? live : synthesize) return undefined;
+      if (a === "--json") json = true;
+      else if (a === "--live") live = true;
+      else synthesize = true;
+    } else if (a === "--live-budget") {
+      const v = takeValue(rest, i);
+      if (v === undefined || liveBudget !== undefined || !/^\d{1,2}$/.test(v)) return undefined;
+      liveBudget = Number(v);
+      if (liveBudget < 1 || liveBudget > 60) return undefined;
+      i += 1;
+    } else if (a.startsWith("--") || id !== undefined) {
+      return undefined;
+    } else {
+      id = a;
+    }
+  }
+  if (id === undefined || (liveBudget !== undefined && !live)) return undefined;
+  return {
+    verb: "investigate",
+    json,
+    id,
+    ...(synthesize ? { synthesize: true } : {}),
+    ...(live ? { live: true } : {}),
+    ...(liveBudget === undefined ? {} : { liveBudget }),
+  };
 }
 
 function parseTimelineArgs(rest: readonly string[]): IncidentArgs | undefined {
