@@ -94,7 +94,7 @@ async function listNewRuns(
       const after =
         run.finishedAtMs > since.ms || (run.finishedAtMs === since.ms && run.runId > since.runId);
       if (after) runs.push(run);
-      else reachedOld = true;
+      else if (run.finishedAtMs < since.ms) reachedOld = true;
     }
     if (reachedOld || rows.length < RUN_PAGE_SIZE) break;
   }

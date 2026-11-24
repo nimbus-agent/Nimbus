@@ -32,15 +32,35 @@ export const MAX_ARTIFACT_BYTES = 32 * 1024 * 1024;
 
 type FetchFn = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
-/** `globalThis.fetch` read at call time, refusing a body that announces itself over the artifact cap. */
+const tooLarge = (): Response => new Response(null, { status: 413 });
+
+/**
+ * `globalThis.fetch` read at call time, refusing a body over the artifact cap: by its announced
+ * `Content-Length`, and by the bytes actually read (a missing or understated header is not trusted), so the
+ * body is never buffered past the cap.
+ */
 const cappedFetch: FetchFn = async (input, init) => {
   const res = await (globalThis.fetch as FetchFn)(input, init);
   const announced = Number(res.headers.get("content-length"));
   if (Number.isFinite(announced) && announced > MAX_ARTIFACT_BYTES) {
     await res.body?.cancel();
-    return new Response(null, { status: 413 });
+    return tooLarge();
   }
-  return res;
+  if (res.body === null) return res;
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > MAX_ARTIFACT_BYTES) {
+      await reader.cancel();
+      return tooLarge();
+    }
+    chunks.push(value);
+  }
+  return new Response(new Blob(chunks), { status: res.status, headers: res.headers });
 };
 
 export function dbtGet(ctx: SyncContext, creds: DbtCreds, path: string, capped = false) {

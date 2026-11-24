@@ -10,7 +10,7 @@ import {
 } from "./connector-sync-test-helpers.ts";
 import { createDbtSyncable } from "./dbt-sync.ts";
 import { MAX_RUNS_PER_PASS } from "./dbt-test-sync.ts";
-import { decodeNimbusJsonCursorObject } from "./nimbus-json-cursor.ts";
+import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 
 const NOW = Date.now();
 const FAIL_UID = "test.shop.not_null_orders_id.abc";
@@ -245,6 +245,55 @@ describeWithFetchRestore("dbt test results", () => {
     seen.length = 0;
     await syncable().sync(fast(), r.cursor);
     expect(seen).toEqual([200 + total - 1]);
+  });
+
+  test("a body over the cap with no Content-Length is refused by the bytes read", async () => {
+    const db = createMemoryIndexDb();
+    const chunk = new Uint8Array(1024 * 1024).fill(120);
+    let sent = 0;
+    globalThis.fetch = route((u) => {
+      if (u.includes("run_results.json")) {
+        const body = new ReadableStream<Uint8Array>({
+          pull(controller) {
+            sent += 1;
+            if (sent > 40) controller.close();
+            else controller.enqueue(chunk);
+          },
+        });
+        return new Response(body, { status: 200 });
+      }
+      if (u.includes("/runs/?")) return json({ data: [run(7, 5)] });
+      return undefined;
+    });
+    await syncable().sync(syncTestContext(db, vault(), "dbt"), null);
+    expect(testRows(db)).toHaveLength(0);
+    expect(sent).toBeLessThan(40); // the read stopped at the cap, not at the end of the body
+  });
+
+  test("a tie at the cursor on one page does not stop the listing before the next page", async () => {
+    const db = createMemoryIndexDb();
+    const same = new Date(NOW - 60_000).toISOString();
+    const at = (id: number) => ({ ...run(id, 1), finished_at: same });
+    const page1 = Array.from({ length: 100 }, (_, i) => at(i + 1));
+    const seen: number[] = [];
+    globalThis.fetch = route((u) => {
+      const m = /\/runs\/(\d+)\/artifacts\/run_results\.json/.exec(u);
+      if (m !== null) {
+        seen.push(Number(m[1]));
+        return json({ results: [] });
+      }
+      if (u.includes("/runs/?")) {
+        return json({ data: u.includes("offset=100") ? [at(500)] : page1 });
+      }
+      return undefined;
+    });
+    const cursor = encodeNimbusJsonCursor("nimbus-dbt1:", {
+      pass: 1,
+      tests: { "42": Date.parse(same) },
+      testRuns: { "42": 100 },
+    });
+    await syncable().sync(syncTestContext(db, vault(), "dbt"), cursor);
+    expect(seen).toEqual([500]);
   });
 
   test("a pass handles the oldest runs first, at most the per-pass cap, and resumes after the last", async () => {

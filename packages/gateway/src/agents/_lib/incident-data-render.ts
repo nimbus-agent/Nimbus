@@ -59,6 +59,9 @@ function orchestrationLines(d: DataLane): string[] {
 }
 
 function dbtLines(d: DataLane): string[] {
+  if (d.dbtTests === undefined && d.totals.dbtTests === undefined) {
+    return ["_dbt test results were not collected for this record._"];
+  }
   const tests = d.dbtTests ?? [];
   const total = d.totals.dbtTests ?? tests.length;
   if (total === 0) return ["_No failing or warning dbt test found for these models._"];

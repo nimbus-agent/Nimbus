@@ -137,10 +137,21 @@ describe("the dbt tests section", () => {
     expect(md).not.toContain("No failing or warning dbt test");
   });
 
-  test("a record stored before dbt tests existed reads as none found", () => {
+  test("a record stored before dbt tests existed says they were not collected, never none found", () => {
     const { dbtTests: _drop, ...old } = buildDataLane();
     const { dbtTests: _t, ...totals } = old.totals;
     const md = renderIncidentData(buildDataBriefFixture({ data: { ...old, totals } }));
+    expect(md).toContain("_dbt test results were not collected for this record._");
+    expect(md).not.toContain("No failing or warning dbt test");
+  });
+
+  test("a recorded zero total reads as none found", () => {
+    const base = buildDataLane();
+    const md = renderIncidentData(
+      buildDataBriefFixture({
+        data: { ...base, dbtTests: [], totals: { ...base.totals, dbtTests: 0 } },
+      }),
+    );
     expect(md).toContain("_No failing or warning dbt test found for these models._");
   });
 });
