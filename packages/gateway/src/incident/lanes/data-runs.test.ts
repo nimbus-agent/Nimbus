@@ -229,4 +229,45 @@ describe("the data lane's runs", () => {
       ["prefect", "failed", "orders deployment"],
     ]);
   });
+
+  test("a stored run with almost no metadata still reads: nulls, no tasks, an unknown outcome", () => {
+    const d = db();
+    dag(d, "orders_etl");
+    const put = (externalId: string, metadata: Record<string, unknown>): void => {
+      upsertIndexedItem(
+        d,
+        {
+          service: "airflow",
+          type: "dag_run",
+          externalId,
+          title: externalId,
+          bodyPreview: "",
+          modifiedAt: T0,
+          syncedAt: T0,
+          metadata,
+        },
+        resolver,
+      );
+    };
+    put("orders_etl|bare", { parent_item_id: "airflow:orders_etl", outcome: "failed" });
+    put("orders_etl|weird", {
+      parent_item_id: "airflow:orders_etl",
+      outcome: "mystery",
+      start_ms: OPEN - HOUR,
+      failed_tasks: "not a list",
+    });
+    const runs = lane(d).lane.runs ?? [];
+    const bare = (lane(d, null).lane.runs ?? []).find((r) => r.id.endsWith("|bare"));
+    expect(bare).toMatchObject({
+      state: null,
+      startMs: null,
+      endMs: null,
+      trigger: null,
+      failedTasks: [],
+      failedTaskCount: 0,
+    });
+    // `bare` has no start, so only a failed run with no open time lists it; `weird` is in the window.
+    expect(runs.map((r) => r.outcome)).toEqual(["other"]);
+    expect(lane(d, null).lane.runs?.map((r) => r.outcome)).toEqual(["failed"]);
+  });
 });

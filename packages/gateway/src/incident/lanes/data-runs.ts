@@ -33,8 +33,9 @@ type RunRow = {
 function num(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
-function str(v: unknown): string | null {
-  return typeof v === "string" ? v : null;
+/** A provider string as one capped display line, or null when it is not a string. */
+function lineOrNull(v: unknown, max: number): string | null {
+  return typeof v === "string" ? oneLine(v, max) : null;
 }
 
 /** The query only returns rows whose metadata is valid JSON with a non-null `parent_item_id`, so it is an object. */
@@ -49,14 +50,14 @@ function viewOf(r: RunRow, jobTitle: string): DataRunView {
     service: r.service,
     type: r.type,
     job: oneLine(jobTitle),
-    state: str(m["state"]) === null ? null : oneLine(str(m["state"]) ?? ""),
+    state: lineOrNull(m["state"], 120),
     outcome:
       outcome === "failed" || outcome === "success" || outcome === "running" ? outcome : "other",
     startMs: num(m["start_ms"]),
     endMs: num(m["end_ms"]),
     failedTasks: tasks.slice(0, RUN_TASK_CAP).map((t) => oneLine(t, 120)),
     failedTaskCount: num(m["failed_task_count"]) ?? tasks.length,
-    trigger: str(m["trigger"]) === null ? null : oneLine(str(m["trigger"]) ?? "", 40),
+    trigger: lineOrNull(m["trigger"], 40),
     url: r.url,
     rule: "data:run_of_matched_job",
   };

@@ -23,7 +23,7 @@ interface FakeAirflowConfig {
   totalEntries?: number;
   status?: number;
   // DAG runs and failed task instances served on the run endpoints (a missing list is an empty one).
-  runs?: unknown[];
+  runs?: unknown;
   failedTasks?: unknown[];
   // The run endpoints answer HTTP 500.
   runsFail?: boolean;
@@ -334,5 +334,36 @@ describe("airflow-sync against Bun.serve fake API", () => {
     const syncable = createAirflowSyncable({ ensureAirflowMcpRunning: async () => {} });
     await syncable.sync(h.ctx, null);
     expect(h.fake.runRequests).toHaveLength(5);
+  });
+
+  test("malformed failed-task rows and a non-list run reply are skipped, never thrown", async () => {
+    h = startHarness({
+      pages: { "0": [dag("nightly_etl")] },
+      runs: [{ dag_id: "nightly_etl", dag_run_id: "r1", state: "failed" }],
+      failedTasks: [
+        null,
+        { dag_run_id: "r1", task_id: "t" },
+        { dag_id: "nightly_etl", task_id: "t" },
+        { dag_id: "nightly_etl", dag_run_id: "r1" },
+        { dag_id: "nightly_etl", dag_run_id: "r1", task_id: "good" },
+      ],
+    });
+    await setCreds(h);
+    const syncable = createAirflowSyncable({ ensureAirflowMcpRunning: async () => {} });
+    await syncable.sync(h.ctx, null);
+    const row = h.db
+      .query<{ metadata: string }, []>(
+        "SELECT metadata FROM item WHERE service = 'airflow' AND type = 'dag_run'",
+      )
+      .get();
+    expect((JSON.parse(row?.metadata ?? "{}") as Record<string, unknown>)["failed_tasks"]).toEqual([
+      "good",
+    ]);
+    h.cleanup();
+
+    h = startHarness({ pages: { "0": [dag("a")] }, runs: { oops: true } });
+    await setCreds(h);
+    const result = await syncable.sync(h.ctx, null);
+    expect(result.itemsUpserted).toBe(1);
   });
 });
