@@ -18,6 +18,77 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-11-24: `nimbus incident investigate <id> --live` (S4; owner ruling 9; static D46(h); I57 (a) text extended; no migration, invariant, HITL type or allowlist entry).**
+  What you can do now: `nimbus incident investigate <id> --live [--live-budget <seconds>]` also reads Sentry now, from the terminal only: one gated, audited, ledgered read per declared `sentry_projects` entry (at most 5), inside a time budget (15 seconds by default, 1 to 60) and a result budget (25 issues), showing only unresolved issues of the bound projects that were active inside the incident window. Nothing is stored; a read that failed, was refused or ran out of time is a line under Gaps; a model sees the rows only if you also pass `--synthesize`. Datadog, Grafana, New Relic and CloudWatch still have no live read.
+  Stated bounds: unresolved issues only; project-and-time correlation, not causation; Sentry reply shapes are not verified against a live account; the declared client kind is the client's own claim on the local socket.
+
+- **2026-11-24: model-written lead for an incident update (S4; owner ruling OR-S4-SCRIBE; I31 and I11 extended; no migration, invariant, HITL type or allowlist change).**
+  What you can do now: `nimbus incident update <id> --synthesize` has the model write ONE lead paragraph above the unchanged update facts (the 23rd brief kind, `incident_update`, whose update text and disclosure footer are reserved). It is owner-requested only and posts nothing; the post is still your `--send`. The unattended scribe stays model-free.
+  Stated bounds: the lead is model output; the facts below it are the deterministic update, verbatim.
+
+- **2026-11-24: `nimbus iac accept-drift --workdir <dir>` (S4; owner ruling OR-S4-ACCEPT-DRIFT; static D42(k); I54 text extended; no migration, invariant or HITL type).**
+  What you can do now: the owner's entry point for accepting Terraform drift into state. `iac.acceptDrift` answers `cli` connections only (the `iac` namespace stays LAN-forbidden and off the Tauri allowlist), through an executor with no delegation, no standing rules and human-only consent, and you type `iac/accept-drift <dir>`. The model is still never offered the row.
+  Stated bounds: reply shapes are not verified against a live Terraform; no desktop action.
+
+- **2026-11-24: a PagerDuty incident of a service that declares `data_models` renders the Data Incident Brief (S4; owner ruling OR-S4-DATA; no migration, invariant or IPC method).**
+  What you can do now: a PagerDuty incident whose bound `[ci.service.<id>]` declares `data_models` is a data incident too, and its record takes that service's indexed models by glob and renders the data-first brief.
+  Stated bounds: PagerDuty incidents carry no tag the index keeps, so a `data` tag is not read; DAG-run logs, dbt test results and warehouse schema deltas are still not indexed.
+
+- **2026-11-24: the Terraform apply preview shows a plan's moves (a fix; I54).**
+  The apply approval now also lists the objects Terraform moves in the state (`[moved in the state] <from> -> <to>`, `(moved from <from>)`, `Moves: N` in the counts and footer when present).
+  Stated bounds: a non-string `previous_address` refuses the plan.
+
+- **2026-11-23: long-term episodic memory (Phase 10; owner rulings OR-S4-MEM and OR-S4-MEM-RECALL; migration V107; new invariant I61, static D52; no allowlist change, HITL type or egress class).**
+  What you can do now: set `[memory] episodic = true` (off by default; `retention_days` 7 to 365, default 90) and the local owner's own conversational turns (the request and the final answer, never tool output, connector content, retrieved items or MCP client text) are summarised by the LOCAL model after 30 minutes of silence, embedded by the LOCAL embedder, and recalled into later prompts as an UNTRUSTED I11 envelope, only to a local answering model unless `[memory] recall_remote = true`. `nimbus memory list [--json]` and `nimbus memory forget <id>|--all` manage them. A demo gateway keeps nothing.
+  Stated bounds: the final answer is model output; with `recall_remote` a note goes to whatever model answers the turn; only conversational turns with a session id; session end is silence.
+
+- **2026-11-23: the personalization layer (Phase 10; owner ruling OR-S4-PERS; I53 text amended; no migration, IPC method or static rule).**
+  What you can do now: `[personalization]` holds `tone`, `verbosity`, `tool_order` and `hide_tools`, all explicit and never inferred. Hidden tools are removed from the model's offer AFTER every I53, I60, I35 and I42 check and ordering never changes membership, so a tool a door refuses stays refused; unknown names warn; a non-neutral tone wins over `[persona] tone`; `nimbus config explain` shows the active preferences.
+  Stated bounds: hiding is offer presentation, not policy; exact tool names, no globs.
+
+- **2026-11-23: privacy-preserving agent-to-agent scheduling (Phase 10; owner ruling OR-S4-SCHED; I17 gains sub-clause (b), static D13(b); no migration, new HITL type or allowlist entry).**
+  What you can do now: `nimbus team schedule <peer> --from <t> --to <t> --duration <m>` asks a paired peer when they are free and prints the slots both calendars leave free. The peer's owner approves each request at their terminal (`nimbus team listen`); only 30-minute free/busy blocks leave their machine, through one gate (`federation/free-busy-gate.ts`). A denial is a fixed refusal that is not an empty calendar. No standing per-peer grant. New IPC: `federation.freeBusy` (admitted over the LAN, answered through the gate) and the LAN-forbidden `scheduling.ask` and `scheduling.respond`.
+  Stated bounds: the 30-minute grid; freshness of at most 24 hours; an all-day out-of-office does not block; no desktop screen; provider shapes are unverified live.
+
+- **2026-11-23: LAN pairing over Noise `XXpsk0` (Phase 10 LAN forward secrecy FS2; no migration, new invariant or static rule; I56 text extended).**
+  What you can do now: pairing is keyed by the pairing code, which is never sent, so a man in the middle cannot finish a pairing; a wrong code gets no reply; a newly paired peer starts at protocol 2. `nimbus lan status` and `lan.getStatus` list each peer's protocol version and warn while any is on the old wire. `[lan] min_protocol = 2` now accepts a pairing.
+  Stated bounds: a new pairing needs both gateways upgraded (owner ruling 2026-11-24: no plaintext fallback); the code is about 114 bits, below Noise § 14's advice (OR-FS-6).
+
+- **2026-11-23: OpenCost and Kubecost cost sync (Phase 10 FinOps; owner ruling OR-S4-FINOPS; pins `@nimbus-dev/connectors` 0.17.0, 98 exported connectors and 97 bundled; no schema change, invariant, HITL type, egress class or IPC method; static D48 kept).**
+  What you can do now: with `opencost.url` or `kubecost.url` in the Vault (optional `.token`, `.cluster`, `.aggregate` = namespace or controller), a 6-hour sync indexes the cluster's daily cost per namespace or controller as `opencost:cost_allocation` / `kubecost:cost_allocation` rows, through Vantage's roll-up, series cap, retention and embedding exclusion. CloudHealth, Flexera/Spot, Cloud Carbon Footprint, Climatiq and Watershed moved to Phase 30.
+  Stated bounds: reply shapes are documentation-verified only (no live OpenCost or Kubecost was run); a loopback port-forward is unreachable from the Windows sandbox; idle cost is not requested; rows carry no currency.
+
+- **2026-11-23: accepting Terraform drift into state (S4; owner ruling OR-S4-DRIFT, which supersedes OR-DRIFT-3; pins `@nimbus-dev/connectors` 0.16.0 and later; no migration, invariant or static rule; I54 text extended).**
+  What you can do now: a seventh bound connector write, `iac_terraform_apply_refresh_only` (wave 4), with its own prepare id `iac_terraform_plan_refresh_only`. The gateway moves, hashes and renders the refresh-only plan itself and refuses it unless it holds no planned create, update, delete or replace, saves no provider action and lists its drift in full; you see the drift by object and attribute name (never a value) and type `iac/accept-drift <dir>`. The connector's apply re-renders the file and refuses anything but no-ops. Never offered to the model and so refused on the MCP act door. Counts: 126 write rows, 188 HITL types, 8 prepare ids, 7 bound rows, 17 never offered.
+  Stated bounds: the refresh-only plan JSON is documented-shape, not verified against a live Terraform; OR-D2-1's provider and `local-exec` bound applies; the state is rewritten and Nimbus does not undo it.
+
+- **2026-11-23: the desktop Infrastructure page (Phase 10 IaC drift; no migration, invariant or static rule; Tauri allowlist 140 -> 141).**
+  What you can do now: the desktop lists the latest Terraform drift finding per approved directory, from `iac.driftLatest`, which now answers `cli` and `ui` connections. `iac.driftCheck` stays CLI-only; the `iac` namespace stays LAN-forbidden.
+  Stated bounds: no check from the desktop; `ui` is client-declared; freshness is the last check.
+
+- **2026-11-23: a separate Data Incident Brief and `--synthesize` for investigations (Phase 10; no migration, invariant, HITL type or allowlist change; I31, I11 and I57 (a) extended).**
+  What you can do now: a Monte Carlo or Bigeye incident record renders as the 21st brief kind, `incident_data`, a deterministic data-first view of the same stored record (monitored models, one hop of lineage, jobs and merged changes by name match, the reserved gaps and freshness blocks). `nimbus incident investigate <id> --synthesize` offers the finished, index-only investigation to the model on your command only, as the 22nd brief kind `incident_investigation`, whose actions, leads, gaps and freshness are reserved and re-attached verbatim.
+  Stated bounds: the scribe and every unattended path stay model-free.
+
+- **2026-11-23: `nimbus incident undo` with no id (Phase 17 one-tap rollback; migration V106; no new invariant, HITL type or IPC method; I57 (b) unchanged).**
+  What you can do now: `nimbus incident undo` without an id resolves the newest executed, not-yet-undone, declared-reversible action with a recorded before-state (the new `incident_proposal.executed_at_ms`) and runs the same owner-approved undo as a named one.
+  Stated bounds: "most recent" is by the gateway's clock at the end of the run and does not know actions run outside the incident engine; a bare `undo` reverses the newest candidate, so read the prompt.
+
+- **2026-11-23: cost anomaly notice (Phase 10 FinOps; no schema change, new invariant, HITL type, egress class or IPC method; static D48 unchanged).**
+  What you can do now: with `[finops] notify = true` (off by default) Nimbus shows one local notification (counts and the connector id only) when `nimbus cost anomalies` would list a new anomaly, at most one per `notify_min_interval_minutes` (5 to 1440, default 360), never on a demo gateway.
+  Stated bounds: a restart can re-announce an open anomaly; per-tag attribution is not built (where Vantage returns a tag value is undocumented; the owner will supply a sample reply, ruling 14).
+
+- **2026-11-23: `nimbus agent uninstall` and the A6 helper (Phase 28 agent kits; CLI only).**
+  What you can do now: `nimbus agent uninstall <claude-code|codex|cursor|vscode> [--scope user|project] [--dry-run] [--yes]` removes what `nimbus agent install` wrote (an unedited block, the kit's own JSON keys, a Nimbus-named file that held nothing else), with a diff, a backup per file and a typed `yes`; a hand-edited block is refused. `scripts/agent-kits/verify-kit.ts` helps the owner run acceptance A6.
+  Stated bounds: A6 (two kits verified against the real agents) is still not closed; a rule byte-equal to one of the kit's deny rules is removed even if you wrote it first.
+
+- **2026-11-23: owner rulings recorded in the roadmap (S4; documentation only).**
+  Closed: the ChatOps Remediate action stays forbidden (I57 (b) unchanged; Phase 11's signed approval is the later answer); one-tap rollback means the prompt's single yes for a non-Wave-4 proposal (Wave 4 keeps its typed text); the scribe drafts and never sends without consent; live runbook driving and scribe templates are delivered for the owner's own runbooks and templates; the provider-side dry run is closed (the Nimbus-side prediction is the dry run). Moved: cost garbage-collection deletion, data FinOps attribution, CloudHealth, Flexera/Spot, Cloud Carbon Footprint, Climatiq and Watershed to Phase 30; team skill-pack runbooks and templates to Phase 16; LoRA adapter training to Phase 14. Ratings wait for the hosted registry or the Team Server, and registry install counts are not built for now. Still open: Vantage per-tag attribution (waiting for the owner's sample reply).
+
+- **2026-11-19: `nimbus pre-review <pr-url>` (Phase 10 automated PR pre-review; no migration, invariant, static rule, HITL type or egress class).**
+  What you can do now: `nimbus pre-review <pr-url> [--json]` briefs a pull request in the local index from co-change in the repository's merged PRs (at least 4 supporting PRs and 60% of the cohort) and your own past GitHub review notes on those PRs, plus a size comparison for GitHub. It uses no model, no network and posts nothing; `prreview.run` is owner-kinds-only, LAN-forbidden and not on the Tauri allowlist.
+  Stated bounds: correlation with untuned thresholds; no per-path owners; a truncated file list gets no co-change finding; Bitbucket's window uses the last update; only your own reviews are visible.
+
 - **2026-11-18: the model drives a computer-use session you opened (S4; owner rulings OR-MCU-1 and OR-MCU-2; I35 extended; static D26(d)).**
   What you can do now: `nimbus ask --computer <session-id> "<task>"` lets the model drive a session you opened with `nimbus computer`. Every computer-use prompt, on every path, now goes only to the connection that opened the session, and only a person's answer there counts (`--yes`, scripts, delegates and an older CLI decline).
   Stated bounds: CLI only; the desktop cannot drive or approve computer-use; two ask turns on one session interleave; a computer-use audit row does not record the answer source.
