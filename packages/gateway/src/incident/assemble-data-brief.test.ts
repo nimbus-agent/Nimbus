@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
-
 import { createMemoryIndexDb } from "../connectors/connector-sync-test-helpers.ts";
+import type { ServiceConfig } from "../metrics/dora-config.ts";
 import { configMap, HOUR, resolverFor, serviceConfig, T0 } from "./__fixtures__/index-writers.ts";
 import {
   writeBigeyeIssue,
@@ -28,8 +28,12 @@ function db(): Database {
   return d;
 }
 
-async function markdownOf(d: Database, itemId: string): Promise<string> {
-  const r = await assembleOne({ db: d, loadServiceConfigs: () => configMap(cfg) }, itemId, NOW);
+async function markdownOf(
+  d: Database,
+  itemId: string,
+  bound: ServiceConfig = cfg,
+): Promise<string> {
+  const r = await assembleOne({ db: d, loadServiceConfigs: () => configMap(bound) }, itemId, NOW);
   if (r.outcome === "missing") throw new Error("missing");
   const row = getById(d, r.recordId);
   if (row === null) throw new Error("record missing");
@@ -59,14 +63,24 @@ describe("the Data Incident Brief at assembly", () => {
   });
 
   test("a PagerDuty incident and a JSM alert keep the general brief (no data lane)", async () => {
+    // OR-S4-DATA: a PagerDuty incident is a data incident only when its service declares data_models, so
+    // the general-brief case binds a service with none (a JSM alert stays general either way).
+    const plain = serviceConfig({ dataModels: [] });
+    const plainResolver = resolverFor(plain);
     const d = db();
     const pd = await markdownOf(
       d,
-      writePagerdutyIncident(d, { id: "P", openedAtMs: OPEN, priority: "P1" }, resolver),
+      writePagerdutyIncident(d, { id: "P", openedAtMs: OPEN, priority: "P1" }, plainResolver),
+      plain,
     );
     const jsm = await markdownOf(
       d,
-      writeJsmAlert(d, { id: "J", openedAtMs: OPEN, priority: "P1", tags: ["payments"] }, resolver),
+      writeJsmAlert(
+        d,
+        { id: "J", openedAtMs: OPEN, priority: "P1", tags: ["payments"] },
+        plainResolver,
+      ),
+      plain,
     );
     expect(pd.startsWith("# Incident ")).toBe(true);
     expect(jsm.startsWith("# Incident ")).toBe(true);

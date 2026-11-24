@@ -32,7 +32,9 @@ afterEach(() => {
   for (const d of dbs.splice(0)) d.close();
 });
 
-const cfg = serviceConfig();
+// OR-S4-DATA: a PagerDuty incident of a service that declares data_models is a data incident; these tests
+// read the general brief, so the bound service declares none.
+const cfg = serviceConfig({ dataModels: [] });
 const resolver = resolverFor(cfg);
 const NOW = T0 + HOUR;
 
