@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795550317874,
+  "lastUpdate": 1795557463491,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "49699333+dependabot[bot]@users.noreply.github.com",
-            "name": "dependabot[bot]",
-            "username": "dependabot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "e7962a22abbcbd49c385fc40beb610fb5d9276d2",
-          "message": "chore(deps): bump react-devtools-core from 7.0.1 to 8.0.0 (#1518)\n\nBumps\n[react-devtools-core](https://github.com/react/react/tree/HEAD/packages/react-devtools-core)\nfrom 7.0.1 to 8.0.0.\n<details>\n<summary>Release notes</summary>\n<p><em>Sourced from <a\nhref=\"https://github.com/react/react/releases\">react-devtools-core's\nreleases</a>.</em></p>\n<blockquote>\n<h2>eslint-plugin-react-hooks@7.1.1 (April 17, 2026)</h2>\n<p><strong>Note:</strong> 7.1.0 accidentally removed the\n<code>component-hook-factories</code> rule, causing errors for users who\nreferenced it in their ESLint config. This is now fixed.</p>\n<ul>\n<li>Add deprecated no-op <code>component-hook-factories</code> rule for\nbackwards compatibility. (<a\nhref=\"https://github.com/mofeiZ\"><code>@​mofeiZ</code></a> in <a\nhref=\"https://redirect.github.com/facebook/react/pull/36307\">#36307</a>)</li>\n</ul>\n<h2>eslint-plugin-react-hooks@7.1.0 (April 16, 2026)</h2>\n<p>This release adds ESLint v10 support, improves performance by\nskipping compilation for non-React files, and includes compiler lint\nimprovements including better <code>set-state-in-effect</code>\ndetection, improved ref validation, and more helpful error\nreporting.</p>\n<ul>\n<li>Add ESLint v10 support. (<a\nhref=\"https://github.com/azat-io\"><code>@​azat-io</code></a> in <a\nhref=\"https://redirect.github.com/facebook/react/pull/35720\">#35720</a>)</li>\n<li>Skip compilation for non-React files to improve performance. (<a\nhref=\"https://github.com/josephsavona\"><code>@​josephsavona</code></a>\nin <a\nhref=\"https://redirect.github.com/facebook/react/pull/35589\">#35589</a>)</li>\n<li>Fix exhaustive deps bug with Flow type casting. (<a\nhref=\"https://github.com/jorge-cab\"><code>@​jorge-cab</code></a> in <a\nhref=\"https://redirect.github.com/facebook/react/pull/35691\">#35691</a>)</li>\n<li>Fix <code>useEffectEvent</code> checks in component syntax. (<a\nhref=\"https://github.com/jbrown215\"><code>@​jbrown215</code></a> in <a\nhref=\"https://redirect.github.com/facebook/react/pull/35041\">#35041</a>)</li>\n<li>Improved <code>set-state-in-effect</code> validation with fewer\nfalse negatives. (<a\nhref=\"https://github.com/jorge-cab\"><code>@​jorge-cab</code></a> in <a\nhref=\"https://redirect.github.com/facebook/react/pull/35134\">#35134</a>,\n<a\nhref=\"https://github.com/josephsavona\"><code>@​josephsavona</code></a>\nin <a\nhref=\"https://redirect.github.com/facebook/react/pull/35147\">#35147</a>,\n<a href=\"https://github.com/jackpope\"><code>@​jackpope</code></a> in <a\nhref=\"https://redirect.github.com/facebook/react/pull/35214\">#35214</a>,\n<a\nhref=\"https://github.com/chesnokov-tony\"><code>@​chesnokov-tony</code></a>\nin <a\nhref=\"https://redirect.github.com/facebook/react/pull/35419\">#35419</a>,\n<a href=\"https://github.com/jsleitor\"><code>@​jsleitor</code></a> in <a\nhref=\"https://redirect.github.com/facebook/react/pull/36107\">#36107</a>)</li>\n<li>Improved ref validation for non-mutating functions and event handler\nprops. (<a\nhref=\"https://github.com/josephsavona\"><code>@​josephsavona</code></a>\nin <a\nhref=\"https://redirect.github.com/facebook/react/pull/35893\">#35893</a>,\n<a href=\"https://github.com/kolvian\"><code>@​kolvian</code></a> in <a\nhref=\"https://redirect.github.com/facebook/react/pull/35062\">#35062</a>)</li>\n<li>Compiler now reports all errors instead of stopping at the first.\n(<a\nhref=\"https://github.com/josephsavona\"><code>@​josephsavona</code></a>\nin <a\nhref=\"https://redirect.github.com/facebook/react/pull/35873\">#35873</a>–<a\nhref=\"https://redirect.github.com/facebook/react/pull/35884\">#35884</a>)</li>\n<li>Improved source locations and error display in compiler diagnostics.\n(<a href=\"https://github.com/nathanmarks\"><code>@​nathanmarks</code></a>\nin <a\nhref=\"https://redirect.github.com/facebook/react/pull/35348\">#35348</a>,\n<a\nhref=\"https://github.com/josephsavona\"><code>@​josephsavona</code></a>\nin <a\nhref=\"https://redirect.github.com/facebook/react/pull/34963\">#34963</a>)</li>\n</ul>\n</blockquote>\n</details>\n<details>\n<summary>Changelog</summary>\n<p><em>Sourced from <a\nhref=\"https://github.com/react/react/blob/main/CHANGELOG.md\">react-devtools-core's\nchangelog</a>.</em></p>\n<blockquote>\n<h2>18.0.0 (March 29, 2022)</h2>\n<p>Below is a list of all new features, APIs, deprecations, and breaking\nchanges.\nRead <a href=\"https://reactjs.org/blog/2022/03/29/react-v18.html\">React\n18 release post</a> and <a\nhref=\"https://reactjs.org/blog/2022/03/08/react-18-upgrade-guide.html\">React\n18 upgrade guide</a> for more information.</p>\n<h3>New Features</h3>\n<h3>React</h3>\n<ul>\n<li><code>useId</code> is a new hook for generating unique IDs on both\nthe client and server, while avoiding hydration mismatches. It is\nprimarily useful for component libraries integrating with accessibility\nAPIs that require unique IDs. This solves an issue that already exists\nin React 17 and below, but it’s even more important in React 18 because\nof how the new streaming server renderer delivers HTML\nout-of-order.</li>\n<li><code>startTransition</code> and <code>useTransition</code> let you\nmark some state updates as not urgent. Other state updates are\nconsidered urgent by default. React will allow urgent state updates (for\nexample, updating a text input) to interrupt non-urgent state updates\n(for example, rendering a list of search results).</li>\n<li><code>useDeferredValue</code> lets you defer re-rendering a\nnon-urgent part of the tree. It is similar to debouncing, but has a few\nadvantages compared to it. There is no fixed time delay, so React will\nattempt the deferred render right after the first render is reflected on\nthe screen. The deferred render is interruptible and doesn't block user\ninput.</li>\n<li><code>useSyncExternalStore</code> is a new hook that allows external\nstores to support concurrent reads by forcing updates to the store to be\nsynchronous. It removes the need for <code>useEffect</code> when\nimplementing subscriptions to external data sources, and is recommended\nfor any library that integrates with state external to React.</li>\n<li><code>useInsertionEffect</code> is a new hook that allows CSS-in-JS\nlibraries to address performance issues of injecting styles in render.\nUnless you’ve already built a CSS-in-JS library we don’t expect you to\never use this. This hook will run after the DOM is mutated, but before\nlayout effects read the new layout. This solves an issue that already\nexists in React 17 and below, but is even more important in React 18\nbecause React yields to the browser during concurrent rendering, giving\nit a chance to recalculate layout.</li>\n</ul>\n<h3>React DOM Client</h3>\n<p>These new APIs are now exported from\n<code>react-dom/client</code>:</p>\n<ul>\n<li><code>createRoot</code>: New method to create a root to\n<code>render</code> or <code>unmount</code>. Use it instead of\n<code>ReactDOM.render</code>. New features in React 18 don't work\nwithout it.</li>\n<li><code>hydrateRoot</code>: New method to hydrate a server rendered\napplication. Use it instead of <code>ReactDOM.hydrate</code> in\nconjunction with the new React DOM Server APIs. New features in React 18\ndon't work without it.</li>\n</ul>\n<p>Both <code>createRoot</code> and <code>hydrateRoot</code> accept a\nnew option called <code>onRecoverableError</code> in case you want to be\nnotified when React recovers from errors during rendering or hydration\nfor logging. By default, React will use <a\nhref=\"https://developer.mozilla.org/en-US/docs/Web/API/reportError\"><code>reportError</code></a>,\nor <code>console.error</code> in the older browsers.</p>\n<h3>React DOM Server</h3>\n<p>These new APIs are now exported from <code>react-dom/server</code>\nand have full support for streaming Suspense on the server:</p>\n<ul>\n<li><code>renderToPipeableStream</code>: for streaming in Node\nenvironments.</li>\n<li><code>renderToReadableStream</code>: for modern edge runtime\nenvironments, such as Deno and Cloudflare workers.</li>\n</ul>\n<p>The existing <code>renderToString</code> method keeps working but is\ndiscouraged.</p>\n<h2>Deprecations</h2>\n<ul>\n<li><code>react-dom</code>: <code>ReactDOM.render</code> has been\ndeprecated. Using it will warn and run your app in React 17 mode.</li>\n<li><code>react-dom</code>: <code>ReactDOM.hydrate</code> has been\ndeprecated. Using it will warn and run your app in React 17 mode.</li>\n<li><code>react-dom</code>: <code>ReactDOM.unmountComponentAtNode</code>\nhas been deprecated.</li>\n<li><code>react-dom</code>:\n<code>ReactDOM.renderSubtreeIntoContainer</code> has been\ndeprecated.</li>\n<li><code>react-dom/server</code>:\n<code>ReactDOMServer.renderToNodeStream</code> has been deprecated.</li>\n</ul>\n<h2>Breaking Changes</h2>\n<h3>React</h3>\n<ul>\n<li><strong>Automatic batching:</strong> This release introduces a\nperformance improvement that changes to the way React batches updates to\ndo more batching automatically. See <a\nhref=\"https://github.com/reactwg/react-18/discussions/21\">Automatic\nbatching for fewer renders in React 18</a> for more info. In the rare\ncase that you need to opt out, wrap the state update in\n<code>flushSync</code>.</li>\n<li><strong>Stricter Strict Mode</strong>: In the future, React will\nprovide a feature that lets components preserve state between unmounts.\nTo prepare for it, React 18 introduces a new development-only check to\nStrict Mode. React will automatically unmount and remount every\ncomponent, whenever a component mounts for the first time, restoring the\nprevious state on the second mount. If this breaks your app, consider\nremoving Strict Mode until you can fix the components to be resilient to\nremounting with existing state.</li>\n<li><strong>Consistent useEffect timing</strong>: React now always\nsynchronously flushes effect functions if the update was triggered\nduring a discrete user input event such as a click or a keydown event.\nPreviously, the behavior wasn't always predictable or consistent.</li>\n<li><strong>Stricter hydration errors</strong>: Hydration mismatches due\nto missing or extra text content are now treated like errors instead of\nwarnings. React will no longer attempt to &quot;patch up&quot;\nindividual nodes by inserting or deleting a node on the client in an\nattempt to match the server markup, and will revert to client rendering\nup to the closest <code>&lt;Suspense&gt;</code> boundary in the tree.\nThis ensures the hydrated tree is consistent and avoids potential\nprivacy and security holes that can be caused by hydration\nmismatches.</li>\n<li><strong>Suspense trees are always consistent:</strong> If a\ncomponent suspends before it's fully added to the tree, React will not\nadd it to the tree in an incomplete state or fire its effects. Instead,\nReact will throw away the new tree completely, wait for the asynchronous\noperation to finish, and then retry rendering again from scratch. React\nwill render the retry attempt concurrently, and without blocking the\nbrowser.</li>\n</ul>\n<!-- raw HTML omitted -->\n</blockquote>\n<p>... (truncated)</p>\n</details>\n<details>\n<summary>Commits</summary>\n<ul>\n<li>See full diff in <a\nhref=\"https://github.com/react/react/commits/HEAD/packages/react-devtools-core\">compare\nview</a></li>\n</ul>\n</details>\n<br />\n\nSigned-off-by: dependabot[bot] <support@github.com>\nCo-authored-by: dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-09-15T19:12:03+03:00",
-          "tree_id": "7d5c471c3935b4d2c51b375d69444dc8c82cc944",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/e7962a22abbcbd49c385fc40beb610fb5d9276d2"
-        },
-        "date": 1789490248075,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 246.7219045499991,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 249.86164430000355,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 261.98055550000026,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7bcbbb516ce555d81fe2876f514d2b3aecdc5fa3",
+          "message": "docs: close Phase 17's Approve-from-push on its CLI door (owner ruling) (#2145)\n\nRecords the owner's ruling of 2026-11-24: Phase 17's\n**Approve-from-push** row closes on the CLI door Phase 10 IC5b shipped\n(`nimbus oncall pushed <id> --remediate`: the owner's own prompt, a\nperson's answer only, the typed confirmation for a Wave 4 row) and the\ndesktop view IC10b shipped. Approving from the push on a phone with a\ndevice-key signature moves to Phase 11's *Mobile HITL signature* row,\nwhich now names it. This has the same shape as ruling 4's close of\nChatOps Remediate.\n\nStated bound: a pushed brief is approved at a terminal, not on the\ndevice it reached.\n\nAlso corrects the IC5b sentence in CLAUDE.md and GEMINI.md, which still\ncalled ChatOps Remediate an open owner question and the desktop view\nunbuilt. Docs only. `preflight:fast`, `audit:status-drift` and\n`audit:doc-refs` pass.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrGFPLqt8C3Ybzk2dHq\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Documentation**\n* Updated project status and roadmap notes with later phase, release,\nsecurity, and product updates.\n* Recorded the completed terminal-based approval flow and clarified that\nphone-based approval is not included in Phase 17; mobile signatures\nremain tracked under Phase 11.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-24T21:50:26Z",
+          "tree_id": "2f7b1bd67d89c7a060359d40919af6dc06258fbd",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/7bcbbb516ce555d81fe2876f514d2b3aecdc5fa3"
+        },
+        "date": 1795557460007,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 181.99616564999923,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 182.53774945000478,
             "unit": "ms"
           }
         ]
