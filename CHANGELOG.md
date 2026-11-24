@@ -2,6 +2,39 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [11.12.0](https://github.com/nimbus-agent/Nimbus/compare/v11.11.0...v11.12.0) (2026-11-24)
+
+
+### Features
+
+* **cli:** nimbus agent uninstall and the A6 verification helper ([#2121](https://github.com/nimbus-agent/Nimbus/issues/2121)) ([baa3d08](https://github.com/nimbus-agent/Nimbus/commit/baa3d080ed83fa96ced3cd327f92a0b92ffda5b7))
+* **cli:** nimbus iac accept-drift, the owner's entry point for accepting Terraform drift ([#2135](https://github.com/nimbus-agent/Nimbus/issues/2135)) ([02fc284](https://github.com/nimbus-agent/Nimbus/commit/02fc284ab9308182bbb43bf2f84630fa90f05056))
+* **gateway:** a Monte Carlo or Bigeye incident record is stored and shown as a separate Data Incident Brief (incident_data) ([#2124](https://github.com/nimbus-agent/Nimbus/issues/2124)) ([2d33891](https://github.com/nimbus-agent/Nimbus/commit/2d33891f9fade112808ecaaadc1b43261adaa94e))
+* **gateway:** a PagerDuty incident of a service that declares data_models renders the Data Incident Brief ([#2133](https://github.com/nimbus-agent/Nimbus/issues/2133)) ([12f8e87](https://github.com/nimbus-agent/Nimbus/commit/12f8e8727f4e680e53adbc1e558056809fcacf22))
+* **gateway:** Kubecost and OpenCost cost sync, and an accept-drift (terraform apply -refresh-only) write row ([#2132](https://github.com/nimbus-agent/Nimbus/issues/2132)) ([63625e2](https://github.com/nimbus-agent/Nimbus/commit/63625e237be9a31153d224b2c624f453992461cb))
+* **gateway:** LAN pairing over Noise XXpsk0 keyed by the pairing code (Phase 10 FS2) ([#2127](https://github.com/nimbus-agent/Nimbus/issues/2127)) ([ce57cf0](https://github.com/nimbus-agent/Nimbus/commit/ce57cf091ce69132851872f47f8f03f52a4fed7c))
+* **gateway:** local notice of a new cost anomaly, off by default ([#2118](https://github.com/nimbus-agent/Nimbus/issues/2118)) ([a45c1f3](https://github.com/nimbus-agent/Nimbus/commit/a45c1f3ab3b2b5866f71caac6f9a6e8c678c6a43))
+* **gateway:** nimbus incident investigate --synthesize rewrites an investigation's prose with the model, keeping actions, leads, gaps and freshness verbatim ([#2126](https://github.com/nimbus-agent/Nimbus/issues/2126)) ([973c19e](https://github.com/nimbus-agent/Nimbus/commit/973c19e12f4cb357ac28f7105cf2e4231c8bbe6c))
+* **gateway:** nimbus incident undo with no id reverses the most recent executed reversible action (V106) ([#2122](https://github.com/nimbus-agent/Nimbus/issues/2122)) ([9ea610c](https://github.com/nimbus-agent/Nimbus/commit/9ea610ce1d3b2911a0796f941623c4f7f891af1b))
+* **gateway:** nimbus incident update --synthesize has the model write one lead paragraph above the unchanged update facts ([#2134](https://github.com/nimbus-agent/Nimbus/issues/2134)) ([5a58b18](https://github.com/nimbus-agent/Nimbus/commit/5a58b187d8807d8602195cede6badca74c4c7903))
+* **gateway:** nimbus pre-review, a lint-plus brief for a pull request from the repo's merged history and your own reviews ([#2120](https://github.com/nimbus-agent/Nimbus/issues/2120)) ([ff9849b](https://github.com/nimbus-agent/Nimbus/commit/ff9849ba9e13ee77a659d2923bca447f4bedc45d))
+* **gateway:** opt-in long-term episodic memory from the owner's own turns ([#2130](https://github.com/nimbus-agent/Nimbus/issues/2130)) ([651f544](https://github.com/nimbus-agent/Nimbus/commit/651f5445973789297d34ddce7df286c97867fde8))
+* **gateway:** personalization layer with explicit tone, verbosity, tool order and hide list ([#2128](https://github.com/nimbus-agent/Nimbus/issues/2128)) ([dc88284](https://github.com/nimbus-agent/Nimbus/commit/dc882848dbe6ada206bf04f1867126567b08111f))
+* **gateway:** privacy-preserving agent-to-agent scheduling over federation ([#2129](https://github.com/nimbus-agent/Nimbus/issues/2129)) ([6f7491f](https://github.com/nimbus-agent/Nimbus/commit/6f7491ff8d41963412dffbd17f529a62395cddee))
+* **ui:** the desktop's read-only Infrastructure page for the latest IaC drift findings ([#2123](https://github.com/nimbus-agent/Nimbus/issues/2123)) ([0e16d47](https://github.com/nimbus-agent/Nimbus/commit/0e16d475616b954ec467f34d61cd2c42ce72ef26))
+
+
+### Bug Fixes
+
+* clear the SonarCloud reliability issues on main ([#2086](https://github.com/nimbus-agent/Nimbus/issues/2086)) ([580ab6f](https://github.com/nimbus-agent/Nimbus/commit/580ab6fe27bb8da23fac96bb5de19d1f75b1ae16))
+* **gateway:** brief-source state race, agents read gate, and five follow-ups from the file splits ([#2119](https://github.com/nimbus-agent/Nimbus/issues/2119)) ([f5da0fd](https://github.com/nimbus-agent/Nimbus/commit/f5da0fdbdced4a2cbdcc791411921b6093e5c22b))
+* **gateway:** llama.cpp base-URL collision ignores every trailing slash; correct three stale doc pointers ([#2099](https://github.com/nimbus-agent/Nimbus/issues/2099)) ([99d8cac](https://github.com/nimbus-agent/Nimbus/commit/99d8cacebde12bed717b642c585fe6faba304621))
+* **gateway:** show a plan's moves in the Terraform apply preview ([#2136](https://github.com/nimbus-agent/Nimbus/issues/2136)) ([206daba](https://github.com/nimbus-agent/Nimbus/commit/206daba76301af28713338a80bedb9d1b35a9f1d))
+* **registry-action:** run git from a fixed install path, never a PATH lookup (Sonar S4036) ([#2112](https://github.com/nimbus-agent/Nimbus/issues/2112)) ([0d6a126](https://github.com/nimbus-agent/Nimbus/commit/0d6a126f67b206abcf26f3705e84f8629d29e864))
+* **scripts:** a split folder's modules are importable only through their facade ([#2115](https://github.com/nimbus-agent/Nimbus/issues/2115)) ([240d0cd](https://github.com/nimbus-agent/Nimbus/commit/240d0cde87322aa76988e36f48e3c9d43de10d92))
+* **scripts:** harden nine static invariant rules found in the [#2090](https://github.com/nimbus-agent/Nimbus/issues/2090) review ([#2093](https://github.com/nimbus-agent/Nimbus/issues/2093)) ([4048a14](https://github.com/nimbus-agent/Nimbus/commit/4048a14d42c9c83ea16a5268752da8c0f4ca7508))
+* **ui:** bump cookie to 0.18.3 for RUSTSEC-2026-0594 ([#2125](https://github.com/nimbus-agent/Nimbus/issues/2125)) ([17ad026](https://github.com/nimbus-agent/Nimbus/commit/17ad026b57c9bd6f1a09ad0c96f614c6425a7a14))
+
 ## [11.11.0](https://github.com/nimbus-agent/Nimbus/compare/v11.10.0...v11.11.0) (2026-11-22)
 
 
