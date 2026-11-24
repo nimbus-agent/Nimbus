@@ -170,6 +170,30 @@ describe("data lane, dbt tests", () => {
     expect(dbtTests(d, [], [], OPEN, { value: false })).toEqual([]);
   });
 
+  test("the same test is listed once whichever order its model keys come in", () => {
+    const d = db();
+    model(d, MODEL, [UP]);
+    const lineageFirst = writeDbtTest(d, resolver, {
+      uniqueId: "test.shop.a.m1",
+      status: "fail",
+      modelKeys: [UP, MODEL],
+      finishedAtMs: OPEN - HOUR,
+    });
+    const monitoredFirst = writeDbtTest(d, resolver, {
+      uniqueId: "test.shop.b.m2",
+      status: "fail",
+      modelKeys: [MODEL, UP],
+      finishedAtMs: OPEN - HOUR,
+    });
+    const tests = lane(d).lane.dbtTests ?? [];
+    expect(tests.map((t) => [t.id, t.via]).sort()).toEqual(
+      [
+        [lineageFirst, "monitored"],
+        [monitoredFirst, "monitored"],
+      ].sort(),
+    );
+  });
+
   test("no open time: no dbt query, and the list is empty", () => {
     const d = db();
     writeDbtTest(d, resolver, {

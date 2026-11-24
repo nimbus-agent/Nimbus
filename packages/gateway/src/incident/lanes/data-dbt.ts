@@ -16,7 +16,11 @@ export const DBT_WINDOW_AFTER_MS = 3_600_000;
 /** At most this many model keys (monitored plus one hop upstream) are matched against dbt tests. */
 export const DBT_KEY_CAP = 200;
 const ROW_CAP = 500;
-const SEVERITY: Record<string, number> = { fail: 0, error: 1, warn: 2 };
+const SEVERITY: Record<DataTestView["status"], number> = { fail: 0, error: 1, warn: 2 };
+
+function isIndexedStatus(s: string): s is DataTestView["status"] {
+  return s in SEVERITY;
+}
 
 type DbtRow = {
   id: string;
@@ -42,11 +46,7 @@ function readMeta(metadata: string): {
 }
 
 function order(a: DataTestView, b: DataTestView): number {
-  return (
-    (SEVERITY[a.status] ?? 9) - (SEVERITY[b.status] ?? 9) ||
-    b.atMs - a.atMs ||
-    codeUnitCompare(a.id, b.id)
-  );
+  return SEVERITY[a.status] - SEVERITY[b.status] || b.atMs - a.atMs || codeUnitCompare(a.id, b.id);
 }
 
 /** A test on several models is listed once, against the most direct one (a monitored model over a lineage hop). */
@@ -81,15 +81,15 @@ export function dbtTests(
   const best = new Map<string, DataTestView>();
   for (const r of rows) {
     const meta = readMeta(r.metadata);
-    if (!(meta.status in SEVERITY)) continue;
-    const rowVia = via.get(r.model) ?? "lineage";
+    if (!isIndexedStatus(meta.status)) continue;
+    const rowVia = via.get(r.model) === "monitored" ? "monitored" : "lineage";
     const prev = best.get(r.id);
     if (prev !== undefined && (prev.via === "monitored" || rowVia !== "monitored")) continue;
     best.set(r.id, {
       id: r.id,
       title: oneLine(r.title),
       url: r.url,
-      status: meta.status as DataTestView["status"],
+      status: meta.status,
       failures: meta.failures,
       runId: meta.runId,
       atMs: r.modified_at,

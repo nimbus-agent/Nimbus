@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
+import { buildDataLane } from "../__fixtures__/data-brief.ts";
 import { buildRecord } from "../__fixtures__/record-builder.ts";
 import type { IncidentRecordV1 } from "../incident-record-types.ts";
 import { allocate, capRecordSize, gap, oneLine } from "./caps.ts";
@@ -86,5 +87,37 @@ describe("allocate and the data cut", () => {
     expect(allocate(5, [1, 10, 10])).toEqual([1, 2, 2]);
     expect(allocate(100, [2, 1, 0])).toEqual([2, 1, 0]);
     expect(allocate(0, [3, 3])).toEqual([0, 0]);
+  });
+});
+
+describe("the data cut with dbt tests", () => {
+  const test0 = buildDataLane().dbtTests?.[0];
+  if (test0 === undefined) throw new Error("fixture: the data lane has no dbt test");
+  const fatTest = (i: number) => ({ ...test0, id: `dbt:${String(i)}`, title: "t".repeat(200) });
+
+  test("dbt tests are cut with the rest of the data lane, and the true total stays", () => {
+    const data = buildDataLane({
+      dbtTests: Array.from({ length: 300 }, (_, i) => fatTest(i)),
+      totals: { lineage: 1, orchestration: 1, prs: 1, dbtTests: 300 },
+    });
+    const out = capRecordSize({ ...buildRecord(), data }, 20_000);
+    expect(out.cuts.some((c) => c.lane === "data")).toBe(true);
+    expect((out.record.data?.dbtTests ?? []).length).toBeLessThan(300);
+    expect(out.record.data?.totals.dbtTests).toBe(300);
+  });
+
+  test("a data lane stored before dbt tests existed is cut without gaining the field", () => {
+    const { dbtTests: _drop, ...old } = buildDataLane();
+    const data = {
+      ...old,
+      lineage: Array.from({ length: 300 }, (_, i) => ({
+        model: "m",
+        to: `raw.${String(i)}${"x".repeat(200)}`,
+        rule: "data:derived_from" as const,
+      })),
+    };
+    const out = capRecordSize({ ...buildRecord(), data }, 20_000);
+    expect(out.cuts.some((c) => c.lane === "data")).toBe(true);
+    expect(out.record.data !== null && "dbtTests" in out.record.data).toBe(false);
   });
 });
