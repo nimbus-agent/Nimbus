@@ -11,6 +11,7 @@ import { QuorumCoordinator } from "../engine/quorum/quorum-coordinator.ts";
 import { ExecConsentBroker } from "../exec/exec-consent-broker.ts";
 import { FederationConsentBroker } from "../federation/consent-broker.ts";
 import { PreflightConsentBroker } from "../federation/preflight-consent-broker.ts";
+import { ScheduleConsentBroker } from "../federation/schedule-consent-broker.ts";
 import { ConsentCoordinatorImpl } from "../ipc/consent.ts";
 import { setGatewayEventBroadcast } from "../ipc/gateway-events.ts";
 import { ShareConsentBroker } from "../share/share-consent-broker.ts";
@@ -82,6 +83,7 @@ afterEach(() => {
 const BROKER_CLASSES: Record<string, () => ConsentBroker<object>> = {
   ExecConsentBroker: () => new ExecConsentBroker() as ConsentBroker<object>,
   PreflightConsentBroker: () => new PreflightConsentBroker() as ConsentBroker<object>,
+  ScheduleConsentBroker: () => new ScheduleConsentBroker() as ConsentBroker<object>,
   ShareConsentBroker: () => new ShareConsentBroker() as ConsentBroker<object>,
   ToolgenConsentBroker: () => new ToolgenConsentBroker() as ConsentBroker<object>,
   ToolgenSaveConsentBroker: () => new ToolgenSaveConsentBroker() as ConsentBroker<object>,
