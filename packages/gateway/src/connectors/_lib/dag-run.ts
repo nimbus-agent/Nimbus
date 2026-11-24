@@ -32,7 +32,8 @@ export function failedTaskNames(names: Iterable<string>): { list: string[]; tota
     const c = clampName(n);
     if (c !== "") set.add(c);
   }
-  const all = [...set].sort();
+  // By code unit, never by locale, so the stored order is the same on every machine.
+  const all = [...set].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   return { list: all.slice(0, DAG_RUN_MAX_FAILED_TASKS), total: all.length };
 }
 
