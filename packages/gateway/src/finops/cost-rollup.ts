@@ -152,6 +152,12 @@ export interface RollupResult {
   readonly mixedCurrencyIds: string[];
   /** Series-days whose points carry more than one currency; no row is written for them. */
   readonly mixedCurrencyBuckets: number;
+  /**
+   * The `__other__` row ids of the days these points cover that now fold nothing (the cap grew, or
+   * the folded series are gone): an earlier sync's `__other__` row for such a day is stale, and
+   * keeping it would count the newly named series twice.
+   */
+  readonly staleOtherIds: string[];
 }
 
 /** The rows to index: one per named series per UTC day, plus one `__other__` row per day. */
@@ -213,5 +219,15 @@ export function rollUpCostPointsDetailed(
     }
   }
   rows.sort((a, b) => a.dayMs - b.dayMs || (a.externalId < b.externalId ? -1 : 1));
-  return { rows, mixedCurrencyBuckets: mixedCurrencyIds.length, mixedCurrencyIds };
+  const otherDays = series.get(otherHash)?.days;
+  const staleOtherIds = [...new Set(points.map((p) => p.dayMs))]
+    .filter((dayMs) => otherDays?.has(dayMs) !== true)
+    .sort((a, b) => a - b)
+    .map((dayMs) => costRowExternalId(idScope(opts), otherHash, dayMs));
+  return {
+    rows,
+    mixedCurrencyBuckets: mixedCurrencyIds.length,
+    mixedCurrencyIds,
+    staleOtherIds,
+  };
 }

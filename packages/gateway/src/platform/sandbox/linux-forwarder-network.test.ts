@@ -245,7 +245,7 @@ function unixSink(path: string): Promise<{ server: Server; hits: () => number }>
   let count = 0;
   const server = createServer((socket) => {
     count += 1;
-    socket.destroy();
+    socket.on("error", () => {}).once("end", () => socket.destroy()); // client closes first: ECONNRESET race
   });
   return new Promise((done, reject) => {
     server.once("error", reject);

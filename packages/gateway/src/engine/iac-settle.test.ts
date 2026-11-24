@@ -878,9 +878,8 @@ describe("the connector's writers (source pins, so the fixtures cannot drift fro
     expect(src).toContain('randomBytes(16).toString("hex")');
     expect(src).toContain('const PLAN_NAME = "plan.tfplan"');
     expect(src).toContain('const DESTROY_PLAN_NAME = "destroy.tfplan"');
-    expect(src).toContain(
-      "const planFile = join(planDir, destroy ? DESTROY_PLAN_NAME : PLAN_NAME)",
-    );
+    expect(src).toContain('const REFRESH_PLAN_NAME = "refresh.tfplan"');
+    expect(src).toContain("const planFile = join(planDir, PLAN_FILE_OF_MODE[mode])");
   });
 
   test("the change set reply carries exactly the keys the CFN settler cross-checks", () => {

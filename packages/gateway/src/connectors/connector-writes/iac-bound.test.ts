@@ -14,7 +14,12 @@ import {
   readConnectorPackageSources,
   scanWriteToolRegistrations,
 } from "../testing/connector-write-registrations.ts";
-import { CFN_DEPLOY_BOUND, TERRAFORM_APPLY_BOUND, TERRAFORM_DESTROY_BOUND } from "./iac-bound.ts";
+import {
+  CFN_DEPLOY_BOUND,
+  TERRAFORM_APPLY_BOUND,
+  TERRAFORM_DESTROY_BOUND,
+  TERRAFORM_REFRESH_ONLY_BOUND,
+} from "./iac-bound.ts";
 import { CONNECTOR_WRITE_ROWS } from "./index.ts";
 import { isModelOfferableRow } from "./model-offerable.ts";
 import { PREPARE_TOOL_IDS } from "./prepare-tools.ts";
@@ -42,7 +47,7 @@ const rowOf = (id: string) => {
 
 /** The write tool's input keys, read from the installed source (the Terraform applies share one shape). */
 function writeKeys(toolId: string): string[] {
-  if (toolId === "iac_terraform_apply" || toolId === "iac_terraform_destroy") {
+  if (/^iac_terraform_(apply|destroy|apply_refresh_only)$/.test(toolId)) {
     const at = iacCode.indexOf("const applyShape = {");
     const open = iacCode.indexOf("{", at);
     return declaredInputKeys(`z.object(${iacCode.slice(open, matchingClose(iacCode, open) + 1)})`);
@@ -68,6 +73,12 @@ const BOUND_BY_ROW: ReadonlyArray<readonly [string, BoundWrite, string, readonly
     ["planFile", "planSha256"],
   ],
   [
+    "iac_terraform_apply_refresh_only",
+    TERRAFORM_REFRESH_ONLY_BOUND,
+    "iac_terraform_plan_refresh_only",
+    ["planFile", "planSha256"],
+  ],
+  [
     "iac_cloudformation_deploy",
     CFN_DEPLOY_BOUND,
     "iac_cloudformation_changeset_create",
@@ -75,8 +86,8 @@ const BOUND_BY_ROW: ReadonlyArray<readonly [string, BoundWrite, string, readonly
   ],
 ];
 
-describe("the three bound iac rows are the production bound rows beside the two commits (D2)", () => {
-  test("exactly six bound rows (the Kubernetes apply is D3a's), each Wave 4 with a typed preview and a confirm target", () => {
+describe("the four bound iac rows are the production bound rows beside the two commits (D2)", () => {
+  test("exactly seven bound rows (the Kubernetes apply is D3a's), each Wave 4 with a typed preview and a confirm target", () => {
     const bound = CONNECTOR_WRITE_ROWS.filter((r) => r.bound !== undefined);
     expect(bound.map((r) => r.toolId).sort()).toEqual(
       [
@@ -84,6 +95,7 @@ describe("the three bound iac rows are the production bound rows beside the two 
         "github_file_commit",
         "iac_cloudformation_deploy",
         "iac_terraform_apply",
+        "iac_terraform_apply_refresh_only",
         "iac_terraform_destroy",
         "k8s_manifest_apply",
       ].sort(),
@@ -144,7 +156,11 @@ describe("the three bound iac rows are the production bound rows beside the two 
 
 describe("the prepare reads' arguments and the reply shape readers", () => {
   test("the Terraform read takes the directory and nothing else", () => {
-    for (const b of [TERRAFORM_APPLY_BOUND, TERRAFORM_DESTROY_BOUND]) {
+    for (const b of [
+      TERRAFORM_APPLY_BOUND,
+      TERRAFORM_DESTROY_BOUND,
+      TERRAFORM_REFRESH_ONLY_BOUND,
+    ]) {
       expect(b.prepare.args({ workingDirectory: "/w" })).toEqual({ workingDirectory: "/w" });
       expect(b.prepare.args({})).toBeUndefined();
       expect(b.prepare.args({ workingDirectory: 7 })).toBeUndefined();

@@ -26,6 +26,8 @@ export const MODEL_NEVER_OFFERED_REASONS: Readonly<Record<string, string>> = Obj
     "the Bitbucket merge exposes no head-commit precondition the connector can send, so a merge cannot be tied to the commit the owner reviewed (D1 round-1 fix 8)",
   iac_terraform_destroy:
     "irreversible deletion of every resource in a configuration stays an owner action (OR-D2-2)",
+  iac_terraform_apply_refresh_only:
+    "accepting drift into state makes a change made outside Terraform stop showing in later plans, so whether it was benign is the owner's call (OR-S4-DRIFT: owner action by default, model access a design point awaiting a ruling)",
   iac_pulumi_up:
     "no plan-bound Pulumi apply exists (saved update plans are experimental): refused on every door",
   iac_cloudformation_changeset_discard:

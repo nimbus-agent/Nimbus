@@ -102,14 +102,16 @@ export type { IacHost, IacRunnerDeps } from "./iac-runner/iac-runner-types.ts";
 
 export type IacProfileKind = "plan" | "show" | "apply" | "cfn" | "kube";
 
-/** The eight tools the runner executes. Everything else the `iac` slot lists stays in the slot. */
+/** The tools the runner executes (ten). Everything else the `iac` slot lists stays in it. */
 export const IAC_TOOL_PROFILE: Readonly<Record<string, Exclude<IacProfileKind, "kube">>> =
   Object.freeze({
     iac_terraform_plan: "plan",
     iac_terraform_destroy_plan: "plan",
+    iac_terraform_plan_refresh_only: "plan",
     iac_terraform_show_json: "show",
     iac_terraform_apply: "apply",
     iac_terraform_destroy: "apply",
+    iac_terraform_apply_refresh_only: "apply",
     iac_cloudformation_changeset_create: "cfn",
     iac_cloudformation_changeset_discard: "cfn",
     iac_cloudformation_deploy: "cfn",
@@ -377,13 +379,12 @@ function kubeRunKey(context: string, namespace: string): string {
   return `${context}\0${namespace}`;
 }
 
-const TERRAFORM_ROWS: ReadonlySet<string> = new Set([
-  "iac_terraform_apply",
-  "iac_terraform_destroy",
-]);
+const TERRAFORM_ROWS: ReadonlySet<string> = new Set(
+  Object.keys(IAC_TOOL_PROFILE).filter((id) => IAC_TOOL_PROFILE[id] === "apply"),
+);
 const CFN_ROW = "iac_cloudformation_deploy";
 const HEX32 = /^[0-9a-f]{32}$/;
-const PLAN_NAMES: ReadonlySet<string> = new Set(["plan.tfplan", "destroy.tfplan"]);
+const PLAN_NAMES = new Set(["plan.tfplan", "destroy.tfplan", "refresh.tfplan"]);
 
 export class IacRunner implements IacHost {
   private readonly runs = new Map<string, Run>();
@@ -1021,11 +1022,10 @@ export class IacRunner implements IacHost {
     }
     const approvedRoot = this.realApprovedRoot();
     const rel = relative(approvedRoot, real).split(sep);
-    // <runId>/<planId>/<plan.tfplan|destroy.tfplan>, and nothing else.
+    // <runId>/<planId>/<plan|destroy|refresh>.tfplan, and nothing else.
     if (rel.length !== 3 || rel.some((s) => s === "" || s === "..")) return undefined;
     const [runId, planId, name] = rel as [string, string, string];
-    if (!HEX32.test(planId) || !/^[0-9a-f]{32}$/.test(runId) || !PLAN_NAMES.has(name))
-      return undefined;
+    if (!HEX32.test(planId) || !HEX32.test(runId) || !PLAN_NAMES.has(name)) return undefined;
     return join(approvedRoot, runId);
   }
 
