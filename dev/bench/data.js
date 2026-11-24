@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795520663533,
+  "lastUpdate": 1795522865697,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "2c261c25bb30d4f462d7d5604efcc657c4f0a07d",
-          "message": "chore: release main (#1508)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.21.1</summary>\n\n##\n[7.21.1](https://github.com/nimbus-agent/Nimbus/compare/v7.21.0...v7.21.1)\n(2026-09-13)\n\n\n### Bug Fixes\n\n* **platform:** bundle a full SQLite with the macOS build so semantic\nsearch works without Homebrew\n([#1507](https://github.com/nimbus-agent/Nimbus/issues/1507))\n([a3703cc](https://github.com/nimbus-agent/Nimbus/commit/a3703cc0b63bf7b9de4efce67bae91a2e71831a2))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-09-13T08:39:42+03:00",
-          "tree_id": "bf85cb135686fd16578a64a9ecd40938e922a977",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/2c261c25bb30d4f462d7d5604efcc657c4f0a07d"
-        },
-        "date": 1789278720657,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 320.01320289999967,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 324.93235560001193,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 181.48262005000342,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "206daba76301af28713338a80bedb9d1b35a9f1d",
+          "message": "fix(gateway): show a plan's moves in the Terraform apply preview (#2136)\n\n## What\n\nThe Terraform apply consent preview (`iac-plan-preview.ts`, the\n`iac_terraform_apply` row, I54) skipped every `no-op` resource change,\nso a move (`previous_address` on a `resource_changes` entry, which\nTerraform's jsonplan emits as a `no-op` when the object only moves) was\nnever shown to the owner who types the confirm text. #2132 closed the\nsame gap for the refresh-only drift block; this applies the same rule to\na normal plan.\n\n- A move-only object: `[moved in the state] <from> -> <to> (<type>,\n<provider>)`.\n- A changed object that also moved ends with `(moved from <from>)`.\n- A non-string `previous_address` (on a no-op or a change) refuses the\nplan as unshowable; `previous_address == address` is not a move.\n- Moves are counted: `counts.move`, `, Moves: N` in the header and `, N\nmoves` in the footer, each only when N > 0 (a plan with no moves renders\nbyte-identically, so goldens are unchanged). `changeCount` is unchanged\n(the refresh-only gate keeps working).\n- Moves count toward the 500-change cap and the byte budget: a plan too\nlarge to show is refused, never cut.\n- The previous address goes through `escapeOneLine`.\n- Shared pure helpers moved to the new sibling `iac-plan-attrs.ts`\n(`iac-plan-preview.ts` 496 -> 430 lines; not a split folder, so\n`audit:split-privacy` is unaffected). `escapeOneLine` is still exported\nfrom the preview module.\n- Tests: `iac-plan-preview-moves.test.ts` (6 tests); red-proved by\nreverting the preview (all fail, plus the two `counts` assertions that\ngained `move: 0`).\n- Docs: `docs/cli-reference.md` and `docs/architecture.md` describe the\npreview line. I54 in SECURITY-INVARIANTS.md does not describe plan\nlines, so unchanged.\n\nVerified: `typecheck`, `typecheck:tests`, touched tests,\n`security-invariants`, `check-nimbus-invariants`, `audit:file-size`\n(baseline lowered by one stale entry that was already shrunk on main),\n`audit:split-privacy`, `preflight:fast`.\n\n## For the batch-docs PR\n\n- CLAUDE.md / GEMINI.md: under the D2 IaC text, the apply preview now\nalso shows a plan's moves (`[moved in the state] <from> -> <to>`,\n`(moved from <from>)`, `Moves: N` in the counts and footer when\npresent); stated bound: a non-string `previous_address` refuses the\nplan.\n- CHANGELOG: `fix(gateway)` Terraform apply preview shows moves (I54).\n- roadmap: none.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrGFPLqt8C3Ybzk2dHq\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-24T12:12:55Z",
+          "tree_id": "a8bc9fb089812664fc1766ea882317663874bd01",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/206daba76301af28713338a80bedb9d1b35a9f1d"
+        },
+        "date": 1795522861866,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 185.8157049499994,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 185.06688380000088,
             "unit": "ms"
           }
         ]
