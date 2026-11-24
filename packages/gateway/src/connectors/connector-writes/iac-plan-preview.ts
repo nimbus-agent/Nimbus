@@ -57,7 +57,7 @@ export interface PlanPreview extends RenderedText {
   /** Deletes + replaces: every change that destroys something. */
   readonly deleteCount: number;
   /**
-   * Objects Terraform reports as changed outside Terraform (`resource_drift`, no-ops excluded):
+   * Objects Terraform reports as changed outside Terraform (`resource_drift`; a no-op only as a move):
    * `0` when it reports none, `null` when the field could not be read. Informational: it never
    * refuses a plan.
    */
@@ -83,6 +83,8 @@ const FORMAT_VERSION = /^1\.\d+$/;
 
 type Obj = Record<string, unknown>;
 type Label = "create" | "update" | "delete" | "replace" | "read" | "no-op";
+/** The classes an output change or a drifted object may have (no data-source read). */
+const CHANGE_LABELS: readonly Label[] = ["no-op", "create", "update", "delete", "replace"];
 
 class Refusal extends Error {
   readonly why: "unshowable" | "tooLarge";
@@ -247,14 +249,7 @@ function readResourceChanges(plan: Obj, maxChanges: number): ResourceChange[] {
     if (!isObj(entry)) throw new Refusal("unshowable");
     const change = own(entry, "change");
     if (!isObj(change)) throw new Refusal("unshowable");
-    const label = classify(own(change, "actions"), [
-      "no-op",
-      "create",
-      "update",
-      "delete",
-      "replace",
-      "read",
-    ]);
+    const label = classify(own(change, "actions"), [...CHANGE_LABELS, "read"]);
     if (label === undefined) throw new Refusal("unshowable");
     // Validate every entry's strings, no-ops included: a plan the gateway cannot read whole is refused.
     requireString(entry, "address");
@@ -274,13 +269,7 @@ function readOutputChanges(plan: Obj, maxChanges: number): Array<{ name: string;
   const out: Array<{ name: string; label: Label }> = [];
   for (const [name, value] of Object.entries(raw)) {
     if (!isObj(value)) throw new Refusal("unshowable");
-    const label = classify(own(value, "actions"), [
-      "no-op",
-      "create",
-      "update",
-      "delete",
-      "replace",
-    ]);
+    const label = classify(own(value, "actions"), CHANGE_LABELS);
     if (label === undefined) throw new Refusal("unshowable");
     if (label === "no-op") continue;
     if (out.length >= maxChanges) throw new Refusal("tooLarge");
@@ -355,6 +344,8 @@ interface DriftEntry {
   readonly label: Label;
   readonly entry: Obj;
   readonly change: Obj;
+  /** `previous_address` when it differs from `address`: the object moves in the state. */
+  readonly movedFrom: string | undefined;
 }
 
 /** The drift entries, or `null` when the field is present but not the documented shape. */
@@ -367,22 +358,21 @@ function readDrift(plan: Obj): DriftEntry[] | null {
     if (!isObj(entry)) return null;
     const change = own(entry, "change");
     if (!isObj(change)) return null;
-    const label = classify(own(change, "actions"), [
-      "no-op",
-      "create",
-      "update",
-      "delete",
-      "replace",
-    ]);
+    const label = classify(own(change, "actions"), CHANGE_LABELS);
     if (label === undefined) return null;
     for (const key of ["address", "type", "provider_name"]) {
       if (typeof own(entry, key) !== "string") return null;
     }
+    const prev = own(entry, "previous_address");
+    if (prev !== undefined && typeof prev !== "string") return null;
+    const movedFrom = prev !== undefined && prev !== own(entry, "address") ? prev : undefined;
     // An update compares two whole objects; anything else is not the documented shape.
     if (label === "update" && !(isObj(own(change, "before")) && isObj(own(change, "after")))) {
       return null;
     }
-    if (label !== "no-op") out.push({ label, entry, change });
+    // A refresh-only plan lists a move-only object as a no-op with `previous_address` (Terraform's
+    // jsonplan): accepting the plan moves it in the state, so it is drift the owner must see.
+    if (label !== "no-op" || movedFrom !== undefined) out.push({ label, entry, change, movedFrom });
   }
   return out;
 }
@@ -409,7 +399,14 @@ function buildDrift(plan: Obj): DriftBlock {
       const address = escapeOneLine(own(d.entry, "address") as string);
       const type = escapeOneLine(own(d.entry, "type") as string);
       const provider = escapeOneLine(own(d.entry, "provider_name") as string);
-      lines.add(`  [${driftLabel(d.label)}] ${address} (${type}, ${provider})`);
+      const from = d.movedFrom === undefined ? undefined : escapeOneLine(d.movedFrom);
+      // A move-only object (a no-op) names both addresses; a changed one that also moved, its old one.
+      const moveOnly = d.label === "no-op";
+      const head = moveOnly
+        ? `[moved in the state] ${from} -> ${address}`
+        : `[${driftLabel(d.label)}] ${address}`;
+      const moved = !moveOnly && from !== undefined ? ` (moved from ${from})` : "";
+      lines.add(`  ${head} (${type}, ${provider})${moved}`);
       if (d.label !== "update") continue;
       for (const k of changedAttributes(d.change)) lines.add(`    changed: ${escapeOneLine(k)}`);
     }

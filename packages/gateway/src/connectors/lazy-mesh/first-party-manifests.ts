@@ -3,6 +3,7 @@ import { validateAndNormalizePermissions } from "@nimbus-dev/registry-format";
 import pino from "pino";
 
 import type { ExtensionManifest } from "../../extensions/manifest.ts";
+import { FINOPS_FIRST_PARTY_MANIFESTS } from "./finops-manifests.ts";
 
 // To stderr: a stdout line in a process with an MCP stdio channel corrupts it. See sandbox/linux.ts.
 const log = pino(
@@ -298,12 +299,7 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
-  // Phase 10 FinOps FO1 (connectors 0.14.0). Bundled and sandboxed here; its gateway sync,
-  // catalog entry and Vault keys arrive with FO2.
-  vantage: baseManifest("com.nimbus.vantage", {
-    network: ["api.vantage.sh"],
-    filesystem: { read: [], write: [] },
-  }),
+  ...FINOPS_FIRST_PARTY_MANIFESTS,
   dbt: baseManifest("com.nimbus.dbt", {
     network: ["cloud.getdbt.com"],
     filesystem: { read: [], write: [] },

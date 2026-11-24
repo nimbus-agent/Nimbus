@@ -76,7 +76,7 @@ function escapeValue(v: string): string {
 }
 
 /** A value over {@link VALUE_MAX} is cut, then ends with an ellipsis and 6 hex of its own hash. */
-function boundedValue(v: string): string {
+export function boundedValue(v: string): string {
   if (v.length <= VALUE_MAX) {
     return v;
   }

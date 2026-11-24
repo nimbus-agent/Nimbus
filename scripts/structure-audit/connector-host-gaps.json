@@ -429,6 +429,15 @@
         "dynamicUrls": ["https://${}"]
       }
     },
+    "kubecost": {
+      "reaches": "KUBECOST_URL only.",
+      "decision": "phase3AddKubecostMcp adds the stored URL's host and port, labelled the owner's (a cluster-local service; the manifest list is empty). With an https URL or a loopback host the optional token is sent; an http URL on another host with a token is refused by the connector.",
+      "covers": {
+        "env": ["KUBECOST_URL"],
+        "cli": [],
+        "dynamicUrls": []
+      }
+    },
     "kubernetes": {
       "reaches": "kubectl to the cluster in the kubeconfig; exec auth plugins may reach more.",
       "decision": "Not declared: no parser for the kubeconfig at spawn. Empty list, so no network today. In knownUnreachable. Re-read against connectors 0.11.0: apply (kubectl apply --server-side, a dry run first) and get are the manifest plan and apply, D3's, and reach the same cluster (the plan computes its own diff from two `-o json` replies, so there is no kubectl diff); config is `kubectl config current-context`, a local read of the kubeconfig copy; the signals v1 and y are not commands, they are the first words of the apiVersion arrays and the YAML 1.1 word list in manifest-scan.ts.",
@@ -489,6 +498,15 @@
       "decision": "API host declared. The per-tenant <tenant>-my.sharepoint.com redirect target is a Linux wildcard (*.sharepoint.com); macOS enforces only ports, so 443 reaches it there. A consumer download host is in knownUnreachable. nextLink is held to Graph's origin by resolveUrlWithBase.",
       "covers": {
         "env": [],
+        "cli": [],
+        "dynamicUrls": []
+      }
+    },
+    "opencost": {
+      "reaches": "OPENCOST_URL only.",
+      "decision": "phase3AddOpencostMcp adds the stored URL's host and port, labelled the owner's (a cluster-local service; the manifest list is empty). With an https URL or a loopback host the optional token is sent; an http URL on another host with a token is refused by the connector.",
+      "covers": {
+        "env": ["OPENCOST_URL"],
         "cli": [],
         "dynamicUrls": []
       }

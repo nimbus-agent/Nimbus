@@ -11,7 +11,12 @@ import {
   selectK8sDeployment,
   selectLambdaFunction,
 } from "./cloud-readers.ts";
-import { CFN_DEPLOY_BOUND, TERRAFORM_APPLY_BOUND, TERRAFORM_DESTROY_BOUND } from "./iac-bound.ts";
+import {
+  CFN_DEPLOY_BOUND,
+  TERRAFORM_APPLY_BOUND,
+  TERRAFORM_DESTROY_BOUND,
+  TERRAFORM_REFRESH_ONLY_BOUND,
+} from "./iac-bound.ts";
 import { K8S_APPLY_BOUND } from "./k8s-bound.ts";
 import {
   type ConnectorWritePreviewTemplate,
@@ -244,6 +249,24 @@ export const CLOUD_INFRA_ROWS: readonly ConnectorWriteRow[] = [
       TERRAFORM_DESTROY_BOUND,
     ),
     { template: "destroy {workingDirectory}" },
+  ),
+  // OR-S4-DRIFT: accept drift into state, a refresh-only apply of the plan the gateway settled. It
+  // changes the state, never infrastructure (the settler refuses a plan that would), never offered
+  // to the model (model-offerable.ts), denied on the act door like every iac row (class iac).
+  withConfirm(
+    withBound(
+      withPreview(
+        row("iac_terraform_apply_refresh_only", "iac.terraform.apply_refresh_only", "mesh", 4),
+        {
+          target: "{workingDirectory}",
+          summary:
+            "ACCEPT DRIFT: update the Terraform state of {workingDirectory} to match what exists (the drift below, pinned by its plan hash); no infrastructure changes",
+          fields: [textField("workingDirectory", "Working directory")],
+        },
+      ),
+      TERRAFORM_REFRESH_ONLY_BOUND,
+    ),
+    { template: "accept-drift {workingDirectory}" },
   ),
   withConfirm(
     withBound(
