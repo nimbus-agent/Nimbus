@@ -636,7 +636,7 @@ org-admin rights:
 5. **Allow-list the mint action.** `Nimbus` requires SHA-pinned third-party
    actions, so add
    `actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc`
-   (`v3.2.0`) to the org's (or repo's) allowed-actions list, or the mint step
+   (`v3.4.0`) to the org's (or repo's) allowed-actions list, or the mint step
    fails closed with an "action not allowed" error before ever reaching the
    App.
 6. **Grant the App push access on protected branches, if any.**
