@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795513037383,
+  "lastUpdate": 1795513592004,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "1ac89f6808c5ed51f39fb8ea5d9ca8c42d3afc62",
-          "message": "fix(search): stop the vector KNN re-running once per chunk row (#1500)\n\n## The defect\n\nSemantic search was **quadratic in index size**. `vectorSearchChunks`\njoined the sqlite-vec KNN subquery to `embedding_chunk` on `vec_rowid`,\nand SQLite put the vec0 virtual table in the **innermost** loop, driven\nby `embedding_chunk` filtered on `model` — non-selective when you have\none local embedder, so it matches every row. The brute-force KNN\ntherefore re-executed once per chunk.\n\nMeasured at idle, with **zero concurrent writers**:\n\n| Items | `searchRankedAsync`, end to end |\n|---|---|\n| 4,000 | 26.7 s |\n| 8,000 | 69.9 s |\n\nEmbed time stayed under 6 ms throughout. Essentially all of it was SQL.\n\nThis is what produced `IPC request timed out after 30000ms:\nindex.searchRanked` in #1396. It is **not** a cold-start problem:\n`nimbus search` has been failing by construction on any install past a\nfew thousand indexed items. `memory/session-memory-store.ts` carried the\nidentical defect.\n\n## The fix\n\n`CROSS JOIN` to pin join order, plus schema **V62** adding\n`idx_embedding_chunk_vec_rowid` and `idx_session_memory_vec_rowid`. The\nplan inverts:\n\n```text\nbefore:  SEARCH ec USING INDEX idx_embedding_chunk_model      <- drives\n         SCAN vec_items_384 VIRTUAL TABLE                     <- inner, re-run per row\nafter:   SCAN vec_items_384 VIRTUAL TABLE                     <- drives, scanned once\n         SEARCH ec USING INDEX idx_embedding_chunk_vec_rowid\n```\n\n**The two halves are not symmetric**, and the first draft of this PR\nclaimed they were. The index alone changes nothing — same plan, 49.3 s\nto 83.4 s. The `CROSS JOIN` alone removes the quadratic term outright;\nwhat the index removes is the residual `k x N` range scan the now-outer\nloop leaves behind, which is why the gap widens with `k`. At 20,000\nitems: 33.3 ms / 432.4 ms at limits 20 / 500 without the index, against\n16.9 ms / 22.1 ms with it.\n\n**Result:** 69,896 ms to 28 ms end to end at 8,000 items. Growth is\nlinear — x8.17 for an x8 corpus, where quadratic would be x64.\nSession-memory recall: 42,424 ms to 27.8 ms.\n\n## Ordering is preserved, including ties\n\nChanging join order changed tie order — same rows, tie groups reversed.\nThat is user-visible through three order-dependent consumers:\n`bestVectorRanksByItem` derives rank from array index and feeds the RRF\nscore, `firstChunkByItem` picks which snippet is shown, and\n`dual-search`'s sort-then-slice decides which row survives at the limit\nboundary.\n\n`ORDER BY ..., vec_rowid ASC` restores the pre-fix order exactly rather\nthan imposing a new one, and is a no-op on the pre-fix query, so the\nbaseline does not move. Verified against a tie-bearing fixture, and\nred-proved: removing only the tiebreak reds exactly the two tie cases.\n\nStated bound: pre-fix ties were really ordered by ascending\n`embedding_chunk.id`, which merely **coincides** with `vec_rowid`\nbecause both writers allocate `MAX(rowid)+1` inside one transaction. No\ncode path produces a layout that separates them; a hand-built database\ncould.\n\n## How this was found\n\nThe original diagnosis was wrong and two measurement tasks corrected it.\nThe first measured embedding contention under backfill at 7-9 ms against\n2-3 ms idle — real, but four orders of magnitude too small to explain a\n30-second timeout. The second measured the layer nobody had, and found\nthe cause at idle with no writers at all.\n\nBoth harnesses ship, opt-in via `NIMBUS_RUN_EMBED_HARNESS=1` and never\nrun in CI, alongside an `EXPLAIN QUERY PLAN` regression test. **The fix\nis a planner hint, not a property true by construction** — a SQLite\nupgrade could re-plan it, and that test is what stands in the way. It is\nred-proved: reverting `CROSS` to `INNER` fails exactly the two plan\ncases.\n\n## Not in this PR\n\n- **The priority gate** for backfill-vs-query contention, deferred with\nits measurement attached. 7-9 ms is immaterial beside a 26,700 ms SQL\ndefect, and it would have added a concurrency primitive inside the\nembedding worker for no user-visible gain.\n- **A typed embedding-timeout error and a retrieval-quality\ndisclosure**, both real honesty defects, split to a follow-up branch so\nthis fix is not delayed behind them.\n\n## Verification\n\nFull suite in the exact CI shape: **22,754 pass / 75 skip / 0 fail**\nacross 1,528 files. `preflight:fast` green; `verify:docker --full` green\non Linux, which is the authority for the coverage floor.\n\n## Residuals, stated\n\n- The 60,000-item scale is extrapolated, not measured. The largest\ncompleted run anywhere in this branch is 8,000; post-fix growth is\nlinear and the plan is size-stable, but it is extrapolation.\n- Plan assertions cover the 384-dim leg only. The 1536 leg shares one\nbuilder and one SQL string, so the property transfers by argument rather\nthan by assertion.\n- The V62 migration has not been run against a\nmulti-hundred-thousand-chunk production database.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JfjtCEdFCQR848FKP34HFC\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n- **Performance**\n- Improved semantic and session-memory search performance through\noptimized vector query execution and lookup indexing.\n- Reduced repeated scans, including during searches performed while\nembeddings are being backfilled.\n\n- **Search Quality**\n- Search results now use consistent ordering when matches have equal\nrelevance.\n\n- **Maintenance**\n  - Added an automatic database migration to schema version 62.\n\n- **Documentation**\n- Updated architecture, schema references, project status, and changelog\ndocumentation.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-12T16:40:22+03:00",
-          "tree_id": "1b5e606f7c02adb8e6c652d7ee247f057e1296ac",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/1ac89f6808c5ed51f39fb8ea5d9ca8c42d3afc62"
-        },
-        "date": 1789221161678,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 325.2360549999947,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 328.57376240001287,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 204.38886295000012,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0e16d475616b954ec467f34d61cd2c42ce72ef26",
+          "message": "feat(ui): the desktop's read-only Infrastructure page for the latest IaC drift findings (#2123)\n\n## What and why\nPhase 10 IaC drift D2 stated \"no desktop view\". This adds one: a\nread-only `/infrastructure` page listing the latest drift finding per\napproved Terraform directory (`drift`, `clean`, `failed`, `busy`;\ncounts, the planned-change count and escaped attribute NAMES, never a\nvalue).\n\n## Design\n- `iac.driftLatest` joins the Tauri allowlist (I7, 140 -> 141, inserted\nalphabetically). `iac.driftCheck` (runs the plan child) stays CLI-only\nand off the renderer.\n- Gateway: `iac.driftLatest` now answers a connection that declared\n`cli` or `ui`; `driftCheck` stays `cli`-only (`runnerOf` takes the\nallowed kinds and a refusal string; new `IAC_DRIFT_OWNER_ONLY`). Every\nother kind is still refused before the runner lookup.\n- The `iac` namespace stays LAN-forbidden (I5, whole-namespace entry\nunchanged).\n- Page: one `useIpcQuery(\"iac.driftLatest\")` every 60 s, gateway text\nonly through `safeText` (invisible and bidi characters shown as\n`\\u{XXXX}`), no HTML, no link, nothing that starts a check; the check is\nshown as a terminal command. Sidebar entry \"Infrastructure\".\n- File-size rule honoured: the Rust bridge file gained 0 net lines (new\nRust test folded into `allowlist_incident_reads_only`, comment\ntightened); the new wire types live in `ipc/iac-types.ts`.\n\n## Stated bounds\nNo desktop trigger for a check (terminal only); `ui` is client-declared\non the local socket; the page is only as fresh as the last check; no\nhistory, one finding per directory.\n\n## Security notes\nI7 (allowlist, by-name pins in `i05`, `i07`, `i46`, `i54` tests and the\nRust test updated for 141), I5 (LAN unchanged), I41 (demo gateway still\nhas no runner). No egress, HITL, migration or new invariant.\n\n## Tests\nGateway unit and dispatcher tests (ui reads latest, ui refused check,\nother kinds refused both); `bun test\npackages/gateway/src/security-invariants` 684 pass; vitest\n`Infrastructure.test.tsx` (4) and the Sidebar test; `cargo test\nallowlist` 44 pass; `typecheck`, `typecheck:tests`, `audit:file-size`,\n`audit:split-privacy`, `audit:doc-refs`, `audit:status-drift`,\n`check-nimbus-invariants`, `preflight:fast` pass.\n\n## For the batch-docs PR\n- Roadmap: in the Phase 10 IaC drift row, replace \"no desktop view\"\nwith: \"2026-11-23: a read-only Infrastructure page lists the latest\nfinding per workdir (`iac.driftLatest` joined the Tauri allowlist, 140\n-> 141; `driftCheck` stays CLI-only).\"\n- CHANGELOG draft: `**2026-11-23: the desktop Infrastructure page (Phase\n10 IaC drift; no migration, invariant or static rule; Tauri allowlist\n140 -> 141).** The desktop lists the latest Terraform drift finding per\napproved directory, from \\`iac.driftLatest\\`, which now answers \\`cli\\`\nand \\`ui\\` connections. \\`iac.driftCheck\\` stays CLI-only; the \\`iac\\`\nnamespace stays LAN-forbidden. Stated bounds: no check from the desktop;\n\\`ui\\` is client-declared; freshness is the last check.`\n- CLAUDE.md/GEMINI.md: append to the IaC drift D2 sentence: \"A read-only\ndesktop Infrastructure page shows the latest finding per workdir\n(2026-11-23; `iac.driftLatest` is renderer-callable, Tauri allowlist 140\n-> 141; `iac.driftCheck` is not).\" and change \"Tauri allowlist\" counts\naccordingly.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrGFPLqt8C3Ybzk2dHq\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-24T09:39:05Z",
+          "tree_id": "0b5f50737870f76e0e8ed904be4116837f36ad26",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/0e16d475616b954ec467f34d61cd2c42ce72ef26"
+        },
+        "date": 1795513588748,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 182.8480948000044,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 184.23632170000093,
             "unit": "ms"
           }
         ]
