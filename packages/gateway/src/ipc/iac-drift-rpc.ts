@@ -4,6 +4,8 @@
  *   - `iac.driftCheck { workdir? }` runs the read-only check now for one approved workdir (its exact
  *     stored spelling) or each in turn, and returns the findings (`{ findings }`).
  *   - `iac.driftLatest` returns the stored latest finding per workdir (`{ findings }`).
+ *   - `iac.acceptDrift { workdir }` (OR-S4-ACCEPT-DRIFT) runs the accept-drift write row for one approved
+ *     workdir on THIS connection: the executor asks the owner there, a person's answer only (`{ outcome }`).
  *
  * `iac.driftCheck` is CLI ONLY: answered only to a connection that declared `cli` (the dispatcher
  * passes the CONNECTION's kind, never a param), so never the desktop, an MCP agent, ChatOps, HTTP or a
@@ -14,6 +16,7 @@
  * refuse.
  */
 
+import { type AcceptDriftOutcome, AcceptNotApprovedError } from "../iac-drift/accept-drift.ts";
 import type { DriftFinding } from "../iac-drift/drift-findings.ts";
 import { IacDriftNotApprovedError, type IacDriftRunner } from "../iac-drift/drift-runner.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
@@ -35,6 +38,7 @@ export const IAC_DRIFT_OWNER_ONLY =
 export const IAC_DRIFT_UNAVAILABLE =
   "ERR_IAC_DRIFT_UNAVAILABLE: the drift check is not available on this gateway";
 export const IAC_DRIFT_BAD_PARAMS = "ERR_IAC_DRIFT_BAD_PARAMS: workdir must be a non-empty string";
+export const IAC_ACCEPT_BAD_PARAMS = "ERR_IAC_DRIFT_BAD_PARAMS: accept-drift needs a workdir";
 
 export interface IacDriftRpcCtx {
   /** Absent on a demo gateway (I41) and until `gateway-main.ts` binds it. */
@@ -68,9 +72,23 @@ export async function dispatchIacDriftRpc(
   method: string,
   params: unknown,
   ctx: IacDriftRpcCtx,
-  caller: { readonly kind: ClientKind },
-): Promise<RpcMissOrHit<{ findings: DriftFinding[] }>> {
-  return dispatchByMethod<IacDriftRpcCtx, { findings: DriftFinding[] }>(method, params, ctx, {
+  caller: { readonly kind: ClientKind; readonly clientId: string },
+): Promise<RpcMissOrHit<{ findings: DriftFinding[] } | { outcome: AcceptDriftOutcome }>> {
+  return dispatchByMethod<
+    IacDriftRpcCtx,
+    { findings: DriftFinding[] } | { outcome: AcceptDriftOutcome }
+  >(method, params, ctx, {
+    "iac.acceptDrift": async (p, c) => {
+      const runner = runnerOf(c, caller.kind);
+      const workdir = workdirParam(p);
+      if (workdir === undefined) throw new IacDriftRpcError(-32602, IAC_ACCEPT_BAD_PARAMS);
+      try {
+        return { outcome: await runner.accept({ workdir, clientId: caller.clientId }) };
+      } catch (e) {
+        if (e instanceof AcceptNotApprovedError) throw new IacDriftRpcError(-32000, e.message);
+        throw e;
+      }
+    },
     "iac.driftCheck": async (p, c) => {
       const runner = runnerOf(c, caller.kind, ["cli"], IAC_DRIFT_CLI_ONLY);
       const workdir = workdirParam(p);

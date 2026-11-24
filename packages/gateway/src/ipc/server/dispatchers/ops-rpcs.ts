@@ -364,6 +364,7 @@ export async function tryDispatchIacDriftRpc(
   try {
     const out = await dispatchIacDriftRpc(method, params, rpc, {
       kind: ctx.getClientKind(clientId),
+      clientId,
     });
     if (out.kind === "hit") return out.value;
   } catch (e) {

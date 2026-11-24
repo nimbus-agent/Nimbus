@@ -247,3 +247,44 @@ describe("notification helpers", () => {
     expect(isNewDrift(1, f("drift", 2))).toBe(true);
   });
 });
+
+describe("the drift runner's accept (OR-S4-ACCEPT-DRIFT)", () => {
+  const base = {
+    makeExecutor: () => ({
+      checkTerraformDrift: async () => ({ ok: false as const, reason: "x" }),
+    }),
+    approvedWorkdirs: () => ["/a"],
+    now: () => 1,
+  };
+
+  test("accepts through the accept executor, on the connection named", async () => {
+    const made: string[] = [];
+    const r = createIacDriftRunner({
+      ...base,
+      dataDir: dir,
+      makeAcceptExecutor: ({ clientId }) => {
+        made.push(clientId);
+        return { execute: async () => ({ status: "ok" as const, result: {} }) };
+      },
+    });
+    expect(await r.accept({ workdir: "/a", clientId: "c9" })).toEqual({ status: "accepted" });
+    expect(made).toEqual(["c9"]);
+  });
+
+  test("a gateway with no accept executor refuses, and an unapproved workdir never reaches one", async () => {
+    const none = createIacDriftRunner({ ...base, dataDir: dir });
+    await expect(none.accept({ workdir: "/a", clientId: "c" })).rejects.toThrow(
+      "no accept executor",
+    );
+    const some = createIacDriftRunner({
+      ...base,
+      dataDir: dir,
+      makeAcceptExecutor: () => {
+        throw new Error("must not be built");
+      },
+    });
+    await expect(some.accept({ workdir: "/etc", clientId: "c" })).rejects.toThrow(
+      "not an approved",
+    );
+  });
+});

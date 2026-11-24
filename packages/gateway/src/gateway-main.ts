@@ -21,6 +21,7 @@ import { createNimbusEngineAgent } from "./engine/agent.ts";
 import { agentRequestContext } from "./engine/agent-request-context.ts";
 import { personalizationDeps } from "./engine/personalization.ts";
 import {
+  buildIacAcceptExecutor,
   buildIacDriftExecutor,
   buildRemediationExecutor,
   buildUnattendedWorkflowWriteExecutor,
@@ -310,14 +311,10 @@ export async function main(): Promise<void> {
     }),
   );
 
-  // ChatOps read path (Slice 5): `@nimbus <question>` answers run through the same runAsk
-  // pipeline as engine.ask (I11 envelope, HITL gate on any planned action). Per-namespace
-  // content filtering of local reads remains the slice's documented deferral.
-  //
-  // See `createChatOpsAskEngine` above: this is the only runAsk caller not already inside
-  // `agentRequestContext.run` (the other three sites are `ipc/server/inline-handlers.ts`'s
-  // `dispatchAgentInvoke`, `dispatchWorkflowRunRpc`, `dispatchEngineAskStream`), so the wrapper
-  // is applied here explicitly.
+  // ChatOps read path (Slice 5): `@nimbus <question>` runs through the same runAsk pipeline as engine.ask
+  // (I11 envelope, HITL gate). It is the only runAsk caller not already inside `agentRequestContext.run`
+  // (see `createChatOpsAskEngine` above; the other three are in `ipc/server/inline-handlers.ts`), so the
+  // wrapper is applied here explicitly.
   platform.chatops?.bindAskEngine(
     createChatOpsAskEngine((query) => ({
       input: query,
@@ -359,15 +356,10 @@ export async function main(): Promise<void> {
     })),
   );
 
-  // ChatOps agent-intent path (Task 9): `@nimbus agent <name> k=v ...` runs a real built-in agent
-  // through `dispatchAgentsRpc` and posts the (truncated) brief via `posts.agentBrief` — the I29
-  // `chatops` class's appender, ledgered `method='chatops.agentBrief'`. FIX 1 (whole-branch
-  // review): this used to be bound HERE, after `assemblePlatformServices` had already returned —
-  // a point with no federation-identity field to read at all — so `selfIdentity` was always
-  // omitted and every peer-fanning chat agent (`ghost`/`conflicts`/`huddle`/`janitor`) ran with a
-  // zero keypair. It is now bound inside `assemblePlatformServices` itself
-  // (`platform/assemble.ts`'s `bootChatopsAgentInvoker`), right after `ipcOpts.federationIdentity`
-  // is populated, so nothing is left to do here.
+  // ChatOps agent-intent path (Task 9): `@nimbus agent <name> k=v ...` runs a built-in agent through
+  // `dispatchAgentsRpc` and posts the brief via `posts.agentBrief` (I29 `chatops` class). It is bound
+  // inside `assemblePlatformServices` (`bootChatopsAgentInvoker`), where the federation identity is
+  // readable, so nothing is left to do here.
 
   const learningLogger = pino({ name: "standing-learning" });
   platform.ipc.setWorkflowRunHandler(async (ctx) => {
@@ -446,11 +438,10 @@ export async function main(): Promise<void> {
     );
   }
 
-  // Phase 10 IaC drift D2 (OR-DRIFT-1, OR-DRIFT-2): the read-only Terraform drift check, run by the owner's CLI
-  // (`iac.driftCheck`) and, opt-in, on the `[iac.drift] schedule`. Its executor (`buildIacDriftExecutor`, static
-  // D42(h)) asks nobody and never dispatches an apply; every plan and show read is audited and I29-ledgered. A
-  // scheduled run notifies through `showIgnoringFailure` with a count and the workdir only. A demo-rooted gateway
-  // builds neither (I41).
+  // Phase 10 IaC drift (OR-DRIFT-1, OR-DRIFT-2): the read-only Terraform drift check (`iac.driftCheck`, and opt-in
+  // the `[iac.drift] schedule`) on `buildIacDriftExecutor` (static D42(h)), which asks nobody and never applies.
+  // OR-S4-ACCEPT-DRIFT: `iac.acceptDrift` runs the accept-drift row on `buildIacAcceptExecutor` (static D42(k)),
+  // human-only consent on the asking connection. A demo-rooted gateway builds none of it (I41).
   const iacDriftScheduler =
     platform.paths.demo === true
       ? undefined
@@ -458,6 +449,15 @@ export async function main(): Promise<void> {
           const runner = createIacDriftRunner({
             makeExecutor: () =>
               buildIacDriftExecutor({
+                localIndex: platform.localIndex,
+                dispatcher,
+                egressSink: askEgressSink,
+                policyHitl: platform.policyHitl,
+              }),
+            makeAcceptExecutor: ({ clientId, onNonHuman }) =>
+              buildIacAcceptExecutor({
+                clientId,
+                consentCoordinator: humanOnlyConsent(platform.ipc.consent, onNonHuman),
                 localIndex: platform.localIndex,
                 dispatcher,
                 egressSink: askEgressSink,

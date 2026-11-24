@@ -144,7 +144,12 @@ describe("I54 — a bound connector write is dispatched only with the values its
     // ...an unbound runner refuses a check without running anything, while a bound one runs (the control)...
     const { dispatchIacDriftRpc, IAC_DRIFT_UNAVAILABLE } = await import("../ipc/iac-drift-rpc.ts");
     await expect(
-      dispatchIacDriftRpc("iac.driftCheck", {}, { runner: () => undefined }, { kind: "cli" }),
+      dispatchIacDriftRpc(
+        "iac.driftCheck",
+        {},
+        { runner: () => undefined },
+        { kind: "cli", clientId: "c" },
+      ),
     ).rejects.toThrow(IAC_DRIFT_UNAVAILABLE);
     let ran = 0;
     const bound = {
@@ -153,10 +158,16 @@ describe("I54 — a bound connector write is dispatched only with the values its
         return [];
       },
       latest: () => [],
+      accept: async () => ({ status: "accepted" as const }),
       running: () => false,
       wasRunningAt: () => false,
     };
-    await dispatchIacDriftRpc("iac.driftCheck", {}, { runner: () => bound }, { kind: "cli" });
+    await dispatchIacDriftRpc(
+      "iac.driftCheck",
+      {},
+      { runner: () => bound },
+      { kind: "cli", clientId: "c" },
+    );
     expect(ran).toBe(1);
     // ...and gateway-main binds the runner only inside the non-demo branch.
     const bindAt = stripComments(await read("packages/gateway/src/gateway-main.ts")).indexOf(
