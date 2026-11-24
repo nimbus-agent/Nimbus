@@ -307,7 +307,7 @@ test("federation.ask sends the query over the wire to a paired peer and returns 
 
   // --- Responder B ---
   const bDb = new Database(":memory:");
-  runIndexedSchemaMigrations(bDb, 38);
+  runIndexedSchemaMigrations(bDb, LocalIndex.SCHEMA_VERSION);
   const bIndex = new LocalIndex(bDb);
   bDb.run(`INSERT INTO item (id,service,type,external_id,title,body_preview,modified_at,synced_at,metadata)
            VALUES ('github:pr1','github','pull_request','pr1','Fix auth','body1',10,1,'{}')`);
@@ -357,7 +357,7 @@ test("federation.ask sends the query over the wire to a paired peer and returns 
 
   // --- Asker A ---
   const aDb = new Database(":memory:");
-  runIndexedSchemaMigrations(aDb, 38);
+  runIndexedSchemaMigrations(aDb, LocalIndex.SCHEMA_VERSION);
   const aIndex = new LocalIndex(aDb);
   // A knows B as an outbound peer (host/port/pubkey):
   aIndex.addLanPeer({
@@ -625,7 +625,7 @@ test("team.auditMerged merges a reachable peer's slice OVER THE WIRE (extractAud
 
   // --- Responder B: has a federation-audit slice + grants the asker on a published namespace ---
   const bDb = new Database(":memory:");
-  runIndexedSchemaMigrations(bDb, 33);
+  runIndexedSchemaMigrations(bDb, LocalIndex.SCHEMA_VERSION);
   const bIndex = new LocalIndex(bDb);
   appendAuditEntry(bDb, {
     actionType: "federation.query",
@@ -677,7 +677,7 @@ test("team.auditMerged merges a reachable peer's slice OVER THE WIRE (extractAud
 
   // --- Asker A: a local federation-audit slice + B paired as an outbound peer ---
   const aDb = new Database(":memory:");
-  runIndexedSchemaMigrations(aDb, 33);
+  runIndexedSchemaMigrations(aDb, LocalIndex.SCHEMA_VERSION);
   const aIndex = new LocalIndex(aDb);
   appendAuditEntry(aDb, {
     actionType: "federation.query",
