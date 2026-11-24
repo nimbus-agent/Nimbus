@@ -1,7 +1,6 @@
 // `config explain`: where each effective value comes from. Reads the layered snapshot
 // (pack -> base -> profile) and puts a set, effective environment override on top.
 
-import { DEFAULT_OPENAPI_CONFIG, parseOpenapiToml } from "../connectors/openapi-indexer-config.ts";
 import { loadMultimodalConfig } from "../multimodal/multimodal-config.ts";
 import { processEnvGet } from "../platform/env-access.ts";
 import { sourceMappingFor } from "../sources/source-mapping.ts";
@@ -69,12 +68,13 @@ import {
   loadNimbusUpdaterFromConfigDir,
   loadNimbusUserFromConfigDir,
   loadNimbusVoiceFromConfigDir,
-  loadTomlSectionFromConfig,
 } from "./nimbus-toml.ts";
 import { loadGlossaryManualFromConfigDir } from "./nimbus-toml-glossary-terms.ts";
 import { loadNimbusWorkdayFromConfigDir } from "./nimbus-toml-workday.ts";
 import { loadNimbusNotificationsFromConfigDir } from "./notifications-toml.ts";
 import { loadNimbusOncallPushFromConfigDir } from "./oncall-push-toml.ts";
+import { loadNimbusOpenapiFromConfigDir } from "./openapi-section.ts";
+import { loadNimbusOrchestrationFromConfigDir } from "./orchestration-toml.ts";
 import { personalizationExplainNotes } from "./personalization-toml.ts";
 import { loadNimbusPreflightRiskFromConfigDir } from "./preflight-risk-toml.ts";
 import { loadNimbusSessionFromConfigDir } from "./session-toml.ts";
@@ -121,8 +121,8 @@ export const SECTION_LOADERS: Readonly<Record<string, (configDir: string) => unk
   negotiate: loadNimbusNegotiateFromConfigDir,
   notifications: (configDir) => loadNimbusNotificationsFromConfigDir(configDir),
   "oncall.push": loadNimbusOncallPushFromConfigDir,
-  openapi: (configDir) =>
-    loadTomlSectionFromConfig(configDir, "openapi", DEFAULT_OPENAPI_CONFIG, parseOpenapiToml),
+  orchestration: loadNimbusOrchestrationFromConfigDir,
+  openapi: loadNimbusOpenapiFromConfigDir,
   ownership: loadNimbusOwnershipFromConfigDir,
   pagerduty: loadNimbusPagerdutyFromConfigDir,
   persona: (configDir) => loadNimbusPersonaFromConfigDir(configDir),

@@ -46,7 +46,6 @@ import { startCuSnapshotRetention } from "../computer-use/cu-snapshot-retention.
 import { loadNimbusFilesystemRootsFromConfigDir } from "../config/filesystem-toml.ts";
 import { loadNimbusIncidentPredictFromConfigDir } from "../config/incident-predict-toml.ts";
 import { loadNimbusIncidentFromConfigDir } from "../config/incident-toml.ts";
-import { loadNimbusIndexFromConfigDir } from "../config/index-toml.ts";
 import { initLayeredConfig } from "../config/layered-config.ts";
 import {
   loadNimbusAuditFromConfigDir,
@@ -115,7 +114,6 @@ import { startIncidentRetention } from "../incident/incident-retention.ts";
 import { startPredictScheduler } from "../incident/predict-pass.ts";
 import { createRemediation, type MakeExecutor } from "../incident/remediation.ts";
 import { readUnreadChatThreads } from "../index/chat-unread-query.ts";
-import { startItemHistoryRetention } from "../index/item-history-retention.ts";
 import { gitAwareRootPaths, loadRegisteredRoots } from "../index/registered-roots-store.ts";
 import { createLiveInvestigator } from "../investigation/investigation-live.ts";
 import { resumePendingRemovals } from "../ipc/connector-rpc-handlers/index.ts";
@@ -241,6 +239,7 @@ import {
   maybeAttachSessionMemoryStore,
   openGatewaySqlite,
 } from "./assemble/index-boot.ts";
+import { startIndexRetentionSidecars } from "./assemble/index-retention-sidecars.ts";
 import { buildLlmRegistryFromToml } from "./assemble/llm-registry.ts";
 import { resolveAgentVendor } from "./assemble/llm-vendors.ts";
 import {
@@ -607,12 +606,8 @@ export async function assemblePlatformServices(
   });
   sidecarStops.push(() => toolCallLogRetention.stop());
 
-  // Item history retention (Phase 10 IC1): `[index] history_retention_days`, read through the closure on
-  // every tick so an edit applies without a restart. One batched prune per 24 h, never inside a sync.
-  const itemHistoryRetention = startItemHistoryRetention(db, {
-    retentionDays: () => loadNimbusIndexFromConfigDir(paths.configDir).historyRetentionDays,
-  });
-  sidecarStops.push(() => itemHistoryRetention.stop());
+  // Item history (IC1) and orchestration run rows: the daily index retention passes.
+  startIndexRetentionSidecars({ db, paths, sidecarStops });
 
   // Incident record retention (Phase 10 IC3): `[incident] retention_days`, re-read on every tick. A pruned
   // record takes its pushed briefs with it, in one transaction per batch.

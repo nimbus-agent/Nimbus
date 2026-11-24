@@ -6,7 +6,7 @@
   ],
   "sqlLiteralScopeNote": "A raw scan of packages/gateway/src/**/*.ts (minus *.test.ts) with extractSqlLiterals finds 483 SQL-shaped literals. This artifact's file set additionally excludes *-sql.ts files (an existing, repo-wide iterateSourceFiles() convention, not specific to this gate), which drops exactly 4 literals in 4 files: index/entity-metadata-v54-sql.ts, index/fleet-subjects-v63-sql.ts, index/glossary-manual-v46-sql.ts, index/unified-item-v3-sql.ts. Three are schema DDL (their only SQL-shaped text is an internal FTS-sync SELECT inside a CREATE TRIGGER body); the fourth is a one-time graph_entity migration UPDATE, already out of scope by table. None is a live read predicate reachable at runtime, so this fully explains the 483-vs-479 gap with zero effect on reads/writes/unmatchedItemReads below.",
   "counts": {
-    "reads": 531,
+    "reads": 536,
     "writes": 141,
     "unmatchedItemReads": 69,
     "totalAbsence": 24,
@@ -1175,6 +1175,41 @@
     },
     {
       "table": "item",
+      "kind": "type",
+      "value": "dag_run",
+      "file": "packages/gateway/src/index/orchestration-run-retention.ts",
+      "line": 47
+    },
+    {
+      "table": "item",
+      "kind": "type",
+      "value": "job_run",
+      "file": "packages/gateway/src/index/orchestration-run-retention.ts",
+      "line": 48
+    },
+    {
+      "table": "item",
+      "kind": "type",
+      "value": "flow_run",
+      "file": "packages/gateway/src/index/orchestration-run-retention.ts",
+      "line": 49
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "end_ms",
+      "file": "packages/gateway/src/index/orchestration-run-retention.ts",
+      "line": 42
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "start_ms",
+      "file": "packages/gateway/src/index/orchestration-run-retention.ts",
+      "line": 43
+    },
+    {
+      "table": "item",
       "kind": "metadata-key",
       "value": "branch",
       "file": "packages/gateway/src/index/resolve-by-url.ts",
@@ -1416,28 +1451,28 @@
       "kind": "metadata-key",
       "value": "parent_item_id",
       "file": "packages/gateway/src/incident/lanes/data-runs.ts",
-      "line": 122
+      "line": 116
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "outcome",
       "file": "packages/gateway/src/incident/lanes/data-runs.ts",
-      "line": 123
+      "line": 117
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "start_ms",
       "file": "packages/gateway/src/incident/lanes/data-runs.ts",
-      "line": 124
+      "line": 118
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "end_ms",
       "file": "packages/gateway/src/incident/lanes/data-runs.ts",
-      "line": 125
+      "line": 119
     },
     {
       "table": "graph_relation",
@@ -6701,11 +6736,11 @@
     },
     {
       "file": "packages/gateway/src/incident/lanes/data-runs.ts",
-      "line": 96
+      "line": 92
     },
     {
       "file": "packages/gateway/src/incident/lanes/data-runs.ts",
-      "line": 126
+      "line": 120
     },
     {
       "file": "packages/gateway/src/incident/lanes/data.ts",

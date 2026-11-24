@@ -389,7 +389,7 @@
     "packages/gateway/src/platform/assemble-fleet.test.ts": 528,
     "packages/gateway/src/platform/assemble-sync-registrations.ts": 568,
     "packages/gateway/src/platform/assemble.test.ts": 1297,
-    "packages/gateway/src/platform/assemble.ts": 1993,
+    "packages/gateway/src/platform/assemble.ts": 1988,
     "packages/gateway/src/platform/gateway-log-file.test.ts": 763,
     "packages/gateway/src/platform/notifications/os-notifications.test.ts": 505,
     "packages/gateway/src/platform/register-extension-sync.test.ts": 893,

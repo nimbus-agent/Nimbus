@@ -1322,6 +1322,7 @@ Text from the index (a title, a sender) is stripped of control characters before
 | `[briefing.deadlines] enabled` | `false` | independent of `[briefing] enabled` |
 | `[briefing.deadlines] lead_hours` | `24` | 1 to 168 |
 | `[briefing.deadlines] quiet_hours` | `24` | 1 to 336 |
+| `[orchestration] run_retention_days` | `30` | 7 to 365, an integer; Airflow, Dagster and Prefect run rows (`airflow:dag_run`, `dagster:job_run`, `prefect:flow_run`) whose run ended (else started) longer ago are deleted by a daily pass; the DAG, job and deployment rows are never pruned by it |
 | `[index] history_retention_days` | `180` | 7 to 3650, an integer; how long item-history rows (the change log behind `--at`) are kept, pruned daily in batches. There is no `0` (an unbounded history table is not a mode); a value outside the range falls back to 180 and `nimbus config explain index.history_retention_days` says so |
 
 **The notification shows counts only** (`3 meetings · 2 reviews waiting · on call today`; `2 open items due within 24 h with no recent activity`): never a title, sender, repository, channel or time. A missed slot is caught up if the gateway starts within three hours of it, otherwise it is recorded as skipped; enabling the briefing fires nothing until the next slot; a wall time inside a spring-forward gap has no slot that day.
