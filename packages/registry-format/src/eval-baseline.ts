@@ -134,8 +134,10 @@ function hasPlainShape(definitions: object): boolean {
  *
  * It sees what the listing kept. A client that collects definitions by name turns a tool named
  * `__proto__` into the record's prototype, where no key shows it, so a record with a foreign
- * prototype is `invalid-tool`. A duplicate name overwrites the earlier tool and leaves no trace,
- * so it cannot be detected here: that is a stated limit.
+ * prototype is `invalid-tool`. `@mastra/mcp` 2.10 drops such a tool before this function sees
+ * the listing (the end-to-end test records that), so through that client it is not counted and
+ * not flagged; the check stays for a client that does not. A duplicate name overwrites the
+ * earlier tool and leaves no trace, so it cannot be detected here: that is a stated limit.
  */
 export function judgeToolDefinitions(definitions: unknown): EvalBaseline {
   if (typeof definitions !== "object" || definitions === null) {
