@@ -106,19 +106,26 @@ export async function runMemoryWith(
   }
 }
 
-export async function runMemoryCommand(args: string[]): Promise<void> {
+/** The process-level seams of the command, injectable so the exit-code paths are testable. */
+export interface MemoryCommandIo {
+  readonly withIpc: (fn: (c: MemoryIpc) => Promise<number>) => Promise<number>;
+  readonly sink: MemorySink;
+}
+
+const DEFAULT_IO: MemoryCommandIo = {
+  withIpc: (fn) => withGatewayIpc(fn, getCliPlatformPaths()),
+  sink: { out: (s) => process.stdout.write(s), err: (s) => process.stderr.write(s) },
+};
+
+export async function runMemoryCommand(
+  args: string[],
+  io: MemoryCommandIo = DEFAULT_IO,
+): Promise<void> {
   const a = parseMemoryArgs(args);
   if (a === undefined) {
-    process.stderr.write(`${MEMORY_USAGE}\n`);
+    io.sink.err(`${MEMORY_USAGE}\n`);
     throw new CliExit(2);
   }
-  const code = await withGatewayIpc(
-    (c) =>
-      runMemoryWith(c, a, {
-        out: (s) => process.stdout.write(s),
-        err: (s) => process.stderr.write(s),
-      }),
-    getCliPlatformPaths(),
-  );
+  const code = await io.withIpc((c) => runMemoryWith(c, a, io.sink));
   if (code !== 0) throw new CliExit(code);
 }

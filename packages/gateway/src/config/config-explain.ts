@@ -83,10 +83,7 @@ import { loadNimbusTelemetryFromConfigDir } from "./telemetry-toml.ts";
 import { parseString } from "./toml-primitives.ts";
 import { loadNimbusWatcherChatopsFromConfigDir } from "./watcher-chatops-toml.ts";
 
-/**
- * Each section id (unbracketed, as `sectionFallback` keys it) mapped to its config-dir loader;
- * `probeSection` runs it so a swallowed error is on record. Every id a fallback sink uses is here.
- */
+/** Each section id (as `sectionFallback` keys it) mapped to its loader; every id a fallback sink uses is here. */
 export const SECTION_LOADERS: Readonly<Record<string, (configDir: string) => unknown>> = {
   agents: loadNimbusAgentsFromConfigDir,
   audit: loadNimbusAuditFromConfigDir,

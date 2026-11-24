@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
 
-import { type MemoryIpc, parseMemoryArgs, runMemoryWith } from "./memory.ts";
+import { CliExit } from "../lib/cli-exit.ts";
+import {
+  type MemoryCommandIo,
+  type MemoryIpc,
+  parseMemoryArgs,
+  runMemoryCommand,
+  runMemoryWith,
+} from "./memory.ts";
 
 function sink() {
   const out: string[] = [];
@@ -107,5 +114,39 @@ describe("runMemoryWith", () => {
     expect(await runMemoryWith(c, { mode: "list", json: false }, o.s)).toBe(1);
     expect(o.err.join("")).toContain("ERR_MEMORY_UNAVAILABLE");
     expect(o.err.join("")).not.toContain("\u001b");
+  });
+});
+
+describe("runMemoryCommand", () => {
+  const ioOf = (call: MemoryIpc["call"]) => {
+    const o = sink();
+    const io: MemoryCommandIo = { withIpc: (fn) => fn({ call }), sink: o.s };
+    return { o, io };
+  };
+
+  test("bad arguments print the usage and exit 2 without touching the gateway", async () => {
+    let touched = false;
+    const { o, io } = ioOf(async () => {
+      touched = true;
+      return {};
+    });
+    await expect(runMemoryCommand(["wipe"], io)).rejects.toEqual(new CliExit(2));
+    expect(o.err.join("")).toContain("Usage: nimbus memory");
+    expect(touched).toBe(false);
+  });
+
+  test("success resolves; a failed call throws the CliExit code", async () => {
+    const ok = ioOf(async () => ({
+      enabled: false,
+      retentionDays: 90,
+      pendingTurns: 0,
+      memories: [],
+    }));
+    await runMemoryCommand(["list"], ok.io);
+    expect(ok.o.out.join("")).toContain("OFF");
+    const bad = ioOf(async () => ({ forgotten: 0 }));
+    await expect(runMemoryCommand(["forget", "mem_0123456789abcdef"], bad.io)).rejects.toEqual(
+      new CliExit(1),
+    );
   });
 });
