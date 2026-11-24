@@ -79,7 +79,7 @@ export async function dispatchIacDriftRpc(
     { findings: DriftFinding[] } | { outcome: AcceptDriftOutcome }
   >(method, params, ctx, {
     "iac.acceptDrift": async (p, c) => {
-      const runner = runnerOf(c, caller.kind);
+      const runner = runnerOf(c, caller.kind, ["cli"], IAC_DRIFT_CLI_ONLY);
       const workdir = workdirParam(p);
       if (workdir === undefined) throw new IacDriftRpcError(-32602, IAC_ACCEPT_BAD_PARAMS);
       try {

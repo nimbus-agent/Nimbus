@@ -107,7 +107,10 @@ describe("iac.* (OR-DRIFT-1: the owner's CLI only)", () => {
   test("the desktop (ui) reads the latest findings and is still refused the check", async () => {
     const h = runner();
     const ctx = { runner: () => h.r };
-    const latest = await dispatchIacDriftRpc("iac.driftLatest", {}, ctx, { kind: "ui", clientId: "c1" });
+    const latest = await dispatchIacDriftRpc("iac.driftLatest", {}, ctx, {
+      kind: "ui",
+      clientId: "c1",
+    });
     expect(latest).toEqual({ kind: "hit", value: { findings: [F] } });
     expect(h.calls).toEqual([]);
   });
