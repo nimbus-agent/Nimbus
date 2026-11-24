@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [11.13.0](https://github.com/nimbus-agent/Nimbus/compare/v11.12.0...v11.13.0) (2026-11-24)
+
+
+### Features
+
+* **gateway:** nimbus incident investigate --live, a gated and ledgered live Sentry read ([#2137](https://github.com/nimbus-agent/Nimbus/issues/2137)) ([be4df0e](https://github.com/nimbus-agent/Nimbus/commit/be4df0e84c2dc8ba85498af9454a5b598f7f47da))
+
 ## [11.12.0](https://github.com/nimbus-agent/Nimbus/compare/v11.11.0...v11.12.0) (2026-11-24)
 
 
