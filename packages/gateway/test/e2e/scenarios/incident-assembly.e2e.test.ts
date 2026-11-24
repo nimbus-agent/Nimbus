@@ -60,7 +60,11 @@ describe("incident assembly acceptance (IC3)", () => {
     dbs.push(db);
     const now = Date.now();
     const open = now - 5 * 60_000;
-    const cfg = serviceConfig({ serviceId: "payments", pagerdutyServices: ["PSVC1"] });
+    const cfg = serviceConfig({
+      serviceId: "payments",
+      pagerdutyServices: ["PSVC1"],
+      dataModels: [],
+    });
     const resolver = resolverFor(cfg);
     bulkItems(db, 5_000, now);
     markSynced(db, "slack", now);

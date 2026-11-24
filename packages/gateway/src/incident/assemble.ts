@@ -26,7 +26,7 @@ import { capRecordSize, gap, oneLine } from "./lanes/caps.ts";
 import { changeLane, skippedChange } from "./lanes/change.ts";
 import { CHAT_SERVICES, chatLane, skippedChat } from "./lanes/chat.ts";
 import { concurrentLane, skippedConcurrent } from "./lanes/concurrent.ts";
-import { dataLane } from "./lanes/data.ts";
+import { dataLane, pagerdutyDataLane } from "./lanes/data.ts";
 import { historyLane } from "./lanes/history.ts";
 import { oncallLane } from "./lanes/oncall.ts";
 import { priorLane, skippedPrior } from "./lanes/prior.ts";
@@ -318,7 +318,7 @@ function buildBody(deps: AssembleDeps, ev: Evidence, nowMs: number, trigger: Tri
   const data =
     trigger.service === "montecarlo" || trigger.service === "bigeye"
       ? dataLane(db, { metadata: ev.meta, openedAtMs: open })
-      : null;
+      : pagerdutyDataLane(db, { service: trigger.service, cfg, openedAtMs: open });
   // lane-census: scope=incident service=pagerduty
   const pdService =
     typeof ev.meta?.["pagerduty_service_id"] === "string"

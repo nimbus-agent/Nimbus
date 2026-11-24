@@ -32,7 +32,7 @@ afterEach(() => {
   for (const d of dbs.splice(0)) d.close();
 });
 
-const cfg = serviceConfig();
+const cfg = serviceConfig({ dataModels: [] }); // OR-S4-DATA: these read the general brief
 const resolver = resolverFor(cfg);
 const NOW = T0 + HOUR;
 

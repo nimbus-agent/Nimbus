@@ -31,6 +31,7 @@ import { createIncidentEngine } from "../../../src/incident/incident-engine.ts";
 import { pruneIncidentRecordsWithBriefs } from "../../../src/incident/incident-erasure.ts";
 import { getByTriggerItem, versionsOf } from "../../../src/incident/incident-store.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
+import type { ServiceConfig } from "../../../src/metrics/dora-config.ts";
 import { createOncallPushRunner } from "../../../src/oncall-push/push-runner.ts";
 import { PushStore } from "../../../src/oncall-push/push-store.ts";
 import { findPersonByCanonicalEmail } from "../../../src/people/person-store.ts";
@@ -52,7 +53,7 @@ const OPEN = NOW - 10 * 60_000;
 const cfg = serviceConfig({ serviceId: "payments", pagerdutyServices: ["PSVC1"] });
 const resolver = resolverFor(cfg);
 
-function setup(config = DEFAULT_INCIDENT_CONFIG) {
+function setup(config = DEFAULT_INCIDENT_CONFIG, bound: ServiceConfig = cfg) {
   const db = createMemoryIndexDb();
   dbs.push(db);
   const events: { recordId: string; version: number; status: string }[] = [];
@@ -60,7 +61,7 @@ function setup(config = DEFAULT_INCIDENT_CONFIG) {
     db,
     now: () => NOW,
     emit: (p) => events.push(p),
-    loadServiceConfigs: () => configMap(cfg),
+    loadServiceConfigs: () => configMap(bound),
     readConfig: () => ({ incident: config, pagerdutyP1Aliases: [] }),
     demo: false,
     logger: { warn: () => {} },
@@ -174,14 +175,22 @@ describe("re-assembly", () => {
 
 describe("erasure and retention reach the records and the briefs built from them", () => {
   test("connector remove of the chat service deletes the citing records AND their pushed briefs; unrelated ones stay", async () => {
-    const { db, engine } = setup();
+    // OR-S4-DATA: a PagerDuty incident of a service that declares data_models is a data incident (no chat
+    // lane), so this general-brief case binds a service with none.
+    const plain = serviceConfig({
+      serviceId: "payments",
+      pagerdutyServices: ["PSVC1"],
+      dataModels: [],
+    });
+    const plainResolver = resolverFor(plain);
+    const { db, engine } = setup(DEFAULT_INCIDENT_CONFIG, plain);
     markSynced(db, "slack", OPEN);
     writeSlackMessage(db, { ts: "1.000001", text: "payments is slow", atMs: OPEN + 60_000 });
-    writePagerdutyIncident(db, { id: "WITHCHAT", openedAtMs: OPEN, priority: "P1" }, resolver);
+    writePagerdutyIncident(db, { id: "WITHCHAT", openedAtMs: OPEN, priority: "P1" }, plainResolver);
     writeJsmAlert(
       db,
       { id: "NOCHAT", openedAtMs: OPEN, priority: "P1", tags: ["elsewhere"] },
-      resolver,
+      plainResolver,
     );
     await engine.trigger("pagerduty");
     await engine.trigger("jira");
