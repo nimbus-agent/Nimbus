@@ -21,6 +21,19 @@ describe("renderIncidentInvestigation", () => {
     expect(renderIncidentInvestigation(brief)).toBe(renderInvestigation(brief.investigation));
   });
 
+  test("with no gaps the deterministic render keeps the heading, as the plain investigation does", () => {
+    const base = buildInvestigationBriefFixture();
+    const brief = {
+      ...base,
+      gaps: [],
+      investigation: { ...base.investigation, gaps: [] },
+    };
+    const out = renderIncidentInvestigation(brief);
+    expect(out).toContain("## Gaps");
+    expect(out).toBe(renderInvestigation(brief.investigation));
+    expect(renderIncidentInvestigation(brief, { omitReserved: true })).not.toContain("## Gaps");
+  });
+
   test("omitReserved withholds actions, leads, gaps and freshness and nothing else", () => {
     const body = renderIncidentInvestigation(buildInvestigationBriefFixture(), {
       omitReserved: true,

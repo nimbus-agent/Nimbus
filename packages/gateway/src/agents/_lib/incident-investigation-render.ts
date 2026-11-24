@@ -54,7 +54,9 @@ export function renderIncidentInvestigation(
     dataContext(inv),
     related(inv),
     ...(withheld ? [] : investigationReservedBlocks(brief).map((b) => b.markdown)),
-    withheld ? "" : renderGaps(brief.gaps).trim(),
+    // Same as `renderInvestigation`: the heading stays even with no gaps. (A synthesized brief reserves `## Gaps`
+    // only when it has content, `reservedBlocksFor`, so there it is omitted when the list is empty.)
+    withheld ? "" : renderGaps(brief.gaps).trim() || "## Gaps\n",
     withheld ? "" : investigationFreshnessBlock(brief),
   ];
   return `${body.filter((p): p is string => p !== null && p !== "").join("\n\n")}\n`;
