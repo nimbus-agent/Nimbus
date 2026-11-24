@@ -18,6 +18,8 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
 
 ## Post-Phase-6 deliveries
 
+- **2026-11-24: Phase 17 *Approve-from-push* closed by owner ruling (docs only).**
+  The row closes on the CLI door Phase 10 IC5b shipped (`nimbus oncall pushed <id> --remediate`) and the desktop view of IC10b; the device-key-signed approval from a phone moves to Phase 11's *Mobile HITL signature* row, the same shape as ruling 4's close of ChatOps Remediate. Stated bound: a pushed brief is approved at a terminal, not on the device it reached.
 - **2026-11-24: the org-wide dependency sweep is complete (owner ruling OR-S4-DEPS, the last carried-in S4 item; no user-visible change).**
   All seven repositories moved to the latest versions, majors included, one PR each in the ruling's order: nimbus-sdk #299, nimbus-client #97, nimbus-mcp #22, nimbus-mcp-servers #94 (released as connectors 0.17.1), Nimbus #2140, nimbus-vscode #133 and nimbus-web-clipper #137. What was held back, and why, is in [`roadmap.md`](./roadmap.md) and each repository's contributing notes.
 - **2026-11-24: MCP revision 2026-07-28 run against a real client; the MCP server reports its real version (Phase 28; no schema, invariant, IPC method or tool change).**
