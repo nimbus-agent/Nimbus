@@ -15,6 +15,7 @@ function makeCtx(o: { wired?: boolean; kind?: ClientKind; throws?: Error } = {})
       if (o.throws !== undefined) throw o.throws;
       return [];
     },
+    accept: async () => ({ status: "accepted" as const }),
     latest: () => [],
     running: () => false,
     wasRunningAt: () => false,

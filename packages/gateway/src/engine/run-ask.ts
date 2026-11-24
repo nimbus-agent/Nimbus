@@ -438,11 +438,7 @@ function newTurnExecutor(
   );
 }
 
-/**
- * The shared construction behind {@link newTurnExecutor} and the unattended workflow executor: the
- * same dispatcher, egress sink, policy and preview credential, on the consent channel the caller
- * names. Everything but the channel comes from the same arguments, so the two cannot drift.
- */
+/** The shared construction behind every executor here: the same arguments, on the consent channel named. */
 function newExecutorOnChannel(
   p: Omit<ExecutorBuildParams, "clientId" | "consentCoordinator" | "localIndex">,
   consent: ConsentChannel,
@@ -451,11 +447,7 @@ function newExecutorOnChannel(
   audit: AuditSink,
 ): ToolExecutor {
   // I29: every real connector dispatch routes through this executor, so it carries the egress sink
-  // (append-before-dispatch). A connector tool call (read OR write) is an outbound event and is
-  // ledgered; a query answered purely from the local index never reaches here, so it adds 0 rows.
-  // `p.egressSink` is REQUIRED (see the doc comment on `RunAskParams.egressSink`) — this used to
-  // silently fall back to `NULL_EGRESS_SINK` whenever `p.localIndex.getDatabase` wasn't a function;
-  // that fallback is gone, so a caller can no longer get a no-op sink without saying so.
+  // (append-before-dispatch); `p.egressSink` is REQUIRED, with no silent no-op fallback.
   return new ToolExecutor(
     consent,
     audit,
@@ -464,8 +456,7 @@ function newExecutorOnChannel(
     p.egressSink,
     p.policyHitl ?? NO_POLICY_OVERLAY,
     p.previewCredentialFor,
-    // I15 (AD5b): EVERY turn executor carries the reader (ask, model write door, agent door, both
-    // workflow executors), so none can prompt for an `mcp_*` call without the write directories.
+    // I15 (AD5b): EVERY executor carries the user-MCP write-grant reader.
     p.userMcpWriteGrants === undefined
       ? extras
       : { ...extras, userMcpWriteGrants: p.userMcpWriteGrants },
@@ -611,11 +602,10 @@ export function buildUnattendedWorkflowWriteExecutor(
 export type IacDriftExecutorParams = Omit<ExecutorBuildParams, "clientId" | "consentCoordinator">;
 
 /**
- * The IaC drift check's executor (Phase 10 IaC drift D2, OR-DRIFT-1, static D42(h)): the ONE executor
- * that may run `checkTerraformDrift`, the read-only plan and show of an approved Terraform workdir. Its
- * consent channel denies every request without asking anyone (nothing in a drift check is ever asked),
- * it has no delegation, no before-state runner and no standing rules, and it takes no client id. Called
- * only from `gateway-main.ts`, which hands it to the drift runner (`iac-drift/drift-runner.ts`).
+ * The IaC drift check's executor (OR-DRIFT-1, static D42(h)): the ONE executor that may run
+ * `checkTerraformDrift`, the read-only plan and show of an approved workdir. Its consent channel denies
+ * every request without asking anyone, it has no delegation, before-state runner or standing rules, and
+ * no client id. Called only from `gateway-main.ts`, for the drift runner (`iac-drift/drift-runner.ts`).
  */
 export function buildIacDriftExecutor(p: IacDriftExecutorParams): ToolExecutor {
   return newExecutorOnChannel(
@@ -625,6 +615,15 @@ export function buildIacDriftExecutor(p: IacDriftExecutorParams): ToolExecutor {
     { driftCheck: true },
     p.localIndex,
   );
+}
+
+/**
+ * The owner's accept-drift executor (OR-S4-ACCEPT-DRIFT, static D42(k)): no delegation, no standing rules, no
+ * before-state runner. The caller (`gateway-main.ts`) passes a human-only consent coordinator. Built per call.
+ */
+export function buildIacAcceptExecutor(p: ExecutorBuildParams): ToolExecutor {
+  const consent = bindConsentChannel(p.consentCoordinator, p.clientId);
+  return newExecutorOnChannel(p, consent, undefined, {}, p.localIndex);
 }
 
 /** A consent channel that is never answered by a person: every request is denied, nobody is asked. */

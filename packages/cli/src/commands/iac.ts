@@ -5,6 +5,11 @@
 // changed outside Terraform: object addresses and attribute NAMES, never values. `--latest` prints the
 // stored findings without running a check. Exit 0 when every finding is clean, 1 when any shows drift,
 // failed or found the workdir busy, 2 on a usage error.
+//
+// `nimbus iac accept-drift --workdir <dir> [--json]` (OR-S4-ACCEPT-DRIFT) accepts the drift the check found
+// into the Terraform state of an approved workdir: the gateway settles a refresh-only plan, shows the drift,
+// and you approve by TYPING `iac/accept-drift <dir>` at this terminal. Only a person can: `--yes`, scripted
+// consent and a non-terminal are refused. Exit 0 accepted, 1 declined or failed, 2 usage or no terminal.
 import type { IPCClient } from "../ipc-client/index.ts";
 import { CliExit } from "../lib/cli-exit.ts";
 import { declareCliClientKind } from "../lib/declare-client-kind.ts";
@@ -16,6 +21,7 @@ import { stripControl } from "./captures-format.ts";
 export const IAC_USAGE = [
   "usage: nimbus iac drift [--workdir <dir>] [--json]",
   "       nimbus iac drift --latest [--json]",
+  "       nimbus iac accept-drift --workdir <dir> [--json]   accept the drift into state (you type the confirmation)",
 ].join("\n");
 
 /** `--help` / `-h` anywhere after `iac`: print the usage and exit 0. */
@@ -90,6 +96,73 @@ export function formatIacDrift(findings: readonly IacDriftFinding[], latest: boo
 
 type Sink = { out(s: string): void; err(s: string): void };
 
+export type AcceptArgs = { workdir: string; json: boolean };
+
+/** `accept-drift --workdir <dir> [--json]`; `--yes`, `-y`, a consent-source flag and anything else is a usage error. */
+export function parseAcceptArgs(argv: readonly string[]): AcceptArgs | undefined {
+  if (argv[0] !== "accept-drift") return undefined;
+  let workdir: string | undefined;
+  let json = false;
+  for (let i = 1; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--json") json = true;
+    else if (a === "--workdir") {
+      const v = argv[i + 1];
+      if (workdir !== undefined || v === undefined || v === "" || v.startsWith("--")) {
+        return undefined;
+      }
+      workdir = v;
+      i++;
+    } else return undefined;
+  }
+  return workdir === undefined ? undefined : { workdir, json };
+}
+
+export type AcceptOutcome =
+  | { status: "accepted" }
+  | { status: "declined" | "failed"; reason: string; nonHuman: boolean };
+
+export const ACCEPT_TTY_REFUSAL =
+  "Accepting drift needs an interactive terminal (TTY): you approve it by typing the confirmation at this terminal. Nothing was sent to the gateway.";
+
+/** The owner's view of the outcome, one line; the gateway's reason is shown stripped of control characters. */
+export function formatAccept(workdir: string, o: AcceptOutcome): string {
+  const where = stripControl(workdir);
+  if (o.status === "accepted") {
+    return `Accepted: the drift in ${where} is now in the Terraform state; no infrastructure was changed. Run nimbus iac drift to check.\n`;
+  }
+  if (o.nonHuman) {
+    return "Not accepted: only a person at this terminal can approve this (--yes, scripts and older clients cannot).\n";
+  }
+  return `Not accepted (${o.status}): ${stripControl(o.reason)}\n`;
+}
+
+type Tty = { readonly stdin: boolean; readonly stdout: boolean };
+
+export async function runAcceptWith(
+  c: Pick<IPCClient, "call">,
+  a: AcceptArgs,
+  sink: Sink,
+  tty: Tty,
+): Promise<number> {
+  if (!(tty.stdin && tty.stdout)) {
+    sink.err(`${ACCEPT_TTY_REFUSAL}\n`);
+    return 2;
+  }
+  try {
+    await declareCliClientKind(c);
+    const { outcome } = await c.call<{ outcome: AcceptOutcome }>("iac.acceptDrift", {
+      workdir: a.workdir,
+    });
+    sink.out(a.json ? `${JSON.stringify({ outcome })}\n` : formatAccept(a.workdir, outcome));
+    if (outcome.status === "accepted") return 0;
+    return outcome.status === "declined" && outcome.nonHuman ? 2 : 1;
+  } catch (e) {
+    sink.err(`${stripControl(e instanceof Error ? e.message : String(e))}\n`);
+    return 1;
+  }
+}
+
 export async function runIacWith(
   c: Pick<IPCClient, "call">,
   a: IacArgs,
@@ -119,10 +192,15 @@ export async function runIacWith(
 export type IacIpc = (
   fn: (c: Pick<IPCClient, "call">) => Promise<number>,
   long: boolean,
+  human?: boolean,
 ) => Promise<number>;
 
-const GATEWAY_IPC: IacIpc = (fn, long) =>
-  withGatewayIpc(fn, getCliPlatformPaths(), long ? { requestTimeoutMs: BATCH_RPC_TIMEOUT_MS } : {});
+/** `human`: the run blocks on the executor's prompt, so consent ignores NIMBUS_SCRIPT_CONSENT_SOURCE (a person only). */
+const GATEWAY_IPC: IacIpc = (fn, long, human) =>
+  withGatewayIpc(fn, getCliPlatformPaths(), {
+    ...(long ? { requestTimeoutMs: BATCH_RPC_TIMEOUT_MS } : {}),
+    ...(human === true ? { consent: { kind: "human" as const } } : {}),
+  });
 
 const PROCESS_SINK: Sink = {
   out: (s) => process.stdout.write(s),
@@ -133,9 +211,20 @@ export async function runIacCmd(
   argv: string[],
   ipc: IacIpc = GATEWAY_IPC,
   sink: Sink = PROCESS_SINK,
+  tty: Tty = { stdin: process.stdin.isTTY === true, stdout: process.stdout.isTTY === true },
 ): Promise<void> {
   if (wantsIacHelp(argv)) {
     sink.out(`${IAC_USAGE}\n`);
+    return;
+  }
+  if (argv[0] === "accept-drift") {
+    const acc = parseAcceptArgs(argv);
+    if (acc === undefined) {
+      sink.err(`${IAC_USAGE}\n`);
+      throw new CliExit(2);
+    }
+    const code = await ipc((c) => runAcceptWith(c, acc, sink, tty), true, true);
+    if (code !== 0) throw new CliExit(code);
     return;
   }
   const a = parseIacArgs(argv);

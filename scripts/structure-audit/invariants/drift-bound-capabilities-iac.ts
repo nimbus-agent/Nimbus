@@ -45,6 +45,15 @@ const D42I_RUNNER = "packages/gateway/src/iac-drift/drift-runner.ts";
 const D42I_FLAG_RE = /\bdriftCheck\s*:\s*true\b/g;
 const D42I_BUILD_CALL_RE = /\bbuildIacDriftExecutor\s*\(/g;
 const D42I_METHOD_CALL_RE = /\.checkTerraformDrift\s*\(/g;
+// D42(k) (OR-S4-ACCEPT-DRIFT): the owner's accept-drift executor. Built only in run-ask.ts and called only by
+// gateway-main.ts, which hands it a HUMAN-ONLY consent coordinator in that very call; its body carries none of
+// the machinery that would let anything but a person approve or that would change what it runs.
+const D42K_BUILD_CALL_RE = /\bbuildIacAcceptExecutor\s*\(/g;
+const D42K_DEF_RE = /\bexport\s+function\s+buildIacAcceptExecutor\s*\(/;
+const D42K_BODY_FORBIDDEN_RE =
+  /\b(?:standingRules|beforeState|driftCheck|dryRun|unattended|NEVER_ASKED_CONSENT|delegation)\b/;
+/** How far after a call's name its human-only argument must appear (the call is about 10 lines). */
+const D42K_CALL_WINDOW = 600;
 
 /**
  * D42(i): the drift check's flag is written only inside `buildIacDriftExecutor` (run-ask.ts) and inside
@@ -86,6 +95,27 @@ export function checkDriftCheckConfined(files: readonly FileEntry[]): Violation[
     }
     if (f.relPath !== D42I_RUNNER) {
       for (const m of code.matchAll(D42I_METHOD_CALL_RE)) add(m.index);
+    }
+    // D42(k).
+    const builds = [...code.matchAll(D42K_BUILD_CALL_RE)];
+    if (f.relPath === D42I_RUN_ASK) {
+      for (const m of builds.slice(1)) add(m.index);
+      const s = d41Span(code, D42K_DEF_RE, "\n}\n");
+      // A missing definition confines nothing (a call to it would not compile); a present one is pinned.
+      const body = s === undefined ? "" : code.slice(s[0], s[1]);
+      if (
+        s !== undefined &&
+        (D42K_BODY_FORBIDDEN_RE.test(body) || !body.includes("bindConsentChannel("))
+      ) {
+        add(s[0]);
+      }
+    } else if (f.relPath === D42I_GATEWAY_MAIN) {
+      for (const m of builds) {
+        const call = code.slice(m.index ?? 0, (m.index ?? 0) + D42K_CALL_WINDOW);
+        if (!call.includes("humanOnlyConsent(")) add(m.index);
+      }
+    } else {
+      for (const m of builds) add(m.index);
     }
   }
   return out;

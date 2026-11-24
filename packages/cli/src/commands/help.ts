@@ -181,6 +181,8 @@ CONFIG & DIAGNOSTICS
   nimbus iac drift [--workdir <dir>] [--json] | nimbus iac drift --latest [--json]   Read-only Terraform drift check of your
                               approved workdirs: what changed outside Terraform (names, never values);
                               no prompt, no apply; opt-in schedule: [iac.drift] schedule in nimbus.toml
+  nimbus iac accept-drift --workdir <dir> [--json]   Accept the drift into the Terraform state (needs a
+                              terminal; you type iac/accept-drift <dir>; --yes and scripts are refused)
   nimbus captures [list|show|accept|reject|revoke|purge <id>] [--json]   Review what MCP clients
                               captured or proposed ([mcp_sink] in nimbus.toml); accept --all takes
                               every proposed decision/term/link after one prompt; purge deletes a

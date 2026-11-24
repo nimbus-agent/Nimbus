@@ -10,6 +10,7 @@
  */
 
 import type { TerraformDriftOutcome } from "../engine/executor.ts";
+import { type AcceptDriftDeps, type AcceptDriftOutcome, acceptDrift } from "./accept-drift.ts";
 import {
   type DriftFinding,
   type DriftStarter,
@@ -27,6 +28,8 @@ export interface DriftExecutor {
 export interface IacDriftRunnerDeps {
   /** A fresh drift executor (`buildIacDriftExecutor`), made per check. */
   readonly makeExecutor: () => DriftExecutor;
+  /** OR-S4-ACCEPT-DRIFT: a fresh human-only executor for `accept` (`buildIacAcceptExecutor`); absent: none. */
+  readonly makeAcceptExecutor?: AcceptDriftDeps["makeExecutor"];
   /** The owner's approved workdirs, re-read per check (V85 `connector_write_iac_grant`). */
   readonly approvedWorkdirs: () => readonly string[];
   readonly dataDir: string;
@@ -77,6 +80,11 @@ export interface IacDriftRunner {
     readonly workdir?: string;
     readonly startedBy: DriftStarter;
   }): Promise<DriftFinding[]>;
+  /** Accepts the drift of an approved workdir into its state, asking the owner on `clientId` (a person only). */
+  accept(opts: {
+    readonly workdir: string;
+    readonly clientId: string;
+  }): Promise<AcceptDriftOutcome>;
   /** The stored findings, sorted by workdir. */
   latest(): DriftFinding[];
   /** Whether a check is running now. */
@@ -137,6 +145,11 @@ export function createIacDriftRunner(deps: IacDriftRunnerDeps): IacDriftRunner {
         lastRun = { start: startedAt, end: deps.now() };
         inFlight.delete(id);
       }
+    },
+    accept: async (o) => {
+      const makeExecutor = deps.makeAcceptExecutor;
+      if (makeExecutor === undefined) throw new Error("no accept executor");
+      return acceptDrift({ approvedWorkdirs: deps.approvedWorkdirs, makeExecutor }, o);
     },
     latest: () => readLatestFindings(deps.dataDir),
     running: () => inFlight.size > 0,
