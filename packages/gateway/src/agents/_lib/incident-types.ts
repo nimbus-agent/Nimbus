@@ -48,3 +48,23 @@ export type IncidentInvestigationBrief = {
   readonly gaps: GapNote[];
   readonly investigation: Investigation;
 };
+
+/**
+ * The `incident_update` brief (Phase 10 IC9b, `--synthesize`; owner ruling OR-S4-SCRIBE). The deterministic
+ * update text (`renderIncidentUpdate`, facts and disclosure footer included) carried as a brief KIND, so the I31
+ * machinery can hold that text verbatim while a model, asked by the owner (`nimbus incident update --synthesize`),
+ * writes ONE short lead paragraph. `gaps` is empty in production. Built only outside `incident/**` and outside
+ * `incident-update/**` (static D46(a); the IC9b confinement pin), in `update-synthesis/`.
+ */
+export type IncidentUpdateBrief = {
+  readonly kind: "incident_update";
+  readonly agentVersion: 1;
+  readonly generatedAt: number;
+  readonly latencyMs: number;
+  readonly gaps: GapNote[];
+  readonly recordId: string;
+  readonly version: number;
+  readonly audience: string;
+  /** The deterministic update text, exactly as `incident.update` returns it. */
+  readonly text: string;
+};

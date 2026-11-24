@@ -16,13 +16,14 @@ import { type PostmortemFs, realPostmortemFs, safeText } from "./incident-postmo
  *   nimbus incident update <id> --send slack:<channel-id>|teams:<team-id>/<channel-id> [--from <file>] [--audience ..] [--version <n>]
  *   nimbus incident update --queued [--json]
  *
- * The draft is deterministic and drafted from the local index alone. The send asks YOU at this terminal: the typed
+ * The draft is deterministic and drafted from the local index alone; `--synthesize` (draft only) asks the model for ONE
+ * lead paragraph above that text, which stays exactly as drafted. The send asks YOU at this terminal: the typed
  * preview of the post appears as an ordinary approval, and this command offers no `--yes`. Everything printed from
  * the gateway is stripped of control and invisible characters.
  */
 
 export const UPDATE_USAGE =
-  "Usage: nimbus incident update <id> [--audience stakeholders|engineers] [--version <n>] [--out <file>] [--force] [--json]\n" +
+  "Usage: nimbus incident update <id> [--audience stakeholders|engineers] [--version <n>] [--out <file>] [--force] [--synthesize] [--json]\n" +
   "       nimbus incident update <id> --send slack:<channel-id>|teams:<team-id>/<channel-id> [--from <file>] [--audience <a>] [--version <n>]\n" +
   "       nimbus incident update --queued [--json]";
 
@@ -43,6 +44,7 @@ export type UpdateArgs =
       readonly json: boolean;
       readonly out?: string;
       readonly force: boolean;
+      readonly synthesize?: boolean;
     })
   | (Common & { readonly mode: "send"; readonly dest: UpdateDest; readonly from?: string });
 
@@ -53,7 +55,7 @@ const VALUE_FLAGS: ReadonlySet<string> = new Set([
   "--send",
   "--from",
 ]);
-const BOOL_FLAGS: ReadonlySet<string> = new Set(["--force", "--json", "--queued"]);
+const BOOL_FLAGS: ReadonlySet<string> = new Set(["--force", "--json", "--queued", "--synthesize"]);
 
 /** `slack:C0123` or `teams:<team-id>/<19:...thread id>`; `undefined` is a usage error. */
 export function parseDest(raw: string): UpdateDest | undefined {
@@ -80,6 +82,7 @@ export function parseUpdateArgs(argv: readonly string[]): UpdateArgs | undefined
   if (f === undefined) return undefined;
   if (f.bools.has("--queued")) {
     if (f.id !== undefined || f.values.size > 0 || f.bools.has("--force")) return undefined;
+    if (f.bools.has("--synthesize")) return undefined;
     return { mode: "queue", json: f.bools.has("--json") };
   }
   if (f.id === undefined) return undefined;
@@ -107,10 +110,11 @@ export function parseUpdateArgs(argv: readonly string[]): UpdateArgs | undefined
       mode: "draft",
       json: f.bools.has("--json"),
       force: f.bools.has("--force"),
+      ...(f.bools.has("--synthesize") ? { synthesize: true } : {}),
       ...(out === undefined ? {} : { out }),
     };
   }
-  if (f.values.has("--out") || f.bools.size > 0) return undefined;
+  if (f.values.has("--out") || f.bools.size > 0) return undefined; // includes --synthesize
   const dest = parseDest(sendRaw);
   if (dest === undefined) return undefined;
   const from = f.values.get("--from");
@@ -140,7 +144,23 @@ type DraftReply = {
   currentVersion: number;
   audience: string;
   text: string;
+  /** Only from `incident.updateSynthesize`. */
+  lead?: string | null;
+  synthesis?: { attempted: boolean; used?: boolean; reason?: string; model?: string };
 };
+
+/** What to tell the owner about the lead paragraph: it is a model's, and the facts below it are not. */
+function synthesisNote(r: DraftReply): string | undefined {
+  const s = r.synthesis;
+  if (s === undefined) return undefined;
+  if (s.attempted === false) {
+    return `No model was used (${safeText(s.reason ?? "unavailable")}); this is the deterministic update.\n`;
+  }
+  if (r.lead !== null && r.lead !== undefined) {
+    return `The first paragraph was written by ${safeText(s.model ?? "the model")}; read it before you send. Everything after it is the index's own text, unchanged.\n`;
+  }
+  return `The model's lead was not used (${safeText(s.reason ?? "none written")}); this is the deterministic update.\n`;
+}
 
 type SendReply =
   | { outcome: "sent" }
@@ -168,13 +188,18 @@ async function runDraft(
   fs: UpdateFs,
 ): Promise<number> {
   await declareCliClientKind(c);
-  const r = await c.call<DraftReply>("incident.update", draftParams(a));
+  const r = await c.call<DraftReply>(
+    a.synthesize === true ? "incident.updateSynthesize" : "incident.update",
+    draftParams(a),
+  );
+  const note = synthesisNote(r);
   if (a.json) {
     sink.out(`${JSON.stringify(r)}\n`);
     return 0;
   }
   if (a.out === undefined) {
     sink.out(cleanLines(r.text));
+    if (note !== undefined) sink.err(note);
     if (r.version !== r.currentVersion) {
       sink.err(
         `This is version ${String(r.version)}; the record is now at version ${String(r.currentVersion)}.\n`,
@@ -191,6 +216,7 @@ async function runDraft(
     }
     throw e;
   }
+  if (note !== undefined) sink.err(note);
   sink.out(
     `Wrote the ${safeText(r.audience)} update for ${safeText(r.recordId)} (version ${String(r.version)}) to ${safeText(a.out)}\n`,
   );
@@ -304,9 +330,12 @@ export async function runUpdateCommand(args: string[]): Promise<void> {
       ),
     getCliPlatformPaths(),
     // A send blocks on the executor's prompt, which only a person answers (as `nimbus incident remediate`).
+    // A send waits on the owner's answer, and a synthesis waits on a model.
     a.mode === "send"
       ? { consent: { kind: "human" }, requestTimeoutMs: INTERACTIVE_RPC_TIMEOUT_MS }
-      : undefined,
+      : a.mode === "draft" && a.synthesize === true
+        ? { requestTimeoutMs: INTERACTIVE_RPC_TIMEOUT_MS }
+        : undefined,
   );
   if (code !== 0) throw new CliExit(code);
 }

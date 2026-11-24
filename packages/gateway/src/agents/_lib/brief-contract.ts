@@ -158,6 +158,8 @@ export function requiredPhrases(brief: SynthInput): readonly Disclosure[] {
     brief.kind === "incident_data" ||
     // The investigation's disclosures (actions, leads, gaps, freshness) are all reserved blocks (IC9a).
     brief.kind === "incident_investigation" ||
+    // The update text is one reserved block (IC9b); a rewrite cannot reword it.
+    brief.kind === "incident_update" ||
     // The post-mortem draft's disclosures are all reserved blocks (IC7a); a rewrite cannot drop them.
     brief.kind === "incident_postmortem"
   ) {

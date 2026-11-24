@@ -9,6 +9,7 @@ import { renderIncidentData } from "./incident-data-render.ts";
 import { renderIncidentInvestigation } from "./incident-investigation-render.ts";
 import { renderIncidentPostmortem } from "./incident-postmortem-render.ts";
 import { renderIncident } from "./incident-render.ts";
+import { renderIncidentUpdateBrief } from "./incident-update-brief-render.ts";
 import {
   stripMetaPreamble,
   stripSections,
@@ -159,6 +160,8 @@ function deterministicRender(brief: SynthInput, opts?: RenderOpts): string {
       return renderIncidentData(brief, opts);
     case brief.kind === "incident_investigation":
       return renderIncidentInvestigation(brief, opts);
+    case brief.kind === "incident_update":
+      return renderIncidentUpdateBrief(brief, opts);
     case brief.kind === "incident_postmortem":
       return renderIncidentPostmortem(brief, opts);
     default:

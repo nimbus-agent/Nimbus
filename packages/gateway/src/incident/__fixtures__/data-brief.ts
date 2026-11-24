@@ -3,6 +3,7 @@ import type { DataLane } from "../incident-record-types.ts";
 import { buildInvestigationBriefFixture } from "./investigation-brief.ts";
 import { buildPostmortemFixture } from "./postmortem-brief.ts";
 import { buildRecord } from "./record-builder.ts";
+import { buildUpdateBriefFixture } from "./update-brief.ts";
 
 /** A data lane with one of everything, for the Data Incident Brief's render and reserved-section tests. */
 export function buildDataLane(over: Partial<DataLane> = {}): DataLane {
@@ -71,5 +72,6 @@ export function buildRecordKindFixtures() {
     incident_postmortem: buildPostmortemFixture(),
     incident_data: buildDataBriefFixture(),
     incident_investigation: buildInvestigationBriefFixture(),
+    incident_update: buildUpdateBriefFixture(),
   } as const;
 }

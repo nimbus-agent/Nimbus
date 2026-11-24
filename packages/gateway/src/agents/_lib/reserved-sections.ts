@@ -13,6 +13,7 @@ import {
   postmortemReservedBlocks,
 } from "./incident-postmortem-render.ts";
 import { INCIDENT_FRESHNESS_HEADING, renderIncidentFreshness } from "./incident-render.ts";
+import { UPDATE_TEXT_HEADING, updateTextBlock } from "./incident-update-brief-render.ts";
 import {
   GLOSSARY_TERMS_HEADING,
   renderGaps,
@@ -72,6 +73,8 @@ export const RESERVED_HEADINGS_BY_KIND: Readonly<Record<SynthInput["kind"], read
     incident: [GAPS_HEADING, INCIDENT_FRESHNESS_HEADING],
     incident_data: [GAPS_HEADING, INCIDENT_FRESHNESS_HEADING],
     // IC9a: the actions Nimbus took and the candidate leads are disclosures a rewrite must not reword.
+    // IC9b: the update text (facts and the disclosure footer) is reserved; the model writes only the lead.
+    incident_update: [UPDATE_TEXT_HEADING, GAPS_HEADING],
     incident_investigation: [
       INVESTIGATION_ACTIONS_HEADING,
       INVESTIGATION_LEADS_HEADING,
@@ -150,6 +153,9 @@ export function reservedBlocksFor(brief: SynthInput): readonly ReservedBlock[] {
   const blocks: ReservedBlock[] = [];
   if (brief.kind === "incident_postmortem") blocks.push(...postmortemReservedBlocks(brief));
   if (brief.kind === "incident_investigation") blocks.push(...investigationReservedBlocks(brief));
+  if (brief.kind === "incident_update") {
+    blocks.push({ heading: UPDATE_TEXT_HEADING, markdown: updateTextBlock(brief) });
+  }
   if (brief.kind === "negotiate") {
     blocks.push(
       {
