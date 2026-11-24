@@ -1,6 +1,7 @@
 import type { GapNote } from "@nimbus-dev/sdk";
 
 import type { IncidentRecordV1 } from "../../incident/incident-record-types.ts";
+import type { Investigation } from "../../incident/investigate.ts";
 
 /**
  * The `incident` brief (Phase 10 IC3). A pure function of the index and a clock builds the record
@@ -30,4 +31,20 @@ export type IncidentDataBrief = {
   readonly latencyMs: number;
   readonly gaps: GapNote[];
   readonly record: IncidentRecordV1;
+};
+
+/**
+ * The `incident_investigation` brief (Phase 10 IC9a, `--synthesize`). The investigation of one record, built
+ * from the local index only (`incident/investigate.ts`), carried as a brief KIND so the I31 machinery can hold
+ * its disclosures while a model, asked by the owner (`nimbus incident investigate --synthesize`), rewrites the
+ * prose. `gaps` mirrors the investigation's own gap list (detail only); the investigation is carried whole. It
+ * is built only outside `incident/**` (static D46(a): no runner reaches an incident record from there).
+ */
+export type IncidentInvestigationBrief = {
+  readonly kind: "incident_investigation";
+  readonly agentVersion: 1;
+  readonly generatedAt: number;
+  readonly latencyMs: number;
+  readonly gaps: GapNote[];
+  readonly investigation: Investigation;
 };

@@ -22,7 +22,7 @@ export const INCIDENT_USAGE =
   "Usage: nimbus incident list [--open] [--service <id>] [--source <service>] [--limit <n>] [--cascade] [--json]\n" +
   "       nimbus incident show <id> [--json]\n" +
   "       nimbus incident timeline <id> [--version <n>] [--json]\n" +
-  "       nimbus incident investigate <id> [--json]\n" +
+  "       nimbus incident investigate <id> [--synthesize] [--json]\n" +
   `${REMEDIATE_USAGE}
 ` +
   `${DEBT_USAGE_LINE}\n` +
@@ -45,7 +45,12 @@ export type IncidentArgs =
       readonly cascade: boolean;
     }
   | { readonly verb: "show"; readonly json: boolean; readonly id: string }
-  | { readonly verb: "investigate"; readonly json: boolean; readonly id: string }
+  | {
+      readonly verb: "investigate";
+      readonly json: boolean;
+      readonly id: string;
+      readonly synthesize?: boolean;
+    }
   | {
       readonly verb: "timeline";
       readonly json: boolean;
@@ -124,12 +129,18 @@ export function parseIncidentArgs(argv: readonly string[]): IncidentArgs | undef
   }
   if (verb === "show" || verb === "investigate") {
     const json = rest.filter((a) => a === "--json");
-    const ids = rest.filter((a) => a !== "--json");
+    // --synthesize belongs to investigate only: the model is asked only when the owner types it.
+    const synth: string[] = verb === "investigate" ? rest.filter((a) => a === "--synthesize") : [];
+    const ids = rest.filter((a) => a !== "--json" && !synth.includes(a));
     const [id] = ids;
-    if (json.length > 1 || ids.length !== 1 || id === undefined || id.startsWith("--")) {
-      return undefined;
-    }
-    return { verb, json: json.length === 1, id };
+    if (json.length > 1 || synth.length > 1) return undefined;
+    if (ids.length !== 1 || id === undefined || id.startsWith("--")) return undefined;
+    return {
+      verb,
+      json: json.length === 1,
+      id,
+      ...(synth.length === 1 ? { synthesize: true } : {}),
+    };
   }
   if (verb === "timeline") return parseTimelineArgs(rest);
   if (verb === "debt") return parseDebtArgs(rest);

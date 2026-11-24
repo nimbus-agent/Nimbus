@@ -30,6 +30,8 @@ export const TOOL_NAME_BY_KIND: Readonly<Record<SynthInput["kind"], string>> = {
   incident: "agents.incident",
   // Never sent anywhere either: the Data Incident Brief is rendered with no runner (OR-10-8, I57 (a)).
   incident_data: "agents.incident_data",
+  // A model may rewrite it (IC9a, `--synthesize`): only in a command the owner runs, never unattended.
+  incident_investigation: "agents.incident_investigation",
   // The one record brief a model may rewrite (IC7a): only in a command the owner runs, never unattended.
   incident_postmortem: "agents.incident_postmortem",
 };

@@ -156,6 +156,8 @@ export function requiredPhrases(brief: SynthInput): readonly Disclosure[] {
     brief.kind === "incident" ||
     // The Data Incident Brief is the same record, rendered with no model for a data trigger.
     brief.kind === "incident_data" ||
+    // The investigation's disclosures (actions, leads, gaps, freshness) are all reserved blocks (IC9a).
+    brief.kind === "incident_investigation" ||
     // The post-mortem draft's disclosures are all reserved blocks (IC7a); a rewrite cannot drop them.
     brief.kind === "incident_postmortem"
   ) {
