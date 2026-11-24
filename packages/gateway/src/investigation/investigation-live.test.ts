@@ -254,7 +254,7 @@ describe("a live read of the bound project", () => {
         "payments-api": mcp([
           issue({
             id: "7",
-            title: "line1\nline2‮evil",
+            title: "line1\nline2\u202eevil",
             permalink: "javascript:alert(1)",
             level: "err\u0007or",
           }),
