@@ -18,6 +18,8 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
 
 ## Post-Phase-6 deliveries
 
+- **2026-11-24: the org-wide dependency sweep is complete (owner ruling OR-S4-DEPS, the last carried-in S4 item; no user-visible change).**
+  All seven repositories moved to the latest versions, majors included, one PR each in the ruling's order: nimbus-sdk #299, nimbus-client #97, nimbus-mcp #22, nimbus-mcp-servers #94 (released as connectors 0.17.1), Nimbus #2140, nimbus-vscode #133 and nimbus-web-clipper #137. What was held back, and why, is in [`roadmap.md`](./roadmap.md) and each repository's contributing notes.
 - **2026-11-24: MCP revision 2026-07-28 run against a real client; the MCP server reports its real version (Phase 28; no schema, invariant, IPC method or tool change).**
   The official Python MCP SDK, `mcp` 2.3.0, was run as a 2026-07-28 client over stdio against `nimbus mcp-server --stdio` and a standalone `nimbus-connector github`: both negotiate the revision through `server/discover` and still serve the `initialize` era, list the same tools in both, hide a connector's write tools from a client that cannot prompt, and complete the write consent round trip (a decline sends nothing; an approval reaches the vendor through the sealed-state retry). This closes the roadmap row's last open item. The same run showed `nimbus mcp-server` reporting `0.1.0` as its server version; it now reports `NIMBUS_VERSION` (`packages/cli/src/mcp/adapter.ts`, `adapter-server-version.test.ts`, both eras). Stated bound: an SDK client, not a shipped application.
 - **2026-11-24: org-wide dependency sweep, Nimbus itself (owner ruling OR-S4-DEPS; no schema, invariant, IPC method or user-visible behaviour change).**
