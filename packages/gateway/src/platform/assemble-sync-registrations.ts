@@ -27,6 +27,7 @@ import { createDiscordSyncable } from "../connectors/discord-sync.ts";
 import { createElasticsearchSyncable } from "../connectors/elasticsearch-sync.ts";
 import { createFastmailSyncable } from "../connectors/fastmail-sync.ts";
 import { createFigmaSyncable } from "../connectors/figma-sync.ts";
+import { registerFinopsSyncables } from "../connectors/finops-syncables.ts";
 import { createFirebaseSyncable } from "../connectors/firebase-sync.ts";
 import { createFlagsmithSyncable } from "../connectors/flagsmith-sync.ts";
 import { createFluxSyncable } from "../connectors/flux-sync.ts";
@@ -88,7 +89,6 @@ import { createSupersetSyncable } from "../connectors/superset-sync.ts";
 import { createTableauSyncable } from "../connectors/tableau-sync.ts";
 import { createTeamsSyncable } from "../connectors/teams-sync.ts";
 import { createTestflightSyncable } from "../connectors/testflight-sync.ts";
-import { createVantageSyncable } from "../connectors/vantage-sync.ts";
 import { createVercelSyncable } from "../connectors/vercel-sync.ts";
 import { createVertexAiSyncable } from "../connectors/vertex-ai-sync.ts";
 import { createWizSyncable } from "../connectors/wiz-sync.ts";
@@ -564,9 +564,5 @@ export function registerConnectorMeshSyncables(
   );
   syncScheduler.register(createMonteCarloSyncable());
   syncScheduler.register(createBigeyeSyncable());
-  syncScheduler.register(
-    createVantageSyncable(
-      options.finopsMaxSeries === undefined ? {} : { maxSeries: options.finopsMaxSeries },
-    ),
-  );
+  registerFinopsSyncables(syncScheduler, options.finopsMaxSeries);
 }

@@ -13,6 +13,7 @@ const COMMIT_PREPARE_IDS = [
   "iac_cloudformation_changeset_create",
   "iac_terraform_destroy_plan",
   "iac_terraform_plan",
+  "iac_terraform_plan_refresh_only",
   "iac_terraform_show_json",
   "k8s_manifest_plan",
 ] as const;
@@ -24,8 +25,8 @@ function serverOf(id: string): string {
 }
 
 describe("PREPARE_TOOL_IDS (D0b, D1c)", () => {
-  test("is exactly the seven prepare tools: two commits, four iac, and D3's manifest plan", () => {
-    expect(PREPARE_TOOL_IDS.size).toBe(7);
+  test("is exactly the eight prepare tools: two commits, five iac, and D3's manifest plan", () => {
+    expect(PREPARE_TOOL_IDS.size).toBe(8);
     expect([...PREPARE_TOOL_IDS].sort()).toEqual([...COMMIT_PREPARE_IDS]);
   });
 
@@ -33,10 +34,10 @@ describe("PREPARE_TOOL_IDS (D0b, D1c)", () => {
     expect(() => (PREPARE_TOOL_IDS as unknown as Set<string>).add("x_plan")).toThrow(TypeError);
     expect(() => (PREPARE_TOOL_IDS as unknown as Set<string>).delete("x")).toThrow(TypeError);
     expect(() => (PREPARE_TOOL_IDS as unknown as Set<string>).clear()).toThrow(TypeError);
-    expect(PREPARE_TOOL_IDS.size).toBe(7);
+    expect(PREPARE_TOOL_IDS.size).toBe(8);
   });
 
-  test("the set interface answers like a seven-member set", () => {
+  test("the set interface answers like an eight-member set", () => {
     const seen: string[] = [];
     PREPARE_TOOL_IDS.forEach((v, v2, set) => {
       expect(v2).toBe(v);
@@ -109,7 +110,9 @@ describe("isPrepareToolId", () => {
       expect(isPrepareToolId(id)).toBe(true);
       expect(isPrepareToolId(`${server}_${id}`)).toBe(true);
       expect(isPrepareToolId(`${id}s`)).toBe(false);
-      expect(isPrepareToolId(`${id.replace(/_(prepare|plan|json|create)$/, "_get")}`)).toBe(false);
+      expect(isPrepareToolId(`${id.replace(/_(prepare|plan|json|create|only)$/, "_get")}`)).toBe(
+        false,
+      );
     }
     expect(isPrepareToolId("github_files_get")).toBe(false);
   });

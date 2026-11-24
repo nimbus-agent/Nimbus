@@ -262,7 +262,7 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
   });
 
   test("the coverage set is the whole table", () => {
-    expect(CONNECTOR_WRITE_ROWS).toHaveLength(125);
+    expect(CONNECTOR_WRITE_ROWS).toHaveLength(126);
     expect(writesUnderTest()).toHaveLength(CONNECTOR_WRITE_ROWS.length + 4);
   });
 

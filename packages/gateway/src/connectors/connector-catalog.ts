@@ -1,4 +1,5 @@
 import type { OAuthProvider } from "../auth/pkce.ts";
+import * as finops from "./finops-connector-catalog.ts";
 
 export const CONNECTOR_SERVICE_IDS = [
   "google_drive",
@@ -67,7 +68,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "prefect",
   "dagster",
   "ramp",
-  "vantage",
+  ...finops.FINOPS_CONNECTOR_IDS,
   "zoom",
   "hubspot",
   "miro",
@@ -133,7 +134,6 @@ const MIN10 = 10 * 60 * 1000;
 const MIN30 = 30 * 60 * 1000;
 const SEC90 = 90 * 1000;
 const MIN120 = 120 * 1000;
-const HOUR6 = 6 * 60 * 60 * 1000;
 
 const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number } = {
   google_drive: MIN30,
@@ -144,8 +144,8 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   slack: MIN5,
   notion: MIN5,
   confluence: MIN10,
-  google_photos: HOUR6,
-  google_meet: HOUR6,
+  google_photos: finops.HOUR6,
+  google_meet: finops.HOUR6,
   // A meeting moved this morning must be seen this morning: the briefing reads these rows.
   google_calendar: MIN5,
   github: MIN1,
@@ -205,7 +205,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   prefect: MIN10,
   dagster: MIN10,
   ramp: MIN10,
-  vantage: HOUR6,
+  ...finops.FINOPS_SYNC_INTERVAL_MS,
   zoom: MIN10,
   hubspot: MIN10,
   miro: MIN10,
@@ -344,7 +344,7 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
   prefect: "uses a Prefect API key (Bearer) + workspace API URL",
   dagster: "uses a Dagster Cloud API token + host base URL",
   ramp: "uses OAuth2 client-credentials — client id + client secret",
-  vantage: "uses a Vantage API token (Read scope is enough)",
+  ...finops.FINOPS_CREDENTIAL_HINTS,
   bigquery:
     "reuses the existing GCP service-account JSON key path + project id — no separate BigQuery credential",
   athena:

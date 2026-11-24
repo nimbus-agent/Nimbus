@@ -50,6 +50,7 @@ import {
 import { codeUnitCompare } from "../util/code-unit-compare.ts";
 import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
 import type { SettledWrite } from "./bound-write-capabilities.ts";
+import { planFileName, refreshOnlyRefusal, settledFields } from "./iac-refresh-only.ts";
 import { PREPARE_REFUSALS, PrepareRefusedError } from "./prepare-step.ts";
 
 // The shapes the gate sees live in ./bound-write-capabilities.ts (a leaf module, so the dispatcher's
@@ -157,6 +158,8 @@ export interface TerraformSettleOps {
 export interface TerraformSettleRequest {
   /** `true` for the destroy row: the plan must be `destroy.tfplan`. */
   readonly destroy: boolean;
+  /** `true` for the accept-drift row: `refresh.tfplan`, which must change no infrastructure. */
+  readonly refreshOnly?: boolean;
   readonly workingDirectory: string;
   /** The plan child's raw reply (`{planId, planFile, planSha256, hasChanges}`). */
   readonly reply: unknown;
@@ -177,8 +180,6 @@ export interface TerraformSettleLimits {
 }
 
 const PLAN_ID = /^[0-9a-f]{32}$/;
-const PLAN_NAME = "plan.tfplan";
-const DESTROY_PLAN_NAME = "destroy.tfplan";
 
 function refuse(reason: string): PrepareRefusedError {
   return new PrepareRefusedError(reason);
@@ -269,7 +270,7 @@ async function settle(
 ): Promise<SettledWrite> {
   const maxFile = limits.maxPlanFileBytes ?? IAC_LIMITS.maxPlanFileBytes;
   const maxJson = limits.maxPlanJsonBytes ?? IAC_LIMITS.maxPlanJsonBytes;
-  const name = req.destroy ? DESTROY_PLAN_NAME : PLAN_NAME;
+  const name = planFileName(req);
   const { planId, planFile, hasChanges } = readPlanReply(req.reply, name);
   const fs = ops.fs;
 
@@ -331,17 +332,11 @@ async function settle(
       rendered.reason === "tooLarge" ? PREPARE_REFUSALS.diffTooLarge : PREPARE_REFUSALS.unshowable,
     );
   }
-  const { counts } = rendered.preview;
+  const refused = req.refreshOnly ? refreshOnlyRefusal(rendered.preview, parsed) : undefined;
+  if (refused !== undefined) throw refuse(refused);
   return {
     values: Object.freeze({ planFile: moved, planSha256 }),
-    fields: [
-      { label: "Plan SHA-256", value: planSha256 },
-      { label: "Workdir", value: req.workingDirectory },
-      {
-        label: "Changes",
-        value: `${String(counts.create + counts.replace)} to add, ${String(counts.update)} to change, ${String(counts.delete + counts.replace)} to destroy`,
-      },
-    ],
+    fields: settledFields(rendered.preview, req.workingDirectory, planSha256, req.refreshOnly),
     plan: rendered.preview,
     cleanup,
   };
