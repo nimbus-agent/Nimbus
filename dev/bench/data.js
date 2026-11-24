@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795534843827,
+  "lastUpdate": 1795546750991,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "755c2b6019479a1313ada85ab4d3db6726c4add4",
-          "message": "feat(cli): nimbus explain last — an X-ray of the most recent nimbus ask (#1514)\n\nAdds `nimbus explain last` — a CLI-only X-ray of the most recent `nimbus\nask`, so a weak answer can be diagnosed as a retrieval failure or a\nmodel failure instead of a mystery.\n\nEvery `runAsk` writes exactly one record — win or throw — to an\nin-memory ring of the last 10. `ask.explainLast` returns the newest;\n`nimbus explain last [--json]` renders it.\n\n## What it reports\n\n- Which of five routes the turn took: `empty_index`, `local_context`,\n`agent_tools`, `plan_dispatch`, `failed`.\n- For a local-index turn: every candidate considered, grouped by\ncontributing retrieval pass, each marked `shown` or cut with the real\nreason — `cut: probe slice`, `cut: over cap`, `cut: service fairness` —\nwith the three score components that produced its rank.\n- For an agent turn: the tool calls the model actually made, plus each\n`searchLocalIndex` call's own ranking summary.\n- On a local-to-agent fallback: the local pool that was still in the\nagent's prompt, so the turn is not under-reported.\n\n## Honesty properties, enforced by tests\n\n- A candidate that was never scored renders `n/a` and never `0.00` — a\nzero would claim it ranked last when it was never ranked.\n- Scores are never compared across scoring formulas. The two formulas\nare different scales, so groups are labelled and sorted only within\nthemselves.\n- \"Given to the model\", never \"read by the model\". The gateway knows\nwhat it handed over, not what was attended to.\n- `at least N` whenever the retrieval probe hit its own ceiling, because\nthe total is then a floor.\n- The empty state is its own sentence. The ring is in-memory, so \"no ask\nsince the gateway started\" is a different claim from \"no ask ever\nhappened\".\n\n## Security posture\n\nCLI-only. The record carries the owner's question verbatim and titles\nfrom the owner's private index, so `ask` is added to\n`FORBIDDEN_OVER_LAN` as a whole-namespace entry —\n`checkLanMethodAllowed` is a denylist, so an unnamed method is reachable\nby any paired peer. Verified at runtime with a negative control:\n`ask.explainLast` and an arbitrary future `ask.*` are both refused while\n`index.health` still passes. No Tauri allowlist entry, no HTTP, MCP or\nChatOps route.\n\n## What the roadmap row promised that has no substrate\n\nStated in `docs/roadmap.md` rather than quietly dropped:\n\n- \"Connector rate-limited\" is not a discard reason. The local-context\nroute queries no connector at all.\n- \"Below relevance threshold\" does not exist. Cuts are slice, cap and\nfairness decisions over an already-ranked list.\n- \"Which connectors were queried vs answered from cache\" misdescribes\nthe index — the local index is the cache. The real axis is local index\nvs live tool call, and that is what ships.\n\n## Deferrals, recorded with reasons\n\nA durable `ask_explain` table, deferred because persisting this would\nwrite every question asked plus its retrieval trace to an index that is\nnot encrypted at rest; `nimbus explain list` navigation; and capture of\nnegation predicates.\n\n## Scope\n\nNo schema migration, no new invariant, no new egress class, no HITL\naction type, no new Tauri allowlist entry. Nine tasks, each\nindependently reviewed, plus a whole-branch review and its fix wave.\n\nFull suite: 23280 pass, 80 skip, 0 fail.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_018de5p4L7YihdexuyiwevUE\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **New Features**\n- Added `nimbus explain last` to inspect the most recent ask, including\nrouting, retrieval results, ranking details, tool calls, truncation, and\nfailures.\n- Supports human-readable and validated JSON output, with color disabled\nautomatically when appropriate.\n- Retains up to 10 recent ask outcomes in memory, including failed\nrequests.\n\n- **Security**\n- Explanation data is read-only, temporary, and unavailable over LAN and\nother remote interfaces.\n\n- **Documentation**\n- Added CLI reference, changelog entry, and roadmap updates for the new\ncommand.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-15T17:46:14+03:00",
-          "tree_id": "88ba08db1a6e6a39ddf607cf8883225eb39685d1",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/755c2b6019479a1313ada85ab4d3db6726c4add4"
-        },
-        "date": 1789483985771,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 188.94094984999646,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 192.19715975000182,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 263.98316919999706,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "73edb215570ce220dbc72ebc94031fead15f31ab",
+          "message": "build(deps): org-wide dependency sweep, npm, Cargo and GitHub Action pins (#2140)\n\n## Summary\n\nOrg-wide dependency sweep (owner ruling OR-S4-DEPS) for Nimbus itself:\nevery workspace, the root `overrides`, the Tauri Cargo workspace and\nevery pinned GitHub Action moved to its latest release, majors included,\nfollowing `docs/CONTRIBUTING.md` under \"Updating Dependencies\". Nothing\nhere changes what a user must do.\n\n## Moved (old to new)\n\nnpm, runtime:\n- `@nimbus-dev/connectors` 0.17.0 to 0.17.1 (the bundled registry and\nthe connector write manifest regenerate with no diff),\n`@nimbus-dev/client` 0.18.0 to 0.19.0 (`@nimbus-dev/sdk` is already at\nthe latest 2.3.0)\n- `ink` 7.1.1 to 8.0.0 (major), `react` and `react-dom` 19.3.0 to\n19.3.1, `react-router` 8.4.0 to 8.5.2, `react-window` 2.3.3 to 2.5.4,\n`zustand` 5.0.15 to 5.1.0, `marked` 18.1.1 to 18.3.0\n- `@tauri-apps/api` 2.12.1 to 2.12.5, `plugin-clipboard-manager` 2.4.1\nto 2.5.0, `plugin-dialog` 2.8.1 to 2.8.4, `plugin-fs` 2.6.0 to 2.7.1\n- `@mastra/core` 1.74.0 to 1.85.0, `@mastra/mcp` 2.1.2 to 2.10.0,\n`imapflow` 2.2.5 to 2.12.2, `tsdav` 2.3.5 to 2.5.1, `hyparquet` 1.31.2\nto 1.33.1, `js-yaml` 5.4.2 to 5.5.0, `semver` 7.8.x to 7.8.6, `tar`\n7.5.22 to 7.5.23, `@clack/prompts` 1.8.0 to 1.9.0\n- docs: `astro` 7.4.12 to 7.4.13, `@astrojs/starlight` 0.42.5 to 0.43.1,\n`@astrojs/check` 0.9.10 to 0.9.12, `starlight-links-validator` 0.26.0 to\n0.27.0, `satteri` 0.10.5 to 0.11.7\n\nnpm, dev:\n- `@biomejs/biome` 2.5.15 to 2.6.9 (`biome.json` `$schema` follows),\n`@babel/core` 8.0.6 to 8.1.3, `@babel/preset-typescript` 8.0.1 to 8.0.7,\n`@types/bun` 1.4.2 to 1.4.5, `@types/node` 26.6.4 to 26.6.6,\n`dependency-cruiser` 18.5.0 to 18.9.0, `knip` 6.39.0 to 6.48.0, `jscpd`\n5.4.0 to 5.4.3, `markdownlint-cli2` 0.23.3 to 0.24.2,\n`@stryker-mutator/core` 10.0.0 to 10.1.1, `@modelcontextprotocol/sdk`\n1.32.0 to 1.32.2, `fast-check` 4.10.2 to 4.11.0, `pidusage` 4.0.1 to\n4.1.0\n- ui: `@tauri-apps/cli` 2.12.1 to 2.12.6, `@tailwindcss/vite` 4.3.3 to\n4.3.5, `@vitejs/plugin-react` 6.1.1 to 6.3.0, `@vitest/coverage-v8`\n5.0.3 to 5.1.1, `@testing-library/user-event` 14.6.7 to 14.6.13,\n`@testing-library/jest-dom` 7.0.1 to 8.0.0 (major), `jsdom` 30.1.1 to\n31.0.1 (major)\n\nRoot `overrides` (installed with `bun install --force`): `protobufjs`\n8.8.1, `qs` 6.17.1, `smol-toml` 1.9.1, `undici` 8.13.1, `nodemailer`\n10.6.1, `fast-uri` 3.1.9 to 4.2.3 (major), `@expressive-code/core`\n0.44.4, `@modelcontextprotocol/client`, `core` and `server` 2.4.0,\n`@modelcontextprotocol/node` 2.1.2. The MCP override set moving to 2.4.0\nlets `@hono/node-server` dedupe to 2.1.3+, so its accepted-advisory row\n(GHSA-rmxm-3fg6-px4f) is deleted as the row itself instructed. Pins\nalready at their latest: `sharp`, `zod`, `markdown-it`, `body-parser`,\n`http-cache-semantics`, `@emnapi/runtime`.\n\nRust (`packages/ui/src-tauri`): `cargo update` (about 100 crates in\n`Cargo.lock`), `tauri` 2.12.7 and `tauri-build` 2.7.6 as the\n`Cargo.toml` floors. No stable newer major exists (Tauri 3 is alpha\nonly). `interprocess` 2.4.9 deprecates `Stream::split`, which `warnings\n= \"deny\"` turns into an error, so `gateway_bridge.rs` now uses\n`tokio::io::split`.\n\nGitHub Actions (every occurrence under `.github/`, plus the copies in\n`docs/ci-secrets.md` and `docs/cla/cla.yml`): `cargo-deny-action` v2.1.1\nto v2.1.4, `sonarqube-scan-action` v8.3.0 to v8.5.1,\n`create-github-app-token` v3.2.0 to v3.4.0, `download-artifact` v8.0.1\nto v8.0.2, `setup-node` v7.0.0 to v7.1.0, `upload-artifact` v7.0.1 to\nv7.0.2, `anchore/sbom-action` v0.24.3 to v0.24.4, `bencher` v0.6.13 to\nv0.6.17, the four `github/codeql-action` sub-actions together v4.38.2 to\nv4.39.5, `scorecard-action` v2.4.4 to v2.6.0,\n`softprops/action-gh-release` v3.0.3 to v3.0.4, `harden-runner` v2.21.1\nto v2.23.0, and the `nimbus-agent/.github` provenance action to its\ncurrent `main`. The pins that `nimbus registry maintain init --github`\nwrites (`registry-templates/workflows.ts`) follow, and the scaffold's\n`@modelcontextprotocol/sdk` pin goes to 1.32.2 with its pinned output\ndigests.\n\nBun: CI already uses the floating `1.4` default (`setup-nimbus-ci` and\nthe workflows), which resolves to 1.4.5; all verification here ran on\nBun 1.4.5. The three `packages/github-actions/*/dist` bundles were\nrebuilt under it (`audit:action-dist`).\n\n## Code changes the bumps forced\n\n- Ink 8 types `useStdout().stdout` as a bare `WritableStream`: the TUI\nreads `columns` and `rows` through one helper that keeps the old 120x40\nfallback (behaviour unchanged).\n- Biome 2.6: kept the old lint scope by excluding Markdown, MDX and YAML\nin `biome.json` (no docs reformatted); the new\n`noComponentHookFactories` rule is off for test files (harness\ncomponents close over the test's locals); three new\n`useTemplate`/`noUselessStringRaw` findings fixed by hand (the regex\nsources are byte-identical).\n\n- `@mastra/mcp` 2.10 rebuilds a server's tool listing through\n`Object.fromEntries`, which launders a tool named `__proto__` before the\neval baseline judge sees it. The `eval-role` e2e expectation is\nunchanged (`invalid-tool`): the baseline listing client now re-reads\neach healthy server's own record from its connection\n(`withServerListing` in `eval-role.ts`), fails closed when the client\nlacks that accessor (a test pins its existence), and the pure judge in\n`registry-format` is untouched. Red-proven: without the wiring the e2e\ntest fails on 2.10.\n\n## Held back, each re-tested today\n\n- **msw 3** (gateway devDependency), stays on 2.15.0: with msw 3.0.7 on\nBun 1.4.5 (and `onUnhandledRequest` renamed to `onUnhandledFrame`, which\nmsw 3 needs) all 15 tests in `msw-handlers.test.ts` fail because the\nrequests still reach the real Google and GitHub APIs; a probe handler\nwas never hit. Bun's native `fetch` is still not intercepted.\n- **TypeScript 7 for `packages/docs`**: `astro check` still refuses\n7.0.2, and `@astrojs/check` 0.9.12 still declares `^5 || ^6`.\n- **TypeScript 7 for the root `typescript-compiler-api` alias**:\ndependency-cruiser 18.9.0 now accepts `>=7.1.0` but explicitly refuses\n7.0 (\"typescript@7.0 is not supported\"), so `audit:boundaries` cruised\nnothing and failed with the alias on 7.0.2; the compiler API is also\nstill only under `typescript/unstable/*` for `scripts/cleanup/*`.\n- **WiX 6 and 7**: a licensing decision, unchanged.\n\nReasons recorded in `docs/CONTRIBUTING.md` § Majors that are held back.\n`CLAUDE.md` and `GEMINI.md` state the new dependency-cruiser bound, and\n`docs/CHANGELOG.md` has the dated entry.\n\n## Verification\n\n- `bun run preflight` (full gate set), `bun run typecheck:tests`, `bun\nrun audit:connector-version-skew`, `bun run audit:boundaries`, `bun run\naudit:action-dist`\n- `bun test packages/gateway packages/cli scripts --parallel` on\nWindows: the only failures were the scaffold digests and registry action\npins fixed here, the toolgen and real-Chromium tests that need the\nWindows sandbox helper (passed after `bun run\nbuild:sandbox-helper:win32`), and files that pass in isolation (timing\nunder load); Linux-only legs are left to CI\n- UI vitest: 123 files, 1415 tests pass (jest-dom 8, jsdom 31)\n- `cargo test --locked` (61 pass), `cargo clippy --all-targets -- -D\nwarnings`, `cargo fmt --check`, `cargo deny check` (advisories, bans,\nlicenses, sources ok), `cargo audit` (exit 0; the allowed warnings are\nthe documented unmaintained and unsound gtk3 crates)\n- Coverage floor is CI-Linux authoritative and runs in CI.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrGFPLqt8C3Ybzk2dHq\n\n---------\n\nCo-authored-by: Claude Sonnet 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-24T18:51:57Z",
+          "tree_id": "c4e60cc704f85e32d7a42561359f6892889a1c0a",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/73edb215570ce220dbc72ebc94031fead15f31ab"
+        },
+        "date": 1795546747572,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 179.67206240000178,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 180.84775929999904,
             "unit": "ms"
           }
         ]
