@@ -163,6 +163,10 @@ async function withDeadline<T>(p: Promise<T>, ms: number): Promise<Timed<T>> {
   }
 }
 
+function isIssueShaped(raw: unknown): boolean {
+  return isRecord(raw) && str(raw["id"]) !== null && isoMs(raw["lastSeen"]) !== null;
+}
+
 function parseReply(
   reply: unknown,
   project: string,
@@ -176,8 +180,11 @@ function parseReply(
     return { outcome: "unreadable" };
   }
   if (!Array.isArray(json)) return { outcome: "unreadable" };
+  const scan = json.slice(0, SCAN_CAP);
+  // A non-empty reply with no issue-shaped element is not "nothing found": it is a reply we cannot read.
+  if (scan.length > 0 && !scan.some(isIssueShaped)) return { outcome: "unreadable" };
   const rows: LiveIssueRow[] = [];
-  for (const el of json.slice(0, SCAN_CAP)) {
+  for (const el of scan) {
     const row = toRow(el, project, span, deployStartMs);
     if (row !== null) rows.push(row);
   }

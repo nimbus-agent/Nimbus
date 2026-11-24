@@ -62,6 +62,18 @@ describe("D46(h) - the live investigation read is confined", () => {
     ).toEqual(["investigate-live-confined"]);
   });
 
+  test("FAILS on a literal property access that hides the name in a string", () => {
+    expect(
+      rules([...GOOD, file(`${SRC}automation/x.ts`, 'r["createLiveInvestigator"]({ db });')]),
+    ).toContain("investigate-live-confined");
+    expect(
+      rules([...GOOD, file(`${SRC}ipc/x.ts`, "const l = ctx.options['investigationLive'];")]),
+    ).toEqual(["investigate-live-confined"]);
+    expect(
+      rules([...GOOD, file(`${SRC}ipc/y.ts`, 'const t = e["investigateReadActionType"];')]),
+    ).toEqual(["investigate-live-confined"]);
+  });
+
   test("FAILS when incident assembly (or its render) names the live module", () => {
     expect(
       rules([

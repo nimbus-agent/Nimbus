@@ -285,6 +285,17 @@ describe("a failed, refused, late or unreadable read is a named Gap, never silen
     expect(out.gaps.map((g) => g.code)).toContain("live_sentry_unreadable");
   });
 
+  test("a non-empty reply with no issue object is unreadable; an empty one and an out-of-window one are successful empty reads", async () => {
+    const junk = await run(setup({ replies: { "payments-api": mcp([null, "bad"]) } }));
+    expect(junk.live?.projects[0]?.outcome).toBe("unreadable");
+    expect(junk.gaps.map((g) => g.code)).toContain("live_sentry_unreadable");
+    const empty = await run(setup({ replies: { "payments-api": mcp([]) } }));
+    expect(empty.live?.projects[0]?.outcome).toBe("read");
+    const old = issue({ id: "9", lastSeen: iso(NOW - 12 * 3_600_000) });
+    const outside = await run(setup({ replies: { "payments-api": mcp([old]) } }));
+    expect(outside.live?.projects[0]).toMatchObject({ outcome: "read", scanned: 1, matched: 0 });
+  });
+
   test("a read that outlives the budget times out and its late reply is dropped", async () => {
     const h = setup({ delayMs: 200 });
     const out = await run(h, 40);

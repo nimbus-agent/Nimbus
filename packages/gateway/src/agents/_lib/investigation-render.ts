@@ -80,7 +80,11 @@ function liveSentry(inv: Investigation): string | null {
     ...l.rows.map(liveRow),
   ];
   if (l.status !== "not_read" && l.rows.length === 0) {
-    lines.push("_No unresolved issue of the bound projects was active in the window._");
+    lines.push(
+      l.status === "ok"
+        ? "_No unresolved issue of the bound projects was active in the window._"
+        : "_No unresolved issue was active in the window in the projects that were read; the others were not read (see Gaps)._",
+    );
   }
   if (l.total > l.rows.length) lines.push(`_and ${String(l.total - l.rows.length)} more_`);
   return section("Sentry error issues, live", lines);

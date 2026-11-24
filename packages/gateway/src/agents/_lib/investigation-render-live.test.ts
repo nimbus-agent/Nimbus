@@ -85,6 +85,25 @@ describe("the live section", () => {
     expect(none).not.toContain("No unresolved issue of the bound projects");
   });
 
+  test("a partial read with no rows does not claim the whole bound set was empty", () => {
+    const md = renderInvestigation(
+      buildInvestigationFixture({
+        live: {
+          ...LIVE,
+          status: "partial",
+          rows: [],
+          total: 0,
+          projects: [
+            { project: "a", outcome: "read", scanned: 0, matched: 0 },
+            { project: "b", outcome: "timeout", scanned: 0, matched: 0 },
+          ],
+        },
+      }),
+    );
+    expect(md).not.toContain("No unresolved issue of the bound projects was active");
+    expect(md).toContain("in the projects that were read; the others were not read");
+  });
+
   test("the synthesized brief's deterministic render carries it too, and its reserved blocks still end the brief", () => {
     const inv = buildInvestigationFixture({ live: LIVE });
     const md = renderIncidentInvestigation(investigationBrief(inv, T));

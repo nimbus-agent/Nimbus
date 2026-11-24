@@ -36,6 +36,10 @@ const WIRING: readonly string[] = [
 const TYPE_RE = /\binvestigateReadActionType\b/g;
 const SUFFIX_RE = /\.investigate\.read\b/g;
 const WIRING_RE = /\b(?:createLiveInvestigator|investigationLive)\b/g;
+// A literal property access (`ns["createLiveInvestigator"]`) keeps its name inside a string, which the
+// string-stripped scan blanks, so it is matched on the comment-free text.
+const BRACKET_RE =
+  /\[\s*["'`](?:investigateReadActionType|createLiveInvestigator|investigationLive)["'`]\s*\]/g;
 const INCIDENT_IMPORT_RE = /investigation-live/g;
 const ALLOWED_CONNECTOR_IMPORT_RE =
   /connectors\/(?:connector-writes\/before-select|lazy-mesh\/tool-map)\.ts$/;
@@ -66,6 +70,11 @@ export function checkInvestigateLiveConfinement(files: readonly FileEntry[]): Vi
       if (f.relPath !== LIVE) {
         for (const m of code.matchAll(TYPE_RE))
           add("investigate-read-type-confined", f, code, m.index);
+      }
+    }
+    if (f.relPath !== LIVE) {
+      for (const m of commentFree.matchAll(BRACKET_RE)) {
+        add("investigate-live-confined", f, commentFree, m.index);
       }
     }
     if (!WIRING.includes(f.relPath)) {
