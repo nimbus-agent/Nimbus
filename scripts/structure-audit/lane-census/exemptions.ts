@@ -37,6 +37,31 @@ export type LaneExemption = {
 };
 
 export const LANE_EXEMPTIONS: readonly LaneExemption[] = [
+  // ── prreview/ ────────────────────────────────────────────────────────────────────────────
+  {
+    file: "packages/gateway/src/prreview/prreview-build.ts",
+    key: "merged_at",
+    category: "disclosed",
+    reads: 3,
+    reason:
+      "loadHistory orders and windows merged PRs by COALESCE(merged_at, item.modified_at), so a Bitbucket PR (no merge time) falls back to the last update (the GitLab connector writes merged_at from the MR resource for a merged MR, so GitLab rows normally have it); buildPrereviewBrief adds the gap 'Bitbucket records no merge time, so the history window uses each pull request's last update time instead'.",
+  },
+  {
+    file: "packages/gateway/src/prreview/prreview-build.ts",
+    key: "additions",
+    category: "disclosed",
+    reads: 1,
+    reason:
+      "Only GitHub writes PR line counts; for any other forge the size lane is empty and buildPrereviewBrief's 'No review data is indexed for <service>' gap says the review lane and the size comparison are empty.",
+  },
+  {
+    file: "packages/gateway/src/prreview/prreview-build.ts",
+    key: "deletions",
+    category: "disclosed",
+    reads: 1,
+    reason:
+      "Only GitHub writes PR line counts; for any other forge the size lane is empty and buildPrereviewBrief's 'No review data is indexed for <service>' gap says the review lane and the size comparison are empty.",
+  },
   // ── agents/ ──────────────────────────────────────────────────────────────────────────────
   {
     file: "packages/gateway/src/agents/_lib/oncall-queries.ts",

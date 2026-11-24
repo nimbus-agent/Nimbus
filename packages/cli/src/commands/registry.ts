@@ -53,6 +53,7 @@ export const COMMAND_NAMES = [
   "people",
   "policy",
   "pre-mortem",
+  "pre-review",
   "preflight",
   "profile",
   "prove",

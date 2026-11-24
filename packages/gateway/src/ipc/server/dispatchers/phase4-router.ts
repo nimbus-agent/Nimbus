@@ -60,6 +60,7 @@ import {
   tryDispatchOncallNowRpc,
   tryDispatchOncallPushRpc,
   tryDispatchPostmortemRpc,
+  tryDispatchPrereviewRpc,
   tryDispatchStatuspageRpc,
   tryDispatchUpdateSynthesisRpc,
 } from "./ops-rpcs.ts";
@@ -178,6 +179,7 @@ const PHASE4_PLATFORM_DISPATCHERS: ReadonlyArray<
   tryDispatchInvestigationRpc,
   tryDispatchUpdateSynthesisRpc,
   tryDispatchPostmortemRpc,
+  tryDispatchPrereviewRpc,
   tryDispatchIncidentUpdateRpc,
   tryDispatchNotificationsRpc,
   tryDispatchIacDriftRpc,

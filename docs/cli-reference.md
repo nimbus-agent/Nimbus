@@ -912,6 +912,28 @@ Like `nimbus glossary`, `nimbus owners` **hard-rejects** an unrecognised flag ra
 
 ---
 
+### `nimbus pre-review`
+
+A read-only "lint-plus" brief for a pull request or merge request already in the local index (Phase 10 *Automated PR pre-review*). It answers "in this repository, what usually changes with what this PR changes, and what did I ask for last time": the paths this repository's merged PRs usually changed beside the areas this one touches, your own past review notes on those PRs, and (GitHub) how large this one is against them. No model, no network call, nothing posted. Every statement is a correlation in merged history ("In 7 of 9 merged pull requests that changed `src/index/`, `docs/architecture.md` also changed. This pull request does not change it."), never a rule, and the `## Gaps` section says what the index cannot see (only your own GitHub reviews are indexed; no inline comments; no per-path owners).
+
+```text
+Usage: nimbus pre-review <pr-url> [--json]
+```
+
+```bash
+nimbus pre-review https://github.com/acme/app/pull/42
+nimbus pre-review https://gitlab.com/acme/app/-/merge_requests/7 --json
+```
+
+| Flag | Description |
+|---|---|
+| `<pr-url>` | Required. The PR or MR URL, resolved against the local index (any forge, self-hosted included). A URL that is not indexed, is ambiguous, is not a PR or is not http(s) is an error naming the reason; sync the forge first (`nimbus connector sync <service>`). |
+| `--json` | Print the gateway reply (`{ markdown, brief }`) instead of the Markdown. |
+
+**Exit codes:** `0` = brief printed; `1` = the gateway refused (an unresolved URL, a connection that did not declare its kind) or is not running; `2` = usage error.
+
+---
+
 ### `nimbus pre-mortem`
 
 The thirteenth built-in agent: a risk brief for a Jira epic or a Linear project, built from comparable past epics (or projects) of the same tracker already in the local index. Four sequential lanes — resolve the epic to its affected services, build an IDF-weighted service-overlap cohort of closed epics touching those services, compute five structural risks over that cohort (cycle-time overrun, size overrun, review drag, incident coupling, abandonment), and read recurring blocker themes mined by the background pass (schema **V53**). It then proposes — but never arms — one paused `incident_opened` watcher per affected service that resolves to a configured deployment-service id.

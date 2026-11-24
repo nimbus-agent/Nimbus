@@ -80,6 +80,9 @@ const FORBIDDEN_OVER_LAN = new Set([
   // owner's incidents, alerts, chat messages, deployments and pull requests, and `incident.assemble` writes
   // one. A peer with a legitimate question has `federation.ask`.
   "incident",
+  // `prreview.run` (Phase 10 "Automated PR pre-review") - the WHOLE namespace. The brief quotes the owner's
+  // own past review text and restates the repository's merged history; a peer has `federation.ask`.
+  "prreview",
   // S2 runtime tool generation — the WHOLE namespace, matching exec/computer/media/fleet.
   // `toolgen.create` is RCE-class by definition (it registers model-authored code that then runs),
   // and `toolgen.approvalRespond` is the LOCAL owner answering a registration prompt — admitting it

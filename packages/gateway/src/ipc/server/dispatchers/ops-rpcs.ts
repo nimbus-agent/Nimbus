@@ -10,6 +10,7 @@ import { dispatchOncallHandoffRpc } from "../../oncall-handoff-rpc.ts";
 import { dispatchOncallNowRpc, OncallNowRpcError } from "../../oncall-now-rpc.ts";
 import { dispatchOncallPushRpc, OncallPushRpcError } from "../../oncall-push-rpc.ts";
 import { dispatchPostmortemRpc } from "../../postmortem-rpc.ts";
+import { dispatchPrereviewRpc, PrereviewRpcError } from "../../prreview-rpc.ts";
 import { dispatchStatuspageRpc, StatuspageRpcError } from "../../statuspage-rpc.ts";
 import { dispatchUpdateSynthesisRpc } from "../../update-synthesis-rpc.ts";
 import { phase4RpcSkipped, type ServerCtx } from "../context.ts";
@@ -409,6 +410,36 @@ export async function tryDispatchIacDriftRpc(
     if (out.kind === "hit") return out.value;
   } catch (e) {
     if (e instanceof IacDriftRpcError) throw new RpcMethodError(e.rpcCode, e.message);
+    throw e;
+  }
+  return phase4RpcSkipped;
+}
+
+/**
+ * `prreview.run` (Phase 10 "Automated PR pre-review"): the read-only pre-review brief. Owner kinds only (checked
+ * in the module, before any query); the namespace is LAN-forbidden (I5) and absent from the Tauri allowlist
+ * (I7). No model is reached.
+ */
+export async function tryDispatchPrereviewRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+  clientId: string,
+): Promise<unknown> {
+  if (method !== "prreview.run") return phase4RpcSkipped;
+  const localIndex = ctx.options.localIndex;
+  if (localIndex === undefined) return phase4RpcSkipped;
+  const db = localIndex.getDatabase();
+  try {
+    const out = await dispatchPrereviewRpc(
+      method,
+      params,
+      { db, now: () => Date.now() },
+      { kind: ctx.getClientKind(clientId) },
+    );
+    if (out.kind === "hit") return out.value;
+  } catch (e) {
+    if (e instanceof PrereviewRpcError) throw new RpcMethodError(e.rpcCode, e.message);
     throw e;
   }
   return phase4RpcSkipped;

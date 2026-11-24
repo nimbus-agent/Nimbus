@@ -56,6 +56,7 @@ export {
   tryDispatchOncallNowRpc,
   tryDispatchOncallPushRpc,
   tryDispatchPostmortemRpc,
+  tryDispatchPrereviewRpc,
   tryDispatchStatuspageRpc,
   tryDispatchUpdateSynthesisRpc,
 } from "./dispatchers/ops-rpcs.ts";
