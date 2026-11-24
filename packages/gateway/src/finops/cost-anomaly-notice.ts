@@ -32,7 +32,9 @@ export function costAnomalyNoticeText(
   count: number,
   serviceIds: readonly string[],
 ): { title: string; body: string } {
-  const shown = serviceIds.filter((s) => /^[a-z0-9][a-z0-9_.-]{0,63}$/.test(s)).sort();
+  const shown = serviceIds
+    .filter((s) => /^[a-z0-9][a-z0-9_.-]{0,63}$/.test(s))
+    .sort((a, b) => a.localeCompare(b));
   const where = shown.length > 0 ? ` on ${shown.join(", ")}` : "";
   const what = count === 1 ? "1 unusual cost jump" : `${String(count)} unusual cost jumps`;
   return {

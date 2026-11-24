@@ -94,18 +94,81 @@ function intInRange(
   return fallback;
 }
 
+type Draft = { -readonly [K in keyof NimbusFinopsToml]: NimbusFinopsToml[K] };
+
+/** Apply one `[finops]` key to the draft; an unknown key is ignored, a bad value is reported and defaulted. */
+function applyKey(out: Draft, key: string, raw: string, report: (msg: string) => void): void {
+  const d = DEFAULT_FINOPS_CONFIG;
+  switch (key) {
+    case "max_series":
+      out.maxSeries = intInRange(
+        raw,
+        FINOPS_MAX_SERIES_MIN,
+        FINOPS_MAX_SERIES_MAX,
+        "[finops].max_series",
+        d.maxSeries,
+        report,
+      );
+      break;
+    case "retain_days":
+      out.retainDays = intInRange(
+        raw,
+        FINOPS_RETAIN_DAYS_MIN,
+        FINOPS_RETAIN_DAYS_MAX,
+        "[finops].retain_days",
+        d.retainDays,
+        report,
+      );
+      break;
+    case "anomaly_ratio":
+      out.anomalyRatio = decimalInRange(
+        raw,
+        FINOPS_ANOMALY_RATIO_MIN,
+        FINOPS_ANOMALY_RATIO_MAX,
+        "[finops].anomaly_ratio",
+        d.anomalyRatio,
+        report,
+      );
+      break;
+    case "anomaly_min_amount":
+      out.anomalyMinAmount = decimalInRange(
+        raw,
+        FINOPS_ANOMALY_MIN_AMOUNT_MIN,
+        FINOPS_ANOMALY_MIN_AMOUNT_MAX,
+        "[finops].anomaly_min_amount",
+        d.anomalyMinAmount,
+        report,
+      );
+      break;
+    case "notify": {
+      const b = parseBool(raw);
+      if (b === undefined)
+        report(`[finops].notify must be true or false (got: ${raw}); using false`);
+      out.notify = b ?? d.notify;
+      break;
+    }
+    case "notify_min_interval_minutes":
+      out.notifyMinIntervalMinutes = intInRange(
+        raw,
+        FINOPS_NOTIFY_INTERVAL_MIN,
+        FINOPS_NOTIFY_INTERVAL_MAX,
+        "[finops].notify_min_interval_minutes",
+        d.notifyMinIntervalMinutes,
+        report,
+      );
+      break;
+    default:
+      break;
+  }
+}
+
 /** Parse `[finops]`. A bad value reports through `onFallback`. */
 export function parseNimbusTomlFinops(
   source: string,
   onFallback?: SectionFallbackSink,
 ): NimbusFinopsToml {
   const report = (msg: string): void => onFallback?.(msg);
-  let maxSeries = DEFAULT_FINOPS_CONFIG.maxSeries;
-  let retainDays = DEFAULT_FINOPS_CONFIG.retainDays;
-  let anomalyRatio = DEFAULT_FINOPS_CONFIG.anomalyRatio;
-  let anomalyMinAmount = DEFAULT_FINOPS_CONFIG.anomalyMinAmount;
-  let notify = DEFAULT_FINOPS_CONFIG.notify;
-  let notifyMinIntervalMinutes = DEFAULT_FINOPS_CONFIG.notifyMinIntervalMinutes;
+  const out: Draft = { ...DEFAULT_FINOPS_CONFIG };
   let inSection = false;
   for (const line of source.split(/\r?\n/)) {
     const trimmed = stripComment(line).trim();
@@ -116,67 +179,9 @@ export function parseNimbusTomlFinops(
     }
     if (!inSection) continue;
     const kv = splitKeyValue(trimmed);
-    if (kv === undefined) continue;
-    if (kv.key === "max_series") {
-      maxSeries = intInRange(
-        kv.valRaw,
-        FINOPS_MAX_SERIES_MIN,
-        FINOPS_MAX_SERIES_MAX,
-        "[finops].max_series",
-        DEFAULT_FINOPS_CONFIG.maxSeries,
-        report,
-      );
-    } else if (kv.key === "retain_days") {
-      retainDays = intInRange(
-        kv.valRaw,
-        FINOPS_RETAIN_DAYS_MIN,
-        FINOPS_RETAIN_DAYS_MAX,
-        "[finops].retain_days",
-        DEFAULT_FINOPS_CONFIG.retainDays,
-        report,
-      );
-    } else if (kv.key === "anomaly_ratio") {
-      anomalyRatio = decimalInRange(
-        kv.valRaw,
-        FINOPS_ANOMALY_RATIO_MIN,
-        FINOPS_ANOMALY_RATIO_MAX,
-        "[finops].anomaly_ratio",
-        DEFAULT_FINOPS_CONFIG.anomalyRatio,
-        report,
-      );
-    } else if (kv.key === "anomaly_min_amount") {
-      anomalyMinAmount = decimalInRange(
-        kv.valRaw,
-        FINOPS_ANOMALY_MIN_AMOUNT_MIN,
-        FINOPS_ANOMALY_MIN_AMOUNT_MAX,
-        "[finops].anomaly_min_amount",
-        DEFAULT_FINOPS_CONFIG.anomalyMinAmount,
-        report,
-      );
-    } else if (kv.key === "notify") {
-      const b = parseBool(kv.valRaw);
-      if (b === undefined)
-        report(`[finops].notify must be true or false (got: ${kv.valRaw}); using false`);
-      notify = b ?? DEFAULT_FINOPS_CONFIG.notify;
-    } else if (kv.key === "notify_min_interval_minutes") {
-      notifyMinIntervalMinutes = intInRange(
-        kv.valRaw,
-        FINOPS_NOTIFY_INTERVAL_MIN,
-        FINOPS_NOTIFY_INTERVAL_MAX,
-        "[finops].notify_min_interval_minutes",
-        DEFAULT_FINOPS_CONFIG.notifyMinIntervalMinutes,
-        report,
-      );
-    }
+    if (kv !== undefined) applyKey(out, kv.key, kv.valRaw, report);
   }
-  return Object.freeze({
-    maxSeries,
-    retainDays,
-    anomalyRatio,
-    anomalyMinAmount,
-    notify,
-    notifyMinIntervalMinutes,
-  });
+  return Object.freeze(out);
 }
 
 /** `[finops]` over the layered snapshot (packs, base, active profile). */
