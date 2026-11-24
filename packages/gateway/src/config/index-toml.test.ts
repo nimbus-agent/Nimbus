@@ -93,3 +93,25 @@ describe("[index] history_retention_days", () => {
     expect(loadNimbusIndexFromConfigDir(tmp())).toEqual(DEFAULT_INDEX_CONFIG);
   });
 });
+
+describe("[index] dbt_test_retention_days", () => {
+  test("defaults to 30; a value in 7..365 is kept", () => {
+    expect(parseNimbusTomlIndex("").dbtTestRetentionDays).toBe(30);
+    expect(
+      parseNimbusTomlIndex("[index]\ndbt_test_retention_days = 7\n").dbtTestRetentionDays,
+    ).toBe(7);
+    expect(
+      parseNimbusTomlIndex("[index]\ndbt_test_retention_days = 365\n").dbtTestRetentionDays,
+    ).toBe(365);
+  });
+
+  test.each(["6", "366", "0", "abc", "1.5"])("%s falls back to 30 and reports the key", (raw) => {
+    const seen: string[] = [];
+    const c = parseNimbusTomlIndex(`[index]\ndbt_test_retention_days = ${raw}\n`, (m) =>
+      seen.push(m),
+    );
+    expect(c.dbtTestRetentionDays).toBe(30);
+    expect(seen[0]).toContain("[index].dbt_test_retention_days");
+    expect(seen[0]).toContain("7..365");
+  });
+});

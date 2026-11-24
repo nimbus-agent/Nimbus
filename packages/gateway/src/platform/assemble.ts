@@ -607,10 +607,10 @@ export async function assemblePlatformServices(
   });
   sidecarStops.push(() => toolCallLogRetention.stop());
 
-  // Item history retention (Phase 10 IC1): `[index] history_retention_days`, read through the closure on
-  // every tick so an edit applies without a restart. One batched prune per 24 h, never inside a sync.
+  // Item history and dbt test retention (IC1): `[index] history_retention_days`, `dbt_test_retention_days`, read per tick; one batched prune per 24 h.
   const itemHistoryRetention = startItemHistoryRetention(db, {
     retentionDays: () => loadNimbusIndexFromConfigDir(paths.configDir).historyRetentionDays,
+    dbtTestRetentionDays: () => loadNimbusIndexFromConfigDir(paths.configDir).dbtTestRetentionDays,
   });
   sidecarStops.push(() => itemHistoryRetention.stop());
 

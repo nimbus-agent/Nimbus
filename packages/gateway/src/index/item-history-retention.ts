@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 
+import { pruneDbtTests } from "./dbt-test-retention.ts";
 import { pruneItemHistory } from "./item-history.ts";
 
 /**
@@ -56,6 +57,8 @@ export type ItemHistoryRetentionTimer = { readonly clear: () => void };
 export type StartItemHistoryRetentionOptions = {
   /** Read EVERY tick, so an edited `nimbus.toml` applies without a restart. */
   readonly retentionDays: () => number;
+  /** `[index] dbt_test_retention_days`, read every tick; the same tick prunes old dbt test results. */
+  readonly dbtTestRetentionDays?: () => number;
   readonly nowMs?: () => number;
   readonly yieldToEventLoop?: () => Promise<void>;
   /** Test seams: the per-batch row count and the per-pass batch cap. */
@@ -110,6 +113,19 @@ export function startItemHistoryRetention(
           });
           more = run.more;
           if (more) await yieldToEventLoop();
+        }
+        if (opts.dbtTestRetentionDays !== undefined) {
+          let dbtMore = true;
+          while (dbtMore && !stopped) {
+            const run = await pruneDbtTests(db, {
+              retentionDays: opts.dbtTestRetentionDays(),
+              nowMs: clock(),
+              yieldToEventLoop,
+              ...(opts.batchSize === undefined ? {} : { batchSize: opts.batchSize }),
+              ...(opts.maxBatches === undefined ? {} : { maxBatches: opts.maxBatches }),
+            });
+            dbtMore = run.more;
+          }
         }
       } catch {
         // Best-effort maintenance: never crash the gateway.
