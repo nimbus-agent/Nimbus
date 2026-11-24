@@ -1328,6 +1328,33 @@ Text from the index (a title, a sender) is stripped of control characters before
 
 **Bounds.** Outlook mail is counted per message (no thread key or sender is indexed); an empty work snapshot reads "not run yet", never "nothing assigned"; GitHub only for reviews; Slack unread needs the read markers the Slack sync records.
 
+### `nimbus memory list [--json]` / `nimbus memory forget <id> | --all`
+
+Long-term episodic memory (Phase 10, owner ruling OR-S4-MEM). **Off by default**: set `[memory] episodic = true` in `nimbus.toml` to opt in. Then, after a session (a conversational `nimbus ask --session <id>` or the desktop chat) has been quiet for 30 minutes, the gateway has your **local** model write a short note from your own messages and the answers you were given, embeds it with the **local** embedder and keeps it on this machine. A later question that is close to a note gets it in its prompt as clearly marked, untrusted background (never as an instruction). Raw tool results, connector content, retrieved items, session rows and MCP client text are never passed to the summariser (only your own messages and the answers you were given are; an answer can itself repeat what the model read), and a model that is not local is never asked. A demo gateway stores and recalls nothing.
+
+```bash
+nimbus memory list           # whether it is on, the retention, each note with its id and date
+nimbus memory list --json
+nimbus memory forget mem_0123456789abcdef
+nimbus memory forget --all   # every note and every turn still waiting to be summarised
+```
+
+| Subcommand | Description |
+|---|---|
+| `list [--json]` | The state (`ON` or `OFF`), the retention, the number of turns waiting to be summarised, then each note newest first (`id`, time, turn count, the text). Works while memory is off, so an earlier opt-in can be reviewed. |
+| `forget <id>` | Deletes one note. Exit 1 when there is no such id. |
+| `forget --all` | Deletes every note and every pending turn. |
+
+Served only to a CLI or desktop connection; refused for MCP, HTTP, ChatOps and LAN peers, and absent from the desktop renderer's allowed methods. Note text is model output, so control characters are stripped before it reaches the terminal.
+
+| Key | Default | Range |
+|---|---|---|
+| `[memory] episodic` | `false` | `true` opts in |
+| `[memory] recall_remote` | `false` | Owner ruling OR-S4-MEM-RECALL. With `false`, a recalled note goes only into a prompt whose every possible destination is a local provider (`isLocal`); with a remote answering model, or a remote provider or the cloud agent that could take over, nothing about memory is added to the prompt. `true` also allows a remote model (then the note leaves the machine like any prompt text). A bad value falls back to `false`; `nimbus config explain` names it. |
+| `[memory] retention_days` | `90` | 7 to 365, an integer; notes and waiting turns older than this are deleted daily. A value outside falls back to 90 and `nimbus config explain` names it; nothing is clamped. |
+
+**Bounds.** Only turns that carry a session id and are conversational (not a plan the gateway ran) are remembered; the answer you were given is model output and can echo what the model read; a recalled note goes to a remote model only if you set `[memory] recall_remote = true`; a session ends by 30 minutes of silence, not by an event.
+
 ### `nimbus iac drift [--workdir <dir>] [--json]` / `nimbus iac drift --latest [--json]`
 
 Phase 10 IaC drift D2 (owner rulings OR-DRIFT-1 and OR-DRIFT-2). A read-only Terraform drift check of the directories you approved with `nimbus connector writes enable iac --wave 4 --workdir <dir>`. For each one it runs `terraform plan` under the same sandbox profile as an apply's plan (that directory's granted cloud credentials and hosts), asks nothing and applies nothing, and prints what Terraform reports as changed or deleted outside Terraform: object addresses and attribute NAMES, never a value.

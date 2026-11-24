@@ -46,6 +46,7 @@ import {
   EMBEDDING_V6_NO_VEC_MIGRATION_SQL,
 } from "../embedding-v6-sql.ts";
 import { ENTITY_METADATA_V54_SQL } from "../entity-metadata-v54-sql.ts";
+import { EPISODIC_MEMORY_V107_SQL } from "../episodic-memory-v107-sql.ts";
 import { EXTENSION_DEPENDENCY_REGISTRY_V78_SQL } from "../extension-dependency-registry-v78-sql.ts";
 import { V31_EXTENSION_DEPENDENCY_SQL } from "../extension-dependency-v31-sql.ts";
 import { EXTENSION_KIND_V79_SQL } from "../extension-kind-v79-sql.ts";
@@ -236,11 +237,7 @@ function lanPeersHasColumn(db: Database, columnName: string): boolean {
   return rows.some((r) => r.name === columnName);
 }
 
-/**
- * V95 - `lan_peers.proto_version`. SQLite has no `ADD COLUMN IF NOT EXISTS`, and a step must be
- * re-runnable (the migration suites rewind `user_version` and run every step again), so the `ALTER`
- * is guarded by a column probe, as V4 does for `person.linked`.
- */
+/** V95 - `lan_peers.proto_version`: no `ADD COLUMN IF NOT EXISTS`, so a column probe keeps the step re-runnable. */
 function migrateIndexedV94ToV95(db: Database, now: number): void {
   db.transaction(() => {
     if (!lanPeersHasColumn(db, "proto_version")) {
@@ -931,6 +928,7 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
   simpleStep(103, 104, "incident runbook step state (Phase 10 IC6)", INCIDENT_RUNBOOK_V104_SQL),
   { fromVersion: 104, toVersion: 105, apply: migrateIndexedV104ToV105 },
   { fromVersion: 105, toVersion: 106, apply: migrateIndexedV105ToV106 },
+  simpleStep(106, 107, "long-term episodic memory (Phase 10, I61)", EPISODIC_MEMORY_V107_SQL),
 ];
 
 /**

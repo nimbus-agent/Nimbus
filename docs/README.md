@@ -480,6 +480,8 @@ Phase 28 AD6c shipped 2026-11-16: a first-party connector started on its own (`n
 
 `nimbus deploy preflight` (Phase 17, 2026-11-16) now ends with an advisory deploy-risk block: system state, change velocity, on-call coverage and time of week, each with its evidence. It changes the verdict only if you set `[preflight.risk] fail_at`, and reads missing data as unknown, never as clear.
 
+Shipped 2026-11-23: long-term episodic memory, off by default (`[memory] episodic = true`, invariant `I61`). After a conversation has been quiet for 30 minutes, your local model writes a short note from your own messages and the answers you were given, a local embedder indexes it, and a later question that is close to it gets the note in its prompt as marked, untrusted background. Raw tool results, connector content, indexed items, session rows and MCP client text are never passed to the summariser (only your own messages and the answers you were given are), though an answer can itself repeat what the model read that turn; no remote model is asked to summarise, a note is recalled into a remote model's prompt only if you set `[memory] recall_remote = true`, and a demo gateway keeps nothing. `nimbus memory list` and `nimbus memory forget <id>|--all` are the owner's view; notes expire after `[memory] retention_days` (default 90).
+
 Shipped 2026-11-18: the model can call a saved generated tool you list in `[tool_generation] model_tools` (invariant `I60`), and `nimbus ask --computer <session-id>` lets it drive a computer-use session you opened, with every action approved in the terminal that opened it (`I35`); the desktop can neither drive nor approve computer-use. `nimbus iac drift` checks your approved Terraform directories for changes made outside Terraform, on demand or on an opt-in schedule, and the Terraform apply approval lists that drift. The desktop Marketplace page searches registries and shows an extension's score, evidence lines and permissions (installing stays a terminal command), and the docs site lists the official registry's extensions at [/extensions/](https://nimbus-agent.dev/extensions/). A registry install now re-checks the package's GitHub build provenance offline, against Sigstore roots that ship with Nimbus, and keeps the attestation with the installed extension, so `nimbus extension verify-provenance` can check it again later; a failed check never blocks the install.
 
 Workflow conditionals shipped 2026-11-16: a `run` or `write` step of a saved workflow may carry a `when` guard over the count of an earlier query step, and a step whose guard is false is skipped without asking you. A standing rule covers such a write only when the guard needs matches to hold, so an empty or stale index cannot trigger an unattended write.
@@ -973,7 +975,7 @@ nimbus/
 │   ├── README.md             # this file — the repository landing page
 │   ├── architecture.md       # subsystem design, IPC catalogue, schema reference
 │   ├── SECURITY.md           # security model + vulnerability reporting
-│   ├── SECURITY-INVARIANTS.md# I1–I60 rationale + anti-patterns
+│   ├── SECURITY-INVARIANTS.md# I1–I61 rationale + anti-patterns
 │   ├── roadmap.md            # acceptance-criteria-driven roadmap
 │   ├── CHANGELOG.md          # dated delivery log (canonical)
 │   ├── cli-reference.md      # full CLI + nimbus.toml reference

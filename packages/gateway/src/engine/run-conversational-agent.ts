@@ -39,6 +39,11 @@ export type RunConversationalAgentParams = {
   priorTurns?: ReadonlyArray<{ role: "user" | "assistant" | "tool"; text: string }>;
   localContext?: string;
   /**
+   * The owner's recalled episodic memory (I61): a fixed UNTRUSTED preamble plus the summaries as an I11 tool-output
+   * envelope, built by `memory/episodic-memory.ts`. Placed before the local context, never in session history.
+   */
+  episodicRecall?: string;
+  /**
    * What `buildLocalIndexedContext` had to leave out (F14). Present only when the index held
    * more matches than the context budget allowed, and appended to the reply by the same
    * deterministic path that carries negation disclosures — never asked of the model.
@@ -108,7 +113,9 @@ function isTextDeltaChunk(chunk: unknown): chunk is {
   return typeof text === "string";
 }
 
-function shouldUseLocalRouter(p: RunConversationalAgentParams): boolean {
+export function shouldUseLocalRouter(
+  p: Pick<RunConversationalAgentParams, "llmRouter" | "agent">,
+): boolean {
   if (p.llmRouter === undefined) {
     return false;
   }
@@ -137,6 +144,12 @@ type ConversationMessage =
   | { role: "assistant"; content: string };
 
 type PromptArg = string | ConversationMessage[];
+
+/** Recalled memory first, then the indexed context; either may be absent. */
+function joinContext(recall: string | undefined, local: string | undefined): string | undefined {
+  const parts = [recall, local].filter((x): x is string => x !== undefined && x.trim() !== "");
+  return parts.length === 0 ? undefined : parts.join("\n\n");
+}
 
 /** Build the prompt text, optionally prefixed with a relational-traversal nudge and local context. */
 function buildPromptText(trimmed: string, localContext: string | undefined): string {
@@ -432,7 +445,10 @@ export async function runConversationalAgent(
   // gateway's prompt is unchanged.
   const personaPrompt = applyPersona(
     applyDevilAdvocate(
-      withPointInTimeInstruction(buildPromptText(trimmed, p.localContext), p.pointInTime?.atMs),
+      withPointInTimeInstruction(
+        buildPromptText(trimmed, joinContext(p.episodicRecall, p.localContext)),
+        p.pointInTime?.atMs,
+      ),
       p.devil,
     ),
     p.persona,

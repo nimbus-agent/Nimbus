@@ -20,9 +20,9 @@ function insertProposal(db: Database, id: string, status: string, undo: string |
 }
 
 describe("V106 incident_proposal.executed_at_ms (incident undo with no id)", () => {
-  test("the schema constant and the registered chain end at 106", () => {
-    expect(CURRENT_SCHEMA_VERSION).toBe(106);
-    expect(maxRegisteredIndexedSchemaVersion()).toBe(106);
+  test("the schema constant and the registered chain include 106", () => {
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(106);
+    expect(maxRegisteredIndexedSchemaVersion()).toBe(CURRENT_SCHEMA_VERSION);
   });
 
   test("a fresh database has the column, nullable with no default", () => {

@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-// Entry point of the static invariant auditor (D10 to D51). The rules live under ./invariants/. This file
+// Entry point of the static invariant auditor (D10 to D52). The rules live under ./invariants/. This file
 // re-exports their public names (the unit tests import them from here), parses the mode, loads the
 // source files, and runs the report parts in the original order with the original output.
 
@@ -45,6 +45,7 @@ export {
   checkIacDiscard,
   checkWriteDirDeclarationConfined,
 } from "./invariants/drift-bound-capabilities-iac.ts";
+export { checkEpisodicMemoryConfinement } from "./invariants/episodic-memory.ts";
 export {
   checkEvalConfinement,
   checkExtensionRoleConfinement,

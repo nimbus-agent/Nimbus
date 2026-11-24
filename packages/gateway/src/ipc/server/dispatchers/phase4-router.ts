@@ -48,6 +48,7 @@ import {
   tryDispatchTourRpc,
 } from "./local-surface-rpcs.ts";
 import { tryDispatchMediaRpc } from "./media-rpcs.ts";
+import { tryDispatchMemoryRpc } from "./memory-rpcs.ts";
 import { tryDispatchMigrationRpc } from "./migration-rpcs.ts";
 import {
   tryDispatchBriefingRpc,
@@ -183,6 +184,7 @@ const PHASE4_PLATFORM_DISPATCHERS: ReadonlyArray<
   tryDispatchIncidentUpdateRpc,
   tryDispatchNotificationsRpc,
   tryDispatchIacDriftRpc,
+  tryDispatchMemoryRpc,
   tryDispatchCaptureRpc,
   tryDispatchApprovalsRpc,
   tryDispatchStandingRpc,
