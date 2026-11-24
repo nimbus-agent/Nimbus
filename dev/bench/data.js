@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795519440574,
+  "lastUpdate": 1795519892464,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "a80670679e197e11e32b2c624436bef9b89a7159",
-          "message": "chore: release main (#1504)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.21.0</summary>\n\n##\n[7.21.0](https://github.com/nimbus-agent/Nimbus/compare/v7.20.1...v7.21.0)\n(2026-09-12)\n\n\n### Features\n\n* **agents:** nimbus standup — the sixteenth built-in agent\n([#1502](https://github.com/nimbus-agent/Nimbus/issues/1502))\n([3101702](https://github.com/nimbus-agent/Nimbus/commit/310170239b4a9ed4be1cb9092223dc1d64cc3cd7))\n\n\n### Bug Fixes\n\n* **platform:** load a full SQLite on macOS so sqlite-vec can load\n([#1503](https://github.com/nimbus-agent/Nimbus/issues/1503))\n([107bf08](https://github.com/nimbus-agent/Nimbus/commit/107bf084021bfc7dbd08fae0e42d3d2690f5b7ed))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-09-12T18:02:17Z",
-          "tree_id": "c5de1b5be1315814b2d9dc68760838eccd1ac1a2",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/a80670679e197e11e32b2c624436bef9b89a7159"
-        },
-        "date": 1789236930655,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 327.1389665000006,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 330.4487705000014,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 183.23717055000088,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "02fc284ab9308182bbb43bf2f84630fa90f05056",
+          "message": "feat(cli): nimbus iac accept-drift, the owner's entry point for accepting Terraform drift (#2135)\n\n`nimbus iac accept-drift --workdir <dir>`: the owner's entry point for\nthe accept-drift write row (`iac_terraform_apply_refresh_only`, landed\nin #2132). Owner ruling OR-S4-ACCEPT-DRIFT, 2026-11-24. Until now the\nrow had no way to be run: it is never offered to the model and refused\non the MCP act door.\n\n## What it does\n\nThe gateway makes a `terraform plan -refresh-only` in an approved\nworkdir, fixes the plan's identity itself, refuses it unless it holds no\nplanned change and no provider action and its drift is listed in full,\nand shows the owner the drift (object addresses and changed attribute\nNAMES, never values) with the plan hash. The owner approves by TYPING\n`iac/accept-drift <dir>` exactly at their terminal; the apply then\nupdates the state and changes no infrastructure.\n\n## Design\n\n- **IPC**: `iac.acceptDrift { workdir }` in `ipc/iac-drift-rpc.ts`,\nserved only to a connection that declared `cli` (the dispatcher passes\nthe connection's kind and now its id). The `iac` namespace stays\nLAN-forbidden and off the Tauri allowlist; a demo gateway has no runner\nand refuses (I41).\n- **Executor**: `buildIacAcceptExecutor` (`engine/run-ask.ts`), built\nlike `buildIacDriftExecutor` but on the asking connection's consent\nchannel: no delegation, no standing rules, no before-state runner.\n`gateway-main.ts` hands it `humanOnlyConsent(...)`, so `--yes`, scripts\nand old clients are declined (their approval becomes a decline and the\noutcome says so).\n- **Service**: `iac-drift/accept-drift.ts` only names an approved\nworkdir (exact stored spelling; anything else throws before an executor\nexists), builds the action (the tool id comes from the row table) and\nturns the executor's answer into a fixed outcome. The runner gains\n`accept`.\n- **CLI**: `nimbus iac accept-drift --workdir <dir> [--json]`. Needs a\nterminal (exit 2 otherwise, nothing sent); `--yes`, `-y`,\n`--script-consent-source` and any extra flag are usage errors; the\nconnection registers the human consent mode (ignores\n`NIMBUS_SCRIPT_CONSENT_SOURCE`) with the long request budget. Exit 0\naccepted, 1 declined, refused or failed, 2 usage, no terminal or a\nnon-person approval.\n- The model is still never offered the row; an outside agent cannot\npropose it.\n\n## Invariants and static rules\n\n- I54 text extended (the owner's door). I2, I20, I53, I58 are unchanged\nin shape: no delegation, no standing rule, never offered.\n- **Static D42(k)** (new clause in `checkDriftCheckConfined`,\n`bound-drift-confined`): `buildIacAcceptExecutor` defined once in\n`run-ask.ts` and called only by `gateway-main.ts`, with a\n`humanOnlyConsent` wrapper in that very call; the builder's body binds\nthe consent channel and names none of `standingRules`, `beforeState`,\n`driftCheck`, `dryRun`, `unattended`, `NEVER_ASKED_CONSENT`,\n`delegation`. Red-proved clause by clause in\n`scripts/structure-audit/invariants/iac-accept-confined.test.ts` (13\ntests). D42(h), D42(i) and D43 are untouched.\n- No migration, no new invariant, no new HITL type (the row's type was\nadded in #2132), no egress class (the accept's plan, show and apply\nreads are audited and ledgered like any bound row). `ALLOWED_METHODS`\nunchanged.\n- No baselined file gained a line (`run-ask.ts` 883 -> 882,\n`gateway-main.ts` 604 = 604, comments compacted to pay for the wiring).\n\n## Stated bounds\n\n- The refresh-only plan JSON follows HashiCorp's documented format and\nis not verified against a live Terraform; the real accept was never run.\n- The apply runs the directory's providers with the granted credential\n(OR-D2-1 applies); the state is rewritten and Nimbus does not undo it.\n- `answerSource` and the connection's declared kind are client-reported\non the local socket; the typed text, compared by the executor, is what a\nscript cannot supply without being given the plan.\n- No desktop view (the desktop cannot approve typed text for this row\nand the namespace is not on the allowlist).\n\n## Tests\n\n- `iac-drift/accept-drift.test.ts` (8): the REAL row and the REAL\nexecutor on a human-only channel: the exact typed text accepts with the\ngateway's own file and hash and nothing forged; an approval from `auto`,\n`script` or `unknown` is declined and nothing is written; a near-miss\ntext declines; an unapproved directory is refused before an executor is\nbuilt; a failure reads as the fixed text.\n- `ipc/iac-drift-rpc.test.ts` (+2), `iac-drift/drift-runner.test.ts`\n(+2), `cli/src/commands/iac-accept.test.ts` (parse, terminal rule,\noutcome wording, exit codes, routing) and the D42(k) static tests.\n- `bun run typecheck`, `typecheck:tests` (0 new), `preflight:fast`, the\nstatic rules and the suites for ipc, engine, security-invariants,\niac-drift, connectors, platform, cli commands and\n`scripts/structure-audit` pass. Coverage is CI-Linux authoritative and\nnot measured locally.\n\n## For the batch-docs PR\n\n- **Roadmap** (`docs/roadmap.md`, the IaC drift rows): replace the open\nitem \"a CLI-only `nimbus iac accept-drift`\" with: \"Progress (2026-11-24,\nOR-S4-ACCEPT-DRIFT): `nimbus iac accept-drift --workdir <dir>` runs the\naccept-drift row for the owner: CLI-only, human-only consent, typed\n`iac/accept-drift <dir>`.\"\n- **CHANGELOG** (2026-11-24): \"**`nimbus iac accept-drift`** (S4,\nOR-S4-ACCEPT-DRIFT). The owner's entry point for the accept-drift write\nrow: `iac.acceptDrift` (CLI-only, `iac` stays LAN-forbidden and off the\nTauri allowlist), `buildIacAcceptExecutor` (no delegation, no standing\nrules, human-only consent), the typed text `iac/accept-drift <dir>`.\nStatic D42(k) added, I54 text extended. No migration, invariant or HITL\ntype. Stated bounds: reply shapes not verified against a live Terraform;\nno desktop view.\"\n- **CLAUDE.md / GEMINI.md** (after the 'IaC drift, accept' sentence):\n\"OR-S4-ACCEPT-DRIFT (2026-11-24): `nimbus iac accept-drift --workdir\n<dir>` runs it for the owner (`iac.acceptDrift`, `cli` connections only;\n`buildIacAcceptExecutor` with `humanOnlyConsent`; typed\n`iac/accept-drift <dir>`; static D42(k)); the model is still never\noffered the row.\" Also change the static range text only if D42's\nsub-clause count is stated: D42(k) is a clause of D42, not a new rule\nnumber.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrGFPLqt8C3Ybzk2dHq\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-24T11:20:35Z",
+          "tree_id": "cf88c4449a9f34e33ceb6759461c9d691bc4a3d9",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/02fc284ab9308182bbb43bf2f84630fa90f05056"
+        },
+        "date": 1795519889118,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 178.20382959999588,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 178.80991485000013,
             "unit": "ms"
           }
         ]
