@@ -168,6 +168,7 @@ describe("I54 — a prepare tool is refused to a federated peer in the form a se
       "iac_iac_cloudformation_changeset_create",
       "iac_iac_terraform_destroy_plan",
       "iac_iac_terraform_plan",
+      "iac_iac_terraform_plan_refresh_only",
       "iac_iac_terraform_show_json",
       "kubernetes_k8s_manifest_plan",
     ]);
@@ -198,9 +199,11 @@ describe("I26 — the code-execution refusal holds in the form a federated sessi
       "iac_iac_pulumi_preview",
       "iac_iac_pulumi_up",
       "iac_iac_terraform_apply",
+      "iac_iac_terraform_apply_refresh_only",
       "iac_iac_terraform_destroy",
       "iac_iac_terraform_destroy_plan",
       "iac_iac_terraform_plan",
+      "iac_iac_terraform_plan_refresh_only",
       "iac_iac_terraform_show_json",
     ]);
   }, 120_000);

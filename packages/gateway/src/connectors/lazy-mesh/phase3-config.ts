@@ -48,7 +48,11 @@ import {
   phase3AddTestflightMcp,
   phase3AddVercelMcp,
 } from "./phase3-delivery.ts";
-import { phase3AddVantageMcp } from "./phase3-finops.ts";
+import {
+  phase3AddKubecostMcp,
+  phase3AddOpencostMcp,
+  phase3AddVantageMcp,
+} from "./phase3-finops.ts";
 import {
   phase3AddDatadogMcp,
   phase3AddElasticsearchMcp,
@@ -111,6 +115,7 @@ export {
   phase3AddIacMcp,
   phase3AddImapMcp,
   phase3AddIntercomMcp,
+  phase3AddKubecostMcp,
   phase3AddLaunchdarklyMcp,
   phase3AddLeverMcp,
   phase3AddLocaldbMcp,
@@ -121,6 +126,7 @@ export {
   phase3AddMonteCarloMcp,
   phase3AddNetlifyMcp,
   phase3AddNewrelicMcp,
+  phase3AddOpencostMcp,
   phase3AddPipedriveMcp,
   phase3AddPowerBiMcp,
   phase3AddPrefectMcp,
@@ -215,5 +221,7 @@ export async function buildPhase3Servers(
   await phase3AddMonteCarloMcp(vault, servers, sandboxCwd);
   await phase3AddBigeyeMcp(vault, servers, sandboxCwd);
   await phase3AddVantageMcp(vault, servers, sandboxCwd);
+  await phase3AddOpencostMcp(vault, servers, sandboxCwd);
+  await phase3AddKubecostMcp(vault, servers, sandboxCwd);
   return servers;
 }

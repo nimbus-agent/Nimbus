@@ -36,7 +36,7 @@ describe("I53 — a first-party connector write reaches the model only through t
   test("D0a: every Wave 4 write on every door reaches dispatch only after an exact type-to-confirm match at the executor gate", async () => {
     const { NO_POLICY_OVERLAY, ToolExecutor } = await import("../engine/executor.ts");
     const wave4 = CONNECTOR_WRITE_ROWS.filter((r) => r.wave === 4);
-    expect(wave4).toHaveLength(50);
+    expect(wave4).toHaveLength(51);
     const failures: string[] = [];
     for (const row of wave4) {
       const input = confirmableInput(row);
@@ -127,7 +127,7 @@ describe("I53 — a first-party connector write reaches the model only through t
     const { NO_POLICY_OVERLAY, ToolExecutor } = await import("../engine/executor.ts");
     const { createConnectorDispatcher } = await import("../connectors/registry.ts");
     const wave4 = CONNECTOR_WRITE_ROWS.filter((r) => r.wave === 4 && r.transport === "mesh");
-    expect(wave4).toHaveLength(42);
+    expect(wave4).toHaveLength(43);
     const failures: string[] = [];
     for (const row of wave4) {
       const input = confirmableInput(row);
@@ -212,10 +212,10 @@ describe("I53 — a first-party connector write reaches the model only through t
       true,
     );
     // The seven mail sends (OR-W34-1), since D1 the Bitbucket merge (no head precondition), and
-    // since D2 the three rows that stay owner-only: Terraform destroy, Pulumi and the change-set
-    // discard (D3a took the Kubernetes apply off the list: it is offered while a pair is approved),
+    // since D2 the rows that stay owner-only: Terraform destroy, Pulumi, the change-set discard and
+    // (OR-S4-DRIFT) the accept-drift apply (D3a took the Kubernetes apply off the list: it is offered while a pair is approved),
     // and since the Phase 9.7 close (OR-97-1) the four az/gcloud-read cloud rows and the pod delete.
-    expect(MODEL_NEVER_OFFERED_TOOL_IDS.size).toBe(16);
+    expect(MODEL_NEVER_OFFERED_TOOL_IDS.size).toBe(17);
     expect(MODEL_NEVER_OFFERED_TOOL_IDS.has("gcp_cloud_run_deploy")).toBe(true);
     expect(MODEL_NEVER_OFFERED_TOOL_IDS.has("bitbucket_pr_merge")).toBe(true);
     for (const r of CONNECTOR_WRITE_ROWS) {

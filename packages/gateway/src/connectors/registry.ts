@@ -135,6 +135,7 @@ export function buildBoundWriteCapabilities(host: IacHost): BoundWriteCapabiliti
         },
         {
           destroy: rowToolId.endsWith("_destroy"),
+          refreshOnly: rowToolId.endsWith("_refresh_only"),
           workingDirectory: ctx.workingDirectory,
           reply: ctx.reply,
           stagingDir: dirs.stagingDir,

@@ -1,7 +1,11 @@
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
-import { manifestForFirstParty } from "./first-party-manifests.ts";
+import {
+  manifestForFirstParty,
+  manifestWithExtraNetworkHosts,
+  storedUrlHosts,
+} from "./first-party-manifests.ts";
 import { connectorSpawn } from "./keys.ts";
 import type { ServerSpec } from "./slot.ts";
 import { wrapServerSpec } from "./wrap-server-spec.ts";
@@ -47,4 +51,52 @@ export async function phase3AddVantageMcp(
     manifestForFirstParty("vantage"),
     sandboxCwd,
   );
+}
+
+/**
+ * Kubernetes cost (Phase 10 FinOps, OR-S4-FINOPS): OpenCost and Kubecost run in the owner's own
+ * cluster, so the one host the owner stored (`<service>.url`) is added to the sandbox as an
+ * owner-configured entry, as for Argo CD (I15, static D10). A blank URL registers nothing; the
+ * optional token reaches the child only when stored, through `extensionProcessEnv` (I1).
+ */
+async function addK8sCostMcp(
+  service: "opencost" | "kubecost",
+  envPrefix: "OPENCOST" | "KUBECOST",
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const url = (await readConnectorSecret(vault, service, "url"))?.trim() ?? "";
+  if (url === "") {
+    return;
+  }
+  const token = (await readConnectorSecret(vault, service, "token"))?.trim() ?? "";
+  const hosts = storedUrlHosts(service, url);
+  servers[service] = wrapServerSpec(
+    {
+      ...connectorSpawn(service),
+      env: extensionProcessEnv({
+        [`${envPrefix}_URL`]: url,
+        ...(token === "" ? {} : { [`${envPrefix}_TOKEN`]: token }),
+      }),
+    },
+    manifestWithExtraNetworkHosts(service, hosts, { ownerConfigured: hosts }),
+    sandboxCwd,
+  );
+}
+
+export function phase3AddOpencostMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  return addK8sCostMcp("opencost", "OPENCOST", vault, servers, sandboxCwd);
+}
+
+export function phase3AddKubecostMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  return addK8sCostMcp("kubecost", "KUBECOST", vault, servers, sandboxCwd);
 }

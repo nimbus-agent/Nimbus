@@ -37,7 +37,7 @@ function gitlabPipelineDeclaration(): string {
 }
 
 /**
- * The two Terraform applies share one input object declared as a local `applyShape` constant (the
+ * The three Terraform applies share one input object declared as a local `applyShape` constant (the
  * registering call passes `z.object(applyShape)`), so the scan finds no schema in their call: the
  * declaration is that constant's literal wrapped back into the `z.object(...)` it feeds.
  */
@@ -52,7 +52,7 @@ function iacApplyDeclaration(): string {
 
 function declaration(toolId: string): string {
   if (toolId.startsWith("gitlab_pipeline_")) return gitlabPipelineDeclaration();
-  if (toolId === "iac_terraform_apply" || toolId === "iac_terraform_destroy") {
+  if (/^iac_terraform_(apply|destroy|apply_refresh_only)$/.test(toolId)) {
     return iacApplyDeclaration();
   }
   const reg = scan.registrations.find((r) => r.id === toolId);
@@ -91,8 +91,8 @@ function altPlaceholders(r: ConnectorWriteRow): string[] {
 }
 
 describe("every wave 4 row declares a type-to-confirm target", () => {
-  test("there are 50 wave 4 rows, each with a confirm template that parses", () => {
-    expect(WAVE4).toHaveLength(50);
+  test("there are 51 wave 4 rows, each with a confirm template that parses", () => {
+    expect(WAVE4).toHaveLength(51);
     for (const r of WAVE4) {
       expect(r.confirm, r.toolId).toBeDefined();
       expect(parseConfirmTemplate(r.confirm?.template ?? "").ok, r.toolId).toBe(true);
