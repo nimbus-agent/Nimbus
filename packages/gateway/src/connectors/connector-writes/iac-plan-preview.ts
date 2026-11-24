@@ -24,7 +24,17 @@
 
 import { createHash } from "node:crypto";
 import { IAC_LIMITS } from "./iac-limits.ts";
-import { escapeDiffText } from "./sanitise.ts";
+import {
+  changedAttributes,
+  escapeOneLine,
+  isObj,
+  markerOf,
+  type Obj,
+  own,
+  showValue,
+} from "./iac-plan-attrs.ts";
+
+export { escapeOneLine };
 
 /** Counts of the resource changes, by Terraform's own action classes. No-ops are not counted. */
 export interface PlanPreviewCounts {
@@ -35,6 +45,8 @@ export interface PlanPreviewCounts {
   readonly replace: number;
   /** Data-source reads (not changes). */
   readonly read: number;
+  /** Objects whose address moves in the state with no other change (`no-op` with `previous_address`). */
+  readonly move: number;
 }
 
 /** Rendered text the gateway built: its lines, the joined text and the digest of that text. */
@@ -76,12 +88,9 @@ export interface PlanPreviewLimits {
   readonly maxValueChars: number;
 }
 
-/** Nesting deeper than this is not walked: a marker counts as sensitive, a pair as different. */
-const MAX_DEPTH = 32;
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 const FORMAT_VERSION = /^1\.\d+$/;
 
-type Obj = Record<string, unknown>;
 type Label = "create" | "update" | "delete" | "replace" | "read" | "no-op";
 /** The classes an output change or a drifted object may have (no data-source read). */
 const CHANGE_LABELS: readonly Label[] = ["no-op", "create", "update", "delete", "replace"];
@@ -94,16 +103,6 @@ class Refusal extends Error {
   }
 }
 
-function isObj(v: unknown): v is Obj {
-  if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
-  const proto: unknown = Object.getPrototypeOf(v);
-  return proto === Object.prototype || proto === null;
-}
-
-function own(o: Obj, key: string): unknown {
-  return Object.hasOwn(o, key) ? o[key] : undefined;
-}
-
 /** The text, byte count and digest of `lines` (joined by a newline). */
 export function renderedText(lines: readonly string[]): RenderedText {
   const text = lines.join("\n");
@@ -113,11 +112,6 @@ export function renderedText(lines: readonly string[]): RenderedText {
     bytes: Buffer.byteLength(text, "utf8"),
     sha256: createHash("sha256").update(text).digest("hex"),
   };
-}
-
-/** One line of text for a name: escaped injectively, newline included. */
-export function escapeOneLine(s: string): string {
-  return escapeDiffText(s).replaceAll("\n", String.raw`\u{000A}`);
 }
 
 /** The class of an `actions` list, or `undefined` when Terraform does not document it. */
@@ -137,82 +131,6 @@ function classify(actions: unknown, allowed: readonly Label[]): Label | undefine
     label = "replace";
   }
   return label !== undefined && allowed.includes(label) ? label : undefined;
-}
-
-/** Whether a sensitive / unknown marker marks anything: `true` anywhere inside it (deep). */
-function marksAny(marker: unknown, depth = 0): boolean {
-  if (marker === true) return true;
-  if (depth >= MAX_DEPTH) return typeof marker === "object" && marker !== null;
-  if (Array.isArray(marker)) return marker.some((m) => marksAny(m, depth + 1));
-  if (typeof marker === "object" && marker !== null) {
-    return Object.values(marker).some((m) => marksAny(m, depth + 1));
-  }
-  return false;
-}
-
-/** The marker of one attribute inside a marker container (`true` marks the whole container). */
-function markerOf(container: unknown, key: string): unknown {
-  if (container === true) return true;
-  return isObj(container) ? own(container, key) : undefined;
-}
-
-function sameValue(a: unknown, b: unknown, depth = 0): boolean {
-  if (a === b) return true;
-  if (depth >= MAX_DEPTH) return false;
-  if (Array.isArray(a) && Array.isArray(b)) {
-    return a.length === b.length && a.every((x, i) => sameValue(x, b[i], depth + 1));
-  }
-  if (isObj(a) && isObj(b)) {
-    const ka = Object.keys(a);
-    return (
-      ka.length === Object.keys(b).length &&
-      ka.every((k) => Object.hasOwn(b, k) && sameValue(a[k], b[k], depth + 1))
-    );
-  }
-  return false;
-}
-
-/** How one side of an attribute is shown. Never reveals a sensitive value or the content of a complex one. */
-function showValue(
-  value: unknown,
-  sensitive: unknown,
-  unknown_: unknown,
-  maxValueChars: number,
-): string {
-  if (marksAny(sensitive)) return "(sensitive)";
-  if (unknown_ === true) return "(known after apply)";
-  if (marksAny(unknown_)) return "(partly known after apply)";
-  if (value === undefined) return "(none)";
-  if (value === null) return "null";
-  if (typeof value === "boolean" || typeof value === "number") return String(value);
-  if (typeof value === "string") {
-    if (value.length > maxValueChars)
-      return `(string of ${String(value.length)} characters, not shown)`;
-    const escaped = escapeOneLine(value).replaceAll('"', String.raw`\"`);
-    return `"${escaped}"`;
-  }
-  if (Array.isArray(value)) return `(list, ${String(value.length)} items)`;
-  if (isObj(value)) return `(object, ${String(Object.keys(value).length)} keys)`;
-  return "(value not shown)";
-}
-
-/** The names of the top-level attributes that differ between the two sides, in first-seen order. */
-function changedAttributes(c: Obj): string[] {
-  const before = own(c, "before");
-  const after = own(c, "after");
-  const unknownAfter = own(c, "after_unknown");
-  const names = new Set<string>();
-  for (const side of [before, after, unknownAfter]) {
-    if (isObj(side)) for (const k of Object.keys(side)) names.add(k);
-  }
-  const out: string[] = [];
-  for (const k of names) {
-    const was = isObj(before) ? own(before, k) : undefined;
-    const now = isObj(after) ? own(after, k) : undefined;
-    const unk = markerOf(unknownAfter, k);
-    if (!sameValue(was, now) || marksAny(unk)) out.push(k);
-  }
-  return out;
 }
 
 /** Collects lines under a running byte budget; a line that would pass it refuses the plan. */
@@ -235,6 +153,8 @@ function requireString(o: Obj, key: string): string {
 
 interface ResourceChange {
   readonly label: Label;
+  /** `previous_address` when it differs from `address`: the object moves in the state. */
+  readonly movedFrom: string | undefined;
   readonly actions: readonly string[];
   readonly entry: Obj;
   readonly change: Obj;
@@ -255,9 +175,14 @@ function readResourceChanges(plan: Obj, maxChanges: number): ResourceChange[] {
     requireString(entry, "address");
     requireString(entry, "type");
     requireString(entry, "provider_name");
-    if (label === "no-op") continue;
+    // Terraform's jsonplan sets `previous_address` on a moved object, a move-only one being a no-op:
+    // applying it rewrites the state, so the owner must see it. A non-string value is unshowable.
+    const prev = own(entry, "previous_address");
+    if (prev !== undefined && typeof prev !== "string") throw new Refusal("unshowable");
+    const movedFrom = prev !== undefined && prev !== own(entry, "address") ? prev : undefined;
+    if (label === "no-op" && movedFrom === undefined) continue;
     if (out.length >= maxChanges) throw new Refusal("tooLarge");
-    out.push({ label, actions: own(change, "actions") as string[], entry, change });
+    out.push({ label, movedFrom, actions: own(change, "actions") as string[], entry, change });
   }
   return out;
 }
@@ -279,9 +204,10 @@ function readOutputChanges(plan: Obj, maxChanges: number): Array<{ name: string;
 }
 
 function tally(changes: readonly ResourceChange[]): PlanPreviewCounts {
-  const counts = { create: 0, update: 0, delete: 0, replace: 0, read: 0 };
+  const counts = { create: 0, update: 0, delete: 0, replace: 0, read: 0, move: 0 };
   for (const c of changes) {
-    if (c.label !== "no-op") counts[c.label] += 1;
+    if (c.label === "no-op") counts.move += 1;
+    else counts[c.label] += 1;
   }
   return counts;
 }
@@ -294,7 +220,13 @@ function addChange(lines: Lines, rc: ResourceChange, maxValueChars: number): voi
   const address = escapeOneLine(requireString(rc.entry, "address"));
   const type = escapeOneLine(requireString(rc.entry, "type"));
   const provider = escapeOneLine(requireString(rc.entry, "provider_name"));
-  lines.add(`[${actionText(rc)}] ${address} (${type}, ${provider})`);
+  if (rc.label === "no-op") {
+    const from = escapeOneLine(rc.movedFrom ?? "");
+    lines.add(`[moved in the state] ${from} -> ${address} (${type}, ${provider})`);
+    return;
+  }
+  const moved = rc.movedFrom === undefined ? "" : ` (moved from ${escapeOneLine(rc.movedFrom)})`;
+  lines.add(`[${actionText(rc)}] ${address} (${type}, ${provider})${moved}`);
   const reason = own(rc.entry, "action_reason");
   if (typeof reason === "string") lines.add(`    reason: ${escapeOneLine(reason)}`);
   if (rc.label !== "update" && rc.label !== "replace") return;
@@ -432,8 +364,10 @@ function build(plan: Obj, planSha256: string, limits: PlanPreviewLimits): PlanPr
   const deleteCount = counts.delete + counts.replace;
 
   const lines = new Lines(limits.maxRenderedBytes);
+  // Only a plan with moves names them, so a plan with none renders as before.
+  const moves = counts.move > 0 ? `, Moves: ${String(counts.move)}` : "";
   lines.add(
-    `Deletes: ${String(counts.delete)}, Replaces: ${String(counts.replace)}, Creates: ${String(counts.create)}, Updates: ${String(counts.update)}`,
+    `Deletes: ${String(counts.delete)}, Replaces: ${String(counts.replace)}, Creates: ${String(counts.create)}, Updates: ${String(counts.update)}${moves}`,
   );
   lines.add(`Terraform ${version}`);
   lines.add(`Plan SHA-256: ${planSha256}`);
@@ -446,7 +380,7 @@ function build(plan: Obj, planSha256: string, limits: PlanPreviewLimits): PlanPr
   }
   // The header counts deletes and replaces apart; so does the footer (a replace is a delete AND a create).
   lines.add(
-    `End of plan: ${String(changeCount)} changes (${String(counts.delete)} deletes, ${String(counts.replace)} replaces)`,
+    `End of plan: ${String(changeCount)} changes (${String(counts.delete)} deletes, ${String(counts.replace)} replaces)${counts.move > 0 ? `, ${String(counts.move)} moves` : ""}`,
   );
 
   // The drift block goes after the reads line and before the first change. It is spliced in last
