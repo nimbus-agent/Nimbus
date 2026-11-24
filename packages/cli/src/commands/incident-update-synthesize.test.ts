@@ -114,12 +114,20 @@ describe("nimbus incident update --synthesize", () => {
 
   test("a send never calls the synthesize method: the owner approves exactly the text they hold", async () => {
     const h = harness({ "incident.updateSend": { outcome: "sent" } });
-    await runUpdateWith(
+    const code = await runUpdateWith(
       h.ipc,
-      { mode: "send", id: REC, dest: { platform: "slack", channel: "C0123ABC" } },
+      {
+        mode: "send",
+        id: REC,
+        dest: { platform: "slack", channel: "C0123ABC" },
+        from: "draft.txt",
+      },
       h.sink,
       { ...realUpdateFs, readText: () => "x" },
     );
+    expect(code).toBe(0);
+    const send = h.calls.find((c) => c.method === "incident.updateSend");
+    expect(send?.params).toMatchObject({ id: REC, text: "x" });
     expect(h.calls.map((c) => c.method)).not.toContain("incident.updateSynthesize");
   });
 });
