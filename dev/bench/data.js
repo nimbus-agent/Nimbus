@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795522865697,
+  "lastUpdate": 1795523390248,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "a7050be177e053db074f434e7eef264a9c41d8ed",
-          "message": "docs(secrets): OVSX_PAT is retireable once open-vsx.org upgrades, not never (#1506)\n\nI was asked to retire `OVSX_PAT` via Open VSX Trusted Publishing. **It\ncannot be done yet, and doing it would break the next extension\nrelease** — but the reason we thought it was impossible is now wrong, so\nthe three places that said so are corrected here.\n\n## What changed upstream\n\nOur docs said `OVSX_PAT` \"has no OIDC path either and **never will**\nuntil\n[eclipse-openvsx/openvsx#1534](https://github.com/eclipse-openvsx/openvsx/issues/1534)\nlands\", written 2026-08-12.\n\nThat issue closed **COMPLETED on 2026-08-21** — nine days later. Trusted\nPublishing shipped in server **v1.2.0** ([PR\n#2000](https://github.com/eclipse-openvsx/openvsx/pull/2000), commit\n`d5a01c83`) and in `ovsx` CLI v1.2.0 (`cli/src/oidc.ts`,\n`cli/src/trusted-publishing.ts`). `nimbus-vscode`'s `publish.yml`\nalready grants the `id-token: write` permission it needs.\n\n## Why it is still blocked — deployment, not upstream\n\n```\n$ curl -s https://open-vsx.org/api/version\n{\"maxExtensionSize\":262144000,\"version\":\"v1.1.2\"}\n```\n\n`v1.1.2` is the release **immediately before** the feature: it shipped\n2026-08-20 and the merge landed 2026-08-21. Confirmed both directions —\n\n```\ngh api repos/eclipse-openvsx/openvsx/compare/v1.1.2...v1.2.0   # contains d5a01c83\ngh api repos/eclipse-openvsx/openvsx/compare/v1.1.1...v1.1.2   # contains no such commit\n```\n\nSo the trusted-publisher registration UI does not exist on the instance\nwe publish to. Switching `publish.yml` today would fail the next release\ninstead of removing a secret. **No workflow change is made in this PR.**\n\n## What this PR does instead\n\nReplaces an indefinite blocker with a checkable one, in all three places\nthat carried the false claim — `docs/credential-hygiene.md`,\n`docs/ci-secrets.md`, and the machine-readable `note` on the `OVSX_PAT`\nentry in `scripts/release/credential-registry.ts`:\n\n```bash\ncurl -s https://open-vsx.org/api/version   # retire OVSX_PAT once this reports v1.2.0 or later\n```\n\n…and writes down the migration so it does not need re-deriving: register\nthe workflow under [trusted\npublishers](https://open-vsx.org/user-settings/trusted-publishers)\n(namespace-owner action, web UI only), add `--trusted-publishing`, then\nremove the secret.\n\n**The precedence trap is called out explicitly**, because it is the one\nthat would look like success: `--pat` / `OVSX_PAT` takes precedence over\ntrusted publishing, so leaving the secret in place silently keeps the\nold path and the migration appears done while nothing has changed.\nConfigure-then-revoke ordering from the top of `credential-hygiene.md`\napplies — prove the first trusted publish before deleting the token.\n\n## Not touched\n\n`VSCE_PAT` is unchanged and still needs **manual rotation before\n2026-09-20**. There is no automation available for it: Marketplace\nTrusted Publishing is still open\n([microsoft/vsmarketplace#1422](https://github.com/microsoft/vsmarketplace/issues/1422),\nthough actively discussed — last touched 2026-09-10), the Entra/OIDC\npath was attempted end to end on 2026-08-12 and fails structurally\nbecause the backing ADO org is MSA-backed (`TF14045`), and Azure DevOps\nPATs cannot be created non-interactively at all. Runbook:\n`docs/credential-hygiene.md`.\n\nNo behaviour change; docs and one registry `note` only.\n\n## Verification\n\n`preflight:fast` PASSED · `audit:doc-refs` 1515 refs resolve ·\n`audit:secret-inventory` OK (24 secrets, all documented) ·\n`lint:markdown` 0 issues · `credential-registry.test.ts` 11 pass.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_018oTrzDDuYDGD7hE1gaee4v\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-13T06:05:45Z",
-          "tree_id": "2f9d9768f6dcc11313adaa7a9233683a300249f3",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/a7050be177e053db074f434e7eef264a9c41d8ed"
-        },
-        "date": 1789280371020,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 347.07428024999825,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 341.5491528499988,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 185.06688380000088,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "098864b3f32d803fa431230b7566d5a758eccb2f",
+          "message": "chore: release main (#2091)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>11.12.0</summary>\n\n##\n[11.12.0](https://github.com/nimbus-agent/Nimbus/compare/v11.11.0...v11.12.0)\n(2026-11-24)\n\n\n### Features\n\n* **cli:** nimbus agent uninstall and the A6 verification helper\n([#2121](https://github.com/nimbus-agent/Nimbus/issues/2121))\n([baa3d08](https://github.com/nimbus-agent/Nimbus/commit/baa3d080ed83fa96ced3cd327f92a0b92ffda5b7))\n* **cli:** nimbus iac accept-drift, the owner's entry point for\naccepting Terraform drift\n([#2135](https://github.com/nimbus-agent/Nimbus/issues/2135))\n([02fc284](https://github.com/nimbus-agent/Nimbus/commit/02fc284ab9308182bbb43bf2f84630fa90f05056))\n* **gateway:** a Monte Carlo or Bigeye incident record is stored and\nshown as a separate Data Incident Brief (incident_data)\n([#2124](https://github.com/nimbus-agent/Nimbus/issues/2124))\n([2d33891](https://github.com/nimbus-agent/Nimbus/commit/2d33891f9fade112808ecaaadc1b43261adaa94e))\n* **gateway:** a PagerDuty incident of a service that declares\ndata_models renders the Data Incident Brief\n([#2133](https://github.com/nimbus-agent/Nimbus/issues/2133))\n([12f8e87](https://github.com/nimbus-agent/Nimbus/commit/12f8e8727f4e680e53adbc1e558056809fcacf22))\n* **gateway:** Kubecost and OpenCost cost sync, and an accept-drift\n(terraform apply -refresh-only) write row\n([#2132](https://github.com/nimbus-agent/Nimbus/issues/2132))\n([63625e2](https://github.com/nimbus-agent/Nimbus/commit/63625e237be9a31153d224b2c624f453992461cb))\n* **gateway:** LAN pairing over Noise XXpsk0 keyed by the pairing code\n(Phase 10 FS2)\n([#2127](https://github.com/nimbus-agent/Nimbus/issues/2127))\n([ce57cf0](https://github.com/nimbus-agent/Nimbus/commit/ce57cf091ce69132851872f47f8f03f52a4fed7c))\n* **gateway:** local notice of a new cost anomaly, off by default\n([#2118](https://github.com/nimbus-agent/Nimbus/issues/2118))\n([a45c1f3](https://github.com/nimbus-agent/Nimbus/commit/a45c1f3ab3b2b5866f71caac6f9a6e8c678c6a43))\n* **gateway:** nimbus incident investigate --synthesize rewrites an\ninvestigation's prose with the model, keeping actions, leads, gaps and\nfreshness verbatim\n([#2126](https://github.com/nimbus-agent/Nimbus/issues/2126))\n([973c19e](https://github.com/nimbus-agent/Nimbus/commit/973c19e12f4cb357ac28f7105cf2e4231c8bbe6c))\n* **gateway:** nimbus incident undo with no id reverses the most recent\nexecuted reversible action (V106)\n([#2122](https://github.com/nimbus-agent/Nimbus/issues/2122))\n([9ea610c](https://github.com/nimbus-agent/Nimbus/commit/9ea610ce1d3b2911a0796f941623c4f7f891af1b))\n* **gateway:** nimbus incident update --synthesize has the model write\none lead paragraph above the unchanged update facts\n([#2134](https://github.com/nimbus-agent/Nimbus/issues/2134))\n([5a58b18](https://github.com/nimbus-agent/Nimbus/commit/5a58b187d8807d8602195cede6badca74c4c7903))\n* **gateway:** nimbus pre-review, a lint-plus brief for a pull request\nfrom the repo's merged history and your own reviews\n([#2120](https://github.com/nimbus-agent/Nimbus/issues/2120))\n([ff9849b](https://github.com/nimbus-agent/Nimbus/commit/ff9849ba9e13ee77a659d2923bca447f4bedc45d))\n* **gateway:** opt-in long-term episodic memory from the owner's own\nturns ([#2130](https://github.com/nimbus-agent/Nimbus/issues/2130))\n([651f544](https://github.com/nimbus-agent/Nimbus/commit/651f5445973789297d34ddce7df286c97867fde8))\n* **gateway:** personalization layer with explicit tone, verbosity, tool\norder and hide list\n([#2128](https://github.com/nimbus-agent/Nimbus/issues/2128))\n([dc88284](https://github.com/nimbus-agent/Nimbus/commit/dc882848dbe6ada206bf04f1867126567b08111f))\n* **gateway:** privacy-preserving agent-to-agent scheduling over\nfederation ([#2129](https://github.com/nimbus-agent/Nimbus/issues/2129))\n([6f7491f](https://github.com/nimbus-agent/Nimbus/commit/6f7491ff8d41963412dffbd17f529a62395cddee))\n* **ui:** the desktop's read-only Infrastructure page for the latest IaC\ndrift findings\n([#2123](https://github.com/nimbus-agent/Nimbus/issues/2123))\n([0e16d47](https://github.com/nimbus-agent/Nimbus/commit/0e16d475616b954ec467f34d61cd2c42ce72ef26))\n\n\n### Bug Fixes\n\n* clear the SonarCloud reliability issues on main\n([#2086](https://github.com/nimbus-agent/Nimbus/issues/2086))\n([580ab6f](https://github.com/nimbus-agent/Nimbus/commit/580ab6fe27bb8da23fac96bb5de19d1f75b1ae16))\n* **gateway:** brief-source state race, agents read gate, and five\nfollow-ups from the file splits\n([#2119](https://github.com/nimbus-agent/Nimbus/issues/2119))\n([f5da0fd](https://github.com/nimbus-agent/Nimbus/commit/f5da0fdbdced4a2cbdcc791411921b6093e5c22b))\n* **gateway:** llama.cpp base-URL collision ignores every trailing\nslash; correct three stale doc pointers\n([#2099](https://github.com/nimbus-agent/Nimbus/issues/2099))\n([99d8cac](https://github.com/nimbus-agent/Nimbus/commit/99d8cacebde12bed717b642c585fe6faba304621))\n* **gateway:** show a plan's moves in the Terraform apply preview\n([#2136](https://github.com/nimbus-agent/Nimbus/issues/2136))\n([206daba](https://github.com/nimbus-agent/Nimbus/commit/206daba76301af28713338a80bedb9d1b35a9f1d))\n* **registry-action:** run git from a fixed install path, never a PATH\nlookup (Sonar S4036)\n([#2112](https://github.com/nimbus-agent/Nimbus/issues/2112))\n([0d6a126](https://github.com/nimbus-agent/Nimbus/commit/0d6a126f67b206abcf26f3705e84f8629d29e864))\n* **scripts:** a split folder's modules are importable only through\ntheir facade\n([#2115](https://github.com/nimbus-agent/Nimbus/issues/2115))\n([240d0cd](https://github.com/nimbus-agent/Nimbus/commit/240d0cde87322aa76988e36f48e3c9d43de10d92))\n* **scripts:** harden nine static invariant rules found in the\n[#2090](https://github.com/nimbus-agent/Nimbus/issues/2090) review\n([#2093](https://github.com/nimbus-agent/Nimbus/issues/2093))\n([4048a14](https://github.com/nimbus-agent/Nimbus/commit/4048a14d42c9c83ea16a5268752da8c0f4ca7508))\n* **ui:** bump cookie to 0.18.3 for RUSTSEC-2026-0594\n([#2125](https://github.com/nimbus-agent/Nimbus/issues/2125))\n([17ad026](https://github.com/nimbus-agent/Nimbus/commit/17ad026b57c9bd6f1a09ad0c96f614c6425a7a14))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-24T12:20:07Z",
+          "tree_id": "8ee83a81bdb0a58888d2ba0c7f794c5153618b93",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/098864b3f32d803fa431230b7566d5a758eccb2f"
+        },
+        "date": 1795523385324,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 202.0256723000004,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 200.6067293999964,
             "unit": "ms"
           }
         ]
