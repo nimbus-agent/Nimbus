@@ -1,4 +1,6 @@
+import type { IPCClient } from "../ipc-client/index.ts";
 import { CliExit } from "../lib/cli-exit.ts";
+import { declareCliClientKind } from "../lib/declare-client-kind.ts";
 import { stripControlChars } from "../lib/strip-control-chars.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { getCliPlatformPaths } from "../paths.ts";
@@ -126,6 +128,10 @@ export async function runMemoryCommand(
     io.sink.err(`${MEMORY_USAGE}\n`);
     throw new CliExit(2);
   }
-  const code = await io.withIpc((c) => runMemoryWith(c, a, io.sink));
+  const code = await io.withIpc(async (c) => {
+    // The gateway serves memory.* only to a connection that declared `cli` or `ui`.
+    await declareCliClientKind(c as Pick<IPCClient, "call">);
+    return runMemoryWith(c, a, io.sink);
+  });
   if (code !== 0) throw new CliExit(code);
 }

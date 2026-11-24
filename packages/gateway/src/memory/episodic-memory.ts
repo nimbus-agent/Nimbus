@@ -58,6 +58,8 @@ function isoDay(ms: number): string {
 
 export class EpisodicMemory implements EpisodicTurnPort {
   private sweeping = false;
+  /** Bumped by every `forgetAll`, so a sweep that awaited a model cannot store what was forgotten meanwhile. */
+  private forgetGeneration = 0;
 
   constructor(private readonly deps: EpisodicMemoryDeps) {}
 
@@ -114,21 +116,31 @@ export class EpisodicMemory implements EpisodicTurnPort {
     let skipped = 0;
     for (const sessionId of store.idleSessions(cutoff, SWEEP_SESSIONS_PER_PASS)) {
       if (!this.enabled()) break;
+      const generation = this.forgetGeneration;
       const turns = store.pendingTurns(sessionId);
+      const turnIds = turns.map((t) => t.id);
       const outcome = await this.summarise(turns);
       if (outcome.kind === "no_model") {
         // No local model now (or it failed): the turns stay for the next pass.
         skipped += 1;
         continue;
       }
-      if (outcome.kind === "empty") {
-        store.dropPending(sessionId);
+      // The model and the embedder are awaited: the owner may have forgotten everything or turned memory off.
+      if (generation !== this.forgetGeneration) break;
+      if (outcome.kind === "empty" || !this.enabled()) {
+        store.dropPending(turnIds);
         continue;
       }
       const text = outcome.text;
       const embedding = await this.embedBestEffort(text);
+      if (generation !== this.forgetGeneration) break;
+      if (!this.enabled()) {
+        store.dropPending(turnIds);
+        continue;
+      }
       store.finishSession({
         sessionId,
+        turnIds,
         summary: text,
         turnCount: turns.length,
         startedAt: turns[0]?.createdAt ?? cutoff,
@@ -173,6 +185,7 @@ export class EpisodicMemory implements EpisodicTurnPort {
   }
 
   forgetAll(): number {
+    this.forgetGeneration += 1;
     return this.deps.store.forgetAll();
   }
 

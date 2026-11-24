@@ -48,6 +48,11 @@ const WORD_RULES: ReadonlyArray<{ re: RegExp; allowed: readonly string[] }> = [
   { re: /\.episodic\s*=(?!=)/g, allowed: [BOOT] },
 ];
 
+// A VALUE import of `EpisodicMemory` (aliased or not) can construct one under another name; only the boot
+// file and the definition may import it as a value. `import type` and a `type EpisodicMemory` specifier are fine.
+const VALUE_IMPORT_RE = /\bimport\s*\{([^}]*)\}\s*from\s*["'][^"']*episodic-memory(?:\.ts)?["']/g;
+const VALUE_IMPORT_ALLOWED: readonly string[] = [BOOT, MEMORY];
+
 const D52_MODULE_RE =
   /^packages\/gateway\/src\/(?:memory\/episodic[\w.-]*\.ts|config\/memory-toml\.ts)$/;
 const D52_FORBIDDEN_WORD_RE =
@@ -84,6 +89,13 @@ export function checkEpisodicMemoryConfinement(files: readonly FileEntry[]): Vio
     for (const r of WORD_RULES) {
       if (r.allowed.includes(f.relPath)) continue;
       for (const m of code.matchAll(r.re)) push(code, m.index);
+    }
+    if (!VALUE_IMPORT_ALLOWED.includes(f.relPath)) {
+      for (const m of noComments.matchAll(VALUE_IMPORT_RE)) {
+        const names = (m[1] ?? "").split(",").map((x) => x.trim());
+        if (names.some((n) => /^EpisodicMemory(?:\s+as\s+\w+)?$/.test(n)))
+          push(noComments, m.index);
+      }
     }
     if (D52_MODULE_RE.test(f.relPath)) {
       for (const m of code.matchAll(D52_FORBIDDEN_WORD_RE)) push(code, m.index);

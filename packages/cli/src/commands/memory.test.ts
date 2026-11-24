@@ -135,6 +135,16 @@ describe("runMemoryCommand", () => {
     expect(touched).toBe(false);
   });
 
+  test("the connection declares itself as the CLI before any memory call", async () => {
+    const calls: string[] = [];
+    const { io } = ioOf(async (m) => {
+      calls.push(m);
+      return { enabled: true, retentionDays: 90, pendingTurns: 0, memories: [] };
+    });
+    await runMemoryCommand(["list"], io);
+    expect(calls).toEqual(["session.declareKind", "memory.list"]);
+  });
+
   test("success resolves; a failed call throws the CliExit code", async () => {
     const ok = ioOf(async () => ({
       enabled: false,

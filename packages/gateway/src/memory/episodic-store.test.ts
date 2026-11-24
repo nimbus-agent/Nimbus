@@ -12,6 +12,7 @@ type Store = ReturnType<typeof storeOf>["store"];
 function finish(store: Store, name: string, now: number, embedding: Float32Array | null) {
   return store.finishSession({
     sessionId: name,
+    turnIds: [],
     summary: name,
     turnCount: 1,
     startedAt: 1,
@@ -55,6 +56,7 @@ describe("EpisodicStore", () => {
     store.recordTurn("s", { ownerText: "a", answerText: "b" }, 5);
     const id = store.finishSession({
       sessionId: "s",
+      turnIds: store.pendingTurns("s").map((t) => t.id),
       summary: "z".repeat(SUMMARY_MAX + 10),
       turnCount: 1,
       startedAt: 5,
@@ -101,7 +103,13 @@ describe("EpisodicStore", () => {
     store.dropAllPending();
     expect(store.pendingCount()).toBe(0);
     store.recordTurn("p4", { ownerText: "x", answerText: "y" }, 1);
-    store.dropPending("p4");
+    store.dropPending(store.pendingTurns("p4").map((t) => t.id));
     expect(store.pendingCount()).toBe(0);
+    // Only the named rows go: a turn recorded meanwhile stays pending.
+    store.recordTurn("p5", { ownerText: "x", answerText: "y" }, 1);
+    const first = store.pendingTurns("p5").map((t) => t.id);
+    store.recordTurn("p5", { ownerText: "later", answerText: "y" }, 2);
+    store.dropPending(first);
+    expect(store.pendingTurns("p5").map((t) => t.ownerText)).toEqual(["later"]);
   });
 });

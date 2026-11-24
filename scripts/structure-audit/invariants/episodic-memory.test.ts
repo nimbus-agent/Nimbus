@@ -40,6 +40,10 @@ describe("D52 - long-term episodic memory stays confined (I61)", () => {
     ["const m = new EpisodicMemory({});", "(c) a second memory wired to another model"],
     ["const l = createEpisodicLlm(router);", "(c) a second summariser binding"],
     ["store.episodic = other;", "(c) a second attach site"],
+    [
+      'import { EpisodicMemory as Mem } from "../memory/episodic-memory.ts"; new Mem({});',
+      "(c) construction through an imported alias",
+    ],
   ])("%s is refused outside its sites: %s", (body) => {
     expect(rules([...GOOD, file(`${SRC}ipc/other.ts`, body)])).toContain(
       "episodic-memory-confined",
@@ -63,6 +67,14 @@ describe("D52 - long-term episodic memory stays confined (I61)", () => {
     expect(rules([...GOOD, file(`${SRC}config/memory-toml.ts`, body)])).toContain(
       "episodic-memory-confined",
     );
+  });
+
+  test("type-only imports of the class are fine", () => {
+    const t = file(
+      `${SRC}ipc/x.ts`,
+      'import type { EpisodicMemory } from "../memory/episodic-memory.ts"; import { type EpisodicMemory as M, formatRecallBlock } from "../memory/episodic-memory.ts";',
+    );
+    expect(rules([...GOOD, t])).toEqual([]);
   });
 
   test("the owner-turn gate must keep both its signals", () => {

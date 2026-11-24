@@ -128,17 +128,20 @@ export class EpisodicStore {
     return rows.map((r) => r.sessionId);
   }
 
-  pendingTurns(sessionId: string): Array<PendingTurn & { readonly createdAt: number }> {
+  pendingTurns(
+    sessionId: string,
+  ): Array<PendingTurn & { readonly id: number; readonly createdAt: number }> {
     return this.db
       .query(
-        `SELECT owner_text AS ownerText, answer_text AS answerText, created_at AS createdAt
+        `SELECT id, owner_text AS ownerText, answer_text AS answerText, created_at AS createdAt
          FROM episodic_pending_turn WHERE session_id = ? ORDER BY id ASC`,
       )
-      .all(sessionId) as Array<PendingTurn & { createdAt: number }>;
+      .all(sessionId) as Array<PendingTurn & { id: number; createdAt: number }>;
   }
 
-  dropPending(sessionId: string): void {
-    dbRun(this.db, "DELETE FROM episodic_pending_turn WHERE session_id = ?", [sessionId]);
+  /** Drops exactly these pending rows; a turn that arrived meanwhile stays for the next pass. */
+  dropPending(ids: readonly number[]): void {
+    for (const id of ids) dbRun(this.db, "DELETE FROM episodic_pending_turn WHERE id = ?", [id]);
   }
 
   /** Drops every pending turn (the owner turned memory off). */
@@ -156,6 +159,8 @@ export class EpisodicStore {
   /** Stores one summary and drops the session's pending turns, in one transaction. */
   finishSession(input: {
     readonly sessionId: string;
+    /** The pending rows that were summarised; only these are deleted. */
+    readonly turnIds: readonly number[];
     readonly summary: string;
     readonly turnCount: number;
     readonly startedAt: number;
@@ -181,7 +186,9 @@ export class EpisodicStore {
           input.embedding === null ? null : encodeVector(input.embedding),
         ],
       );
-      dbRun(this.db, "DELETE FROM episodic_pending_turn WHERE session_id = ?", [input.sessionId]);
+      for (const id of input.turnIds) {
+        dbRun(this.db, "DELETE FROM episodic_pending_turn WHERE id = ?", [id]);
+      }
     })();
     return id;
   }

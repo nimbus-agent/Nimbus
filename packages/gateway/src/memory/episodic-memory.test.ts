@@ -196,4 +196,96 @@ describe("EpisodicMemory", () => {
       retentionDays: 90,
     });
   });
+
+  test("a turn that arrives while the model runs stays pending and is not lost", async () => {
+    const { c, now } = clock();
+    let release: (v: string) => void = () => {};
+    const llm: CapturedLlm = {
+      prompts: [],
+      complete: () => new Promise<string>((r) => (release = r)),
+    };
+    const { memory, store } = makeMemory({ db: migratedDb(), llm, now });
+    memory.recordOwnerTurn("s", "first", "a");
+    c.t += IDLE_MS + 1;
+    const pass = memory.sweep();
+    memory.recordOwnerTurn("s", "second", "b");
+    release("a note about the first turn");
+    expect(await pass).toEqual({ summarised: 1, skipped: 0 });
+    expect(store.pendingTurns("s").map((t) => t.ownerText)).toEqual(["second"]);
+  });
+
+  test("a forget --all during the summary means the summary is not stored", async () => {
+    const { c, now } = clock();
+    let release: (v: string) => void = () => {};
+    const llm: CapturedLlm = {
+      prompts: [],
+      complete: () => new Promise<string>((r) => (release = r)),
+    };
+    const { memory, store } = makeMemory({ db: migratedDb(), llm, now });
+    memory.recordOwnerTurn("s", "private", "a");
+    c.t += IDLE_MS + 1;
+    const pass = memory.sweep();
+    memory.forgetAll();
+    release("a note about private things");
+    expect(await pass).toEqual({ summarised: 0, skipped: 0 });
+    expect(store.count()).toBe(0);
+  });
+
+  test("a forget --all while the embedder runs also stops the commit", async () => {
+    const { c, now } = clock();
+    let memoryRef: { forgetAll(): number } | undefined;
+    const { memory, store } = makeMemory({
+      db: migratedDb(),
+      llm: captureLlm("a note"),
+      now,
+      embedText: async () => {
+        memoryRef?.forgetAll();
+        return null;
+      },
+    });
+    memoryRef = memory;
+    memory.recordOwnerTurn("s", "private", "a");
+    c.t += IDLE_MS + 1;
+    expect(await memory.sweep()).toEqual({ summarised: 0, skipped: 0 });
+    expect(store.count()).toBe(0);
+  });
+
+  test("turning memory off while the model runs discards the waiting turns, never storing the summary", async () => {
+    const { c, now } = clock();
+    let cfg = ON;
+    let release: (v: string) => void = () => {};
+    const llm: CapturedLlm = {
+      prompts: [],
+      complete: () => new Promise<string>((r) => (release = r)),
+    };
+    const { memory, store } = makeMemory({ db: migratedDb(), llm, now, config: () => cfg });
+    memory.recordOwnerTurn("s", "q", "a");
+    c.t += IDLE_MS + 1;
+    const pass = memory.sweep();
+    cfg = OFF;
+    release("a note");
+    expect(await pass).toEqual({ summarised: 0, skipped: 0 });
+    expect(store.count()).toBe(0);
+    expect(store.pendingCount()).toBe(0);
+  });
+
+  test("turning memory off while the embedder runs discards too", async () => {
+    const { c, now } = clock();
+    let cfg = ON;
+    const { memory, store } = makeMemory({
+      db: migratedDb(),
+      llm: captureLlm("a note"),
+      now,
+      config: () => cfg,
+      embedText: async () => {
+        cfg = OFF;
+        return null;
+      },
+    });
+    memory.recordOwnerTurn("s", "q", "a");
+    c.t += IDLE_MS + 1;
+    await memory.sweep();
+    expect(store.count()).toBe(0);
+    expect(store.pendingCount()).toBe(0);
+  });
 });
