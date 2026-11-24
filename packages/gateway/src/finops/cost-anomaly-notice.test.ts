@@ -115,6 +115,22 @@ describe("createCostAnomalyNotice", () => {
     expect(h.sent[1]?.body).toContain("1 unusual cost jump");
   });
 
+  test("an anomaly withheld by the interval is announced later although the query no longer returns it", () => {
+    let list = [anomaly("vantage|a", DAY)];
+    const h = harness({ notifyMinIntervalMinutes: 60 }, () => list);
+    expect(h.pass()).toBe("sent");
+    list = [anomaly("vantage|b", 2 * DAY)];
+    h.advance(10 * 60_000);
+    expect(h.pass()).toBe("limited");
+    list = [];
+    h.advance(60 * 60_000);
+    expect(h.pass()).toBe("sent");
+    expect(h.sent).toHaveLength(2);
+    expect(h.sent[1]?.body).toContain("1 unusual cost jump on vantage");
+    h.advance(60 * 60_000);
+    expect(h.pass()).toBe("none");
+  });
+
   test("a notice that was not accepted leaves the anomaly eligible for the next pass", async () => {
     const results = [false, true];
     let calls = 0;

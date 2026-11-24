@@ -9,6 +9,8 @@ import { type CostAnomalyResult, queryCostAnomalies } from "./cost-anomaly-query
 
 /** A bounded memory of anomalies already announced: (series, day) keys. */
 const SEEN_CAP = 2000;
+/** Anomalies withheld by the rate limit, kept until a notice is accepted. */
+const PENDING_CAP = 500;
 
 export interface CostAnomalyNoticeDeps {
   readonly db: Database;
@@ -49,13 +51,14 @@ function serviceOfKey(seriesKey: string): string {
 
 /**
  * One pass: judge the newest complete day, announce anomalies not announced before in ONE notice, at most one
- * notice per `notifyMinIntervalMinutes`. An anomaly held back by the rate limit is not marked seen, so it is
- * announced by the first pass after the interval. Returns what happened, for tests and logs.
+ * notice per `notifyMinIntervalMinutes`. An anomaly held back by the rate limit is kept (bounded) until a notice
+ * is accepted, so it is announced by the first pass after the interval even if the newest day has moved on. Returns what happened, for tests and logs.
  */
 export function createCostAnomalyNotice(
   deps: CostAnomalyNoticeDeps,
 ): () => "off" | "none" | "limited" | "sent" {
   const seen = new Set<string>();
+  const pending = new Map<string, string>();
   let lastAt: number | undefined;
   const query = deps.query ?? queryCostAnomalies;
   return () => {
@@ -68,13 +71,25 @@ export function createCostAnomalyNotice(
         days: 1,
         thresholds: { ratio: cfg.anomalyRatio, minAmount: cfg.anomalyMinAmount },
       });
-      const fresh = result.anomalies.filter((a) => !seen.has(`${a.seriesKey}#${String(a.dayMs)}`));
-      if (fresh.length === 0) return "none";
+      for (const a of result.anomalies) {
+        const k = `${a.seriesKey}#${String(a.dayMs)}`;
+        if (!seen.has(k) && !pending.has(k)) pending.set(k, serviceOfKey(a.seriesKey));
+      }
+      // A withheld anomaly stays pending even after the newest complete day moves on, so it is announced by the
+      // first pass after the interval (bounded: the oldest are dropped past PENDING_CAP).
+      while (pending.size > PENDING_CAP) {
+        const oldest = pending.keys().next().value;
+        if (oldest === undefined) break;
+        pending.delete(oldest);
+      }
+      if (pending.size === 0) return "none";
       if (lastAt !== undefined && at - lastAt < cfg.notifyMinIntervalMinutes * 60_000) {
         return "limited";
       }
       const prevAt = lastAt;
-      const keys = fresh.map((a) => `${a.seriesKey}#${String(a.dayMs)}`);
+      const announced = new Map(pending);
+      const keys = [...announced.keys()];
+      pending.clear();
       lastAt = at;
       for (const k of keys) seen.add(k);
       if (seen.size > SEEN_CAP) {
@@ -84,11 +99,14 @@ export function createCostAnomalyNotice(
         }
       }
       // result.anomalies is capped; the true count of fresh ones is at least this.
-      const { title, body } = costAnomalyNoticeText(fresh.length, [
-        ...new Set(fresh.map((a) => serviceOfKey(a.seriesKey))),
+      const { title, body } = costAnomalyNoticeText(announced.size, [
+        ...new Set(announced.values()),
       ]);
       const undo = (): void => {
-        for (const k of keys) seen.delete(k);
+        for (const [k, svc] of announced) {
+          seen.delete(k);
+          pending.set(k, svc);
+        }
         if (lastAt === at) lastAt = prevAt;
       };
       void Promise.resolve(deps.notify(title, body)).then(
