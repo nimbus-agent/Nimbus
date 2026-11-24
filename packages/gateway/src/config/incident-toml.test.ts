@@ -51,6 +51,7 @@ describe("[incident]", () => {
       bigeyeSlaStatuses: ["breached"],
       retentionDays: 30,
       lookbackDays: 14,
+      dataSchemaLookbackHours: 24,
     });
   });
 
@@ -110,5 +111,24 @@ describe("[incident]", () => {
 
   test("no file gives the default", () => {
     expect(loadNimbusIncidentFromConfigDir(tmp())).toEqual(DEFAULT_INCIDENT_CONFIG);
+  });
+});
+
+describe("[incident] data_schema_lookback_hours", () => {
+  test("defaults to 24 and accepts 1..168", () => {
+    expect(parseNimbusTomlIncident("").dataSchemaLookbackHours).toBe(24);
+    const c = parseNimbusTomlIncident("[incident]\ndata_schema_lookback_hours = 72\n");
+    expect(c.dataSchemaLookbackHours).toBe(72);
+  });
+
+  test("out of range is a recorded fallback to the default, never clamped", () => {
+    const seen: string[] = [];
+    for (const v of ["0", "169", "abc"]) {
+      const c = parseNimbusTomlIncident(`[incident]\ndata_schema_lookback_hours = ${v}\n`, (m) =>
+        seen.push(m),
+      );
+      expect(c.dataSchemaLookbackHours).toBe(24);
+    }
+    expect(seen).toHaveLength(3);
   });
 });

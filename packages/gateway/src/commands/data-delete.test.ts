@@ -254,6 +254,7 @@ describe("data delete", () => {
       )
     `);
     rawDb.run("CREATE TABLE item_history (service TEXT NOT NULL)");
+    rawDb.run("CREATE TABLE schema_history (service TEXT NOT NULL)");
     for (const stmt of INCIDENT_RECORD_V100_SQL) rawDb.run(stmt);
     for (const stmt of ONCALL_PUSH_V64_SQL) rawDb.run(stmt);
     const bareIndex = { rawDb } as unknown as LocalIndex;
@@ -334,6 +335,24 @@ describe("data delete - item history (Phase 10 IC1)", () => {
     await runDataDelete({ service: "github", dryRun: false, vault, index: idx });
     expect(idx.rawDb.query("SELECT service FROM item_history").all()).toEqual([
       { service: "jira" },
+    ]);
+  });
+});
+
+describe("data delete - warehouse schema history", () => {
+  test("deletion removes the service's schema_history rows and no other service's", async () => {
+    const vault = memVault();
+    const idx = newIndex();
+    for (const service of ["snowflake", "bigquery"]) {
+      idx.rawDb.run(
+        `INSERT INTO schema_history (service, data_model_key, observed_at_ms, complete)
+         VALUES (?, 'a.b.c', 1, 0)`,
+        [service],
+      );
+    }
+    await runDataDelete({ service: "snowflake", dryRun: false, vault, index: idx });
+    expect(idx.rawDb.query("SELECT service FROM schema_history").all()).toEqual([
+      { service: "bigquery" },
     ]);
   });
 });

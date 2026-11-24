@@ -23,6 +23,9 @@ import {
  *   source, lower-cased and de-duplicated.
  * - `bigeye_sla_statuses` (default empty): Bigeye `slaStatus` values (lower-cased) that make a Bigeye item
  *   trigger. Bigeye has no severity, so it never auto-triggers without this.
+ * - `data_schema_lookback_hours` (default 24, `1..168`): how far BEFORE a data incident's open time the data lane
+ *   looks for warehouse schema changes of the monitored tables (the window also runs to the assembly time, at
+ *   most 24 hours after the open time).
  * - `retention_days` (default 365, `7..3650`) and `lookback_days` (default 7, `1..90`): out of range is a
  *   section fallback to the default, recorded through `sectionFallbackSink`, never clamped.
  *
@@ -34,12 +37,15 @@ export type NimbusIncidentToml = {
   readonly bigeyeSlaStatuses: readonly string[];
   readonly retentionDays: number;
   readonly lookbackDays: number;
+  readonly dataSchemaLookbackHours: number;
 };
 
 export const INCIDENT_RETENTION_MIN = 7;
 export const INCIDENT_RETENTION_MAX = 3650;
 export const INCIDENT_LOOKBACK_MIN = 1;
 export const INCIDENT_LOOKBACK_MAX = 90;
+export const INCIDENT_SCHEMA_LOOKBACK_MIN = 1;
+export const INCIDENT_SCHEMA_LOOKBACK_MAX = 168;
 
 export const DEFAULT_INCIDENT_CONFIG: NimbusIncidentToml = Object.freeze({
   enabled: true,
@@ -47,6 +53,7 @@ export const DEFAULT_INCIDENT_CONFIG: NimbusIncidentToml = Object.freeze({
   bigeyeSlaStatuses: Object.freeze([]) as readonly string[],
   retentionDays: 365,
   lookbackDays: 7,
+  dataSchemaLookbackHours: 24,
 });
 
 type IncidentDraft = { -readonly [K in keyof NimbusIncidentToml]: NimbusIncidentToml[K] };
@@ -120,6 +127,15 @@ function applyIncidentKey(
         valRaw,
         [INCIDENT_LOOKBACK_MIN, INCIDENT_LOOKBACK_MAX],
         DEFAULT_INCIDENT_CONFIG.lookbackDays,
+        onFallback,
+      );
+      break;
+    case "data_schema_lookback_hours":
+      out.dataSchemaLookbackHours = boundedOrDefault(
+        key,
+        valRaw,
+        [INCIDENT_SCHEMA_LOOKBACK_MIN, INCIDENT_SCHEMA_LOOKBACK_MAX],
+        DEFAULT_INCIDENT_CONFIG.dataSchemaLookbackHours,
         onFallback,
       );
       break;
