@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795533597261,
+  "lastUpdate": 1795534843827,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "9f70962084caa57c3eba05d99be40f99dd58187b",
-          "message": "feat(cli): nimbus tail — follow the gateway's operational event stream (#1511)\n\n`connector.healthChanged` was a gateway broadcast with a dead listener —\nnothing has ever emitted it. This revives it, adds five more operational\nevent kinds, and adds `nimbus tail` to follow the stream.\n\n## The wire\n\n**Two notification methods, deliberately.** `connector.healthChanged`\nkeeps its own method because the Tauri bridge matches on method names\nand cannot cheaply match a `kind` inside a payload. Everything else\nrides one `gateway.event` envelope (`{kind, ts, payload}`), because\n`@nimbus-dev/client`'s `onNotification` is named-only with no wildcard\nand lives in another repository — without an envelope the CLI would need\na hand-maintained method list, a defect shape this repo has hit three\ntimes.\n\nKinds: `watcher.fired`, `sync.completed`, `extension.stateChanged`,\n`hitl.requested`, `hitl.resolved`.\n\n## `nimbus tail`\n\nFollow-only, like `tail -f -n 0`: it shows what happens from the moment\nit connects and replays nothing earlier. `--filter\nconnector,sync,watcher,extension,hitl` (comma-separated, repeatable) and\n`--json` for raw JSONL.\n\nTwo behaviours are load-bearing and tested as such: an **unknown filter\ncategory fails fast** naming the valid set, because a filter that\nsilently matches nothing is indistinguishable from a healthy quiet\nsystem; and an **unknown future `kind` still prints** rather than being\ndropped, because a stream that discards what it does not recognise has\nthe same defect shape.\n\n## Three things this found that were not the feature\n\n**The desktop panel could never have consumed these events.**\n`ConnectorGrid` asserted\n`useIpcQuery<ConnectorStatus[]>(\"connector.listStatus\")`, but that RPC\nreturns `SyncStatus` — `serviceId`/`healthState`, with no `name` and no\n`health`. `patchConnector` matches `x.name === name`, so every stored\nrow had `name === undefined` and any patch matched zero rows. The tiles\nhave been rendering `displayName(undefined)` all along. Fixed by mapping\nthe rows where they enter the store; without it this PR's own changelog\nentry would have been false.\n\n**`transitionHealth` fires on every successful sync, including no-ops.**\nAn unconfigured connector's `sync()` short-circuits to a no-op success,\nand `isConnectorConfigured` gates only the egress append, never the run\n— so with ~90 registered syncables every interval produced a burst of\n`healthy -> healthy` events. Nobody saw them because the listener was\ndead. Suppressed only when the transition changed nothing *and* the\ndestination is healthy: a repeated **failure** is still announced (that\nreasoning is pinned by its own test), and \"a sync ran\" is carried by\n`sync.completed` with item counts.\n\n**`degradationReason` was set from `reason` on successes**, so a\nconnector recovering `degraded -> healthy` would show a green dot beside\namber \"sync succeeded\", never cleared until the next 30s poll.\n\n## HITL observation\n\n`hitl.requested`/`hitl.resolved` are additive and observational.\n`consent.request` stays **unicast** to the acting client, so who is\nasked and who may answer are untouched; `handleRespond` still refuses\nunless the responding session raised the request, now covered by a real\ncross-client test rather than one using a never-issued id.\n\n**One claim was corrected rather than shipped:** a comment said\n`details` was \"deliberately withheld\" from the broadcast. It is omitted,\nbut that withholds nothing — `formatConsentPrompt` stringifies the same\nredacted object into `prompt`, which *is* broadcast, and the redactor\nmasks only secret-looking key names. The comment and docs now say so.\nRecipients are same-user local socket sessions that can already read the\nsame redacted payload via `audit.list`; LAN peers receive nothing.\n\n## Testing\n\n`packages/cli` and `packages/gateway` cannot import each other, so\nnothing but the end-to-end test binds the CLI's subscriber to the\ngateway's emitter. `tail-stream.integration.test.ts` boots a real\ngateway subprocess over a real socket and asserts the method name and\nthe two fields `ConnectorGrid` reads — renaming the method takes it from\n2 pass to 2 fail, which no other test on the branch would notice.\n\nFour tests that could not fail were found and replaced during review:\none asserted an empty array that stayed empty either way, one called its\nown callback instead of the production path, one asserted a fake prompt\nlacked a string it never contained, and one covered four event kinds so\nweakly that breaking all three category prefixes at once left it green.\n\nNo schema migration, no new invariant, no new egress class — nothing\nhere leaves the machine.\n\n## Gates\n\n`bun run preflight`: all gates pass except `audit:coverage-floor`, which\nreports 7 violations in files this branch never touches\n(`ipc/server/dispatchers.ts`, `socket-listeners.ts`,\n`platform/linux.ts`, `sandbox/win32{,-reap}.ts`). That gate is\nCI-Linux-authoritative and these numbers come from a Windows run —\n`platform/linux.ts` cannot execute there at all, and the exclusions file\nnotes it is \"the ACTIVE, covered arm on a Linux runner\". `tail.ts`\nitself was a real violation at 74.79% branch and is now 98.32%.\n**Deferring to CI's Linux numbers rather than guessing from Windows\nones**; if it reds there I will fix it against real figures.\n\nWhole-repo suite: 23161 pass, 0 fail (the toolgen sandbox failures a\nfresh worktree shows are a missing git-ignored `nimbus-sandbox-helper`;\nbuilt locally to confirm). UI: 524/524.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_013rtq7aC9yd5EbgdDnMZLFL\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n- **New Features**\n- Added `nimbus tail` to stream live gateway notifications with category\nfiltering, human-readable or JSONL output, and clear connection status.\n- Added notifications for connector health, watcher activity, completed\nsyncs, extension changes, and consent events.\n- Added action-type information to consent broadcasts while keeping\nprompts and details private to the approving session.\n\n- **Bug Fixes**\n- Connector dashboards now correctly display “Not configured” instead of\ntreating that state as healthy.\n\n- **Documentation**\n- Added CLI reference, help text, changelog, and roadmap details for\n`nimbus tail`.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-14T07:00:06+03:00",
-          "tree_id": "e863a6e508076bd203e7cf6d9bf709966d4e8d3d",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/9f70962084caa57c3eba05d99be40f99dd58187b"
-        },
-        "date": 1789359327849,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 365.04931210000507,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 362.3900003499992,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 204.80490635000098,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5b1d570e2e76cab26b0d157b6324f2ab22044ddd",
+          "message": "docs: S4 batch status for 2026-11-23/24 rulings and shipped streams (#2138)\n\n## What\n\nThe S4 batch-docs PR. Each stream PR left the hot status docs alone and\ncarried a \"For the batch-docs PR\" section; this applies them all at\nonce, and records the owner's rulings of 2026-11-23 and 2026-11-24.\nDocumentation only: `docs/roadmap.md`, `docs/CHANGELOG.md`, `CLAUDE.md`\nand `GEMINI.md` (kept in step). Every number was derived from code on\nmain, not copied from a PR body.\n\nMerge this AFTER #2137: it documents `nimbus incident investigate\n--live` (owner ruling 9, static D46(h)), whose code is not on main until\nthat PR merges.\n\n## PRs covered\n\nShipped streams with a batch section: #2118 (cost anomaly notice), #2120\n(pre-review), #2121 (agent uninstall), #2122 (undo with no id, V106),\n#2123 (desktop Infrastructure page, allowlist 140 to 141), #2124 (Data\nIncident Brief), #2126 (investigate --synthesize), #2127 (LAN pairing\nover Noise XXpsk0, FS2), #2128 (personalization, I53 amended), #2129\n(federated scheduling, I17 (b)), #2130 (episodic memory, I61, V107),\n#2132 (OpenCost and Kubecost, accept-drift row), #2133 (PagerDuty data\nincidents), #2134 (update --synthesize), #2135 (`nimbus iac\naccept-drift`), #2136 (apply preview shows moves), #2137 (investigate\n--live, open at time of writing).\n\nRead and found to carry no roadmap or status change: #2099, #2104 to\n#2117, #2119, #2125.\n\n## Owner rulings recorded\n\nClosures: ruling 4 (ChatOps Remediate stays forbidden, I57 (b)\nunchanged), ruling 5 (one-tap rollback means the prompt's single yes;\nWave 4 keeps typed text), ruling 6 (scribe drafts only), ruling 7\n(owner's own runbooks and templates delivered; team skill-pack parts\nmoved to Phase 16), ruling 8 (provider-side dry run closed), ruling 9\n(deep investigation: `--live` for one backend, row closed for the\nowner-triggered form).\n\nMoves: ruling 11 (cost garbage-collection deletion), ruling 12 (data\nFinOps attribution) and ruling 13 (CloudHealth, Flexera/Spot, Cloud\nCarbon Footprint, Climatiq, Watershed) to Phase 30; ruling 15 (LoRA\nrows) to Phase 14; ruling 16 (ratings wait for the hosted registry or\nthe Team Server) and the 2026-11-24 follow-up (no registry install\ncounts for now: packages are committed `package.tgz` files on gh-pages,\nnot release assets). Ratings and install counts are removed from S4's\nexit condition, and the LoRA rows no longer gate it.\n\nStill open: Vantage per-tag attribution (ruling 14, waiting for the\nowner's sample reply), FS3, the Phase 11 signed approval, A6, DAG-run\nlogs and dbt results for data incidents.\n\n## Rows ticked\n\nScheduling, episodic memory, personalization, PR pre-review, FinOps\nconnectors, autonomous drift detection, remediation proposals, dry-run\nremediation, live runbook driving, one-tap rollback, live incident\nscribe, deep investigation, and User MCP servers through the door (AD5a\nand AD5b).\n\n## Derived numbers\n\nSchema V107 (highest migration step), invariants I1 to I61, static rules\nD10 to D52, HITL types 188 (`HITL_REQUIRED.size` pinned in\n`executor-confirm.test.ts`), write rows 126 (`rows.test.ts`), prepare\nids 8, never-offered 17, Tauri allowlist 141 (`gateway_bridge.rs`),\nbrief kinds 21 to 23, connectors pin ^0.17.0 with 97 bundled\nentrypoints.\n\n## Checks\n\n`bun run audit:status-drift`, `audit:doc-refs`, `audit:release-please`\nand `bun run preflight:fast` pass.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrGFPLqt8C3Ybzk2dHq\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Documentation**\n* Updated the changelog and roadmap with recent delivery notes, project\nstatus, and revised milestones.\n* Clarified documented capabilities and limitations for scheduling, LAN\npairing, incident investigation, infrastructure drift, and cost\nmanagement.\n* Revised security guidance and connector information, including the\ndocumented connector count and version-skew check.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-24T15:29:50Z",
+          "tree_id": "4d3f917cfe744f366e900f057fecb70914c37375",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/5b1d570e2e76cab26b0d157b6324f2ab22044ddd"
+        },
+        "date": 1795534838582,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 260.1232825000032,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 263.98316919999706,
             "unit": "ms"
           }
         ]
