@@ -93,6 +93,13 @@ export const LOCAL_ONLY_PROSE_TYPES: ReadonlySet<string> = new Set([
   // local MiniLM embedder and are never sent to a remote one. Retrieval quality on long notes is the
   // deliberate price, as for web clips.
   "zotero:note",
+  // Stack Overflow for Teams answers (stackoverflow-answer-mapping.ts): the paragraph-shaped half
+  // of a private team's Q&A, so they get the long body cap; a 512-character cut would lose most of
+  // an answer. They are a team's internal knowledge, written for colleagues and not for a vendor,
+  // so they stay on the local MiniLM embedder like the questions beside them
+  // (`stackoverflow:question` is in neither set). Retrieval quality on long answers is the
+  // deliberate price, as for web clips.
+  "stackoverflow:answer",
   // A glossary term's search copy when any source it was mined from is not remote-eligible (role
   // packs P2 spec § 7.1): a pack- or owner-mapped type, or a local-only one. Its definition and
   // synonyms are text DERIVED from those items, so embedding it remotely would ship off the machine
