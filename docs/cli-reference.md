@@ -3347,6 +3347,8 @@ Limits for the FinOps cost data the Vantage, OpenCost and Kubecost syncs index (
 | `[finops] retain_days` | `400` | 30 to 3650: `cost_allocation` rows older than this are deleted by a daily pass; recommendations are not pruned by age |
 | `[finops] anomaly_ratio` | `1.5` | 1.05 to 100 (a plain decimal): `nimbus cost anomalies` flags a day at least this many times its 7-day baseline |
 | `[finops] anomaly_min_amount` | `10` | 0 to 1000000000 (a plain decimal): ... and only when it also exceeds the baseline by this much, in the series' currency |
+| `[finops] notify` | `false` | `true` shows ONE local OS notice when `nimbus cost anomalies` would list a new anomaly (counts and the service id only: `2 unusual cost jumps on vantage`; never a series name or an amount). Checked every 15 minutes, never on a demo gateway, a bad value falls back to `false` |
+| `[finops] notify_min_interval_minutes` | `360` | 5 to 1440: at most one such notice in this many minutes; an anomaly held back by the limit is announced after it. The memory of what was announced is in the gateway process, so a restart can announce a still-open anomaly once more |
 
 The data comes from `vantage.api_token` (set with `nimbus vault set vantage.api_token`; every 6 hours the sync reads 45 days on the first run, then from three days before the last success). `vantage.group_by` is a comma-separated grouping (default `provider,service,account_id`); a `tag:` entry is refused because where Vantage returns a tag value is undocumented. `nimbus connector auth vantage` prints the keys.
 
