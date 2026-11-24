@@ -137,3 +137,22 @@ describe("incident.updateSynthesize", () => {
     expect(e.rpcCode).toBe(-32602);
   });
 });
+
+describe("incident.updateSynthesize errors", () => {
+  test("a version that is not stored is the typed ERR_INCIDENT_VERSION_NOT_FOUND, -32602", async () => {
+    const { db, recordId } = await seeded();
+    const e = await rejects(call({ id: recordId, version: 99 }, ctxFor(db)));
+    expect(e.rpcCode).toBe(-32602);
+    expect(e.message).toContain("ERR_INCIDENT_VERSION_NOT_FOUND");
+  });
+
+  test("an unexpected failure is not turned into a typed error", async () => {
+    const { db, recordId } = await seeded();
+    const ctx = ctxFor(db, {
+      runner: () => {
+        throw new Error("router exploded");
+      },
+    });
+    await expect(call({ id: recordId }, ctx)).rejects.toThrow("router exploded");
+  });
+});
