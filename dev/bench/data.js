@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795514506367,
+  "lastUpdate": 1795518949939,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "107bf084021bfc7dbd08fae0e42d3d2690f5b7ed",
-          "message": "fix(platform): load a full SQLite on macOS so sqlite-vec can load (#1503)\n\nFixes #1029 — and the issue's own stated cause was wrong, which is why\nit sat for five weeks.\n\n## What was broken\n\n`sqlite-vec` has never loaded on macOS. #1029 scoped that as a CI\ncoverage gap: 54 `skipIf(!VEC_AVAILABLE)` sites across 12 files silently\nskip on the macOS leg, invisible in a green summary. Three more use `if\n(!tryLoadSqliteVec(db)) return;`, which registers as a **passing** test.\n\nBut the load path that fails in CI is the one the product uses at\nruntime, and the sidecar fallback shares the failing call — so on macOS\nthere is no vector search, no hybrid ranking and no session-memory\nrecall. That is a platform-equality break, not a testing problem. The\nmissing coverage is what concealed it.\n\n## The cause, and what it is not\n\n**Not** the optional-dependency lockfile gap the issue names: `bun.lock`\ncarries `sqlite-vec-darwin-arm64@0.1.9` and\n`sqlite-vec-darwin-x64@0.1.9`. **Not** a path or double-extension bug:\n`sqlite-vec`'s `load()` is four lines and resolves correctly. **Not** an\narchitecture mismatch.\n\nFrom Bun's own bundled docs:\n\n> On macOS, Bun uses the system `libsqlite3.dylib`. `loadExtension()`\nrequires a full SQLite build ... To use a full SQLite build, call\n`require(\"bun:sqlite\").Database.setCustomSQLite(path)` before opening a\ndatabase.\n\nApple's system SQLite is not a full build, and **nothing in this repo\ncalled `setCustomSQLite`**. Linux and Windows use Bun's own SQLite,\nwhich is why only macOS failed.\n\n## Why nobody diagnosed it\n\nThe error was thrown away. `tryLoadSqliteVec` reported it at `log.debug`\non a logger built at `level: NIMBUS_LOG_LEVEL ?? \"info\"`, so the message\nnever reached a CI log. Every piece of evidence on the issue is the\ncanary failing — the symptom. The cause was discarded one frame below\nit.\n\n## What this changes\n\n**A darwin-only PAL module** — `platform/sqlite-runtime.ts` — resolving\n`NIMBUS_SQLITE_PATH`, then the two Homebrew prefixes, checking the file\nexists before calling `setCustomSQLite`, never throwing. It sits under\n`platform/` but deliberately not as a `PlatformServices` member: the\ninstall must answer before the first `new Database`, and in a Worker\nrealm there is no service graph at all. `platform/runtime-layout.ts` is\nthe existing precedent.\n\n**Wired at 16 entry points.** Grepping for `new Database` is the wrong\npredicate — `db/snapshot.ts` aliases the import and\n`migrated-db-template.ts` uses `Database.deserialize`. The right one is\na *value* import of `Database` from `bun:sqlite`, since ~200 files use\n`import type` to receive a handle they never opened.\n\n**Static rule D30** enforces it, with no allow-list at all — every file\nin scope names the init, so there is no list to forget. It is\ndeliberately **not** tied to an invariant: claiming one with no threat\nmodel would be worse than the gap.\n\n**The load failure now speaks.** Warn-once after *both* paths fail,\nkeyed on the composed reason so a genuinely different failure still says\nso, plus a `nimbus doctor` line.\n\n**A discriminator, because `false` is ambiguous.** Bun's typedoc\ndocuments `setCustomSQLite`'s two preconditions and says nothing about\nits return value, so \"already installed\" and \"too late, the process is\nstuck on Apple's build\" are the same `false`. Rather than assume the\nbenign one at `debug` — the level that hid this for five weeks — the\ncode now measures: on darwin, after a `false`, it opens a throwaway\n`:memory:` database and attempts a real vec load. Three outcomes, three\nlevels. It resolves the npm package first and the packaged sidecar\nsecond, in the order the product itself tries them, so a compiled binary\nis measured rather than reported as unknown.\n\n**CI**: the shared composite action probes for a full SQLite before\ninstalling one, and the `VEC_AVAILABLE` canary is now fatal on all three\nlegs. The old macOS-only warning is exactly what let this sit unread.\n\n## Verification, stated precisely\n\nWindows: `preflight:fast` green, `bun test packages/gateway packages/cli\nscripts` 22,803 pass / 75 skip / 0 fail. D30 red-proved by writing an\nunwired probe file and watching it fail, then pass on removal. The\ncompiled-binary resolution chain was reproduced with `bun build\n--compile` outside the repo, both with and without the sidecar present.\n\n**Nothing here executed on macOS.** Every darwin branch is exercised\nthrough injected fakes. The macOS CI leg on this PR is the first real\nexecution, and it is the proof — if it stays red, the error this change\nnow surfaces is the deliverable, and the canary flip is the one commit\nto revert.\n\n## Not in this PR\n\nWhat ships to macOS end users who have no Homebrew SQLite. That needs a\ndecision about bundling a `libsqlite3.dylib` against degrading honestly,\nwith size, notarization and licensing consequences, and it should be\ninformed by what this PR proves. Also left alone: converting the three\n`if (!tryLoadSqliteVec(db)) return;` early-returns to `skipIf`, which is\n#1029 cleanup rather than this fix.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JfjtCEdFCQR848FKP34HFC\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-12T19:59:40+03:00",
-          "tree_id": "c1c6682b504cfa77d1d1a8c9fc326ed90363d4dd",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/107bf084021bfc7dbd08fae0e42d3d2690f5b7ed"
-        },
-        "date": 1789233189098,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 327.27545885000325,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 324.237371399995,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 190.90519120000027,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5a58b187d8807d8602195cede6badca74c4c7903",
+          "message": "feat(gateway): nimbus incident update --synthesize has the model write one lead paragraph above the unchanged update facts (#2134)\n\nIncident engine, Phase 10 \"Live incident scribe + comms\": a\nmodel-written update draft. Owner ruling OR-S4-SCRIBE (2026-11-24).\n**Builds on #2126** (the `incident_investigation` kind and its synthesis\npath): until #2126 merges this diff also contains that commit; the\nchange here is the last commit only.\n\n## What\n- `nimbus incident update <id> --synthesize` (draft mode only; IPC\n`incident.updateSynthesize { id, audience?, version? }`) asks the model\nfor ONE short lead paragraph above the deterministic update. The\nunattended scribe stays model-free (OR-10-8): this is the owner's own\nrequest and posts nothing.\n- A new brief kind, `incident_update` (the 23rd).\n`update-synthesis/update-lead.ts` carries `renderIncidentUpdate`'s text\n(facts and the `Drafted by Nimbus ... Not checked with the provider.`\nfooter) as the brief and offers it to the existing `synthesize()`. **`##\nUpdate text` (that text, verbatim) and `## Gaps` are RESERVED (I31)**:\nwithheld from the model, rebuilt from the brief by `reservedBlocksFor`\nand re-attached; anything the model writes under them is stripped. What\nthe model sees is the same facts under `## Known so far`, inside the I11\nenvelope (`agents.incident_update`), and it is asked for `## Lead`.\n- The returned text is the model's `## Lead` (one paragraph, run through\nthe update renderer's own `chatSafe`: no `<`, `*`, `_`, `` ` `` or `~`,\ncontrol and format characters removed, 600 characters at most) followed\nby the deterministic update **byte for byte**. It is never parsed out of\nthe model's output. With no usable model, a failed or discarded rewrite,\nor no lead, it is the plain update.\n- CLI: `--synthesize` is a draft-only flag (a send or `--queued` refuses\nit, so the text the owner approves is the text they hold). A stderr line\nsays the first paragraph is the model's and which model, or why this is\nthe deterministic update.\n- The post is unchanged: `--send ... --from <file>` only, behind the\nowner's typed approval and the B1 refusals (broadcast mention, remote\ncontent) on the final text.\n\n## Invariants\n- OR-10-8 / I57 (a): nothing under `incident/**` reaches a model; the\nIC9b confinement pin still holds for `incident-update/**` (no model\nimport, no network), so the new code lives in `update-synthesis/` and\n`ipc/update-synthesis-rpc.ts`. The scribe is untouched.\n- I31: registry and all-kinds coverage table total over the kind; I11\nenvelope; I29 via the existing ledgered provider.\n- LAN: the `incident` namespace is forbidden whole, pinned for the new\nmethod. Tauri: not on the allowlist. No migration, invariant, HITL type,\negress class or static rule number.\n\n## Stated bounds\n- The lead is the model's reading of provider text (titles, timeline\nlines) it was shown. A prompt-injected title can steer the lead; the\nfacts below it cannot change, `chatSafe` removes chat control sequences\nfrom the lead, and the owner reads the lead before sending.\n- The posted text carries no marker that a model wrote the first\nparagraph; the check is the owner's reading of the CLI note. (Adding a\nmarker would change the posted text; say if you want one.)\n- The model sees the facts twice in the fallback render (`Known so far`\nand the reserved block); only the former is ever sent to it.\n\n## Tests\n- `update-lead.test.ts`: I31 reserved blocks, a model that rewrites the\nreserved block is overridden, the lead section parsing and sanitising\n(`<!here>`, `<@U1>`, emphasis marks, the cap), the no-model and\nfailing-model fallbacks, and that the returned text is lead plus the\nplain update byte for byte.\n- `update-synthesis-rpc.test.ts`: the owner-kind gate before any query\nor model build, off the LAN, parameter checks, reserved text intact when\nthe model invents facts.\n- `incident-update-synthesize.test.ts` (CLI): parsing (draft only), the\nmethod called, the notes, and that a send never calls the synthesize\nmethod.\n- All-kinds coverage and registry-total tests include the kind.\n\n## For the batch-docs PR\n- **roadmap.md**, \"Live incident scribe + comms\": \"a model-written\ndraft\" is done: \"*(2026-11-24, OR-S4-SCRIBE)* `nimbus incident update\n<id> --synthesize` asks the model for one lead paragraph above the\nunchanged, reserved facts and disclosure footer (the 23rd brief kind,\n`incident_update`); owner-requested only, the scribe stays model-free,\nand the post is still the human-approved `--send`.\"\n- **CHANGELOG draft:** `feat(gateway): nimbus incident update\n--synthesize has the model write one lead paragraph above the unchanged\nupdate facts (23rd brief kind)`.\n- **CLAUDE.md / GEMINI.md sentence:** \"Phase 10 update --synthesize ✅\n2026-11-24 (no migration, invariant, HITL type or allowlist change; I31\nand I11 extended; OR-S4-SCRIBE): `nimbus incident update <id>\n--synthesize` returns the model's one-paragraph lead followed by the\ndeterministic update verbatim (the 23rd brief kind, `incident_update`,\nwhose update text is reserved); owner-requested only, nothing is posted\nby it, and the unattended scribe stays model-free.\"\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrGFPLqt8C3Ybzk2dHq\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Incident update drafts can now include an optional AI-generated lead\nparagraph with `--synthesize`.\n* The deterministic update text and gaps are preserved. If synthesis is\nunavailable or the lead cannot be used, the draft remains unchanged.\n* Synthesis is limited to draft mode and cannot be combined with sending\nor queued updates. Draft output also reports whether a lead was used.\n* **Documentation**\n* Updated CLI, architecture, security, and command guidance to explain\nthe option and its safeguards.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-24T11:07:39Z",
+          "tree_id": "8f076545d37dd07dc969713684131d261b32df4d",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/5a58b187d8807d8602195cede6badca74c4c7903"
+        },
+        "date": 1795518945931,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 181.33763384999912,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 180.6980374500039,
             "unit": "ms"
           }
         ]
