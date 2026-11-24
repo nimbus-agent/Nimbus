@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795557463491,
+  "lastUpdate": 1795559443374,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "49699333+dependabot[bot]@users.noreply.github.com",
-            "name": "dependabot[bot]",
-            "username": "dependabot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "edd72d3431f9d85df308c05ec55319025e6c847a",
-          "message": "chore(deps): bump imapflow from 1.7.8 to 2.0.2 (#1517)\n\nBumps [imapflow](https://github.com/postalsys/imapflow) from 1.7.8 to\n2.0.2.\n<details>\n<summary>Changelog</summary>\n<p><em>Sourced from <a\nhref=\"https://github.com/postalsys/imapflow/blob/master/CHANGELOG.md\">imapflow's\nchangelog</a>.</em></p>\n<blockquote>\n<h2><a\nhref=\"https://github.com/postalsys/imapflow/compare/v2.0.1...v2.0.2\">2.0.2</a>\n(2026-09-10)</h2>\n<h3>Bug Fixes</h3>\n<ul>\n<li>skip LSUB once a server has rejected ENABLE over the IMAP4rev2 it\nadvertises (<a\nhref=\"https://github.com/postalsys/imapflow/commit/1c4bca2349ed05d5cb61a85abb4152630ceb3d73\">1c4bca2</a>)</li>\n</ul>\n<h2><a\nhref=\"https://github.com/postalsys/imapflow/compare/v2.0.0...v2.0.1\">2.0.1</a>\n(2026-09-10)</h2>\n<h3>Bug Fixes</h3>\n<ul>\n<li>stop acting on an IMAP4rev2 advertisement once the server rejects\nENABLE over it (<a\nhref=\"https://github.com/postalsys/imapflow/commit/227355fee56a10913af8feb8e52a74364eb90ca2\">227355f</a>)</li>\n</ul>\n<h2><a\nhref=\"https://github.com/postalsys/imapflow/compare/v1.7.8...v2.0.0\">2.0.0</a>\n(2026-09-07)</h2>\n<h3>⚠ BREAKING CHANGES</h3>\n<ul>\n<li>Node.js 20 or newer is required. The <code>lib/</code> directory is\nno longer published; use the package root or the\n<code>imapflow/lib/*</code> export map.</li>\n</ul>\n<h3>Features</h3>\n<ul>\n<li>migrate to TypeScript with ES module and CommonJS builds (<a\nhref=\"https://github.com/postalsys/imapflow/commit/a2cde0778f6d7cb8471ca8e4011534476442ae98\">a2cde07</a>)</li>\n<li>support Bun and Cloudflare Workers (<a\nhref=\"https://github.com/postalsys/imapflow/commit/70fff15b4a3297d4b29c8da7b1faf703ebf00876\">70fff15</a>)</li>\n</ul>\n<h3>Bug Fixes</h3>\n<ul>\n<li>re-arm auto-IDLE after an IDLE or poll session ends on its own (<a\nhref=\"https://github.com/postalsys/imapflow/commit/e6e5d27debf87748aae740b5a0a47b2afc2079b3\">e6e5d27</a>)</li>\n<li><strong>types:</strong> strip the internal members of ImapFlow from\nthe declarations (<a\nhref=\"https://github.com/postalsys/imapflow/commit/68b72587e07ebba52676df5b68631d60f55b08c0\">68b7258</a>)</li>\n<li><strong>types:</strong> type AuthenticationFailure.response as the\nstring it always is (<a\nhref=\"https://github.com/postalsys/imapflow/commit/5c3b3afd234bccf7d86fd999f4673e43ec131b6d\">5c3b3af</a>)</li>\n<li><strong>types:</strong> type the events without the generic\nEventEmitter of <code>@​types/node</code> (<a\nhref=\"https://github.com/postalsys/imapflow/commit/a4285b26064115bd1740b7850b2b0a14e02d96b8\">a4285b2</a>)</li>\n</ul>\n</blockquote>\n</details>\n<details>\n<summary>Commits</summary>\n<ul>\n<li><a\nhref=\"https://github.com/postalsys/imapflow/commit/58ef92c1a09fd1e1da1af3564e3a13777c150536\"><code>58ef92c</code></a>\nchore(master): release 2.0.2 [skip-ci] (<a\nhref=\"https://redirect.github.com/postalsys/imapflow/issues/395\">#395</a>)</li>\n<li><a\nhref=\"https://github.com/postalsys/imapflow/commit/1c4bca2349ed05d5cb61a85abb4152630ceb3d73\"><code>1c4bca2</code></a>\nfix: skip LSUB once a server has rejected ENABLE over the IMAP4rev2 it\nadvert...</li>\n<li><a\nhref=\"https://github.com/postalsys/imapflow/commit/1eb08f623238f1fa59585d4f63d303a18e728403\"><code>1eb08f6</code></a>\nchore(master): release 2.0.1 [skip-ci] (<a\nhref=\"https://redirect.github.com/postalsys/imapflow/issues/394\">#394</a>)</li>\n<li><a\nhref=\"https://github.com/postalsys/imapflow/commit/227355fee56a10913af8feb8e52a74364eb90ca2\"><code>227355f</code></a>\nfix: stop acting on an IMAP4rev2 advertisement once the server rejects\nENABLE...</li>\n<li><a\nhref=\"https://github.com/postalsys/imapflow/commit/fad663d0c7f6e4680f7cf967a96ad72b205998b4\"><code>fad663d</code></a>\nchore(master): release 2.0.0 [skip-ci] (<a\nhref=\"https://redirect.github.com/postalsys/imapflow/issues/393\">#393</a>)</li>\n<li><a\nhref=\"https://github.com/postalsys/imapflow/commit/7ef1b7dd420d3d4caec227e17ae6ada458650ba7\"><code>7ef1b7d</code></a>\nchore(deps): update dependencies</li>\n<li><a\nhref=\"https://github.com/postalsys/imapflow/commit/68b72587e07ebba52676df5b68631d60f55b08c0\"><code>68b7258</code></a>\nfix(types): strip the internal members of ImapFlow from the\ndeclarations</li>\n<li><a\nhref=\"https://github.com/postalsys/imapflow/commit/5c3b3afd234bccf7d86fd999f4673e43ec131b6d\"><code>5c3b3af</code></a>\nfix(types): type AuthenticationFailure.response as the string it always\nis</li>\n<li><a\nhref=\"https://github.com/postalsys/imapflow/commit/a4285b26064115bd1740b7850b2b0a14e02d96b8\"><code>a4285b2</code></a>\nfix(types): type the events without the generic EventEmitter of\n<code>@​types/node</code></li>\n<li><a\nhref=\"https://github.com/postalsys/imapflow/commit/e6e5d27debf87748aae740b5a0a47b2afc2079b3\"><code>e6e5d27</code></a>\nfix: re-arm auto-IDLE after an IDLE or poll session ends on its own</li>\n<li>Additional commits viewable in <a\nhref=\"https://github.com/postalsys/imapflow/compare/v1.7.8...v2.0.2\">compare\nview</a></li>\n</ul>\n</details>\n<br />\n\n---------\n\nSigned-off-by: dependabot[bot] <support@github.com>\nCo-authored-by: dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>\nCo-authored-by: AsafGolombek <asafgolombek@gmail.com>\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-15T20:09:47+03:00",
-          "tree_id": "ae592bddbc0b6c183d6a7dbaa622018a1fc81c61",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/edd72d3431f9d85df308c05ec55319025e6c847a"
-        },
-        "date": 1789492827623,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 240.04223964999946,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 231.93138010000075,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 182.53774945000478,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7c0d8c129e64e2611bc73dd7b8f69cd1bb0b2fea",
+          "message": "feat(gateway): remove the old LAN wire, a peer from before LAN forward secrecy must be upgraded (Phase 10 FS3) (#2146)\n\n## What this does\n\nSlice FS3 of Phase 10's LAN forward secrecy row (S3-F8). The old v1\nstatic-box LAN wire, kept through FS1 and FS2 for peers that had not\nupgraded, is deleted. Every LAN call between gateways is now a\nforward-secret Noise session, and nothing else exists.\n\n**Upgrade note: a paired machine on a version from before FS1 must be\nupgraded to keep LAN federation with this gateway.** The old wire it\nspeaks is no longer served or spoken. Its connection is closed with no\nreply and counted as a failed attempt for its address; the gateway log\nnames the address once an hour; this gateway's call to it fails with a\nno-reply hint that says to upgrade it; `nimbus lan status` and\n`lan.getStatus` keep listing every peer's recorded protocol and warn\nthat a peer on `v1` cannot connect. It works again after its upgrade\nwith no re-pairing (its first session records protocol 2); `nimbus lan\nremove <peerId>` drops one that cannot be upgraded. A new peer pairs\nonly with the code-keyed exchange, so both sides must be upgraded for\nthat too.\n\nOwner ruling 2026-11-24: shipped as a minor release, deliberately\nwithout `!` or `BREAKING CHANGE:`. The release note, the CHANGELOG entry\nand the cli-reference say the above plainly.\n\n## Decision: what `min_protocol = 1` in an existing config means now\n\nIt is ignored with one boot warning, and the gateway still starts.\nEvidence: every `[lan]` key in `config/nimbus-toml/lan.ts` is parsed\nleniently (an invalid `min_protocol` was already silently ignored, every\nother bad value falls back), so refusing at load would be the one place\nthis section can take the gateway down; and the line can only ever have\nasked for the wire that no longer exists, while refusing would also take\nevery upgraded peer, federation and the LAN server down for one stale\nline. `= 2` and any other value are no-ops. The warning (and the\nper-address \"upgrade that machine\" line) is written by\n`platform/assemble/lan-old-wire-notice.ts`, opened lazily.\n\n## Deleted (dead code and its tests, not left behind as unreachable\nbranches)\n\n`ipc/lan-legacy.ts` and `lan-legacy.test.ts`; `legacyAllowedFor`;\n`sealBoxFrame`/`openBoxFrame` (`lan-crypto.ts` keeps key handling only);\nthe v1 retry in `sendFederatedOverWire` and `LanLink.minProtocol`;\n`exchangeOneFrame`, `makeSettler` and `replyKindForMessage` (only the v1\npaths used them); the plaintext `pair` handler, `PairingService.consume`\nand `PairingWindow.consume`/`consumeAt`; `[lan] min_protocol`,\n`LocalIndex.setLanMinProtocol`/`lanMinProtocol`, the `minProtocol` field\nof `lan.getStatus`. The v1-only parts of the server, client, pairing and\nforward-secrecy tests were deleted or converted (the large-request\nregression, the pending-bytes bound and the full pair/read/write/tamper\nintegration flow now run over v2). V95 `proto_version` stays: status\nreads it. No migration.\n\n## Invariants (triple rule in this one commit)\n\n- I56: loses its v1 clause. \"No v1 path exists\": no legacy module, no\ndowngrade check, no `min_protocol`, the server refuses the `{` first\nbyte with no reply and a counted failure (pinned by source and\nbehaviour). Stated bound (a), the downgrade window, is replaced by the\navailability cost above; (c) and (h) updated; the protocol record's role\nis restated.\n- Static D47 (`lan-box-path-confined`): exempts no file now (it fails on\n`sealBoxFrame`, `openBoxFrame` or a `nacl.box` call in every non-test\ngateway file, `lan-crypto.ts` included) and fails on any `lan-legacy*`\nfile under `packages/gateway/src`. Its rule anchor moves from\n`lan-legacy.ts` to `lan-session.ts`.\n- I10: its wiring site `ipc/lan-pairing.ts` is gone (no pairing code is\ncompared on any path: the AEAD tag is the check); the I10 test and docs\nfollow. `lan-pairing.ts` must still not define a local comparator.\n\n## Verified\n\nRed-proved against the real source tree (not only synthetic input):\nre-adding `sealBoxFrame` to `lan-crypto.ts`, reviving\n`ipc/lan-legacy.ts` and a rogue `nacl.box(` in a federation file each\nfail D47; routing the `{` first byte as v2 fails 5 server tests and the\nI56 pin.\n\n`bun run typecheck`, `bun run typecheck:tests` (0 new), `bun run\npreflight:fast` (all gates), the structure audit, `audit:file-size`\n(baseline lowered; no baselined file grew), `audit:split-privacy`,\n`audit:status-drift`, `audit:doc-refs`, markdownlint and biome pass; the\ntouched LAN, federation, pairing, config, status, CLI,\nsecurity-invariant and structure-audit tests pass, as do the\nLAN/federation/teamvault integration tests and `share-forward-e2e`, run\none file at a time (Bun 1.3.14 on Windows crashes when several\nsocket-heavy files share a process; CI runs Linux). Not run locally: the\nwhole-repo `bun test` and the 3-OS matrix. One security-invariant test\non this branch (the I15 user-MCP write-grant marker-folder test) fails\non this Windows machine on `main` too and is unrelated.\n\n## Stated bounds\n\nA peer that cannot be upgraded loses LAN federation (drop it with\n`nimbus lan remove`); sessions recorded before the upgrade stay\ndecryptable by a static-key holder; the Noise engine is ours and\nunreviewed (OR-FS-4); the pairing code is about 114 bits (OR-FS-6);\n`nimbus lan rotate-identity` stays a recorded follow-up (OR-FS-2). Docs\nupdated: CLAUDE.md, GEMINI.md, roadmap (the LAN row is ticked),\nCHANGELOG, cli-reference, architecture, SECURITY, SECURITY-INVARIANTS,\nREADME, schema-reference and the three affected skills.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrGFPLqt8C3Ybzk2dHq\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-25T00:20:24+02:00",
+          "tree_id": "ce668bf6041d307f3cfb865cd263503d90fab833",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/7c0d8c129e64e2611bc73dd7b8f69cd1bb0b2fea"
+        },
+        "date": 1795559436806,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 256.44904544999844,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 259.34453970000396,
             "unit": "ms"
           }
         ]
