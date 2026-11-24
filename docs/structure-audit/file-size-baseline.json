@@ -407,7 +407,7 @@
     "packages/gateway/src/platform/sandbox/net-forward-host.ts": 912,
     "packages/gateway/src/platform/sandbox/network-observation-writer.test.ts": 707,
     "packages/gateway/src/platform/sandbox/observe/connection-poller.test.ts": 633,
-    "packages/gateway/src/platform/sandbox/observe/darwin-connections.test.ts": 832,
+    "packages/gateway/src/platform/sandbox/observe/darwin-connections.test.ts": 576,
     "packages/gateway/src/platform/sandbox/observe/win32-connections.test.ts": 888,
     "packages/gateway/src/platform/sandbox/seccomp-filter.ts": 740,
     "packages/gateway/src/platform/sandbox/win32-legacy-cwd-revoke.test.ts": 544,
