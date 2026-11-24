@@ -184,6 +184,29 @@ export type DataLineageView = {
   readonly rule: "data:derived_from";
 };
 
+/** One column-level change of a monitored table or its one-hop upstream (the schema history, V108). */
+export type DataSchemaChangeView = {
+  readonly model: string;
+  /** `monitored` for a table the trigger names, `upstream` for one of its one-hop `derived_from` models. */
+  readonly via: "monitored" | "upstream";
+  /** When the sync observed the new column set (not the warehouse's own change time). */
+  readonly atMs: number;
+  readonly kind: "added" | "dropped" | "type_changed" | "nullability_changed";
+  readonly column: string;
+  /** A type (`added`, `dropped`, `type_changed`) or `nullable` / `required` / `unknown` (nullability). */
+  readonly from: string | null;
+  readonly to: string | null;
+  readonly rule: "data:schema_history";
+};
+
+export type DataSchemaLane = {
+  readonly changes: readonly DataSchemaChangeView[];
+  readonly total: number;
+  /** Start of the window: the trigger's open time minus the configured lookback. */
+  readonly windowFromMs: number;
+  readonly lookbackHours: number;
+};
+
 export type DataLane = {
   readonly models: readonly string[];
   readonly lineage: readonly DataLineageView[];
@@ -194,6 +217,8 @@ export type DataLane = {
     readonly orchestration: number;
     readonly prs: number;
   };
+  /** Absent in a record assembled before the schema history existed. */
+  readonly schemaDiff?: DataSchemaLane;
 };
 
 export type OnCallPerson = {

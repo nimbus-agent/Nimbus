@@ -14,6 +14,7 @@ import type {
   TriggerBlock,
 } from "../../incident/incident-record-types.ts";
 import type { Timeline } from "../../incident/timeline.ts";
+import { schemaChangeLines } from "./incident-schema-lines.ts";
 import type { IncidentBrief } from "./incident-types.ts";
 import { hardenedPlain, hardenedTitleLink, type RenderOpts, renderGaps } from "./render.ts";
 
@@ -205,6 +206,9 @@ function dataLines(d: DataLane): string[] {
     lines.push(
       `- Merged change: ${hardenedTitleLink(p.title, p.url)}${p.atMs === null ? "" : `, ${utcLabel(p.atMs)}`} (rule: ${p.rule})`,
     );
+  if (d.schemaDiff !== undefined && d.schemaDiff.total > 0) {
+    lines.push(...schemaChangeLines(d.schemaDiff, { plain, utc: utcLabel }));
+  }
   const t = d.totals;
   const hidden =
     t.lineage -

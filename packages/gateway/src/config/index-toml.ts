@@ -13,27 +13,40 @@ import { isTableHeader, parseIntDec, splitKeyValue, stripComment } from "./toml-
  *   prune (`index/item-history-retention.ts`) deletes older rows in batches. `0` is NOT "disabled", unlike
  *   `[audit] tool_call_log_retention_days`: an unbounded history table is not a mode this project offers.
  *
+ * - `schema_history_retention_days` (default 365, `7..3650`): how long warehouse column-set observations
+ *   (`schema_history`, the Data Incident Brief's schema diff) are kept. The newest observation of each table is
+ *   always kept, because the next diff is taken against it.
+ *
  * A value out of range or malformed is a section fallback to the default, recorded through
  * `sectionFallbackSink` so `nimbus config explain` names it; it is never clamped.
  */
 export type NimbusIndexToml = {
   readonly historyRetentionDays: number;
+  readonly schemaHistoryRetentionDays: number;
 };
 
 export const INDEX_HISTORY_RETENTION_MIN = 7;
 export const INDEX_HISTORY_RETENTION_MAX = 3650;
 
-export const DEFAULT_INDEX_CONFIG: NimbusIndexToml = Object.freeze({ historyRetentionDays: 180 });
+export const DEFAULT_INDEX_CONFIG: NimbusIndexToml = Object.freeze({
+  historyRetentionDays: 180,
+  schemaHistoryRetentionDays: 365,
+});
 
-function retentionOrDefault(raw: string, onFallback: SectionFallbackSink | undefined): number {
+function retentionOrDefault(
+  key: string,
+  raw: string,
+  fallback: number,
+  onFallback: SectionFallbackSink | undefined,
+): number {
   const n = parseIntDec(raw);
   if (n !== undefined && n >= INDEX_HISTORY_RETENTION_MIN && n <= INDEX_HISTORY_RETENTION_MAX) {
     return n;
   }
   onFallback?.(
-    `[index].history_retention_days must be an integer ${String(INDEX_HISTORY_RETENTION_MIN)}..${String(INDEX_HISTORY_RETENTION_MAX)} (got: ${raw}); using ${String(DEFAULT_INDEX_CONFIG.historyRetentionDays)}`,
+    `[index].${key} must be an integer ${String(INDEX_HISTORY_RETENTION_MIN)}..${String(INDEX_HISTORY_RETENTION_MAX)} (got: ${raw}); using ${String(fallback)}`,
   );
-  return DEFAULT_INDEX_CONFIG.historyRetentionDays;
+  return fallback;
 }
 
 /** Parse `[index]`. A bad value reports through `onFallback`. `[index.*]` sub-tables are ignored. */
@@ -43,6 +56,7 @@ export function parseNimbusTomlIndex(
 ): NimbusIndexToml {
   let inIndex = false;
   let historyRetentionDays = DEFAULT_INDEX_CONFIG.historyRetentionDays;
+  let schemaHistoryRetentionDays = DEFAULT_INDEX_CONFIG.schemaHistoryRetentionDays;
   for (const line of source.split(/\r?\n/)) {
     const trimmed = stripComment(line).trim();
     if (trimmed === "") continue;
@@ -53,10 +67,22 @@ export function parseNimbusTomlIndex(
     if (!inIndex) continue;
     const kv = splitKeyValue(trimmed);
     if (kv?.key === "history_retention_days") {
-      historyRetentionDays = retentionOrDefault(kv.valRaw, onFallback);
+      historyRetentionDays = retentionOrDefault(
+        kv.key,
+        kv.valRaw,
+        DEFAULT_INDEX_CONFIG.historyRetentionDays,
+        onFallback,
+      );
+    } else if (kv?.key === "schema_history_retention_days") {
+      schemaHistoryRetentionDays = retentionOrDefault(
+        kv.key,
+        kv.valRaw,
+        DEFAULT_INDEX_CONFIG.schemaHistoryRetentionDays,
+        onFallback,
+      );
     }
   }
-  return Object.freeze({ historyRetentionDays });
+  return Object.freeze({ historyRetentionDays, schemaHistoryRetentionDays });
 }
 
 /** `[index]` over the layered snapshot (packs, base, active profile). */

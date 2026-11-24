@@ -16,6 +16,7 @@ describe("renderIncidentData", () => {
       "## Built from",
       "## Jobs by name",
       "## Merged before the alert",
+      "## Schema changes",
       "## Service",
       "## Change",
       "## Concurrent",
@@ -30,6 +31,94 @@ describe("renderIncidentData", () => {
     );
     expect(md).toContain("[orders nightly](https://dbt.example/jobs/1) - dbt (rule: name_match)");
     expect(md).toContain("merged 1970-01-01 00:15 UTC (rule: data:pr_title_or_branch)");
+  });
+
+  test("lists schema changes with kind, column and types only, and says what it did not check", () => {
+    const schemaDiff = {
+      changes: [
+        {
+          model: "analytics.sales.orders",
+          via: "monitored" as const,
+          atMs: 900_000,
+          kind: "type_changed" as const,
+          column: "amount",
+          from: "NUMBER",
+          to: "TEXT",
+          rule: "data:schema_history" as const,
+        },
+        {
+          model: "raw.shop.orders",
+          via: "upstream" as const,
+          atMs: 800_000,
+          kind: "dropped" as const,
+          column: "legacy",
+          from: "DATE",
+          to: null,
+          rule: "data:schema_history" as const,
+        },
+        {
+          model: "raw.shop.orders",
+          via: "upstream" as const,
+          atMs: 700_000,
+          kind: "nullability_changed" as const,
+          column: "id",
+          from: "nullable",
+          to: "required",
+          rule: "data:schema_history" as const,
+        },
+      ],
+      total: 5,
+      windowFromMs: 0,
+      lookbackHours: 24,
+    };
+    const md = renderIncidentData(buildDataBriefFixture({ data: buildDataLane({ schemaDiff }) }));
+    expect(md).toContain(
+      "`analytics.sales.orders` (monitored): column `amount` type NUMBER -> TEXT (rule: data:schema_history)",
+    );
+    expect(md).toContain("column `legacy` dropped (was DATE)");
+    expect(md).toContain("column `id` nullable -> required");
+    expect(md).toContain("_and 2 more_");
+    expect(md).toContain("24 h before the alert");
+    const none = renderIncidentData(
+      buildDataBriefFixture({
+        data: buildDataLane({ schemaDiff: { ...schemaDiff, changes: [], total: 0 } }),
+      }),
+    );
+    expect(none).toContain("_No schema change of a monitored or upstream table was observed");
+    expect(renderIncidentData(buildDataBriefFixture())).toContain(
+      "_Schema changes were not checked for this record._",
+    );
+    // the general incident brief carries the same lines in its Data section
+    const general = renderIncident(
+      buildDataBriefFixture({ data: buildDataLane({ schemaDiff }) }) as never,
+    );
+    expect(general).toContain("column `legacy` dropped (was DATE)");
+  });
+
+  test("a hostile column name cannot add a heading or a link", () => {
+    const schemaDiff = {
+      changes: [
+        {
+          model: "a.b.c",
+          via: "monitored" as const,
+          atMs: 1,
+          kind: "added" as const,
+          column: "x`\n## Injected [click](http://evil.example)",
+          from: null,
+          to: "STRING",
+          rule: "data:schema_history" as const,
+        },
+      ],
+      total: 1,
+      windowFromMs: 0,
+      lookbackHours: 24,
+    };
+    const md = renderIncidentData(buildDataBriefFixture({ data: buildDataLane({ schemaDiff }) }));
+    expect(md.split("\n").filter((l) => l.startsWith("## "))).not.toContain(
+      "## Injected [click](http://evil.example)",
+    );
+    // the bracket is escaped, so no link is formed
+    expect(md).not.toMatch(/[^\\]\]\(http:\/\/evil/);
   });
 
   test("says that jobs are matched by name, never by lineage", () => {

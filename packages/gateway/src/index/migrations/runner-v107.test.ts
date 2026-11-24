@@ -10,9 +10,9 @@ const tables = (db: Database): string[] =>
   ).map((r) => r.name);
 
 describe("V107 long-term episodic memory (OR-S4-MEM, I61)", () => {
-  test("the schema constant and the registered chain end at 107", () => {
-    expect(CURRENT_SCHEMA_VERSION).toBe(107);
-    expect(maxRegisteredIndexedSchemaVersion()).toBe(107);
+  test("the schema constant and the registered chain end at or past 107", () => {
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(107);
+    expect(maxRegisteredIndexedSchemaVersion()).toBe(CURRENT_SCHEMA_VERSION);
   });
 
   test("a fresh database has both tables, with no foreign key and no trigger", () => {

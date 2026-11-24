@@ -1,3 +1,4 @@
+import { normalizeDataModelKey } from "./data-model-key.ts";
 import type { MappedRow } from "./mapped-row.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
 
@@ -50,7 +51,7 @@ function normTableType(raw: string | undefined): string | null {
 export function extractSchemaFields(
   schema: unknown,
   prefix = "",
-): Array<{ name: string; type: string }> {
+): Array<{ name: string; type: string; nullable: boolean | null }> {
   const rec = asRecord(schema);
   if (rec === undefined) {
     return [];
@@ -59,7 +60,7 @@ export function extractSchemaFields(
   if (!Array.isArray(fields)) {
     return [];
   }
-  const out: Array<{ name: string; type: string }> = [];
+  const out: Array<{ name: string; type: string; nullable: boolean | null }> = [];
   for (const f of fields) {
     const fr = asRecord(f);
     if (fr === undefined) {
@@ -71,12 +72,21 @@ export function extractSchemaFields(
     }
     const type = stringField(fr, "type") ?? "";
     const path = prefix === "" ? name : `${prefix}.${name}`;
-    out.push({ name: path, type });
+    out.push({ name: path, type, nullable: nullableOfMode(stringField(fr, "mode")) });
     if ((type === "RECORD" || type === "STRUCT") && Array.isArray(fr["fields"])) {
       out.push(...extractSchemaFields(fr, path));
     }
   }
   return out;
+}
+
+/**
+ * BigQuery's `mode`: an absent mode is NULLABLE (the API default), REQUIRED is not nullable, and REPEATED is
+ * an array that is never NULL but whose elements are not described by it, so it is unknown here.
+ */
+function nullableOfMode(mode: string | undefined): boolean | null {
+  if (mode === undefined || mode === "" || mode === "NULLABLE") return true;
+  return mode === "REQUIRED" ? false : null;
 }
 
 function clampTitle(title: string): string {
@@ -110,6 +120,11 @@ export function mapBigqueryTableToItem(
 
   const tableType = normTableType(stringField(row, "type"));
   const schemaFields = extractSchemaFields(row["schema"]);
+  // The schema is proven fetched only when the reply carried `schema.fields`: a table beyond the per-dataset
+  // describe budget is listed without one, and that must read as "not seen", never as "no columns".
+  const schemaRec = asRecord(row["schema"]);
+  const schemaComplete = Array.isArray(schemaRec?.["fields"]) && schemaFields.length > 0;
+  const dataModelKey = normalizeDataModelKey(`${ctx.project}.${datasetId}.${tableId}`);
 
   const numRowsRaw = parseEpochMillis(row["numRows"]);
   const numBytesRaw = parseEpochMillis(row["numBytes"]);
@@ -137,6 +152,8 @@ export function mapBigqueryTableToItem(
     tableId,
     tableType,
     schemaFields,
+    schemaComplete,
+    dataModelKey,
     numRows: numRowsRaw,
     numBytes: numBytesRaw,
     creationTime,
