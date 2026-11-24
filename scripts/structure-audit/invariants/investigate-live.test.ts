@@ -74,6 +74,24 @@ describe("D46(h) - the live investigation read is confined", () => {
     ).toEqual(["investigate-live-confined"]);
   });
 
+  test("bracket access follows the dotted form's permissions and ignores strings and array literals", () => {
+    // Permitted in a wiring file, as the dotted form is.
+    expect(
+      rules([
+        ...GOOD,
+        file(`${SRC}ipc/investigation-rpc.ts`, 'const l = ctx.options["investigationLive"];'),
+      ]),
+    ).toEqual([]);
+    // Not element access: text in a string, and an array literal.
+    expect(
+      rules([
+        ...GOOD,
+        file(`${SRC}automation/x.ts`, `const help = 'Use reader["createLiveInvestigator"]';`),
+        file(`${SRC}automation/y.ts`, 'const fields = ["investigationLive"];'),
+      ]),
+    ).toEqual([]);
+  });
+
   test("FAILS when incident assembly (or its render) names the live module", () => {
     expect(
       rules([

@@ -36,10 +36,11 @@ const WIRING: readonly string[] = [
 const TYPE_RE = /\binvestigateReadActionType\b/g;
 const SUFFIX_RE = /\.investigate\.read\b/g;
 const WIRING_RE = /\b(?:createLiveInvestigator|investigationLive)\b/g;
-// A literal property access (`ns["createLiveInvestigator"]`) keeps its name inside a string, which the
-// string-stripped scan blanks, so it is matched on the comment-free text.
+// A literal element access (`ns["createLiveInvestigator"]`) keeps its name inside a string, which the string-stripped
+// scan blanks, so it is matched on the comment-free text: an expression end (identifier, `)` or `]`) immediately
+// before `[`, and that `[` must survive string blanking (so one inside a string, or an array literal, is not one).
 const BRACKET_RE =
-  /\[\s*["'`](?:investigateReadActionType|createLiveInvestigator|investigationLive)["'`]\s*\]/g;
+  /(?<=[\w$)\]]\s*)\[\s*["'`](investigateReadActionType|createLiveInvestigator|investigationLive)["'`]\s*\]/g;
 const INCIDENT_IMPORT_RE = /investigation-live/g;
 const ALLOWED_CONNECTOR_IMPORT_RE =
   /connectors\/(?:connector-writes\/before-select|lazy-mesh\/tool-map)\.ts$/;
@@ -72,10 +73,11 @@ export function checkInvestigateLiveConfinement(files: readonly FileEntry[]): Vi
           add("investigate-read-type-confined", f, code, m.index);
       }
     }
-    if (f.relPath !== LIVE) {
-      for (const m of commentFree.matchAll(BRACKET_RE)) {
-        add("investigate-live-confined", f, commentFree, m.index);
-      }
+    for (const m of commentFree.matchAll(BRACKET_RE)) {
+      if (code[m.index] !== "[") continue;
+      // The same per-name permissions as the dotted form.
+      const allowed = m[1] === "investigateReadActionType" ? [LIVE, READ_TYPE] : WIRING;
+      if (!allowed.includes(f.relPath)) add("investigate-live-confined", f, commentFree, m.index);
     }
     if (!WIRING.includes(f.relPath)) {
       for (const m of code.matchAll(WIRING_RE)) add("investigate-live-confined", f, code, m.index);
