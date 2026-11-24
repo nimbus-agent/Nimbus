@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795513592004,
+  "lastUpdate": 1795514506367,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "15d02016a3c5fb51363836b408600735d717f166",
-          "message": "chore: release main (#1501)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.20.1</summary>\n\n##\n[7.20.1](https://github.com/nimbus-agent/Nimbus/compare/v7.20.0...v7.20.1)\n(2026-09-12)\n\n\n### Bug Fixes\n\n* **search:** stop the vector KNN re-running once per chunk row\n([#1500](https://github.com/nimbus-agent/Nimbus/issues/1500))\n([1ac89f6](https://github.com/nimbus-agent/Nimbus/commit/1ac89f6808c5ed51f39fb8ea5d9ca8c42d3afc62))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-09-12T14:05:32Z",
-          "tree_id": "30565207c4a82be370e92daa82b3634c561da99f",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/15d02016a3c5fb51363836b408600735d717f166"
-        },
-        "date": 1789222712903,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 323.94084600000167,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 322.73399419999475,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 184.23632170000093,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "12f8e8727f4e680e53adbc1e558056809fcacf22",
+          "message": "feat(gateway): a PagerDuty incident of a service that declares data_models renders the Data Incident Brief (#2133)\n\nFollow-up to #2124 (the Data Incident Brief), settling the question that\nPR left open. Owner ruling OR-S4-DATA (2026-11-24, option 1).\n\n## What\nA PagerDuty incident whose bound `[ci.service.<id>]` declares\n`data_models` counts as a data incident and renders the Data Incident\nBrief. PagerDuty incidents carry no tag the index keeps, so the owner's\nown configuration is the tag: no connector data, no new config key.\n- `pagerdutyDataLane` (`incident/lanes/data.ts`) takes the indexed\n`data_model` graph entities whose key one of the service's globs matches\n(`matchesDataModelGlob`, at most 500 scanned, in key order) and builds\nthe same lane a Monte Carlo or Bigeye trigger gets (lineage, jobs by\nname, merged changes, the substrate gaps). `incident/assemble.ts` calls\nit for a non-Monte-Carlo, non-Bigeye trigger; a record with a data lane\nis stored as `incident_data`, as before.\n- Only PagerDuty: an unbound incident, a bound service with no\n`data_models`, a JSM alert and a Sentry issue keep the general brief. A\nbound service whose globs match no indexed model is still the data\nbrief, and says `No monitored table.` plus the gap that none was\nmatched, rather than hiding that the service is declared a data service.\n\n## Invariants\nI57 (a) unchanged: still local-index reads only, no model or network;\nthe lane is deterministic. No migration, no new invariant, HITL type,\negress class, IPC method or allowlist change.\n\n## Stated bounds\n- A glob can match models of unrelated incidents on the same service;\nthe lane is the service's data models, not the models this particular\nalert concerns (PagerDuty does not say). The brief's \"Monitored models\"\nheading therefore lists models of the SERVICE; the text is the same as\nfor a Monte Carlo item, so a reader should treat it as scope, not\ndiagnosis.\n- Only the first 500 indexed models (by key) are scanned.\n- A record assembled before this change keeps its stored Markdown until\nit next changes.\n\n## Tests\n`assemble-pd-data.test.ts`, from the real PagerDuty and JSM writers: a\nbound incident with `data_models` renders the data brief with only the\nmatching models; no match is still the data brief with no monitored\ntable; a bound service without `data_models`, an unbound incident and a\nJSM alert do not.\n\n## For the batch-docs PR\n- **roadmap.md**, \"Automatic incident assembly\": the *Still open* clause\n\"a PagerDuty event tagged `data` is not treated as a data trigger\"\nbecomes done: \"*(2026-11-24, OR-S4-DATA)* a PagerDuty incident whose\nbound service declares `data_models` is a data incident and renders the\nData Incident Brief.\"\n- **CHANGELOG draft:** `feat(gateway): a PagerDuty incident of a service\nthat declares data_models renders the Data Incident Brief`.\n- **CLAUDE.md / GEMINI.md:** append to the Data Incident Brief sentence:\n\"a PagerDuty incident whose bound `[ci.service.<id>]` declares\n`data_models` is a data incident too (OR-S4-DATA, 2026-11-24); it takes\nthe service's indexed models by glob.\"\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrGFPLqt8C3Ybzk2dHq\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-24T09:54:17Z",
+          "tree_id": "fd0baf691467f4db779ed232311483cf5cc9b76f",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/12f8e8727f4e680e53adbc1e558056809fcacf22"
+        },
+        "date": 1795514502968,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 192.2346971499992,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 190.90519120000027,
             "unit": "ms"
           }
         ]
