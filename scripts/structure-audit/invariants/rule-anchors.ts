@@ -30,6 +30,7 @@ export const RULE_ANCHORS: readonly string[] = [
   "packages/gateway/src/agents/_lib/incident-render.ts",
   "packages/gateway/src/incident/remediation.ts", // D46(c) -- the one builder of an engine-proposed action; the D46(a) carve-out
   "packages/gateway/src/incident/finding-store.ts", // D46(f) -- the one writer of the IC8 finding and baseline tables
+  "packages/gateway/src/investigation/investigation-live.ts", // D46(h) -- the one live investigation read (owner ruling 9)
   "packages/gateway/src/runbook/runbook-run.ts", // D46(g) -- the one builder of a runbook step (IC6)
   "packages/gateway/src/incident-update/update-send.ts", // D46(e) -- the owner's incident update post, a linked owner action (IC9b)
   "packages/gateway/src/finops/cost-series.ts", // D48 — FinOps cost code is inert

@@ -1,4 +1,5 @@
 import type { Investigation, Lead, SentryIssueRow } from "../../incident/investigate.ts";
+import type { LiveIssueRow } from "../../incident/investigate-live-types.ts";
 import { utcLabel } from "./incident-render.ts";
 import { hardenedPlain, hardenedTitleLink } from "./render.ts";
 
@@ -46,8 +47,52 @@ function sentryRow(r: SentryIssueRow): string {
   return `- ${hardenedTitleLink(r.title, r.url)}: ${facts.join("; ")}`;
 }
 
+const LIVE_PROJECT_WORD: Readonly<Record<string, string>> = {
+  read: "read",
+  timeout: "timed out",
+  refused: "refused",
+  failed: "failed",
+  unreadable: "unreadable reply",
+  skipped_budget: "not read (budget spent)",
+  skipped_cap: "not read (project cap)",
+};
+
+function liveRow(r: LiveIssueRow): string {
+  const facts = [
+    `project ${plain(r.project)}`,
+    r.level === null ? null : `level ${plain(r.level)}`,
+    r.status === null ? null : `status ${plain(r.status)}`,
+    r.count === null ? null : `${String(r.count)} events`,
+    r.userCount === null ? null : `${String(r.userCount)} users`,
+    r.firstSeenMs === null ? null : `first seen ${utcLabel(r.firstSeenMs)}`,
+    `last seen ${utcLabel(r.lastSeenMs)}`,
+    r.newSinceDeploy ? "first seen after the deployment started (timing only)" : null,
+  ].filter((x): x is string => x !== null);
+  return `- ${hardenedTitleLink(r.title, r.url)}: ${facts.join("; ")}`;
+}
+
+/** The `--live` block: what Sentry itself answered now, correlated to the record by project and window. */
+function liveSentry(inv: Investigation): string | null {
+  const l = inv.live;
+  if (l === undefined) return null;
+  const lines = [
+    `_Live read, not stored: ${l.projects.map((p) => `${plain(p.project)} ${LIVE_PROJECT_WORD[p.outcome] ?? "not read"}`).join(", ") || "no project was read"} (budget ${String(Math.round(l.budgetMs / 1000))} s)._`,
+    ...l.rows.map(liveRow),
+  ];
+  if (l.status !== "not_read" && l.rows.length === 0) {
+    lines.push("_No unresolved issue of the bound projects was active in the window._");
+  }
+  if (l.total > l.rows.length) lines.push(`_and ${String(l.total - l.rows.length)} more_`);
+  return section("Sentry error issues, live", lines);
+}
+
 export function sentry(inv: Investigation): string {
-  const s = inv.sentry;
+  const indexed = indexedSentry(inv.sentry);
+  const live = liveSentry(inv);
+  return live === null ? indexed : [indexed, live].join("\n\n");
+}
+
+function indexedSentry(s: Investigation["sentry"]): string {
   if (s.status !== "ok") return section("Sentry error issues", ["_Not listed; see Gaps._"]);
   const lines =
     s.rows.length === 0

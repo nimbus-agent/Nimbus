@@ -4,6 +4,7 @@ import type { ServiceConfig } from "../metrics/dora-config.ts";
 import type { ActionEventKind } from "./action-links.ts";
 import type { IncidentRecordV1 } from "./incident-record-types.ts";
 import { getById, type RecordRow } from "./incident-store.ts";
+import type { LiveBlock } from "./investigate-live-types.ts";
 import { oneLine } from "./lanes/caps.ts";
 import { readTimelineWithCaps } from "./timeline-read.ts";
 import { TRIGGER_SERVICES } from "./trigger-sources.ts";
@@ -126,10 +127,12 @@ export type Investigation = {
     readonly lastSyncMs: number | null;
   }[];
   readonly recordAssembledAtMs: number;
+  /** Set only by `--live` (`investigation/investigation-live.ts`); never by this module, never stored. */
+  readonly live?: LiveBlock;
 };
 
 /** The backends whose state is not indexed: each is a Gap that names whether its connector is connected. */
-const LIVE_BACKENDS: readonly { readonly connector: string; readonly label: string }[] = [
+export const LIVE_BACKENDS: readonly { readonly connector: string; readonly label: string }[] = [
   { connector: "datadog", label: "Datadog monitors" },
   { connector: "grafana", label: "Grafana alert rules" },
   { connector: "newrelic", label: "New Relic violations" },

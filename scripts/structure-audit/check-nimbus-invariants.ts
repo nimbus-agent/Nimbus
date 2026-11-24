@@ -63,6 +63,7 @@ export {
   checkRunbookConfinement,
   checkRunConfinedConfinement,
 } from "./invariants/incident-runbook-client-kinds.ts";
+export { checkInvestigateLiveConfinement } from "./invariants/investigate-live.ts";
 export {
   checkActDoorConfinement,
   checkAgentProvenanceWriters,

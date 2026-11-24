@@ -199,7 +199,8 @@ export async function tryDispatchUpdateSynthesisRpc(
 
 /**
  * `incident.investigateSynthesize` (Phase 10 IC9a): the investigation of one record, offered to a model only
- * when the owner asked (`nimbus incident investigate --synthesize`). Owner kinds only (`requireOwnerKind`,
+ * when the owner asked (`nimbus incident investigate --synthesize`), and `incident.investigateLive` (owner ruling 9,
+ * `--live`: the terminal only). Owner kinds only (`requireOwnerKind`,
  * before anything is read); the incident namespace is LAN-forbidden (I5) and absent from the Tauri allowlist (I7).
  */
 export async function tryDispatchInvestigationRpc(
@@ -208,7 +209,9 @@ export async function tryDispatchInvestigationRpc(
   params: unknown,
   clientId: string,
 ): Promise<unknown> {
-  if (method !== "incident.investigateSynthesize") return phase4RpcSkipped;
+  if (method !== "incident.investigateSynthesize" && method !== "incident.investigateLive") {
+    return phase4RpcSkipped;
+  }
   const incident = ctx.options.incidentRpcCtx;
   const localIndex = ctx.options.localIndex;
   if (incident === undefined || localIndex === undefined) return phase4RpcSkipped;
@@ -220,6 +223,7 @@ export async function tryDispatchInvestigationRpc(
       {
         incident,
         now: () => Date.now(),
+        live: ctx.options.investigationLive,
         runner: () =>
           buildAgentSynthesisRunner({
             configDir: ctx.options.configDir,

@@ -3,13 +3,13 @@ import pino from "pino";
 import { isBeforeReadActionType } from "../engine/before-state.ts";
 import type { BoundWriteCapabilities } from "../engine/bound-write-capabilities.ts";
 import { nodeSettleFs, settleCfnChangeSet, settleTerraformPlan } from "../engine/iac-settle.ts";
+import { isOwnServiceReadStepType } from "../engine/investigate-read.ts";
 import { settleK8sManifest } from "../engine/k8s-settle.ts";
 import {
   isPrepareActionType,
   PREPARE_REFUSALS,
   PrepareRefusedError,
 } from "../engine/prepare-step.ts";
-import { isRunbookReadActionType } from "../engine/runbook-read.ts";
 import { serviceOf } from "../engine/service-of.ts";
 import { extractToolInput } from "../engine/tool-input.ts";
 import type { ConnectorDispatcher, PlannedAction } from "../engine/types.ts";
@@ -328,8 +328,8 @@ export function createConnectorDispatcher(
  * dispatcher actually resolved, before the tool is called; any other type is untouched.
  */
 function assertBeforeReadIsOwnRead(actionType: string, resolvedKey: string): void {
-  // IC6: a runbook read step (`<service>.runbook.read`) is held to the same rule: a read of that service only.
-  if (!isBeforeReadActionType(actionType) && !isRunbookReadActionType(actionType)) return;
+  // IC6 and `--live`: a runbook or investigation read (`<service>.runbook.read`, `.investigate.read`) is held to it too.
+  if (!isBeforeReadActionType(actionType) && !isOwnServiceReadStepType(actionType)) return;
   const shown = `action type ${JSON.stringify(actionType)} may not dispatch tool ${JSON.stringify(resolvedKey)}`;
   if (meshServerForToolKey(resolvedKey) !== serviceOf(actionType)) {
     throw new Error(`ERR_BEFORE_READ_SERVICE_MISMATCH: ${shown}`);

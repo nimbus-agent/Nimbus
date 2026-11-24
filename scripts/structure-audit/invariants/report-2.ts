@@ -35,6 +35,7 @@ import {
   checkRunbookConfinement,
   checkRunConfinedConfinement,
 } from "./incident-runbook-client-kinds.ts";
+import { checkInvestigateLiveConfinement } from "./investigate-live.ts";
 import {
   checkChatReadMarkerConfinement,
   checkIncidentLinkMinting,
@@ -138,6 +139,13 @@ export function reportRulesPart2(files: readonly FileEntry[], mode: Mode): numbe
       );
     }
     if (runbookViolations.length > 0) exit = 1;
+    const investigateLiveViolations = checkInvestigateLiveConfinement(files);
+    for (const e of investigateLiveViolations) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D46(h) a live investigation read built, wired or imported outside investigation/investigation-live.ts and its wiring (rule ${e.rule}): ${e.snippet}`,
+      );
+    }
+    if (investigateLiveViolations.length > 0) exit = 1;
     const incidentLinkViolations = checkIncidentLinkMinting(files);
     for (const e of incidentLinkViolations) {
       console.error(

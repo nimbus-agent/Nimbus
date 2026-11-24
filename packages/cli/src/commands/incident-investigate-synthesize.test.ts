@@ -52,7 +52,9 @@ describe("nimbus incident investigate --synthesize", () => {
     });
     expect(parseIncidentArgs(["investigate", REC, "--synthesize", "--synthesize"])).toBeUndefined();
     expect(parseIncidentArgs(["show", REC, "--synthesize"])).toBeUndefined();
-    expect(INCIDENT_USAGE).toContain("investigate <id> [--synthesize] [--json]");
+    expect(INCIDENT_USAGE).toContain(
+      "investigate <id> [--live [--live-budget <seconds>]] [--synthesize] [--json]",
+    );
   });
 
   test("without the flag nothing but the plain investigation is called", async () => {
