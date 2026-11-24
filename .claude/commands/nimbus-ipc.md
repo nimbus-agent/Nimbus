@@ -445,6 +445,8 @@ Consent-scoped peer-to-peer federated query over the E2EE LAN channel. Over-the-
 | `federation.discover` | request | Discover peers (mDNS + manual fallback). Renderer-callable |
 | `federation.peers` | request | List paired peers. Renderer-callable |
 | `federation.namespace.grant` / `.publish` / `.revoke` | request | Per-peer namespace RBAC grants. Renderer-callable |
+| `federation.freeBusy` | request | **Over-the-wire** — a peer asks for free/busy blocks over a window (Phase 10, OR-S4-SCHED, `I17` (b)): answered only by `federation/free-busy-gate.ts` after THIS owner approves that request; the reply is `{ fromMs, blockMs, blocks }` (30-minute blocks) and nothing else. Admitted over LAN |
+| `scheduling.ask` / `scheduling.respond` | request | Owner's own request to a peer (intersects the peer's blocks with the owner's) and the owner's answer to the prompt; the WHOLE `scheduling` namespace is LAN-forbidden, `cli`/`ui` connections only, not on the Tauri allowlist. `federation.scheduleRequest` is the prompt notification |
 | `federation.consentRespond` | request | Owner's local consent decision for an over-the-wire query (`federation.consentRequest` is a notification delivered to the renderer) |
 | `federation.pair` | request | Mutual-approval peer pairing. **CLI-only** — transmits an out-of-band pairing code |
 

@@ -3,6 +3,7 @@
 
 import { CO_OWNED_ENTITY_TYPES } from "../../../packages/gateway/src/graph/relationship-graph.ts";
 import type { FileEntry, Mode } from "./_shared.ts";
+import { checkFreeBusyConfinement } from "./free-busy.ts";
 import {
   checkBrokeredFetchLiteralConfinement,
   checkGeneratedManifestConfinement,
@@ -78,6 +79,15 @@ export function reportRulesPart4(files: readonly FileEntry[], mode: Mode): numbe
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::flat upsertGraphEntity called with a co-owned type (${CO_OWNED_ENTITY_TYPES.join("/")}) — use upsertGraphEntityNamespaced instead, or the flat write wipes the other owner's namespace: ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkFreeBusyConfinement(files);
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D13(b) (${e.rule}) federated free/busy answering escapes its gate: only 30-minute blocks may leave, built by federation/free-busy-gate.ts from federation/_lib/free-busy-read.ts; I17 (b) regression: ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;

@@ -52,6 +52,7 @@ export {
   checkRunGrantWriters,
   checkTrustTableConfinement,
 } from "./invariants/extension-grants-eval.ts";
+export { checkFreeBusyConfinement } from "./invariants/free-busy.ts";
 export {
   checkConnectorSpawnIsHidden,
   checkFleetClientKindConfinement,

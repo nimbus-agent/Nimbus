@@ -48,6 +48,7 @@ export const BROKER_METHOD_LABELS: Readonly<Record<string, string>> = Object.fre
   "toolgen.saveApprovalRequest": "saving a generated tool",
   "share.approvalRequest": "a share",
   "federation.preflightRequest": "a federated preflight",
+  "federation.scheduleRequest": "a federated free/busy request",
   "federation.consentRequest": "a federated query",
   // Not ConsentBroker subclasses either: the quorum aggregator and the delegated-approval broker.
   "federation.quorumRequest": "a quorum approval",

@@ -4239,9 +4239,18 @@ Expertise routing — ask a peer "who knows X?" Returns a ranked contributor lis
 nimbus team who-knows peer:aabbcc "src/billing/retry.ts"
 ```
 
+### `nimbus team schedule <peerId> --from <time> --to <time> --duration <minutes> [--json]`
+
+Ask a paired peer when they are free and print the slots that both calendars leave free (Phase 10, OR-S4-SCHED, invariant `I17` (b)). `<time>` is `2026-11-25T09:00` (your local time), `2026-11-25T09:00Z`, `2026-11-25` (local midnight), `now`, or `+90m` / `+6h` / `+3d`; the window is widened inward to whole 30-minute blocks, must be 30 minutes to 14 days long and must end within 21 days. `--duration` is 15 to 480 minutes. **What crosses the wire:** the peer receives the window and nothing about you; you receive 30-minute free/busy blocks only: no titles, attendees, places, organiser or calendar names. **The peer's owner approves each request** at their terminal (`nimbus team listen`), so the command can wait up to a couple of minutes; a denial, no answer in time and an invalid operator identity are all the same refusal (`The peer's owner did not approve the request`), which is different from an empty calendar (that answers all-free). Cancelled or declined events are free; tentative events, unanswered invitations and timed events are busy; all-day events are ignored. Both calendars must have synced within 24 hours (connect one with `nimbus connector auth`). Exit 0 when at least one slot exists, 1 for no slot or a refusal, 2 for a usage error. Needs a running gateway with `[federation]` enabled.
+
+```bash
+nimbus team schedule peer:aabbcc --from 2026-11-25T09:00 --to 2026-11-25T17:00 --duration 45
+nimbus team schedule peer:aabbcc --from now --to +3d --duration 30 --json
+```
+
 ### `nimbus team consent <requestId> approve|deny` · `nimbus team listen`
 
-`consent` replies to an inbound federated-query consent request — the host owner remains the consent authority. `listen` runs the foreground listener that surfaces inbound consent requests as they arrive.
+`consent` replies to an inbound federated-query consent request — the host owner remains the consent authority. `listen` runs the foreground listener that surfaces inbound consent requests as they arrive, and, since Phase 10, an inbound free/busy request from a peer (`Peer <id> asks when you are free between <time> and <time>. It learns only which 30-minute blocks are busy ... Approve?`): answer it at the prompt; Esc leaves it to time out, which the peer sees as a refusal. `listen` declares itself the owner's CLI, so its approval counts as a person's.
 
 ```bash
 nimbus team consent req:1234 approve

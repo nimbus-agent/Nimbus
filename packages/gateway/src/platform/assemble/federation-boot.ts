@@ -21,10 +21,12 @@ import { federationConsent } from "../../federation/consent-broker.ts";
 import { loadOrCreateFederationIdentity } from "../../federation/federation-identity.ts";
 import { buildFederationRuntime } from "../../federation/federation-runtime.ts";
 import { buildFederationLanServer } from "../../federation/federation-server.ts";
+import { FreeBusyLimiter } from "../../federation/free-busy-limiter.ts";
 import { lanLinkFor } from "../../federation/lan-link.ts";
 import { NamespaceStore } from "../../federation/namespace-store.ts";
 import { preflightConsent } from "../../federation/preflight-consent-broker.ts";
 import { appendPreflightAudit, defaultRunCommand } from "../../federation/preflight-gate.ts";
+import { scheduleConsent } from "../../federation/schedule-consent-broker.ts";
 import type { buildIdentityBoot } from "../../identity/identity-boot.ts";
 import { isOperatorValid } from "../../identity/verifier.ts";
 import type { LocalIndex } from "../../index/local-index.ts";
@@ -317,6 +319,13 @@ export async function bootFederationIntoIpcOpts(
       runCommand: defaultRunCommand,
       audit: (e) => appendPreflightAudit(db, e),
     },
+    // I17 (b) (OR-S4-SCHED): answer a peer's free/busy request, but only after THIS owner approves it.
+    freeBusy: {
+      db,
+      limiter: new FreeBusyLimiter(),
+      requestApproval: (input) =>
+        scheduleConsent.request(input, federationRuntime.consentTimeoutSeconds * 1000 + 5000),
+    },
     // 8d: receive forwarded shares inert (spec §9.4) — store in share_inbox, no HITL.
     receiveShareDeps: {
       now: () => Date.now(),
@@ -393,6 +402,11 @@ export function bindFederationBroadcasts(
   // I24 (Slice 6b): the inbound-preflight approval prompt reaches the local owner via the same
   // broadcast channel; they answer with `nimbus preflight approve <id>` → federation.preflightRespond.
   preflightConsent.setBroadcast((method, params) =>
+    ipc.broadcast(method, asBroadcastParams(params)),
+  );
+  // I17 (b): the inbound free/busy approval prompt reaches the owner's terminal the same way; they
+  // answer in `nimbus team listen` (or `nimbus team schedule-consent`), which calls scheduling.respond.
+  scheduleConsent.setBroadcast((method, params) =>
     ipc.broadcast(method, asBroadcastParams(params)),
   );
   // Quorum (I21) + delegated-approval (I20) requests reach subscribers (local owner UI / approver

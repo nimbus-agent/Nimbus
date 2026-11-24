@@ -77,6 +77,7 @@ export { runStatuspageCommand } from "./statuspage.ts";
 export { runStop } from "./stop.ts";
 export { runTailCommand } from "./tail.ts";
 export { runTeam } from "./team.ts";
+export { runTeamEntry } from "./team-entry.ts";
 export { runTelemetry } from "./telemetry.ts";
 export { runTest } from "./test.ts";
 export { runTool } from "./tool.ts";
