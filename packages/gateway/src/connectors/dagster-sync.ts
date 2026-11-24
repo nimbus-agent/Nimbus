@@ -7,6 +7,7 @@ import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from
 import { connectorFetch, type FetchOutcome } from "./_lib/fetch-outcome.ts";
 import { trimTrailingSlash } from "./_lib/field-helpers.ts";
 import { type DagsterFlatJob, mapDagsterJobToItem } from "./dagster-job-mapping.ts";
+import { syncDagsterRuns } from "./dagster-runs.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
 
@@ -64,7 +65,12 @@ async function loadCreds(ctx: SyncContext): Promise<DagsterCreds | null> {
  * top-level `errors` array is NOT success — it is downgraded to a parse_error so
  * the caller degrades gracefully (cursor preserved, no throw).
  */
-async function dagsterGraphql(ctx: SyncContext, creds: DagsterCreds): Promise<FetchOutcome> {
+async function dagsterGraphql(
+  ctx: SyncContext,
+  creds: DagsterCreds,
+  query: string = JOBS_QUERY,
+  variables?: Record<string, unknown>,
+): Promise<FetchOutcome> {
   const outcome = await connectorFetch(ctx, SERVICE_ID, `${creds.baseUrl}/graphql`, {
     method: "POST",
     headers: {
@@ -72,7 +78,7 @@ async function dagsterGraphql(ctx: SyncContext, creds: DagsterCreds): Promise<Fe
       "Content-Type": "application/json",
       Accept: "application/json",
     },
-    body: JSON.stringify({ query: JOBS_QUERY }),
+    body: JSON.stringify(variables === undefined ? { query } : { query, variables }),
   });
   if (outcome.kind !== "ok") {
     return outcome;
@@ -160,7 +166,7 @@ export function createDagsterSyncable(options: DagsterSyncableOptions): Syncable
       // (PythonError typename or a top-level `errors` array → parse_error) or an
       // HTTP error degrades gracefully with the cursor preserved.
       const outcome = await dagsterGraphql(ctx, creds);
-      const totalBytes = outcome.bytes;
+      let totalBytes = outcome.bytes;
       if (outcome.kind === "http_error") {
         return syncPassCursorHttpEmpty(t0, totalBytes, cursor, pass1Cursor());
       }
@@ -177,6 +183,20 @@ export function createDagsterSyncable(options: DagsterSyncableOptions): Syncable
         }
         ctx.upsertItem(mapped);
         totalUpserted += 1;
+      }
+
+      // Runs are a best-effort second pass: a failure here never fails the job sync.
+      try {
+        const runs = await syncDagsterRuns(
+          ctx,
+          (query, variables) => dagsterGraphql(ctx, creds, query, variables),
+          creds.baseUrl,
+          now,
+        );
+        totalUpserted += runs.upserted;
+        totalBytes += runs.bytes;
+      } catch (err) {
+        ctx.logger.warn({ serviceId: SERVICE_ID, err }, "dagster run sync failed");
       }
 
       return syncPassCursorSuccess(t0, totalBytes, pass1Cursor(), totalUpserted);

@@ -28,26 +28,40 @@ interface FakeDagsterConfig {
   graphqlErrors?: boolean;
   // HTTP 200 where repositoriesOrError resolves to a PythonError typename.
   pythonError?: boolean;
+  // Runs served for the `runsOrError` query (a missing list is an empty one).
+  runs?: unknown[];
+  // The runs query answers HTTP 500.
+  runsFail?: boolean;
 }
 
 interface FakeDagster {
   baseUrl: string;
   requests: RecordedReq[];
+  runRequests: RecordedReq[];
   stop(): void;
 }
 
 function startFakeDagster(config: FakeDagsterConfig): FakeDagster {
   const requests: RecordedReq[] = [];
+  const runRequests: RecordedReq[] = [];
   let server: Server | undefined;
   server = Bun.serve({
     port: 0,
-    fetch: (req) => {
+    fetch: async (req) => {
       const u = new URL(req.url);
-      requests.push({
+      const body = req.method === "POST" ? await req.text() : "";
+      const isRun = body.includes("runsOrError");
+      (isRun ? runRequests : requests).push({
         method: req.method,
         path: u.pathname,
         token: req.headers.get("dagster-cloud-api-token"),
       });
+      if (isRun) {
+        if (config.runsFail === true) return new Response("error", { status: 500 });
+        return Response.json({
+          data: { runsOrError: { __typename: "Runs", results: config.runs ?? [] } },
+        });
+      }
       if (u.pathname !== "/graphql" || req.method !== "POST") {
         return new Response("not found", { status: 404 });
       }
@@ -78,7 +92,7 @@ function startFakeDagster(config: FakeDagsterConfig): FakeDagster {
     },
   });
   const baseUrl = `http://${server.hostname}:${server.port}`;
-  return { baseUrl, requests, stop: () => server?.stop(true) };
+  return { baseUrl, requests, runRequests, stop: () => server?.stop(true) };
 }
 
 interface Harness {
@@ -260,5 +274,76 @@ describe("dagster-sync against Bun.serve fake API", () => {
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
     expect(result.cursor?.startsWith("nimbus-dagster1:")).toBe(true);
+  });
+
+  test("indexes recent runs as metadata only, with failed step keys and the trigger", async () => {
+    h = startHarness({
+      repos: [
+        repo("analytics", "analytics_code", [pipeline("nightly_etl", { name: "nightly_etl" })]),
+      ],
+      runs: [
+        {
+          runId: "run-a",
+          jobName: "nightly_etl",
+          status: "FAILURE",
+          startTime: 1_780_000_000.5,
+          endTime: 1_780_000_300,
+          creationTime: 1_779_999_990,
+          repositoryOrigin: {
+            repositoryName: "analytics",
+            repositoryLocationName: "analytics_code",
+          },
+          tags: [{ key: "dagster/schedule_name", value: "customer a@example.com" }],
+          stepStats: [
+            { stepKey: "load_orders", status: "FAILURE" },
+            { stepKey: "dedupe", status: "SUCCESS" },
+          ],
+        },
+      ],
+    });
+    await setCreds(h);
+    const syncable = createDagsterSyncable({ ensureDagsterMcpRunning: async () => {} });
+    const result = await syncable.sync(h.ctx, null);
+
+    expect(result.itemsUpserted).toBe(2);
+    const row = h.db
+      .query<{ metadata: string }, []>(
+        "SELECT metadata FROM item WHERE service = 'dagster' AND type = 'job_run'",
+      )
+      .get();
+    const m = JSON.parse(row?.metadata ?? "{}") as Record<string, unknown>;
+    expect(m["parent_item_id"]).toBe("dagster:analytics_code:analytics:nightly_etl");
+    expect(m["outcome"]).toBe("failed");
+    expect(m["failed_tasks"]).toEqual(["load_orders"]);
+    expect(m["trigger"]).toBe("schedule");
+    expect(m["start_ms"]).toBe(1_780_000_000_500);
+    expect(row?.metadata).not.toContain("a@example.com");
+  });
+
+  test("a failing runs query never fails the job sync", async () => {
+    h = startHarness({
+      repos: [repo("r", "l", [pipeline("p", { name: "p" })])],
+      runsFail: true,
+    });
+    await setCreds(h);
+    const syncable = createDagsterSyncable({ ensureDagsterMcpRunning: async () => {} });
+    const result = await syncable.sync(h.ctx, null);
+    expect(result.itemsUpserted).toBe(1);
+    expect(result.cursor?.startsWith("nimbus-dagster1:")).toBe(true);
+  });
+
+  test("the run walk pages by the last run id and stops at its page cap", async () => {
+    const full = Array.from({ length: 50 }, (_, i) => ({
+      runId: `r${String(i)}`,
+      status: "SUCCESS",
+    }));
+    h = startHarness({
+      repos: [repo("r", "l", [pipeline("p", { name: "p" })])],
+      runs: full,
+    });
+    await setCreds(h);
+    const syncable = createDagsterSyncable({ ensureDagsterMcpRunning: async () => {} });
+    await syncable.sync(h.ctx, null);
+    expect(h.fake.runRequests).toHaveLength(5);
   });
 });

@@ -22,16 +22,23 @@ interface FakePrefectConfig {
   // Map of offset -> deployments array for that page.
   pages?: Record<string, unknown[]>;
   status?: number;
+  // Flow runs and failed task runs served on the run endpoints (a missing list is an empty one).
+  runs?: unknown[];
+  failedTasks?: unknown[];
+  // The run endpoints answer HTTP 500.
+  runsFail?: boolean;
 }
 
 interface FakePrefect {
   baseUrl: string;
   requests: RecordedReq[];
+  runRequests: RecordedReq[];
   stop(): void;
 }
 
 function startFakePrefect(config: FakePrefectConfig): FakePrefect {
   const requests: RecordedReq[] = [];
+  const runRequests: RecordedReq[] = [];
   let server: Server | undefined;
   server = Bun.serve({
     port: 0,
@@ -51,7 +58,8 @@ function startFakePrefect(config: FakePrefectConfig): FakePrefect {
         limit = typeof bodyJson["limit"] === "number" ? bodyJson["limit"] : null;
         sort = typeof bodyJson["sort"] === "string" ? bodyJson["sort"] : null;
       }
-      requests.push({
+      const isRun = u.pathname === "/flow_runs/filter" || u.pathname === "/task_runs/filter";
+      (isRun ? runRequests : requests).push({
         method: req.method,
         path: u.pathname,
         offset,
@@ -59,6 +67,12 @@ function startFakePrefect(config: FakePrefectConfig): FakePrefect {
         sort,
         authorization: req.headers.get("authorization"),
       });
+      if (isRun) {
+        if (config.runsFail === true) return new Response("error", { status: 500 });
+        return Response.json(
+          u.pathname === "/flow_runs/filter" ? (config.runs ?? []) : (config.failedTasks ?? []),
+        );
+      }
       if (u.pathname !== "/deployments/filter" || req.method !== "POST") {
         return new Response("not found", { status: 404 });
       }
@@ -71,7 +85,7 @@ function startFakePrefect(config: FakePrefectConfig): FakePrefect {
     },
   });
   const baseUrl = `http://${server.hostname}:${server.port}`;
-  return { baseUrl, requests, stop: () => server?.stop(true) };
+  return { baseUrl, requests, runRequests, stop: () => server?.stop(true) };
 }
 
 interface Harness {
@@ -245,5 +259,68 @@ describe("prefect-sync against Bun.serve fake API", () => {
     expect(result.itemsUpserted).toBe(0);
     expect(result.cursor?.startsWith("nimbus-prefect1:")).toBe(true);
     expect(h.fake.requests).toHaveLength(1);
+  });
+
+  test("indexes recent flow runs as metadata only, with the failed task run names", async () => {
+    h = startHarness({
+      pages: { "0": [deployment("dep1")] },
+      runs: [
+        {
+          id: "run-1",
+          name: "brave-owl",
+          deployment_id: "dep1",
+          state_type: "FAILED",
+          state_name: "Failed",
+          start_time: "2026-06-01T02:00:00+00:00",
+          end_time: "2026-06-01T02:05:00+00:00",
+          auto_scheduled: true,
+          parameters: { customer: "a@example.com" },
+          state: { message: "row 17 had value 4111-1111" },
+        },
+        { id: "run-2", name: "calm-fox", state_type: "COMPLETED", state_name: "Completed" },
+      ],
+      failedTasks: [{ flow_run_id: "run-1", name: "load-0" }],
+    });
+    await setCreds(h);
+    const syncable = createPrefectSyncable({ ensurePrefectMcpRunning: async () => {} });
+    const result = await syncable.sync(h.ctx, null);
+
+    expect(result.itemsUpserted).toBe(3);
+    const rows = h.db
+      .query<{ external_id: string; metadata: string }, []>(
+        "SELECT external_id, metadata FROM item WHERE service = 'prefect' AND type = 'flow_run' ORDER BY external_id",
+      )
+      .all();
+    expect(rows.map((r) => r.external_id)).toEqual(["run-1", "run-2"]);
+    const failed = JSON.parse(rows[0]?.metadata ?? "{}") as Record<string, unknown>;
+    expect(failed["parent_item_id"]).toBe("prefect:dep1");
+    expect(failed["outcome"]).toBe("failed");
+    expect(failed["failed_tasks"]).toEqual(["load-0"]);
+    expect(failed["trigger"]).toBe("schedule");
+    expect(rows[0]?.metadata).not.toContain("4111");
+    expect(rows[0]?.metadata).not.toContain("a@example.com");
+    const orphan = JSON.parse(rows[1]?.metadata ?? "{}") as Record<string, unknown>;
+    expect(orphan["parent_item_id"]).toBeNull();
+  });
+
+  test("a failing run endpoint never fails the deployment sync", async () => {
+    h = startHarness({ pages: { "0": [deployment("a")] }, runsFail: true });
+    await setCreds(h);
+    const syncable = createPrefectSyncable({ ensurePrefectMcpRunning: async () => {} });
+    const result = await syncable.sync(h.ctx, null);
+    expect(result.itemsUpserted).toBe(1);
+    expect(result.cursor?.startsWith("nimbus-prefect1:")).toBe(true);
+  });
+
+  test("the run walk stops at its page cap", async () => {
+    const full = Array.from({ length: 100 }, (_, i) => ({
+      id: `r${String(i)}`,
+      state_type: "COMPLETED",
+    }));
+    h = startHarness({ pages: { "0": [deployment("d")] }, runs: full });
+    await setCreds(h);
+    const syncable = createPrefectSyncable({ ensurePrefectMcpRunning: async () => {} });
+    await syncable.sync(h.ctx, null);
+    expect(h.fake.runRequests).toHaveLength(5);
   });
 });
