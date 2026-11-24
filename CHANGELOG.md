@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [11.13.1](https://github.com/nimbus-agent/Nimbus/compare/v11.13.0...v11.13.1) (2026-11-24)
+
+
+### Bug Fixes
+
+* **cli:** the MCP server reports the CLI's version; record the 2026-07-28 client run ([#2141](https://github.com/nimbus-agent/Nimbus/issues/2141)) ([e332582](https://github.com/nimbus-agent/Nimbus/commit/e332582995253e24f093f740981b7f90c36a2464))
+
 ## [11.13.0](https://github.com/nimbus-agent/Nimbus/compare/v11.12.0...v11.13.0) (2026-11-24)
 
 
