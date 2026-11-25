@@ -161,6 +161,12 @@ describe("routing — local-only prose types", () => {
     }
   });
 
+  test("stackoverflow:answer is local-only prose and never remote-routable", () => {
+    expect(LOCAL_ONLY_PROSE_TYPES.has("stackoverflow:answer")).toBe(true);
+    expect(PROSE_HEAVY_TYPES.has("stackoverflow:answer")).toBe(false);
+    expect(isProseHeavy("stackoverflow", "answer")).toBe(false);
+  });
+
   test("nimbus:capture is local-only prose and never remote-routable", () => {
     expect(LOCAL_ONLY_PROSE_TYPES.has("nimbus:capture")).toBe(true);
     expect(PROSE_HEAVY_TYPES.has("nimbus:capture")).toBe(false);
