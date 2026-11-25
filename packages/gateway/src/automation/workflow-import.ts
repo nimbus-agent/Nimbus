@@ -280,6 +280,78 @@ function commit(
   })();
 }
 
+/** Who imported the workflow being replaced (none for a new one), and whether the signer changes. */
+function priorImportOf(
+  db: Database,
+  existing: WorkflowRow | null,
+  fp: string,
+): {
+  signerChange: { fromFingerprint: string; at: number } | null;
+  importedFromFp12: string | null;
+} {
+  const source = existing === null ? null : readImportSource(db, existing.id);
+  if (source === null) return { signerChange: null, importedFromFp12: null };
+  const importedFromFp12 = source.signerFingerprint.slice(0, 12);
+  if (source.signerFingerprint === fp) return { signerChange: null, importedFromFp12 };
+  return {
+    signerChange: { fromFingerprint: source.signerFingerprint, at: source.importedAt },
+    importedFromFp12,
+  };
+}
+
+/** A signer other than this one whose floor row survives a deleted workflow of the same name. */
+function deletedPriorSignerOf(db: Database, name: string, fp: string): string | null {
+  return (
+    signersForName(db, name).find((r) => r.signerFingerprint !== fp)?.signerFingerprint ?? null
+  );
+}
+
+function floorSeenOf(row: ReturnType<typeof floorFor>): FloorSeen {
+  return row === null ? null : { issuedAt: row.issuedAt, bundleSha256: row.bundleSha256 };
+}
+
+/** The prompt's description of what the import writes over. */
+function promptTargetOf(
+  existing: WorkflowRow | null,
+  importedFromFp12: string | null,
+  stepsSha: string,
+): ImportPromptInput["target"] {
+  if (existing === null) return { kind: "new" };
+  const contentHash = contentHashOf(existing.steps_json);
+  return {
+    kind: "replace",
+    contentSha12: (contentHash ?? sha256(existing.steps_json)).slice(0, 12),
+    updatedAt: existing.updated_at,
+    importedFromFp12,
+    identical: sameContentHash(contentHash, stepsSha),
+    schedule:
+      existing.schedule != null
+        ? { expr: existing.schedule, tz: existing.schedule_tz ?? "" }
+        : null,
+  };
+}
+
+/** The approval text; a prompt too large to show is refused, never cut. */
+function renderPromptOrRefuse(input: ImportPromptInput): string {
+  try {
+    return renderImportPrompt(input);
+  } catch (e) {
+    if (e instanceof ImportPromptTooLargeError) {
+      throw new ImportError(IMPORT_ERR.TOO_LARGE_TO_SHOW, e.message);
+    }
+    throw e;
+  }
+}
+
+function notApprovedError(reason: "declined" | "not_human"): ImportError {
+  return reason === "not_human"
+    ? new ImportError(
+        IMPORT_ERR.NEEDS_HUMAN,
+        "importing a workflow needs a person to answer the prompt (not --yes, a script or an old client)",
+      )
+    : new ImportError(IMPORT_ERR.DECLINED, "the import was not approved; nothing was written");
+}
+
 export async function importWorkflowBundle(
   deps: ImportDeps,
   params: ImportParams,
@@ -323,17 +395,11 @@ export async function importWorkflowBundle(
       name: body.name,
       signerFingerprint: fp,
       stepsSha256: stepsSha,
-      scheduled: existing.schedule !== null && existing.schedule !== undefined,
+      scheduled: existing.schedule != null,
     };
   }
-  let signerChange: { fromFingerprint: string; at: number } | null = null;
-  let importedFromFp12: string | null = null;
+  const { signerChange, importedFromFp12 } = priorImportOf(db, existing, fp);
   if (existing !== null) {
-    const source = readImportSource(db, existing.id);
-    if (source !== null) importedFromFp12 = source.signerFingerprint.slice(0, 12);
-    if (source !== null && source.signerFingerprint !== fp) {
-      signerChange = { fromFingerprint: source.signerFingerprint, at: source.importedAt };
-    }
     if (params.replace !== true) {
       throw new ImportError(
         IMPORT_ERR.REPLACE_REQUIRED,
@@ -347,19 +413,11 @@ export async function importWorkflowBundle(
       );
     }
   }
-  const deletedPriorSigner =
-    existing === null
-      ? (signersForName(db, body.name).find((r) => r.signerFingerprint !== fp)?.signerFingerprint ??
-        null)
-      : null;
+  const deletedPriorSigner = existing === null ? deletedPriorSignerOf(db, body.name, fp) : null;
   // 4. The schedule the owner asked for (never the bundle's: it has no field for one).
   const schedule = scheduleOf(deps, params, bundle.canonicalSteps);
   const showed = showedOf(existing);
-  const floorSeenRow = floorFor(db, fp, body.name);
-  const floorSeen: FloorSeen =
-    floorSeenRow === null
-      ? null
-      : { issuedAt: floorSeenRow.issuedAt, bundleSha256: floorSeenRow.bundleSha256 };
+  const floorSeen = floorSeenOf(floorFor(db, fp, body.name));
   // 5. The approval text, from the stored structure.
   const clearsSchedule = existing?.schedule != null;
   const promptInput: ImportPromptInput = {
@@ -369,23 +427,7 @@ export async function importWorkflowBundle(
     authorLabel: body.author,
     issuedAt: body.issuedAt,
     description: body.description,
-    target:
-      existing === null
-        ? { kind: "new" }
-        : {
-            kind: "replace",
-            contentSha12: (contentHashOf(existing.steps_json) ?? sha256(existing.steps_json)).slice(
-              0,
-              12,
-            ),
-            updatedAt: existing.updated_at,
-            importedFromFp12,
-            identical: sameContentHash(contentHashOf(existing.steps_json), stepsSha),
-            schedule:
-              existing.schedule != null
-                ? { expr: existing.schedule, tz: existing.schedule_tz ?? "" }
-                : null,
-          },
+    target: promptTargetOf(existing, importedFromFp12, stepsSha),
     signerChange,
     deletedPriorSigner,
     restoreOf: restoreAt,
@@ -394,15 +436,7 @@ export async function importWorkflowBundle(
     stepsSha256: stepsSha,
     writeInfo: writeToolInfo,
   };
-  let promptText: string;
-  try {
-    promptText = renderImportPrompt(promptInput);
-  } catch (e) {
-    if (e instanceof ImportPromptTooLargeError) {
-      throw new ImportError(IMPORT_ERR.TOO_LARGE_TO_SHOW, e.message);
-    }
-    throw e;
-  }
+  const promptText = renderPromptOrRefuse(promptInput);
   // 6. A dry run stops here: nothing is written and nobody is asked.
   if (params.dryRun === true) {
     return {
@@ -432,14 +466,7 @@ export async function importWorkflowBundle(
       promptText,
     },
   });
-  if (!approval.approved) {
-    throw new ImportError(
-      approval.reason === "not_human" ? IMPORT_ERR.NEEDS_HUMAN : IMPORT_ERR.DECLINED,
-      approval.reason === "not_human"
-        ? "importing a workflow needs a person to answer the prompt (not --yes, a script or an old client)"
-        : "the import was not approved; nothing was written",
-    );
-  }
+  if (!approval.approved) throw notApprovedError(approval.reason);
   // 8. One transaction: re-check, then write the workflow and its provenance together.
   const id = commit(deps, {
     name: body.name,

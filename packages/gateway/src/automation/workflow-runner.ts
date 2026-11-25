@@ -13,6 +13,12 @@ import { readIndexedUserVersion } from "../index/migrations/runner.ts";
 import { type LearningConfig, learnFromStepRun } from "../standing/approval-learning.ts";
 import { type DeclaredQueryResult, runDeclaredQuery } from "./declared-query.ts";
 import {
+  observeGuardQueries,
+  previewStep,
+  stepLabelOf,
+  type WorkflowStepResult,
+} from "./workflow-dry-run.ts";
+import {
   evaluateGuard,
   type GuardEvaluation,
   guardRequiresPresence,
@@ -20,7 +26,6 @@ import {
   observationText,
   type QueryCount,
 } from "./workflow-guard.ts";
-import { previewHitlActionsForStepText } from "./workflow-hitl-preview.ts";
 import { pruneWorkflowRuns } from "./workflow-run-history.ts";
 import {
   type DeclaredQuery,
@@ -179,17 +184,7 @@ export type RunWorkflowExecutionResult = {
    */
   status: string;
   dryRun: boolean;
-  stepResults: Array<{
-    label?: string;
-    status: string;
-    output?: string;
-    error?: string;
-    hitlActions?: readonly string[];
-    /** A guarded step's `when`, as one sanitised line. */
-    guard?: string;
-    /** Dry run only: what the guard would do now. */
-    evaluation?: string;
-  }>;
+  stepResults: WorkflowStepResult[];
 };
 
 type StepExecOutcome =
@@ -208,10 +203,6 @@ type RunState = {
   readonly workflowName: string;
   readonly startedAt: number;
 };
-
-function stepLabelOf(step: WorkflowStep, stepIndex: number): string {
-  return step.label ?? `step-${String(stepIndex + 1)}`;
-}
 
 function errorOutcome(label: string, err: unknown, halt: boolean): StepExecOutcome {
   return { kind: "err", label, message: err instanceof Error ? err.message : String(err), halt };
@@ -532,95 +523,6 @@ function skippedOnResume(p: RunWorkflowExecutionParams, step: WorkflowStep, i: n
   return p.resume !== undefined && i < p.resume.blockedStep && step.kind !== "query";
 }
 
-/** What the dry run learned about one query a guard names: its count, or why it could not be read. */
-type DryObservation = { readonly count: QueryCount } | { readonly error: string };
-
-const DRY_AS_OF = "as of now; a real run re-reads the index";
-const NOT_EVALUATED = "not evaluated: only the owner's CLI or desktop connection evaluates guards";
-
-/** What a guard would do against the dry run's observations, as one owner-readable line. */
-function dryEvaluation(
-  when: NonNullable<RunWorkflowStep["when"]>,
-  observed: ReadonlyMap<string, DryObservation> | undefined,
-): string {
-  if (observed === undefined) return NOT_EVALUATED;
-  const queries = new Map<string, QueryCount>();
-  for (const g of when) {
-    const o = observed.get(g.count);
-    if (o === undefined) return `cannot tell: query "${g.count}" was not read`;
-    if ("error" in o) return `cannot tell: ${o.error}`;
-    queries.set(g.count, o.count);
-  }
-  const ev = evaluateGuard(when, queries);
-  const counts = ev.observed.map((o) => observationText(o)).join(", ");
-  if (ev.holds) return `would run (selects ${counts}; ${DRY_AS_OF})`;
-  const cappedFailure = ev.observed.some((o) => o.capped && !o.holds);
-  return cappedFailure
-    ? `would not run (selects ${counts}; a query hit its limit, so a comparison other than gt, gte or ne 0 cannot be established; ${DRY_AS_OF})`
-    : `would not run (selects ${counts}; ${DRY_AS_OF})`;
-}
-
-/** One step's dry-run entry: a prompt as before; a query or write shown as the declared form. */
-function previewStep(
-  s: WorkflowStep,
-  i: number,
-  observed: ReadonlyMap<string, DryObservation> | undefined,
-): RunWorkflowExecutionResult["stepResults"][number] {
-  const label = stepLabelOf(s, i);
-  if (s.kind === "query") {
-    return { label, status: "preview", output: JSON.stringify(s.query), hitlActions: [] };
-  }
-  let entry: RunWorkflowExecutionResult["stepResults"][number];
-  if (s.kind === "run") {
-    entry = {
-      label,
-      status: "preview",
-      output: s.run,
-      hitlActions: previewHitlActionsForStepText(s.run),
-    };
-  } else {
-    const row = connectorWriteRowByToolId(s.tool);
-    entry = {
-      label,
-      status: "preview",
-      output: `write ${s.tool} ${JSON.stringify(s.input)}`,
-      hitlActions: row === undefined ? [] : [row.actionType],
-    };
-  }
-  if (s.when !== undefined) {
-    entry.guard = guardText(s.when);
-    entry.evaluation = dryEvaluation(s.when, observed);
-  }
-  return entry;
-}
-
-/**
- * Reads, once each, the queries the guards of `steps` name (read-only bound SELECTs), for a dry run.
- * Only the owner's CLI or desktop connection gets counts (the trigger is derived from the declared
- * kind, never from params): another local kind gets the guard text and no count.
- */
-function observeGuardQueries(
-  p: RunWorkflowExecutionParams,
-  steps: readonly WorkflowStep[],
-): ReadonlyMap<string, DryObservation> | undefined {
-  if (p.trigger !== "owner_cli" && p.trigger !== "owner_ui") return undefined;
-  const named = new Set<string>();
-  for (const s of steps) {
-    if (s.kind !== "query" && s.when !== undefined) for (const g of s.when) named.add(g.count);
-  }
-  const out = new Map<string, DryObservation>();
-  steps.forEach((s, index) => {
-    if (s.kind !== "query" || !named.has(s.label)) return;
-    try {
-      const r = (p.queryRunner ?? runDeclaredQuery)(p.db, s.query);
-      out.set(s.label, { count: { index, values: r.values, capped: r.rows >= s.query.limit } });
-    } catch (err) {
-      out.set(s.label, { error: err instanceof Error ? err.message : String(err) });
-    }
-  });
-  return out;
-}
-
 function executeDryRun(
   p: RunWorkflowExecutionParams,
   wf: { id: string; name: string },
@@ -679,8 +581,8 @@ export async function executeRealRunSteps(
     workflowName: wf.name,
     startedAt: now,
   };
-  const stepResults: RunWorkflowExecutionResult["stepResults"] = [];
-  let notTaken = 0;
+  const run: RunLoop = { p, wf, runId, now, stepResults: [], notTaken: 0 };
+  const { stepResults } = run;
   // Checked once up front too: a zero-step workflow never enters the loop
   // below, so without this an already-aborted signal would be ignored and
   // the run would finalise "done" instead of honouring the cancellation.
@@ -690,51 +592,65 @@ export async function executeRealRunSteps(
   }
   for (let i = 0; i < steps.length; i++) {
     if (isAborted(p)) {
-      finalizeRun(p, wf, runId, "cancelled", now, "Run cancelled", notTaken);
+      finalizeRun(p, wf, runId, "cancelled", now, "Run cancelled", run.notTaken);
       return { runId, status: "cancelled", dryRun: false, stepResults };
     }
     const step = steps[i];
     if (step === undefined || skippedOnResume(p, step, i)) continue;
-    const outcome = await executeWorkflowStep(p, runId, i, step, state);
-    if (outcome.kind === "blocked") {
-      stepResults.push({ label: outcome.label, status: "blocked", output: outcome.message });
-      blockRun(p, wf, runId, now, { stepIndex: i, label: outcome.label, message: outcome.message });
-      return { runId, status: "blocked_on_approval", dryRun: false, stepResults };
-    }
-    if (outcome.kind === "not_taken") {
-      notTaken++;
+    const stop = settleStepOutcome(run, i, await executeWorkflowStep(p, runId, i, step, state));
+    if (stop !== undefined) return { runId, status: stop, dryRun: false, stepResults };
+  }
+  finalizeRun(p, wf, runId, "done", now, null, run.notTaken);
+  return { runId, status: "done", dryRun: false, stepResults };
+}
+
+type RunLoop = {
+  readonly p: RunWorkflowExecutionParams;
+  readonly wf: { id: string; name: string };
+  readonly runId: string;
+  readonly now: number;
+  readonly stepResults: RunWorkflowExecutionResult["stepResults"];
+  notTaken: number;
+};
+
+/** Records one step's outcome; returns the run's final status when that outcome ends the run. */
+function settleStepOutcome(
+  run: RunLoop,
+  i: number,
+  outcome: StepExecOutcome,
+): RunWorkflowExecutionResult["status"] | undefined {
+  const { p, wf, runId, now, stepResults } = run;
+  const label = outcome.label;
+  switch (outcome.kind) {
+    case "blocked":
+      stepResults.push({ label, status: "blocked", output: outcome.message });
+      blockRun(p, wf, runId, now, { stepIndex: i, label, message: outcome.message });
+      return "blocked_on_approval";
+    case "not_taken": {
+      run.notTaken++;
       stepResults.push({
-        label: outcome.label,
+        label,
         status: "not_taken",
         output: outcome.message,
         guard: outcome.guard,
       });
       // A resume was asked to answer a prompt for THIS step. If its condition no longer holds on
       // the fresh counts, stop: later steps would run on data the owner never saw.
-      if (p.resume?.blockedStep === i) {
-        const message = lapsedMessage(outcome);
-        stepResults.push({ label: outcome.label, status: "condition_lapsed", output: message });
-        finalizeRun(p, wf, runId, "condition_lapsed", now, message, notTaken);
-        return { runId, status: "condition_lapsed", dryRun: false, stepResults };
-      }
-      continue;
+      if (p.resume?.blockedStep !== i) return undefined;
+      const message = lapsedMessage(outcome);
+      stepResults.push({ label, status: "condition_lapsed", output: message });
+      finalizeRun(p, wf, runId, "condition_lapsed", now, message, run.notTaken);
+      return "condition_lapsed";
     }
-    if (outcome.kind === "ok") {
-      stepResults.push({
-        label: outcome.label,
-        status: outcome.status ?? "done",
-        output: outcome.reply,
-      });
-      continue;
-    }
-    stepResults.push({ label: outcome.label, status: "error", error: outcome.message });
-    if (outcome.halt) {
-      finalizeRun(p, wf, runId, "error", now, outcome.message, notTaken);
-      return { runId, status: "error", dryRun: false, stepResults };
-    }
+    case "ok":
+      stepResults.push({ label, status: outcome.status ?? "done", output: outcome.reply });
+      return undefined;
+    case "err":
+      stepResults.push({ label, status: "error", error: outcome.message });
+      if (!outcome.halt) return undefined;
+      finalizeRun(p, wf, runId, "error", now, outcome.message, run.notTaken);
+      return "error";
   }
-  finalizeRun(p, wf, runId, "done", now, null, notTaken);
-  return { runId, status: "done", dryRun: false, stepResults };
 }
 
 /** The fixed text of a resumed run that stopped because the blocked step's condition lapsed. */

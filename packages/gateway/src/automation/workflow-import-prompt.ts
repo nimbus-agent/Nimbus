@@ -37,7 +37,7 @@ export class ImportPromptTooLargeError extends Error {
  * and a quote cannot close the quotation it sits in.
  */
 export function escapeBundleText(s: string): string {
-  return escapeDiffText(s).replaceAll("\n", "\\n").replaceAll('"', '\\"');
+  return escapeDiffText(s).replaceAll("\n", String.raw`\n`).replaceAll('"', String.raw`\"`);
 }
 
 /** A bundle string as a quoted, escaped token. */
@@ -53,7 +53,8 @@ export function renderConst(v: JsonValue): string {
   if (Array.isArray(v)) return `[${(v as readonly JsonValue[]).map(renderConst).join(", ")}]`;
   const rec = v as { readonly [key: string]: JsonValue };
   const keys = Object.keys(rec).sort(byCodeUnit);
-  return `{${keys.map((k) => `${q(k)}: ${renderConst(rec[k] as JsonValue)}`).join(", ")}}`;
+  const members = keys.map((k) => `${q(k)}: ${renderConst(rec[k] as JsonValue)}`);
+  return `{${members.join(", ")}}`;
 }
 
 function renderGuard(g: WorkflowGuard): string {
@@ -82,12 +83,12 @@ export function renderStepsVerbatim(steps: readonly WorkflowStep[]): string[] {
     const n = `${String(i + 1)}.`;
     if (step.kind === "query") {
       const qy = step.query;
-      out.push(`  ${n} query ${q(step.label)}`);
-      out.push(
-        `       service: ${q(qy.service)}  type: ${q(qy.type)}  select: ${q(qy.select)}  distinct: ${String(qy.distinct)}  limit: ${String(qy.limit)}`,
-      );
       const where = qy.where.map((p) => renderPredicate(p as Record<string, unknown>));
-      out.push(`       where: [${where.join("; ")}]`);
+      out.push(
+        `  ${n} query ${q(step.label)}`,
+        `       service: ${q(qy.service)}  type: ${q(qy.type)}  select: ${q(qy.select)}  distinct: ${String(qy.distinct)}  limit: ${String(qy.limit)}`,
+        `       where: [${where.join("; ")}]`,
+      );
       return;
     }
     if (step.kind === "write") {

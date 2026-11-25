@@ -191,8 +191,8 @@ function factorsSection(b: IncidentPostmortemBrief): string {
 
 function actionLine(a: PostmortemAction): string {
   const how = a.answerSource === undefined ? "" : ` (answered by ${plain(a.answerSource)})`;
-  const reads =
-    a.subSteps === 0 ? "" : `, ${String(a.subSteps)} read${a.subSteps === 1 ? "" : "s"}`;
+  const plural = a.subSteps === 1 ? "" : "s";
+  const reads = a.subSteps === 0 ? "" : `, ${String(a.subSteps)} read${plural}`;
   return `- ${utcSecondsLabel(a.timestamp)}: ${plain(a.actionType)} ${a.verdict}${how}${reads}`;
 }
 
@@ -230,14 +230,16 @@ function promptLines(a: PostmortemAction): string[] {
   return [`  Prompt shown (sha256 ${a.prompt.sha256.slice(0, 12)}):`, ...lines];
 }
 
+function decisionLine(a: PostmortemAction): string {
+  const answered = a.answerSource === undefined ? "" : `, answered by ${plain(a.answerSource)}`;
+  return `- audit #${String(a.auditId)}, ${utcSecondsLabel(a.timestamp)}: ${plain(a.actionType)}, decision ${a.verdict}${answered}, record version ${String(a.linkVersion)}`;
+}
+
 function decisionLogSection(b: IncidentPostmortemBrief): string {
   const entries =
     b.actions.length === 0
       ? ["_No Nimbus action was linked to this record._"]
-      : b.actions.flatMap((a) => [
-          `- audit #${String(a.auditId)}, ${utcSecondsLabel(a.timestamp)}: ${plain(a.actionType)}, decision ${a.verdict}${a.answerSource === undefined ? "" : `, answered by ${plain(a.answerSource)}`}, record version ${String(a.linkVersion)}`,
-          ...promptLines(a),
-        ]);
+      : b.actions.flatMap((a) => [decisionLine(a), ...promptLines(a)]);
   return block(POSTMORTEM_DECISION_LOG_HEADING, [
     ...entries,
     "",

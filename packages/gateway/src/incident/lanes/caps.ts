@@ -1,4 +1,3 @@
-import { byCodeUnit } from "../../util/canonical-json.ts";
 import type { GapNote, IncidentRecordV1 } from "../incident-record-types.ts";
 
 /**
@@ -32,7 +31,7 @@ export function oneLine(s: string, max: number = TITLE_MAX_CODEPOINTS): string {
 }
 
 /** Compare by code unit (never by locale), the one comparator every lane sort uses. */
-export const codeUnitCompare = byCodeUnit;
+export { byCodeUnit as codeUnitCompare } from "../../util/canonical-json.ts";
 
 export type GapCategory = GapNote["category"];
 

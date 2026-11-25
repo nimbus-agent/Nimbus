@@ -5,7 +5,6 @@ import type { SourceMapping } from "../sources/source-mapping.ts";
 import { emitBriefWithSynthesis } from "./_lib/emit-brief.ts";
 import type { GapNote } from "./_lib/findings.ts";
 import { detectEmptyIndex } from "./_lib/gap-notes.ts";
-import { NEGOTIATE_EVIDENCE_LIMIT } from "./_lib/negotiate/evidence.ts";
 import {
   decodeLaneResults,
   detectMissingErrorIssuePersonEdges,
@@ -20,7 +19,6 @@ import {
   laneIncidents,
   laneOwnership,
   laneTickets,
-  OWNERSHIP_LIMIT,
 } from "./_lib/negotiate/lanes-work.ts";
 import { laneWriting, personalDocsSources } from "./_lib/negotiate/lanes-writing.ts";
 import { detectUnmappedGitIdentity, resolveSubject } from "./_lib/negotiate/subject.ts";
@@ -30,7 +28,9 @@ import type { NegotiateBrief, NegotiateInput } from "./_lib/negotiate-types.ts";
 import { subAgent } from "./_lib/sub-agent.ts";
 import type { SynthesisRunner } from "./_lib/synthesis-llm.ts";
 
-export { NEGOTIATE_EVIDENCE_LIMIT, OWNERSHIP_LIMIT, reduceLaneResults };
+export { NEGOTIATE_EVIDENCE_LIMIT } from "./_lib/negotiate/evidence.ts";
+export { OWNERSHIP_LIMIT } from "./_lib/negotiate/lanes-work.ts";
+export { reduceLaneResults };
 
 const DEFAULT_SINCE_MS = 90 * 24 * 60 * 60 * 1000;
 /**
