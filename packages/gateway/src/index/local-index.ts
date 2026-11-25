@@ -29,7 +29,7 @@ import { hybridSearch } from "../search/hybrid.ts";
 // Aliased to this file's names: `ItemRow` is the same `item` row shape hybrid search selects, and
 // `ftsTitleMatchQuery` is the name engine/ comments use when they describe its tokenising.
 import { ftsMatchQuery as ftsTitleMatchQuery } from "../search/hybrid-internal.ts";
-import type { HybridSearchOptions, HybridIndexedItem as ItemRow } from "../search/hybrid-types.ts";
+import type { HybridIndexedItem as ItemRow } from "../search/hybrid-types.ts";
 import {
   clearSchedulerCursor,
   countItemsForService,
@@ -43,6 +43,7 @@ import {
 import { statusLastError } from "../sync/status-last-error.ts";
 import type { SyncStatus } from "../sync/types.ts";
 import { deleteChatReadMarkersForService } from "./chat-read-marker-store.ts";
+import { buildHybridSearchOptions } from "./hybrid-search-options.ts";
 import {
   type AtClause,
   annotateStateAt,
@@ -781,30 +782,12 @@ export class LocalIndex {
       const t0 = performance.now();
       try {
         const outcome = await ss.embedQueryDualOutcome(nameQ);
-        const dual = outcome.vectors;
-        const hybridOpts: HybridSearchOptions = {
-          query: nameQ,
-          limit: query.limit ?? 50,
-          semantic: true,
-          embeddingModel: ss.model,
-          contextChunks: options?.contextChunks ?? 2,
-        };
-        if (query.service !== undefined && query.service !== "") {
-          hybridOpts.service = query.service;
-        }
-        if (query.itemType !== undefined && query.itemType !== "") {
-          hybridOpts.itemType = query.itemType;
-        }
-        if (query.atMs !== undefined) {
-          hybridOpts.at = buildAtClause(this.db, query.atMs, "i");
-        }
-        if (dual.vec384 !== null) {
-          hybridOpts.queryEmbedding = dual.vec384;
-        }
-        if (dual.vec1536 !== null && dual.model1536 !== null) {
-          hybridOpts.queryEmbedding1536 = dual.vec1536;
-          hybridOpts.embeddingModel1536 = dual.model1536;
-        }
+        const hybridOpts = buildHybridSearchOptions(
+          this.db,
+          query,
+          { query: nameQ, embeddingModel: ss.model, contextChunks: options?.contextChunks ?? 2 },
+          outcome.vectors,
+        );
         // Snapshot the backfill pass when RANKING starts, not before the query embedding: that
         // await can span the whole embedding budget, during which a pass may start or finish.
         const retrieval = retrievalFromOutcome(outcome, ss.activeBackfillPass());
