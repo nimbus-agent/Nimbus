@@ -264,6 +264,86 @@ describe("stackoverflow-sync answers against Bun.serve fake API", () => {
     expect(second.itemsUpserted).toBe(5);
   });
 
+  test("new questions posted between syncs do not shift where the answers pass continues", async () => {
+    const total = MAX_ANSWER_REQUESTS_PER_SYNC + 5;
+    const page = Array.from({ length: total }, (_, i) => question(i + 1));
+    const answers: Record<string, FakeAnswers> = { "9001": [answer(90011, 9001)] };
+    for (let i = 1; i <= total; i += 1) {
+      answers[String(i)] = [answer(1000 + i, i)];
+    }
+    answers["9002"] = [answer(90021, 9002)];
+    h = await configured({ pages: [page], answers });
+
+    const first = await syncable().sync(h.ctx, null);
+    expect(answersRequestIds(h.fake)).toHaveLength(MAX_ANSWER_REQUESTS_PER_SYNC);
+
+    // Two questions are posted before the next sync. The list is newest first, so every older
+    // question moves down two places.
+    page.unshift(question(9002), question(9001));
+    h.fake.requests.length = 0;
+    const second = await syncable().sync(h.ctx, first.cursor);
+
+    // The pass continues with the questions it had not reached: none twice, none skipped.
+    expect(answersRequestIds(h.fake)).toEqual(
+      Array.from({ length: 5 }, (_, i) => String(MAX_ANSWER_REQUESTS_PER_SYNC + i + 1)),
+    );
+
+    // Having reached the oldest question, the next pass starts again at the newest.
+    h.fake.requests.length = 0;
+    await syncable().sync(h.ctx, second.cursor);
+    expect(answersRequestIds(h.fake).slice(0, 3)).toEqual(["9002", "9001", "1"]);
+  });
+
+  test("a cursor from before the question-id rotation point starts from the newest question", async () => {
+    h = await configured({
+      pages: [[question(1), question(2), question(3)]],
+      answers: { "1": [answer(11, 1)], "2": [answer(21, 2)], "3": [answer(31, 3)] },
+    });
+    // The first version of the answers pass stored a list position: { pass: 1, answersFrom: 2 }.
+    const oldCursor = `nimbus-stackoverflow1:${Buffer.from(
+      JSON.stringify({ pass: 1, answersFrom: 2 }),
+      "utf8",
+    ).toString("base64url")}`;
+
+    await syncable().sync(h.ctx, oldCursor);
+
+    expect(answersRequestIds(h.fake)).toEqual(["1", "2", "3"]);
+  });
+
+  test("a cursor whose question is no longer listed starts from the newest question", async () => {
+    const total = MAX_ANSWER_REQUESTS_PER_SYNC + 5;
+    const page = Array.from({ length: total }, (_, i) => question(i + 1));
+    const answers: Record<string, FakeAnswers> = {};
+    for (let i = 1; i <= total; i += 1) {
+      answers[String(i)] = [answer(1000 + i, i)];
+    }
+    h = await configured({ pages: [page], answers });
+    const first = await syncable().sync(h.ctx, null);
+
+    // The last question the first pass handled is deleted before the next sync.
+    page.splice(MAX_ANSWER_REQUESTS_PER_SYNC - 1, 1);
+    h.fake.requests.length = 0;
+    await syncable().sync(h.ctx, first.cursor);
+
+    expect(answersRequestIds(h.fake)[0]).toBe("1");
+    expect(answersRequests(h.fake)).toHaveLength(MAX_ANSWER_REQUESTS_PER_SYNC);
+  });
+
+  test("a question listed on two pages gets one answers request", async () => {
+    // A question posted during the walk pushes the last question of page 1 onto page 2.
+    h = await configured({
+      pages: [
+        [question(1), question(2)],
+        [question(2), question(3)],
+      ],
+      answers: { "1": [answer(11, 1)], "2": [answer(21, 2)], "3": [answer(31, 3)] },
+    });
+
+    await syncable().sync(h.ctx, null);
+
+    expect(answersRequestIds(h.fake)).toEqual(["1", "2", "3"]);
+  });
+
   test("no answers request is made when no listed question has answers", async () => {
     h = await configured({
       pages: [[question(1, { answerCount: 0 }), question(2, { answerCount: undefined })]],
