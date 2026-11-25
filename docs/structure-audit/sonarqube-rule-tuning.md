@@ -541,6 +541,28 @@ written without growing the file (`engine/before-state.ts`, `engine/run-ask.ts`,
 `egress/egress-verify.ts`). `typescript:S107` and `S1788` on `ipc/lan-client.ts`
 `sendFederatedOverWire` stay open: its callers are the federated agents outside this sweep's scope.
 
+## 2026-11-25 — gateway features sweep: 19 loops accepted on the board
+
+The sweep of the gateway feature folders (`index`, `incident`, `investigation`, `iac-drift`, `debt`,
+`automation`, `graph`, …) fixed 132 findings in code and accepted 19 `typescript:S9382` loops on the
+board under the 2026-10-03 rule, each with its reason as an issue comment. No marker was added:
+
+- **Retention prunes (9):** `index/dbt-test-retention.ts`, `index/item-history-retention.ts` (4),
+  `index/orchestration-run-retention.ts` (3) and `index/schema-history-retention.ts` delete one batch per
+  synchronous SQLite transaction and yield to the event loop between batches, so IPC stays responsive.
+- **Long passes that yield or re-run (5):** `incident/incident-engine.ts` (3: one record at a time with a
+  yield, one shared assembler, a pass re-run while a newer sync asked for one) and
+  `graph/regraph-once.ts` (one item type per slice, yielding between slices); and
+  `automation/workflow-scheduler.ts`, which runs due workflows oldest first and re-checks retirement
+  before each.
+- **One child process or one budget at a time (3):** `iac-drift/drift-runner.ts` (one sandboxed Terraform
+  child per workdir, holding that workdir's credential), `debt/debt-scan.ts` (up to three `git` children
+  per root) and `investigation/investigation-live.ts` (one Sentry read per project inside one shared time
+  budget, recomputed before each read).
+- **Ordered deliveries (2):** `automation/watcher-chat-notifier.ts` delivers one queued notice at a time
+  (the breaker and the freshness check read the previous outcome) and `whenIdle` re-checks the live set
+  after each wait.
+
 If you disable a rule, record:
 
 - Rule key (e.g., `typescript:S1135`)
