@@ -35,9 +35,10 @@ export const RULE_ANCHORS: readonly string[] = [
   "packages/gateway/src/incident-update/update-send.ts", // D46(e) -- the owner's incident update post, a linked owner action (IC9b)
   "packages/gateway/src/finops/cost-series.ts", // D48 — FinOps cost code is inert
   "packages/gateway/src/automation/workflow-import.ts", // D50 - the only way a workflow enters from outside
+  "packages/gateway/src/index/schema-history.ts", // D24 (schema-history-confined) - the only writer of the schema history
   "packages/gateway/src/memory/episodic-store.ts", // D52 - the only reader and writer of the episodic memory tables
   "packages/gateway/src/toolgen/toolgen-model-door.ts", // D51 - the model's only door to a saved generated tool
-  "packages/gateway/src/ipc/lan-legacy.ts", // D47 — the only home of the v1 static-box LAN path
+  "packages/gateway/src/ipc/lan-session.ts", // D47 — the only record sealer of the LAN wire (Noise); no v1 path exists
   "packages/gateway/src/platform/sandbox/write-grant-check.ts", // D10 user-write — a file the rule reads and then permits
   "packages/gateway/src/engine/executor.ts", // D22 — connectors.dispatch chokepoint
   "packages/gateway/src/ipc/agents-rpc.ts", // D22(d) — agent emitter confinement

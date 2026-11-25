@@ -318,26 +318,29 @@ why at the time it was written, not a standing fact. Blockers clear without noti
 before assuming it still holds**, take the major in the pass where it clears, and delete its entry in
 that same pass.
 
-- **TypeScript 7 in `packages/docs`.** The rest of the repository is on TypeScript 7. Under 7.0.2,
-  `astro check` (the docs typecheck and build step) refuses to run: "astro check does not currently
-  support TypeScript 7.0". Astro's TypeScript 7 route needs 7.1+, and `@astrojs/check` 0.9.10 still
-  declares `typescript: ^5.0.0 || ^6.0.0`. The root `typescript-compiler-api` alias also stays on 6, for a
-  different reason: TypeScript 7 exports its compiler API only under explicitly unstable subpaths, and
-  `scripts/cleanup/strip-comments.ts` and `scripts/cleanup/survey-oc.ts` drive it directly.
-  `audit:boundaries` depends on the alias too. dependency-cruiser (18.5.0, its latest release) parses
-  TypeScript only through a `typescript` below 7, so
-  `scripts/structure-audit/dependency-cruiser-ts6-preload.ts` hands it this alias. It cannot rely on
-  whichever `typescript` bun links where dependency-cruiser looks: that link flips between 6 and 7 from one
-  install to the next, and on 7 the gate cruised one file and passed. Moving the alias to 7 before
-  dependency-cruiser supports it fails `audit:boundaries` loudly. To re-check: `@astrojs/check`'s peer
-  range, then `bun run typecheck` with the docs workspace on 7. Separately, check whether the compiler-API
-  subpaths have stabilised, and whether a dependency-cruiser release supports TypeScript 7.
+- **TypeScript 7 in `packages/docs`.** The rest of the repository is on TypeScript 7. Re-tested on
+  2026-11-24 with 7.0.2: `astro check` (the docs typecheck and build step) still stops with "astro check
+  does not currently support TypeScript 7.0", and `@astrojs/check` 0.9.12 still declares
+  `typescript: ^5.0.0 || ^6.0.0`. Astro's TypeScript 7 route is the experimental
+  `@astrojs/ts-content-mapper`, which needs TypeScript 7.1+. The root `typescript-compiler-api` alias also
+  stays on 6, for two reasons, both re-tested on the same date. First, TypeScript 7 still exports its
+  compiler API only under explicitly unstable subpaths (`typescript/unstable/*` in 7.0.2), and
+  `scripts/cleanup/strip-comments.ts` and `scripts/cleanup/survey-oc.ts` drive it directly. Second,
+  `audit:boundaries` hands the alias to dependency-cruiser through
+  `scripts/structure-audit/dependency-cruiser-ts6-preload.ts`. dependency-cruiser 18.9.0 (its latest
+  release) accepts `typescript` `>=2.0.0 <7.0.0 || >=7.1.0 <8.0.0` and reports "typescript@7.0 is not
+  supported as its API lacks what dependency-cruiser needs", so with the alias on 7.0.2 the gate cruised
+  nothing and failed loudly. It cannot rely on whichever `typescript` bun links where dependency-cruiser
+  looks: that link flips between 6 and 7 from one install to the next. To re-check: whether TypeScript 7.1
+  is stable, then `@astrojs/check`'s peer range and `bun run typecheck` with the docs workspace on 7, and
+  `bun run audit:boundaries` with the alias on 7.1+.
 - **msw 3** (gateway devDependency). msw 3 intercepts requests by patching `node:net`/`tls` sockets, and
-  Bun's native `fetch` never goes through them. Under msw 3.0.2 the gateway's handler tests therefore sent
-  real requests to Google and GitHub instead of being intercepted. msw 3 also renamed
-  `onUnhandledRequest` to `onUnhandledFrame`, and the old name is silently ignored at runtime (only
-  tsc flags it). To re-check: run the four tests in `msw-handlers.test.ts` on the new version with the
-  network unplugged.
+  Bun's native `fetch` never goes through them. Re-tested on 2026-11-24 with msw 3.0.7 on Bun 1.4.5 (with
+  `onUnhandledRequest` renamed to `onUnhandledFrame`, which msw 3 requires and silently ignores under the
+  old name): all 15 tests in `msw-handlers.test.ts` failed, because the requests reached the real Google
+  and GitHub APIs (a probe handler for `https://www.googleapis.com/probe-x` was never hit, and an
+  unhandled request returned Google's own 404 instead of an error). To re-check: run the same file, and
+  a probe like that one, on the new version.
 - **WiX 6 and 7** (the release MSI). Their binaries are released under the Open Source Maintenance Fee
   EULA, so adopting them is a licensing decision for the maintainer, not a version bump.
 

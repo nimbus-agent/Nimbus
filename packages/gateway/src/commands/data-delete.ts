@@ -6,6 +6,7 @@ import {
 import { deleteChatReadMarkersForService } from "../index/chat-read-marker-store.ts";
 import { deleteItemHistoryForService } from "../index/item-history.ts";
 import type { LocalIndex } from "../index/local-index.ts";
+import { deleteSchemaHistoryForService } from "../index/schema-history.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 
 export type DataDeletePreflight = {
@@ -108,6 +109,7 @@ export async function runDataDelete(input: RunDataDeleteInput): Promise<RunDataD
     dbRun(input.index.rawDb, `DELETE FROM item WHERE service = ?`, [input.service]);
     // An owner erasure: the service's item-history change log goes with it (Phase 10 IC1).
     deleteItemHistoryForService(input.index.rawDb, input.service);
+    deleteSchemaHistoryForService(input.index.rawDb, input.service);
     deleteChatReadMarkersForService(input.index.rawDb, input.service);
     eraseIncidentDataForService(input.index.rawDb, input.service);
     dbRun(

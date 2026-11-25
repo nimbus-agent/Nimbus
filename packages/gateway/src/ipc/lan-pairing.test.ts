@@ -56,7 +56,7 @@ describe("pairing code format (D-FS-16)", () => {
     w.open(CODE);
     expect(() => w.open("abc")).toThrow();
     expect(w.isOpen()).toBe(true);
-    expect(w.consume(CODE)).toBe(true);
+    expect(w.consumeOpen()).toBe(true);
   });
 });
 
@@ -86,30 +86,20 @@ describe("derivePairingPsk (D-FS-6)", () => {
 });
 
 describe("PairingWindow", () => {
-  test("consume returns true within window", () => {
+  test("consumeOpen closes an open window once: of two racers only the first wins", () => {
     const w = new PairingWindow(5_000);
     w.open(CODE);
-    expect(w.consume(CODE)).toBe(true);
+    expect(w.consumeOpen()).toBe(true);
+    expect(w.consumeOpen()).toBe(false);
+    expect(w.isOpen()).toBe(false);
   });
 
-  test("consume returns false outside window", () => {
-    const w = new PairingWindow(10, () => Date.now());
+  test("consumeOpen refuses an expired window", () => {
+    let now = 1_000;
+    const w = new PairingWindow(10, () => now);
     w.open(CODE);
-    const later = Date.now() + 10_000;
-    expect(w.consumeAt(CODE, later)).toBe(false);
-  });
-
-  test("consume returns false on wrong code", () => {
-    const w = new PairingWindow(5_000);
-    w.open(CODE);
-    expect(w.consume(OTHER)).toBe(false);
-  });
-
-  test("consume is single-shot (closes window)", () => {
-    const w = new PairingWindow(5_000);
-    w.open(CODE);
-    expect(w.consume(CODE)).toBe(true);
-    expect(w.consume(CODE)).toBe(false);
+    now += 10_000;
+    expect(w.consumeOpen()).toBe(false);
   });
 
   test("S3-F9 - getExpiresAt matches the windowMs the constructor was given", () => {
@@ -128,13 +118,13 @@ describe("PairingWindow", () => {
     expect(w.getExpiresAt()).toBeNull();
   });
 
-  test("S3-F9 - consume() boundary aligns with getExpiresAt", () => {
-    const t0 = 100_000;
-    const w = new PairingWindow(5_000, () => t0);
+  test("S3-F9 - the window boundary aligns with getExpiresAt", () => {
+    let now = 100_000;
+    const w = new PairingWindow(5_000, () => now);
     w.open(CODE);
-    const expiresAt = w.getExpiresAt();
-    expect(expiresAt).toBe(t0 + 5_000);
-    expect(w.consumeAt(CODE, t0 + 5_000)).toBe(true);
+    expect(w.getExpiresAt()).toBe(100_000 + 5_000);
+    now = 100_000 + 5_000;
+    expect(w.consumeOpen()).toBe(true);
     expect(w.getExpiresAt()).toBeNull();
   });
 });

@@ -49,7 +49,6 @@ async function lanStatus(): Promise<void> {
       enabled: boolean;
       pairingOpen: boolean;
       listenAddr: string | null;
-      minProtocol?: 1 | 2;
       peers?: Array<{ peerId: string; direction: string; protoVersion: 1 | 2 }>;
       peersByProtocol?: { v1: number; v2: number };
     }>("lan.getStatus", {}),
@@ -57,15 +56,16 @@ async function lanStatus(): Promise<void> {
   console.log(`LAN enabled:  ${String(result.enabled)}`);
   console.log(`Pairing open: ${String(result.pairingOpen)}`);
   console.log(`Listen addr:  ${result.listenAddr ?? "(none)"}`);
-  console.log(`Min protocol: ${String(result.minProtocol ?? 1)}`);
   const by = result.peersByProtocol ?? { v1: 0, v2: 0 };
-  console.log(`Peers:        ${String(by.v2)} on v2 (forward secret), ${String(by.v1)} on v1`);
+  console.log(
+    `Peers:        ${String(by.v2)} on v2 (forward secret), ${String(by.v1)} on v1 (cannot connect)`,
+  );
   for (const p of result.peers ?? []) {
     console.log(`  ${p.peerId.padEnd(24)} ${p.direction.padEnd(9)} v${String(p.protoVersion)}`);
   }
   if (by.v1 > 0) {
     console.log(
-      `WARNING: ${String(by.v1)} peer(s) still use the v1 LAN wire, which a later holder of the pairing key can decrypt. A peer moves to v2 after one session with an upgraded gateway, or when you pair it again.`,
+      `WARNING: ${String(by.v1)} paired peer(s) are still recorded on the v1 LAN wire, which this version no longer speaks, so they are refused. Upgrade each one to this release or newer; it moves to v2 on its first session with this gateway. If it cannot be upgraded, remove it (nimbus lan remove <peerId>).`,
     );
   }
 }

@@ -2,6 +2,23 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [11.14.0](https://github.com/nimbus-agent/Nimbus/compare/v11.13.1...v11.14.0) (2026-11-25)
+
+
+### Features
+
+* **gateway:** column-level warehouse schema diff in the Data Incident Brief ([#2150](https://github.com/nimbus-agent/Nimbus/issues/2150)) ([5c29ff2](https://github.com/nimbus-agent/Nimbus/commit/5c29ff215471d0e7cc6790300ed434ba4f8e92d8))
+* **gateway:** dbt Cloud test results in the Data Incident Brief data lane ([#2147](https://github.com/nimbus-agent/Nimbus/issues/2147)) ([e30e736](https://github.com/nimbus-agent/Nimbus/commit/e30e736147ce7bb9ebc43daee9a46bfacdd608fc))
+* **gateway:** index Airflow, Dagster and Prefect runs for the Data Incident Brief ([#2148](https://github.com/nimbus-agent/Nimbus/issues/2148)) ([04c1fa2](https://github.com/nimbus-agent/Nimbus/commit/04c1fa22557567d137fa4f78f26ff6aac23e50c4))
+* **gateway:** remove the old LAN wire, a peer from before LAN forward secrecy must be upgraded (Phase 10 FS3) ([#2146](https://github.com/nimbus-agent/Nimbus/issues/2146)) ([7c0d8c1](https://github.com/nimbus-agent/Nimbus/commit/7c0d8c129e64e2611bc73dd7b8f69cd1bb0b2fea))
+
+## [11.13.1](https://github.com/nimbus-agent/Nimbus/compare/v11.13.0...v11.13.1) (2026-11-24)
+
+
+### Bug Fixes
+
+* **cli:** the MCP server reports the CLI's version; record the 2026-07-28 client run ([#2141](https://github.com/nimbus-agent/Nimbus/issues/2141)) ([e332582](https://github.com/nimbus-agent/Nimbus/commit/e332582995253e24f093f740981b7f90c36a2464))
+
 ## [11.13.0](https://github.com/nimbus-agent/Nimbus/compare/v11.12.0...v11.13.0) (2026-11-24)
 
 

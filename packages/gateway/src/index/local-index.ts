@@ -308,7 +308,7 @@ export interface LanPeerRow {
   proto_version: number;
 }
 
-export const CURRENT_SCHEMA_VERSION = 107;
+export const CURRENT_SCHEMA_VERSION = 108;
 
 // `role_pack_card_dismissed`: the desktop's "Try a role pack" card, set once when an upgraded user
 // dismisses it so it never returns (role packs P5).
@@ -1005,22 +1005,6 @@ export class LocalIndex {
 
   public addLanPeer(params: LanPeerInsert): void {
     insertLanPeer(this.db, params);
-  }
-
-  private lanMinProtocolValue: 1 | 2 = 1;
-
-  /**
-   * `[lan] min_protocol` as the CLIENT side of the LAN wire reads it. Every outbound federation call
-   * already holds the index (it reads the peer row and writes the ratchet), so the floor lives next
-   * to them rather than being threaded through every agent, HTTP and ChatOps context. Set once at
-   * boot by `platform/assemble.ts`; defaults to 1 (OR-FS-1).
-   */
-  public setLanMinProtocol(version: 1 | 2): void {
-    this.lanMinProtocolValue = version;
-  }
-
-  public lanMinProtocol(): 1 | 2 {
-    return this.lanMinProtocolValue;
   }
 
   /**

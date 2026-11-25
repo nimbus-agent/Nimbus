@@ -97,7 +97,7 @@ test("payoff: teammate invokes a team-vault tool on the anchor over the wire —
         "federation.invoke",
         body,
         undefined,
-        { known: 1, minProtocol: 1 },
+        { known: 1 },
       ) as Promise<WireInvokeResult>;
 
     // 2. granted invoke → ok, returns the tool result, and NO secret crosses the wire.

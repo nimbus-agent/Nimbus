@@ -7,8 +7,8 @@ import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { dispatchFederationRpc, type FederationRpcContext } from "../ipc/federation-rpc.ts";
 import { outboundPairHandshake, sendFederatedOverWire } from "../ipc/lan-client.ts";
 import { generateBoxKeypair } from "../ipc/lan-crypto.ts";
-import { sendFederatedLegacy } from "../ipc/lan-legacy.ts";
 import { generatePairingCode, PairingWindow } from "../ipc/lan-pairing.ts";
+import { connectRaw } from "../ipc/testing/lan-v2.test-helpers.ts";
 import { type DeletionRecord, verifyDeletionRecord } from "../policy/deletion-record.ts";
 import { encodeBase64 } from "../util/base64.ts";
 import { generateEd25519Keypair } from "../util/ed25519.ts";
@@ -137,7 +137,7 @@ test("onMessage forces the authenticated peerId (body peerId cannot impersonate)
     "federation.query",
     { namespace: "ns-imp", purpose: "test", peerId: "peer:bogus" },
     undefined,
-    { known: 1, minProtocol: 1 },
+    { known: 1 },
   );
 
   // If the answerer had honoured the body peerId, there would be no grant for "peer:bogus"
@@ -191,7 +191,7 @@ test("onMessage throws on an unhandled federation method (-32601 miss)", async (
       "federation.bogusMethod",
       {},
       undefined,
-      { known: 1, minProtocol: 1 },
+      { known: 1 },
     );
   } catch {
     threw = true;
@@ -257,7 +257,7 @@ test("buildFederationLanServer threads purgeSign + deletePurgeContributions into
     "federation.purge",
     { externalId: "user-99" },
     undefined,
-    { known: 1, minProtocol: 1 },
+    { known: 1 },
   )) as { kind: string; record: DeletionRecord; sig: string };
 
   expect(res.kind).toBe("ok");
@@ -339,7 +339,7 @@ test("onMessage uses body={} fallback when params is null (non-object arm)", asy
       "federation.expertise",
       null, // null params → body = {} → forced = {peerId} only → requireString(rec,"query") fails
       undefined,
-      { known: 1, minProtocol: 1 },
+      { known: 1 },
     );
   } catch {
     threw = true;
@@ -380,7 +380,7 @@ test("buildFederationLanServer threads explicit discovery + pairing into ctx (??
     "federation.expertise",
     { query: "deploy docs", purpose: "coverage-test" },
     undefined,
-    { known: 1, minProtocol: 1 },
+    { known: 1 },
   )) as { rank: string };
 
   // At least one item matched → rank is not "none"
@@ -427,7 +427,7 @@ test("buildFederationLanServer threads teamVault + identityGuard + delegateAppro
     "federation.expertise",
     { query: "test query", purpose: "coverage" },
     undefined,
-    { known: 1, minProtocol: 1 },
+    { known: 1 },
   )) as { rank: string };
 
   expect(["none", "low", "medium", "high"].includes(res.rank)).toBe(true);
@@ -467,7 +467,7 @@ test("buildFederationLanServer threads preflight into ctx (preflight set arm)", 
     "federation.expertise",
     { query: "preflight test", purpose: "coverage" },
     undefined,
-    { known: 1, minProtocol: 1 },
+    { known: 1 },
   )) as { rank: string };
 
   expect(["none", "low", "medium", "high"].includes(res.rank)).toBe(true);
@@ -490,10 +490,6 @@ test("pairingServiceFor adapts a PairingWindow to the PairingService interface",
   expect(svc.isOpen()).toBe(true);
   expect(typeof svc.getExpiresAt()).toBe("number");
 
-  // consume(): wrong code rejected, correct code accepted
-  expect(svc.consume("000000")).toBe(false);
-  expect(svc.consume(code)).toBe(true);
-
   // close(): re-open then close clears the window
   svc.open(generatePairingCode());
   expect(svc.isOpen()).toBe(true);
@@ -509,20 +505,9 @@ test("EMPTY_DISCOVERY and EMPTY_PEER_PAIRING are inert empty providers", async (
   expect(EMPTY_PEER_PAIRING.listPeers()).toEqual([]);
 });
 
-// --- LAN forward secrecy (FS1): the ratchet and [lan] min_protocol, end to end -------------------
+// --- LAN forward secrecy (FS1): the ratchet, end to end (FS3: no old wire) -------------------
 
-/** The message a promise rejects with ("" if it resolves). Used instead of `.rejects`: on Bun 1.3.14 / Windows
- *  `await expect(<socket-closed rejection>).rejects.toThrow()` crashed the runtime in this file. */
-async function errorOf(promise: Promise<unknown>): Promise<string> {
-  try {
-    await promise;
-    return "";
-  } catch (e) {
-    return (e as Error).message;
-  }
-}
-
-function startFederation(minProtocol?: 1 | 2) {
+function startFederation() {
   const db = new Database(":memory:");
   runIndexedSchemaMigrations(db, LocalIndex.SCHEMA_VERSION);
   const index = new LocalIndex(db);
@@ -537,7 +522,6 @@ function startFederation(minProtocol?: 1 | 2) {
       pairingWindowSeconds: 60,
       maxFailedAttempts: 5,
       lockoutSeconds: 60,
-      ...(minProtocol === undefined ? {} : { minProtocol }),
     },
     consentTimeoutMs: 1000,
     notify: () => {},
@@ -561,7 +545,20 @@ function askerSide(hostPubkey: Uint8Array, port: number) {
   return { index, row };
 }
 
-test("a v2 session ratchets both rows to 2, and the old wire is then refused for that peer", async () => {
+/** What an old-wire (v1) hello for `askerKp` gets from the host: whether it was closed, and the bytes back. */
+async function oldWireHello(port: number, askerKp: { publicKey: Uint8Array }) {
+  const conn = await connectRaw(port);
+  const body = new TextEncoder().encode(
+    JSON.stringify({
+      kind: "hello",
+      client_pubkey: Buffer.from(askerKp.publicKey).toString("base64"),
+    }),
+  );
+  conn.writeFrame(body);
+  return { closed: await conn.closed(), bytes: conn.received().length };
+}
+
+test("a v2 session ratchets both rows to 2; an old-wire hello for that peer gets nothing", async () => {
   const h = startFederation();
   await h.built.lanServer.start();
   stop = () => h.built.lanServer.stop();
@@ -585,64 +582,18 @@ test("a v2 session ratchets both rows to 2, and the old wire is then refused for
   expect(res.kind).toBe("error");
   expect(h.index.getLanPeerByPubkey(askerKp.publicKey)?.proto_version).toBe(2); // responder
   expect(asker.row().proto_version).toBe(2); // initiator
-
-  // Both sides now refuse the old wire for each other.
-  expect(
-    await errorOf(
-      sendFederatedLegacy("127.0.0.1", port, askerKp, h.identity.publicKey, "federation.query", {}),
-    ),
-  ).toBe("lan-client: connection closed mid-exchange");
-  // ... and the ratcheted client does not even try it against an old server.
   expect(lanLinkFor(asker.row(), asker.index).known).toBe(2);
+  expect(await oldWireHello(port, askerKp)).toEqual({ closed: true, bytes: 0 });
 });
 
-test("min_protocol = 2 refuses the old wire for every peer, end to end; v2 still works", async () => {
-  const h = startFederation(2);
-  await h.built.lanServer.start();
-  stop = () => h.built.lanServer.stop();
-  const port = h.built.lanServer.listenAddr()?.port as number;
-  const askerKp = generateBoxKeypair();
-  h.index.addLanPeer({
-    peerId: "peer:asker",
-    peerPubkey: askerKp.publicKey,
-    direction: "inbound",
-  });
-  expect(
-    await errorOf(
-      sendFederatedLegacy("127.0.0.1", port, askerKp, h.identity.publicKey, "federation.query", {}),
-    ),
-  ).toBe("lan-client: connection closed mid-exchange");
-  // (A legacy `pair` frame under the floor, and a v2 pairing under it, are pinned in lan-pair.test.ts
-  // and the I56 block.)
-  const asker = askerSide(h.identity.publicKey, port);
-  const res = (await sendFederatedOverWire(
-    "127.0.0.1",
-    port,
-    askerKp,
-    h.identity.publicKey,
-    "federation.query",
-    { namespace: "none", purpose: "test" },
-    undefined,
-    lanLinkFor(asker.row(), asker.index),
-  )) as { kind: string };
-  expect(res.kind).toBe("error");
-});
-
-test("the default min_protocol is 1: a legacy hello from a fresh peer is served", async () => {
+test("FS3: a peer recorded at 1 that has never completed a v2 session gets no old-wire service", async () => {
   const h = startFederation();
   await h.built.lanServer.start();
   stop = () => h.built.lanServer.stop();
   const port = h.built.lanServer.listenAddr()?.port as number;
   const askerKp = generateBoxKeypair();
   h.index.addLanPeer({ peerId: "peer:asker", peerPubkey: askerKp.publicKey, direction: "inbound" });
-  const res = (await sendFederatedLegacy(
-    "127.0.0.1",
-    port,
-    askerKp,
-    h.identity.publicKey,
-    "federation.query",
-    { namespace: "none", purpose: "test" },
-  )) as { kind: string };
-  expect(res.kind).toBe("error");
+  expect(await oldWireHello(port, askerKp)).toEqual({ closed: true, bytes: 0 });
+  // It stays at 1 (status names it), and the first v2 session is what moves it.
   expect(h.index.getLanPeerByPubkey(askerKp.publicKey)?.proto_version).toBe(1);
 });

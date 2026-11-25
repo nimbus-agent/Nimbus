@@ -1,8 +1,8 @@
 /**
- * Pieces of the LAN transport shared by both wire versions and by both ends: the frame caps, the
+ * Pieces of the LAN transport shared by both ends: the frame caps, the
  * service interfaces the server consumes, and the length-prefixed framing helpers. They live here,
- * not in `lan-server.ts` or `lan-client.ts`, so `lan-legacy.ts` (the v1 box path) and the v2 session
- * code can use them without importing each other's host file (no import cycle).
+ * not in `lan-server.ts` or `lan-client.ts`, so the v2 session code, the pairing
+ * code and the host files can use them without importing each other (no import cycle).
  * `lan-server.ts` and `lan-client.ts` re-export what their callers already import from them.
  */
 import type { Socket } from "bun";
@@ -18,8 +18,6 @@ export const DEFAULT_TIMEOUT_MS = 5000;
 
 export interface PairingService {
   isOpen(): boolean;
-  /** The v1 plaintext `pair` frame's check (legacy path only). */
-  consume(code: string): boolean;
   /** D-FS-15: the open window's `XXpsk0` PSK (a copy), or `undefined` when closed or expired. */
   currentPsk(): Uint8Array | undefined;
   /** D-FS-15: closes the window after message 3 opened; `false` if it was already closed or expired. */
@@ -43,18 +41,6 @@ export interface LanPeerMatch {
    * invariant I56), else 1. REQUIRED, never optional: an absent value read as 1 would fail open.
    */
   protoVersion: 1 | 2;
-}
-
-/** Every `kind` a Nimbus responder sends is a short lowercase protocol token. */
-const PROTOCOL_KIND = /^[a-z_]{1,32}$/;
-
-/**
- * A handshake reply's `kind`, for an error message. The reply arrives BEFORE the responder's key is
- * checked, so anyone answering at the peer's address controls this text, and the message reaches
- * brief `## Gaps` and CLI output. Only a protocol token is echoed; anything else reads `unknown`.
- */
-export function replyKindForMessage(kind: unknown): string {
-  return typeof kind === "string" && PROTOCOL_KIND.test(kind) ? kind : "unknown";
 }
 
 export interface FrameReader {
@@ -93,36 +79,6 @@ export function buildFrame(payload: Uint8Array): Uint8Array {
   out.set(header, 0);
   out.set(payload, 4);
   return out;
-}
-
-/**
- * One-shot settle guard shared by the single-frame and two-frame exchanges: starts the timeout
- * timer and returns a `finish(body?, err?)` that resolves/rejects exactly once (clearing the timer),
- * mapping a missing body to `closedMsg` and a timeout to `timeoutMsg`.
- *
- * Every caller settles BEFORE `socket.end()`, on the error paths as on the success path: Bun fires
- * `close()` synchronously inside `end()`, and `close()` calls `finish(undefined)` — so ending first
- * would replace the specific error (a bad hello, a pinned-key mismatch) with `closedMsg`.
- */
-export function makeSettler(
-  resolve: (body: Uint8Array) => void,
-  reject: (err: Error) => void,
-  timeoutMs: number,
-  timeoutMsg: string,
-  closedMsg: string,
-): (body: Uint8Array | undefined, err?: Error) => void {
-  let settled = false;
-  let timer: ReturnType<typeof setTimeout>;
-  const finish = (body: Uint8Array | undefined, err?: Error): void => {
-    if (settled) return;
-    settled = true;
-    clearTimeout(timer);
-    if (err) reject(err);
-    else if (body) resolve(body);
-    else reject(new Error(closedMsg));
-  };
-  timer = setTimeout(() => finish(undefined, new Error(timeoutMsg)), timeoutMs);
-  return finish;
 }
 
 /**

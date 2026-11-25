@@ -178,10 +178,67 @@ export type DataItemView = {
   readonly rule: "name_match" | "data:pr_title_or_branch";
 };
 
+/** One orchestration run (Airflow, Dagster, Prefect) of a job the lane matched by name: metadata only, never a log. */
+export type DataRunView = {
+  readonly id: string;
+  readonly service: string;
+  readonly type: string;
+  /** The title of the DAG, job or deployment the run belongs to (as indexed), one line. */
+  readonly job: string;
+  readonly state: string | null;
+  readonly outcome: "failed" | "success" | "running" | "other";
+  readonly startMs: number | null;
+  readonly endMs: number | null;
+  /** At most five failed task or step names, sorted; `failedTaskCount` is the true count. */
+  readonly failedTasks: readonly string[];
+  readonly failedTaskCount: number;
+  readonly trigger: string | null;
+  readonly url: string | null;
+  readonly rule: "data:run_of_matched_job";
+};
+
 export type DataLineageView = {
   readonly model: string;
   readonly to: string;
   readonly rule: "data:derived_from";
+};
+
+/** A failing, erroring or warning dbt Cloud test on a monitored model or one hop of its lineage (status and counts only). */
+export type DataTestView = {
+  readonly id: string;
+  readonly title: string;
+  readonly url: string | null;
+  readonly status: "fail" | "error" | "warn";
+  readonly failures: number | null;
+  readonly runId: number | null;
+  readonly atMs: number;
+  /** The model the test is on: a monitored one, or one `derived_from` hop upstream of it. */
+  readonly model: string;
+  readonly via: "monitored" | "lineage";
+  readonly rule: "data:dbt_test";
+};
+
+/** One column-level change of a monitored table or its one-hop upstream (the schema history, V108). */
+export type DataSchemaChangeView = {
+  readonly model: string;
+  /** `monitored` for a table the trigger names, `upstream` for one of its one-hop `derived_from` models. */
+  readonly via: "monitored" | "upstream";
+  /** When the sync observed the new column set (not the warehouse's own change time). */
+  readonly atMs: number;
+  readonly kind: "added" | "dropped" | "type_changed" | "nullability_changed";
+  readonly column: string;
+  /** A type (`added`, `dropped`, `type_changed`) or `nullable` / `required` / `unknown` (nullability). */
+  readonly from: string | null;
+  readonly to: string | null;
+  readonly rule: "data:schema_history";
+};
+
+export type DataSchemaLane = {
+  readonly changes: readonly DataSchemaChangeView[];
+  readonly total: number;
+  /** Start of the window: the trigger's open time minus the configured lookback. */
+  readonly windowFromMs: number;
+  readonly lookbackHours: number;
 };
 
 export type DataLane = {
@@ -189,11 +246,19 @@ export type DataLane = {
   readonly lineage: readonly DataLineageView[];
   readonly orchestration: readonly DataItemView[];
   readonly prs: readonly DataItemView[];
+  /** Absent in a record stored before dbt test results were read. */
+  readonly dbtTests?: readonly DataTestView[];
+  /** Runs of the matched jobs that failed or ran in the incident window, newest first. Absent in a record stored before DAG runs were indexed. */
+  readonly runs?: readonly DataRunView[];
   readonly totals: {
     readonly lineage: number;
     readonly orchestration: number;
     readonly prs: number;
+    readonly dbtTests?: number;
+    readonly runs?: number;
   };
+  /** Absent in a record assembled before the schema history existed. */
+  readonly schemaDiff?: DataSchemaLane;
 };
 
 export type OnCallPerson = {

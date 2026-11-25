@@ -215,16 +215,16 @@ async function main() {
   const allowGatewayFailure = getBooleanInput("allow-gateway-failure");
   const fetched = await fetchEnvelope(gatewayUrl, service, targetRef, maxFindings, timeoutMs);
   if (fetched.status === "unreachable") {
-    const code2 = decideExitCode({
+    const code = decideExitCode({
       verdict: "ok",
       mode,
       unreachable: true,
       allowGatewayFailure
     });
     const nonBlockVerdict = mode === "off" ? "ok" : "warn";
-    setOutput("verdict", code2 === 1 ? "block" : nonBlockVerdict);
+    setOutput("verdict", code === 1 ? "block" : nonBlockVerdict);
     setOutput("result-json", "{}");
-    process.exit(code2);
+    process.exit(code);
   }
   const env = sanitizeEnvelope(fetched.envelope);
   writeJobSummary(renderJobSummary(env));
@@ -249,11 +249,11 @@ if (__require.main == __require.module) {
   await main();
 }
 export {
-  sanitizeEnvelope,
-  safeString,
-  parseMode,
-  main,
-  getIntInput,
+  getBooleanInput,
   getInput,
-  getBooleanInput
+  getIntInput,
+  main,
+  parseMode,
+  safeString,
+  sanitizeEnvelope
 };

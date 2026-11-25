@@ -13,10 +13,19 @@
  *   - ipc/index-reembed-rpc.ts       `buildCandidateSql`
  *   - db/index-health.ts             `readPerService` (so cost rows never read as un-embedded)
  *
+ * A `dag_run`, `job_run` or `flow_run` is excluded for the same reason: it is metadata with no prose.
+ *
  * A `cost_recommendation` is NOT excluded: it is short prose, embedded on the LOCAL model only, and
  * it stays out of `PROSE_HEAVY_TYPES` (embedding/routing.ts) so it never reaches a remote embedder.
  */
-export const EMBEDDING_EXCLUDED_TYPES: readonly string[] = ["cost_allocation"];
+export const EMBEDDING_EXCLUDED_TYPES: readonly string[] = [
+  "cost_allocation",
+  // Orchestration RUN rows (airflow:dag_run, dagster:job_run, prefect:flow_run; the Data Incident Brief's
+  // DAG-run input): state, timing and ids with nothing for a vector to find, up to hundreds per sync.
+  "dag_run",
+  "job_run",
+  "flow_run",
+];
 
 /**
  * Types that may be embedded ONLY by a local embedder. A pipeline built on a remote embedder (for

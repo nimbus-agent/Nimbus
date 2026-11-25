@@ -92,6 +92,7 @@ export {
   checkTribalKbWriteInvariant,
 } from "./invariants/policy-chatops-writes.ts";
 export { assertScanIsMeaningful, RULE_ANCHORS } from "./invariants/rule-anchors.ts";
+export { checkSchemaHistoryConfinement } from "./invariants/schema-history.ts";
 export {
   checkChatReadMarkerConfinement,
   checkIncidentLinkMinting,

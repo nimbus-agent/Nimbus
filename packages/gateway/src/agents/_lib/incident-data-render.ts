@@ -2,6 +2,7 @@ import type { DataLane } from "../../incident/incident-record-types.ts";
 import {
   changeLines,
   concurrentLines,
+  dbtTestLine,
   historyLines,
   plain,
   renderIncidentFreshness,
@@ -10,6 +11,8 @@ import {
   summaryLines,
   utcLabel,
 } from "./incident-render.ts";
+import { runSectionLines } from "./incident-run-lines.ts";
+import { schemaChangeLines } from "./incident-schema-lines.ts";
 import type { IncidentDataBrief } from "./incident-types.ts";
 import { hardenedTitleLink, type RenderOpts, renderGaps } from "./render.ts";
 
@@ -22,9 +25,9 @@ import { hardenedTitleLink, type RenderOpts, renderGaps } from "./render.ts";
  * byte-identical across machines. Every provider-supplied string goes through `hardenedTitleLink` or
  * `hardenedPlain`; the fixed text is ours.
  *
- * What the index does NOT hold (DAG-run logs, dbt test results, warehouse schema changes) is never invented
+ * What the index does NOT hold (orchestrator run logs) is never invented
  * here: the record lists each as a gap, and the reserved `## Gaps` block (I31) carries them to the reader.
- * The orchestration and pull-request entries are matches by NAME (a model's last identifier segment as a whole
+ * Runs are listed for the jobs so matched (failed, or inside the incident window), as metadata: no log is indexed. The orchestration and pull-request entries are matches by NAME (a model's last identifier segment as a whole
  * token), never lineage, and the text says so.
  */
 
@@ -57,6 +60,18 @@ function orchestrationLines(d: DataLane): string[] {
     : [...rows, INCIDENT_DATA_NAME_MATCH_NOTE];
 }
 
+function dbtLines(d: DataLane): string[] {
+  if (d.dbtTests === undefined && d.totals.dbtTests === undefined) {
+    return ["_dbt test results were not collected for this record._"];
+  }
+  const tests = d.dbtTests ?? [];
+  const total = d.totals.dbtTests ?? tests.length;
+  if (total === 0) return ["_No failing or warning dbt test found for these models._"];
+  const rows = tests.map(dbtTestLine);
+  const more = total - tests.length;
+  return more > 0 ? [...rows, `_and ${String(more)} more_`] : rows;
+}
+
 function mergedLines(d: DataLane): string[] {
   if (d.prs.length === 0)
     return ["_No change merged in the 24 hours before the alert matched by name._"];
@@ -66,6 +81,14 @@ function mergedLines(d: DataLane): string[] {
   );
   const more = d.totals.prs - d.prs.length;
   return more > 0 ? [...rows, `_and ${String(more)} more_`] : rows;
+}
+
+function schemaLines(d: DataLane): string[] {
+  if (d.schemaDiff === undefined) return ["_Schema changes were not checked for this record._"];
+  if (d.schemaDiff.total === 0) {
+    return ["_No schema change of a monitored or upstream table was observed in the window._"];
+  }
+  return schemaChangeLines(d.schemaDiff, { plain, utc: utcLabel });
 }
 
 export function renderIncidentData(brief: IncidentDataBrief, opts?: RenderOpts): string {
@@ -78,7 +101,10 @@ export function renderIncidentData(brief: IncidentDataBrief, opts?: RenderOpts):
           section("Monitored models", modelLines(r.data)),
           section("Built from", lineageLines(r.data)),
           section("Jobs by name", orchestrationLines(r.data)),
+          section("Runs of those jobs", runSectionLines(r.data)),
+          section("dbt tests", dbtLines(r.data)),
           section("Merged before the alert", mergedLines(r.data)),
+          section("Schema changes", schemaLines(r.data)),
         ];
   const body = [
     section("Summary", summaryLines(r.trigger)),

@@ -2008,7 +2008,7 @@ describe("runExtensionInfo — publisher without key", () => {
           id: "ext-v",
           version: "1.0.0",
           enabled: 1,
-          publisher: { id: "pub-a", key: "A".repeat(43) + "=" },
+          publisher: { id: "pub-a", key: `${"A".repeat(43)}=` },
           verifiedPublisher: { github: "pub-dev", verifiedAt: "2026-10-20T00:00:00Z" },
         },
       },

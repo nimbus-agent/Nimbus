@@ -39,31 +39,26 @@ lockout_seconds = 5
     expect(DEFAULT_NIMBUS_LAN_TOML.bind).toBe("127.0.0.1");
   });
 
-  describe("[lan] min_protocol (LAN forward secrecy, OR-FS-1)", () => {
-    test("defaults to 1: the old wire is accepted during the compatibility window", () => {
-      expect(DEFAULT_NIMBUS_LAN_TOML.minProtocol).toBe(1);
-      expect(parseNimbusLanToml("[lan]\nenabled = true\n").minProtocol).toBe(1);
+  // FS3: the v1 wire is gone and so is the key. A config that still sets it must neither fail nor
+  // change behaviour (a gateway that refuses to boot over it would take every v2 peer down too);
+  // only `= 1`, which asked for the removed wire, is named at boot.
+  describe("[lan] min_protocol (removed in FS3)", () => {
+    test("is not part of the parsed config and the default says nothing was ignored", () => {
+      expect("minProtocol" in DEFAULT_NIMBUS_LAN_TOML).toBe(false);
+      expect(DEFAULT_NIMBUS_LAN_TOML.minProtocolIgnored).toBe(false);
+      expect(parseNimbusLanToml("[lan]\nenabled = true\n").minProtocolIgnored).toBe(false);
     });
 
-    test("1 and 2 are accepted", () => {
-      expect(parseNimbusLanToml("[lan]\nmin_protocol = 2\n").minProtocol).toBe(2);
-      expect(parseNimbusLanToml("[lan]\nmin_protocol = 1\n").minProtocol).toBe(1);
+    test("= 1 is ignored and flagged so the boot can say so", () => {
+      const out = parseNimbusLanToml("[lan]\nenabled = true\nmin_protocol = 1\n");
+      expect(out.minProtocolIgnored).toBe(true);
+      expect(out.enabled).toBe(true);
     });
 
-    test("any other value is ignored, never clamped: the default holds", () => {
-      for (const bad of ["3", "0", "-1", '"two"', "1.5", "", "true", "22"]) {
-        expect(parseNimbusLanToml(`[lan]\nmin_protocol = ${bad}\n`).minProtocol).toBe(1);
-      }
-    });
-
-    test("there is no environment override", () => {
-      const prev = process.env["NIMBUS_LAN_MIN_PROTOCOL"];
-      process.env["NIMBUS_LAN_MIN_PROTOCOL"] = "2";
-      try {
-        expect(parseNimbusLanToml("").minProtocol).toBe(1);
-      } finally {
-        if (prev === undefined) delete process.env["NIMBUS_LAN_MIN_PROTOCOL"];
-        else process.env["NIMBUS_LAN_MIN_PROTOCOL"] = prev;
+    test("= 2 (the only wire left) and any other value are silent no-ops", () => {
+      for (const v of ["2", "3", "0", "-1", '"two"', "1.5", "", "true"]) {
+        const out = parseNimbusLanToml(`[lan]\nmin_protocol = ${v}\n`);
+        expect(out).toEqual(DEFAULT_NIMBUS_LAN_TOML);
       }
     });
   });

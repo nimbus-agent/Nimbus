@@ -9,7 +9,7 @@ const EXTENSION = {
   version: "1.2.3",
   source_registry: "main",
   publisher_key_fingerprint: FP,
-  publisher: { id: "acme", key: "K".repeat(43) + "=" },
+  publisher: { id: "acme", key: `${"K".repeat(43)}=` },
   install_path: "/home/me/.nimbus/extensions/acme/tool",
 };
 

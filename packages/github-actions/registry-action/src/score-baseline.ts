@@ -76,7 +76,7 @@ export function judgeBaselineRun(
   if (r.code !== 0) {
     const last = lastLine(r.stderrTail);
     const exit = r.code === null ? "without an exit code" : String(r.code);
-    const tail = last === "" ? "" : ": " + last;
+    const tail = last === "" ? "" : `: ${last}`;
     return fail("ERR_EVAL_ROLE_FAILED", `the baseline role exited ${exit}${tail}`);
   }
   const lines = r.stdout.split("\n").filter((l) => l.trim() !== "");

@@ -19,16 +19,14 @@ function withIndex(fn: (index: LocalIndex) => void): void {
 }
 
 describe("lanLinkFor", () => {
-  test("known comes from the row, minProtocol from the index, and a new peer is at 1", () => {
+  test("known comes from the row, and a new peer is at 1", () => {
     withIndex((index) => {
       const row = index.getLanPeerByPubkey(PUBKEY) as NonNullable<
         ReturnType<typeof index.getLanPeerByPubkey>
       >;
       const link = lanLinkFor(row, index);
       expect(link.known).toBe(1);
-      expect(link.minProtocol).toBe(1);
-      index.setLanMinProtocol(2);
-      expect(lanLinkFor(row, index).minProtocol).toBe(2);
+      expect("minProtocol" in link).toBe(false);
     });
   });
 

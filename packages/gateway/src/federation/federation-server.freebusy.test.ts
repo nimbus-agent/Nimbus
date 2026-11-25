@@ -26,7 +26,7 @@ async function failure(p: Promise<unknown>): Promise<string> {
   }
 }
 
-const LINK = { known: 1, minProtocol: 1 } as const;
+const LINK = { known: 1 } as const;
 
 async function boot(opts: { approve?: (() => Promise<boolean>) | undefined; configured: boolean }) {
   const db = new Database(":memory:");

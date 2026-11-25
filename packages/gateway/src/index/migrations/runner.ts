@@ -20,7 +20,6 @@ import { AUDIT_SESSION_V24_SCHEMA_SQL } from "../audit-session-v24-sql.ts";
 import { BODY_STORE_V48_SQL, ITEM_FTS_UPDATE_TRIGGER_SQL } from "../body-store-v48-sql.ts";
 import { BRIEFING_V93_SQL } from "../briefing-v93-sql.ts";
 import { CAPTURE_ACTION_V69_COUNT_SQL, CAPTURE_ACTION_V69_SQL } from "../capture-action-v69-sql.ts";
-import { CAPTURE_LABEL_SOURCE_V99_SQL } from "../capture-label-source-v99-sql.ts";
 import {
   CAPTURE_NATIVE_V68_FINISH_SQL,
   CAPTURE_NATIVE_V68_REBUILD_DECISIONS_SQL,
@@ -107,6 +106,7 @@ import { QUERY_LATENCY_V14_SQL } from "../query-latency-v14-sql.ts";
 import { REGISTRY_LIVENESS_V80_SQL } from "../registry-liveness-v80-sql.ts";
 import { RESOLVE_KEY_V52_SQL } from "../resolve-key-v52-sql.ts";
 import { SCHEDULER_V2_MIGRATION_SQL } from "../scheduler-schema-sql.ts";
+import { SCHEMA_HISTORY_V108_SQL } from "../schema-history-v108-sql.ts";
 import { INITIAL_SCHEMA_SQL } from "../schema-sql.ts";
 import { SHARE_INBOX_V43_SQL } from "../share-inbox-v43-sql.ts";
 import { SHARE_RECORDS_V41_SQL } from "../share-records-v41-sql.ts";
@@ -127,7 +127,6 @@ import {
 } from "../unified-item-v3-sql.ts";
 import { USER_MCP_GRANTS_V65_SQL } from "../user-mcp-grants-v65-sql.ts";
 import { USER_MCP_V11_MIGRATION_SQL } from "../user-mcp-v11-sql.ts";
-import { USER_MCP_WRITE_V98_SQL } from "../user-mcp-write-v98-sql.ts";
 import {
   VEC_ITEMS_1536_V30_NO_VEC_SQL,
   VEC_ITEMS_1536_V30_SCHEMA_SQL,
@@ -140,7 +139,12 @@ import { WORKFLOW_IMPORT_V101_SQL } from "../workflow-import-v101-sql.ts";
 import { WORKFLOW_RUN_COLUMNS_V23_SQL } from "../workflow-run-columns-v23-sql.ts";
 import { WORKFLOW_SCHEDULE_V89_SQL } from "../workflow-schedule-v89-sql.ts";
 import { WORKFLOW_V9_MIGRATION_SQL } from "../workflow-v9-sql.ts";
-import { migrateIndexedV104ToV105, migrateIndexedV105ToV106 } from "./column-steps.ts";
+import {
+  migrateIndexedV97ToV98,
+  migrateIndexedV98ToV99,
+  migrateIndexedV104ToV105,
+  migrateIndexedV105ToV106,
+} from "./column-steps.ts";
 
 const MIGRATIONS_LEDGER_SQL = `
 CREATE TABLE IF NOT EXISTS _schema_migrations (
@@ -282,43 +286,6 @@ function migrateIndexedV96ToV97(db: Database, now: number): void {
       "agent door: per-door approval list, capture.legacy, error code on a rejected action (Phase 28 AD3a-1)",
       now,
     );
-  })();
-}
-
-function userMcpConnectorHasColumn(db: Database, columnName: string): boolean {
-  const rows = db.query("PRAGMA table_info(user_mcp_connector)").all() as Array<{ name: string }>;
-  return rows.some((r) => r.name === columnName);
-}
-
-/**
- * V98 - `user_mcp_connector.write_paths_json` (Phase 28 AD5b, I15). Guarded by a column probe, as
- * V95 is: SQLite has no `ADD COLUMN IF NOT EXISTS`, and a step must be re-runnable.
- */
-function migrateIndexedV97ToV98(db: Database, now: number): void {
-  db.transaction(() => {
-    if (!userMcpConnectorHasColumn(db, "write_paths_json")) {
-      dbExec(db, USER_MCP_WRITE_V98_SQL.trim());
-    }
-    dbExec(db, "PRAGMA user_version = 98");
-    recordMigration(db, 98, "user MCP write directories (Phase 28 AD5b)", now);
-  })();
-}
-
-function captureHasColumn(db: Database, columnName: string): boolean {
-  const rows = db.query("PRAGMA table_info(capture)").all() as Array<{ name: string }>;
-  return rows.some((r) => r.name === columnName);
-}
-
-/**
- * V99 - `capture.label_source` (Phase 28 AD7a, D-AD-13). Guarded by a column probe, as V98 is.
- */
-function migrateIndexedV98ToV99(db: Database, now: number): void {
-  db.transaction(() => {
-    if (!captureHasColumn(db, "label_source")) {
-      dbExec(db, CAPTURE_LABEL_SOURCE_V99_SQL.trim());
-    }
-    dbExec(db, "PRAGMA user_version = 99");
-    recordMigration(db, 99, "capture label source (Phase 28 AD7a)", now);
   })();
 }
 
@@ -929,6 +896,12 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
   { fromVersion: 104, toVersion: 105, apply: migrateIndexedV104ToV105 },
   { fromVersion: 105, toVersion: 106, apply: migrateIndexedV105ToV106 },
   simpleStep(106, 107, "long-term episodic memory (Phase 10, I61)", EPISODIC_MEMORY_V107_SQL),
+  simpleStep(
+    107,
+    108,
+    "warehouse schema history (Phase 10, data incident brief)",
+    SCHEMA_HISTORY_V108_SQL,
+  ),
 ];
 
 /**

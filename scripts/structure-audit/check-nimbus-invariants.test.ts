@@ -6304,49 +6304,41 @@ describe("D48 - FinOps cost code cannot leave the machine (spec § 6, OR-10-8)",
   });
 });
 
-describe("D47 - the v1 static-box LAN path is reachable only through ipc/lan-legacy.ts (I56)", () => {
+describe("D47 - no v1 static-box LAN path exists (I56, FS3)", () => {
   const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
   const SRC = "packages/gateway/src/";
 
-  test("the two allowed files pass, whatever they contain", () => {
+  test("a clean ipc/lan-crypto.ts (key handling only) passes, and the rule has no allowed file any more", () => {
+    expect(
+      checkLanBoxPathConfinement([
+        file(`${SRC}ipc/lan-crypto.ts`, "export const kp = () => nacl.box.keyPair();"),
+      ]),
+    ).toEqual([]);
+    // The old allowance for lan-crypto.ts is gone: the seal is a violation THERE too.
     expect(
       checkLanBoxPathConfinement([
         file(
           `${SRC}ipc/lan-crypto.ts`,
           "export function sealBoxFrame() { return nacl.box(a, b, c, d); }",
         ),
-        file(
-          `${SRC}ipc/lan-legacy.ts`,
-          'import { openBoxFrame, sealBoxFrame } from "./lan-crypto.ts";\nsealBoxFrame(a, b, c);',
-        ),
       ]),
-    ).toEqual([]);
+    ).toHaveLength(2);
   });
 
-  test("FAILS on an import of the seal from a federation module, and reports the line", () => {
+  test("FAILS on an import of the seal (aliased or not) and on openBoxFrame, and reports the line", () => {
     const v = checkLanBoxPathConfinement([
       file(
         `${SRC}federation/federation-server.ts`,
         'import { sealBoxFrame } from "../ipc/lan-crypto.ts";\nconst x = 1;',
       ),
-    ]);
-    expect(v).toHaveLength(1);
-    expect(v[0]?.rule).toBe("lan-box-path-confined");
-    expect(v[0]?.line).toBe(1);
-  });
-
-  test("FAILS on openBoxFrame in the server or client, and on an aliased import call", () => {
-    expect(
-      checkLanBoxPathConfinement([file(`${SRC}ipc/lan-server.ts`, "openBoxFrame(f, p, s);")]),
-    ).toHaveLength(1);
-    const aliased = checkLanBoxPathConfinement([
+      file(`${SRC}ipc/lan-server.ts`, "openBoxFrame(f, p, s);"),
       file(
         `${SRC}ipc/lan-client.ts`,
         'import { sealBoxFrame as seal } from "./lan-crypto.ts";\nseal(a, b, c);',
       ),
     ]);
-    expect(aliased).toHaveLength(1);
-    expect(aliased[0]?.line).toBe(1);
+    expect(v.map((x) => x.rule)).toEqual(Array(3).fill("lan-box-path-confined"));
+    expect(v.map((x) => x.line)).toEqual([1, 1, 1]);
   });
 
   test("FAILS on a direct nacl.box or nacl.box.open call", () => {
@@ -6357,6 +6349,16 @@ describe("D47 - the v1 static-box LAN path is reachable only through ipc/lan-leg
         file(`${SRC}federation/z.ts`, "const p = tweetnacl.box(m, n, pk, sk);"),
       ]),
     ).toHaveLength(3);
+  });
+
+  test("FAILS when a lan-legacy module reappears, test file included, whatever it contains", () => {
+    for (const name of ["lan-legacy.ts", "lan-legacy.test.ts", "lan-legacy-v2.ts"]) {
+      const v = checkLanBoxPathConfinement([file(`${SRC}ipc/${name}`, "export {};")]);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.rule).toBe("lan-box-path-confined");
+    }
+    // A look-alike elsewhere is not it.
+    expect(checkLanBoxPathConfinement([file("scripts/lan-legacy.ts", "export {};")])).toEqual([]);
   });
 
   test("does not match key creation, a comment, a string, a look-alike, a test file or a non-gateway file", () => {
@@ -6375,10 +6377,6 @@ describe("D47 - the v1 static-box LAN path is reachable only through ipc/lan-leg
         file("scripts/z.ts", "sealBoxFrame(a);"),
       ]),
     ).toEqual([]);
-  });
-
-  test("lan-legacy.ts is a rule anchor, so a scan that lost it is not meaningful", () => {
-    expect(RULE_ANCHORS).toContain("packages/gateway/src/ipc/lan-legacy.ts");
   });
 });
 
@@ -6638,7 +6636,7 @@ ${middle}}`;
         provenance.basis === 1 && door !== undefined
           ? vetoingConsent(coordinator, async () => { return 1; }, (r) => { v = r; })
           : coordinator;
-` + EXECUTOR,
+${EXECUTOR}`,
           ),
         ),
       ),

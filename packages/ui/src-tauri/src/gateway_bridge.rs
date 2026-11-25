@@ -349,7 +349,7 @@ pub async fn connect_and_run(app: AppHandle, state: BridgeState) {
         match connect_result {
             Ok(stream) => {
                 attempt = 0;
-                let (read_half, write_half) = stream.split();
+                let (read_half, write_half) = tokio::io::split(stream);
                 let write_tx = state.write_tx.clone();
                 let rx = open_connection_writer(|tx| async move {
                     *write_tx.lock().await = Some(tx);

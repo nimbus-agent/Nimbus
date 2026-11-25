@@ -11,7 +11,7 @@ import { lanLinkFor } from "../../federation/lan-link.ts";
 import { type LanPeerRow, LocalIndex } from "../../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
 import { sendFederatedOverWire } from "../lan-client.ts";
-import { type BoxKeypair, generateBoxKeypair, openBoxFrame } from "../lan-crypto.ts";
+import { type BoxKeypair, generateBoxKeypair } from "../lan-crypto.ts";
 import { x25519PublicKey } from "../lan-noise.ts";
 import { LanServer } from "../lan-server.ts";
 import { createInitiatorHandshake } from "../lan-session.ts";
@@ -176,7 +176,16 @@ export function attackTransport(conn: RecordedConnection, secrets: AttackSecrets
   return opened;
 }
 
-/** The v1 attack: `openBoxFrame` on every frame body of both directions with all four key orders. */
+/**
+ * The attack the removed v1 wire was open to: a static `nacl.box.open` (24-byte nonce, then the box)
+ * on every frame body of both directions with all four key orders. The wire is gone, but a recorded
+ * v2 transcript must still yield nothing to it, and a test helper is the one place that may call it.
+ */
+function openStaticBox(frame: Uint8Array, pub: Uint8Array, sec: Uint8Array): Uint8Array | null {
+  if (frame.length < 24 + 16) return null;
+  return nacl.box.open(frame.slice(24), frame.slice(0, 24), pub, sec);
+}
+
 export function attackLegacyBox(conn: RecordedConnection, a: BoxKeypair, b: BoxKeypair): number {
   let opened = 0;
   const pubs = [a.publicKey, b.publicKey];
@@ -184,12 +193,7 @@ export function attackLegacyBox(conn: RecordedConnection, a: BoxKeypair, b: BoxK
   for (const frame of [...conn.c2s, ...conn.s2c]) {
     for (const pub of pubs) {
       for (const sec of secs) {
-        try {
-          openBoxFrame(frame, pub, sec);
-          opened += 1;
-        } catch {
-          /* does not open */
-        }
+        if (openStaticBox(frame, pub, sec) !== null) opened += 1;
       }
     }
   }
@@ -262,7 +266,7 @@ export async function recordSession(knownEphemeral: boolean): Promise<RecordedSe
       "federation.ping",
       { secret: SECRET_REQUEST },
       3000,
-      { known: 2, minProtocol: 1 },
+      { known: 2 },
     );
     return { conn: proxy.connections[0] as RecordedConnection, initiator, responder, stop };
   }

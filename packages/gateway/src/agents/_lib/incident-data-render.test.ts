@@ -15,7 +15,10 @@ describe("renderIncidentData", () => {
       "## Monitored models",
       "## Built from",
       "## Jobs by name",
+      "## Runs of those jobs",
+      "## dbt tests",
       "## Merged before the alert",
+      "## Schema changes",
       "## Service",
       "## Change",
       "## Concurrent",
@@ -32,6 +35,119 @@ describe("renderIncidentData", () => {
     expect(md).toContain("merged 1970-01-01 00:15 UTC (rule: data:pr_title_or_branch)");
   });
 
+  test("lists a failed run with its state, timing, failed tasks and trigger; logs are never claimed", () => {
+    const md = renderIncidentData(buildDataBriefFixture());
+    expect(md).toContain(
+      "[orders_etl](https://airflow.example/dags/orders_etl/grid?dag_run_id=r1) - airflow run failed, started 1970-01-01 00:10 UTC, took 5m 0s, failed tasks: `dedupe`, `load_orders` (and 1 more), trigger scheduled (rule: data:run_of_matched_job)",
+    );
+    expect(md).toContain("logs are never indexed");
+  });
+
+  test("an empty run list says no run failed or ran in the window; an old record says runs were not recorded", () => {
+    const none = renderIncidentData(
+      buildDataBriefFixture({
+        data: buildDataLane({
+          runs: [],
+          totals: { lineage: 1, orchestration: 1, prs: 1, runs: 0 },
+        }),
+      }),
+    );
+    expect(none).toContain(
+      "_No run of the jobs listed above failed or ran in the incident window._",
+    );
+    const { runs: _runs, ...old } = buildDataLane();
+    const md = renderIncidentData(buildDataBriefFixture({ data: old }));
+    expect(md).toContain("_Runs were not recorded in this version of the record._");
+  });
+
+  test("lists schema changes with kind, column and types only, and says what it did not check", () => {
+    const schemaDiff = {
+      changes: [
+        {
+          model: "analytics.sales.orders",
+          via: "monitored" as const,
+          atMs: 900_000,
+          kind: "type_changed" as const,
+          column: "amount",
+          from: "NUMBER",
+          to: "TEXT",
+          rule: "data:schema_history" as const,
+        },
+        {
+          model: "raw.shop.orders",
+          via: "upstream" as const,
+          atMs: 800_000,
+          kind: "dropped" as const,
+          column: "legacy",
+          from: "DATE",
+          to: null,
+          rule: "data:schema_history" as const,
+        },
+        {
+          model: "raw.shop.orders",
+          via: "upstream" as const,
+          atMs: 700_000,
+          kind: "nullability_changed" as const,
+          column: "id",
+          from: "nullable",
+          to: "required",
+          rule: "data:schema_history" as const,
+        },
+      ],
+      total: 5,
+      windowFromMs: 0,
+      lookbackHours: 24,
+    };
+    const md = renderIncidentData(buildDataBriefFixture({ data: buildDataLane({ schemaDiff }) }));
+    expect(md).toContain(
+      "`analytics.sales.orders` (monitored): column `amount` type NUMBER -> TEXT (rule: data:schema_history)",
+    );
+    expect(md).toContain("column `legacy` dropped (was DATE)");
+    expect(md).toContain("column `id` nullable -> required");
+    expect(md).toContain("_and 2 more_");
+    expect(md).toContain("24 h before the alert");
+    const none = renderIncidentData(
+      buildDataBriefFixture({
+        data: buildDataLane({ schemaDiff: { ...schemaDiff, changes: [], total: 0 } }),
+      }),
+    );
+    expect(none).toContain("_No schema change of a monitored or upstream table was observed");
+    expect(renderIncidentData(buildDataBriefFixture())).toContain(
+      "_Schema changes were not checked for this record._",
+    );
+    // the general incident brief carries the same lines in its Data section
+    const general = renderIncident(
+      buildDataBriefFixture({ data: buildDataLane({ schemaDiff }) }) as never,
+    );
+    expect(general).toContain("column `legacy` dropped (was DATE)");
+  });
+
+  test("a hostile column name cannot add a heading or a link", () => {
+    const schemaDiff = {
+      changes: [
+        {
+          model: "a.b.c",
+          via: "monitored" as const,
+          atMs: 1,
+          kind: "added" as const,
+          column: "x`\n## Injected [click](http://evil.example)",
+          from: null,
+          to: "STRING",
+          rule: "data:schema_history" as const,
+        },
+      ],
+      total: 1,
+      windowFromMs: 0,
+      lookbackHours: 24,
+    };
+    const md = renderIncidentData(buildDataBriefFixture({ data: buildDataLane({ schemaDiff }) }));
+    expect(md.split("\n").filter((l) => l.startsWith("## "))).not.toContain(
+      "## Injected [click](http://evil.example)",
+    );
+    // the bracket is escaped, so no link is formed
+    expect(md).not.toMatch(/[^\\]\]\(http:\/\/evil/);
+  });
+
   test("says that jobs are matched by name, never by lineage", () => {
     expect(renderIncidentData(buildDataBriefFixture())).toContain("not by lineage");
   });
@@ -44,13 +160,15 @@ describe("renderIncidentData", () => {
           lineage: [],
           orchestration: [],
           prs: [],
-          totals: { lineage: 0, orchestration: 0, prs: 0 },
+          runs: [],
+          totals: { lineage: 0, orchestration: 0, prs: 0, runs: 0 },
         }),
       }),
     );
     expect(md).toContain("_No monitored table._");
     expect(md).toContain("_No upstream model recorded for the monitored table._");
     expect(md).toContain("_No orchestration job matched by name._");
+    expect(md).toContain("_No orchestration job matched, so no run was looked up._");
     expect(md).toContain("_No change merged in the 24 hours before the alert matched by name._");
   });
 
@@ -121,5 +239,36 @@ describe("incident_data in the I31 machinery", () => {
     const out = await synthesize(brief);
     expect(out.markdown).toContain(renderIncidentData(brief).trimEnd());
     expect(out.provenance.attempted).toBe(false);
+  });
+});
+
+describe("the dbt tests section", () => {
+  test("a size cut that removed every listed test still says how many there were", () => {
+    const base = buildDataLane();
+    const md = renderIncidentData(
+      buildDataBriefFixture({
+        data: { ...base, dbtTests: [], totals: { ...base.totals, dbtTests: 3 } },
+      }),
+    );
+    expect(md).toContain("_and 3 more_");
+    expect(md).not.toContain("No failing or warning dbt test");
+  });
+
+  test("a record stored before dbt tests existed says they were not collected, never none found", () => {
+    const { dbtTests: _drop, ...old } = buildDataLane();
+    const { dbtTests: _t, ...totals } = old.totals;
+    const md = renderIncidentData(buildDataBriefFixture({ data: { ...old, totals } }));
+    expect(md).toContain("_dbt test results were not collected for this record._");
+    expect(md).not.toContain("No failing or warning dbt test");
+  });
+
+  test("a recorded zero total reads as none found", () => {
+    const base = buildDataLane();
+    const md = renderIncidentData(
+      buildDataBriefFixture({
+        data: { ...base, dbtTests: [], totals: { ...base.totals, dbtTests: 0 } },
+      }),
+    );
+    expect(md).toContain("_No failing or warning dbt test found for these models._");
   });
 });

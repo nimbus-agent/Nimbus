@@ -84,7 +84,7 @@ describe("parseConfirmTemplate", () => {
 
 describe("isConfirmChar", () => {
   test("allows exactly letters, digits, space and _ - . / backslash : # @ ! =", () => {
-    for (const c of "azAZ09 _-./:#@!=" + String.fromCharCode(92))
+    for (const c of `azAZ09 _-./:#@!=${String.fromCharCode(92)}`)
       expect(isConfirmChar(c.codePointAt(0) ?? 0)).toBe(true);
     for (const c of ["(", ")", "~", "\t", "\n", "é", "…", "%", "+"]) {
       expect(isConfirmChar(c.codePointAt(0) ?? 0)).toBe(false);
