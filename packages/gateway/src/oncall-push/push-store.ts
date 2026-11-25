@@ -6,7 +6,8 @@ import { TRIGGER_TYPES } from "../incident/trigger-sources.ts";
  * The item types the push can be about (Phase 10 IC3): a PagerDuty incident, a JSM alert, a Sentry issue or a
  * data-quality item. The key of a pushed brief is still the trigger item id.
  */
-const TRIGGER_TYPES_SQL = `(${TRIGGER_TYPES.map((t) => `'${t}'`).join(", ")})`;
+const QUOTED_TRIGGER_TYPES = TRIGGER_TYPES.map((t) => `'${t}'`).join(", ");
+const TRIGGER_TYPES_SQL = `(${QUOTED_TRIGGER_TYPES})`;
 
 export type PushedBriefStatus = "ok" | "failed";
 export type SinkOutcomeKind = "delivered" | "skipped" | "coalesced" | "failed";

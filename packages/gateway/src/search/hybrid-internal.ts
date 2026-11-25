@@ -120,8 +120,11 @@ export function loadBm25Hits(
  * admitted one: ask for the maximum k (500). The residual recall bound is stated in the docs: a query whose
  * nearest 500 chunks are all newer than T gets no vector hits (the keyword arm is exact).
  */
-export function vectorCandidateLimit(limit: number, pointInTime: boolean): number {
-  return pointInTime ? 500 : Math.min(500, limit * 25);
+export function vectorCandidateLimit(
+  limit: number,
+  query: { readonly pointInTime: boolean },
+): number {
+  return query.pointInTime ? 500 : Math.min(500, limit * 25);
 }
 
 export function runVectorSearch(
@@ -150,7 +153,7 @@ export function runVectorSearch(
     itemType?: string;
     since?: number;
     at?: AtClause;
-  } = { limit: vectorCandidateLimit(limit, opts.at !== undefined) };
+  } = { limit: vectorCandidateLimit(limit, { pointInTime: opts.at !== undefined }) };
   if (opts.queryEmbedding !== undefined) {
     dualOpts.queryEmbedding384 = opts.queryEmbedding;
     dualOpts.model384 = opts.embeddingModel;

@@ -216,9 +216,11 @@ function conflicts(
   const problems: string[] = [];
   for (const other of others) {
     if (other.id === packId) continue;
-    problems.push(...scalarConflicts(other, scalars));
-    problems.push(...jobConflicts(other, jobNames));
-    problems.push(...sourceMapConflicts(other, sourceMap));
+    problems.push(
+      ...scalarConflicts(other, scalars),
+      ...jobConflicts(other, jobNames),
+      ...sourceMapConflicts(other, sourceMap),
+    );
   }
   return problems;
 }

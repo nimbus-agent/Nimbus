@@ -186,7 +186,7 @@ async function pushNotion(
   }
   const appendInput: Record<string, unknown> = { parentBlockId: pageId, childrenJson };
   const late = refusedBy(deps, append.toolId, appendInput);
-  if (late !== undefined && late.outcome === "refused") {
+  if (late?.outcome === "refused") {
     return { outcome: "partial", code: "ERR_POSTMORTEM_PUSH_PARTIAL", pageId, reason: late.reason };
   }
   const added = await run(deps, buildAction(append, appendInput, link));

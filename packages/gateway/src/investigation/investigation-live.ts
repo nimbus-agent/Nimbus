@@ -80,12 +80,10 @@ export type LiveInvestigator = {
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   v !== null && typeof v === "object" && !Array.isArray(v);
 const str = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
-const num = (v: unknown): number | null =>
-  typeof v === "number" && Number.isFinite(v)
-    ? v
-    : typeof v === "string" && /^\d{1,15}$/.test(v)
-      ? Number(v)
-      : null;
+const num = (v: unknown): number | null => {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  return typeof v === "string" && /^\d{1,15}$/.test(v) ? Number(v) : null;
+};
 const isoMs = (v: unknown): number | null => {
   const s = str(v);
   if (s === null) return null;
@@ -283,6 +281,31 @@ function merge(inv: Investigation, block: LiveBlock, reason: string | null): Inv
   };
 }
 
+/** The live read's window: the record's span, up to the close time of a closed trigger, else up to now. */
+function liveSpan(inv: Investigation, started: number): Span {
+  const closedAt = inv.trigger.status === "closed" ? inv.trigger.closedAtMs : null;
+  return {
+    fromMs: inv.span.fromMs,
+    toMs: closedAt ?? Math.max(inv.span.toMs, started),
+  };
+}
+
+/** Adds the rows not seen yet (an issue two projects return is kept once); returns how many were new. */
+function addUnseen(seen: Map<string, LiveIssueRow>, rows: readonly LiveIssueRow[]): number {
+  let fresh = 0;
+  for (const row of rows) {
+    if (seen.has(row.issueId)) continue;
+    seen.set(row.issueId, row);
+    fresh += 1;
+  }
+  return fresh;
+}
+
+function liveStatus(reads: number, projects: number): LiveBlock["status"] {
+  if (reads === 0) return "not_read";
+  return reads === projects ? "ok" : "partial";
+}
+
 export function createLiveInvestigator(deps: LiveInvestigationDeps): LiveInvestigator {
   const now = deps.now ?? Date.now;
   return {
@@ -304,24 +327,16 @@ export function createLiveInvestigator(deps: LiveInvestigationDeps): LiveInvesti
       }
       const started = now();
       const deadline = started + budgetMs;
-      const span: Span = {
-        fromMs: inv.span.fromMs,
-        toMs:
-          inv.trigger.status === "closed" && inv.trigger.closedAtMs !== null
-            ? inv.trigger.closedAtMs
-            : Math.max(inv.span.toMs, started),
-      };
+      const span = liveSpan(inv, started);
       const deployStartMs = deploymentStart(deps.db, inv.recordId);
       const link = mintIncidentLink(deps.db, inv.recordId);
       const executor = buildExecutor(deps.makeExecutor, clientId);
       const projects: LiveBlock["projects"][number][] = [];
       const seen = new Map<string, LiveIssueRow>();
       let matched = 0;
-      inv.sentry.projects.forEach((project, i) => {
-        if (i >= LIVE_MAX_PROJECTS) {
-          projects.push({ project, outcome: "skipped_cap", scanned: 0, matched: 0 });
-        }
-      });
+      for (const project of inv.sentry.projects.slice(LIVE_MAX_PROJECTS)) {
+        projects.push({ project, outcome: "skipped_cap", scanned: 0, matched: 0 });
+      }
       for (const project of inv.sentry.projects.slice(0, LIVE_MAX_PROJECTS)) {
         const remaining = deadline - now();
         if (remaining <= 0) {
@@ -343,12 +358,7 @@ export function createLiveInvestigator(deps: LiveInvestigationDeps): LiveInvesti
           projects.push({ project, outcome: read.outcome, scanned: 0, matched: 0 });
           continue;
         }
-        let fresh = 0;
-        for (const row of read.rows) {
-          if (seen.has(row.issueId)) continue;
-          seen.set(row.issueId, row);
-          fresh += 1;
-        }
+        const fresh = addUnseen(seen, read.rows);
         matched += fresh;
         projects.push({ project, outcome: "read", scanned: read.scanned, matched: fresh });
       }
@@ -359,7 +369,7 @@ export function createLiveInvestigator(deps: LiveInvestigationDeps): LiveInvesti
       const block: LiveBlock = {
         backend: "sentry",
         budgetMs,
-        status: reads === 0 ? "not_read" : reads === projects.length ? "ok" : "partial",
+        status: liveStatus(reads, projects.length),
         projects,
         rows,
         total: matched,

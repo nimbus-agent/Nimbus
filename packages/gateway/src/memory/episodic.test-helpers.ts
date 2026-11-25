@@ -14,7 +14,7 @@ export function bagEmbed(text: string): Float32Array {
   const v = new Float32Array(TEST_DIMS);
   for (const w of text.toLowerCase().match(/[a-z0-9]+/g) ?? []) {
     let h = 2166136261;
-    for (let i = 0; i < w.length; i++) h = Math.imul(h ^ w.charCodeAt(i), 16777619) >>> 0;
+    for (let i = 0; i < w.length; i++) h = Math.imul(h ^ (w.codePointAt(i) ?? 0), 16777619) >>> 0;
     v[h % TEST_DIMS] = (v[h % TEST_DIMS] as number) + 1;
   }
   return v;

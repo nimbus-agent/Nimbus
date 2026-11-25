@@ -212,17 +212,21 @@ export function bareLine(line: string): { readonly text: string; readonly multil
     if (c === "#") break;
     if (c === '"' || c === "'") {
       if (line.startsWith(c.repeat(3), i)) return { text: out, multiline: true };
-      let j = i + 1;
-      while (j < line.length && line.charAt(j) !== c)
-        j += c === '"' && line.charAt(j) === "\\" ? 2 : 1;
       out += '""';
-      i = j + 1;
+      i = stringEnd(line, i, c);
       continue;
     }
     out += c;
     i += 1;
   }
   return { text: out, multiline: false };
+}
+
+/** The index just past the string that opens at `i` with quote `c` (a backslash escapes in a `"` string). */
+function stringEnd(line: string, i: number, c: string): number {
+  let j = i + 1;
+  while (j < line.length && line.charAt(j) !== c) j += c === '"' && line.charAt(j) === "\\" ? 2 : 1;
+  return j + 1;
 }
 
 /**

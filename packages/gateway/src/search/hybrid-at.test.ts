@@ -39,9 +39,9 @@ describe("hybridSearch with an --at clause", () => {
 
 describe("vectorCandidateLimit", () => {
   test("the vector arm asks for the maximum k under --at and limit*25 otherwise", () => {
-    expect(vectorCandidateLimit(10, false)).toBe(250);
-    expect(vectorCandidateLimit(40, false)).toBe(500);
-    expect(vectorCandidateLimit(10, true)).toBe(500);
-    expect(vectorCandidateLimit(1, true)).toBe(500);
+    expect(vectorCandidateLimit(10, { pointInTime: false })).toBe(250);
+    expect(vectorCandidateLimit(40, { pointInTime: false })).toBe(500);
+    expect(vectorCandidateLimit(10, { pointInTime: true })).toBe(500);
+    expect(vectorCandidateLimit(1, { pointInTime: true })).toBe(500);
   });
 });

@@ -38,8 +38,11 @@ const RELATIVE_RE = /^-(\d{1,9})\s*([smhdw])$/i;
 const KEYWORD_RE = /^(today|yesterday)-(\d{2}):(\d{2})$/i;
 // Optional fractional seconds (1-3 digits): the gateway itself prints instants as `...:00.000Z`.
 const OFFSET_RE =
-  /^(\d{4})-(\d{2})-(\d{2})[Tt ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?(Z|z|[+-]\d{2}:\d{2})$/;
-const LOCAL_RE = /^(\d{4})-(\d{2})-(\d{2})(?:[Tt ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?)?$/;
+  /^(\d{4})-(\d{2})-(\d{2})[Tt ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?([Zz]|[+-]\d{2}:\d{2})$/;
+// A local time is a date alone or a date with a time; two expressions, so neither nests three deep.
+const LOCAL_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+const LOCAL_DATE_TIME_RE =
+  /^(\d{4})-(\d{2})-(\d{2})[Tt ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?$/;
 
 /** `.5` is 500 ms, `.05` is 50 ms, `.123` is 123 ms; absent is 0. */
 function millis(fraction: string | undefined): number {
@@ -112,7 +115,7 @@ function parseWithOffset(raw: string): number | undefined {
 }
 
 function parseLocal(raw: string, zone: string): number | undefined {
-  const m = LOCAL_RE.exec(raw);
+  const m = LOCAL_DATE_TIME_RE.exec(raw) ?? LOCAL_DATE_RE.exec(raw);
   if (m === null) return undefined;
   const wall = wallOf(num(m[1]), num(m[2]), num(m[3]), num(m[4]), num(m[5]), num(m[6]));
   return inZone(wall, zone) + millis(m[7]);
