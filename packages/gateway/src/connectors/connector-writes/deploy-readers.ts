@@ -432,22 +432,18 @@ function publicLink(g: unknown): "on" | "off" | "unknown" {
 /** Target groups that get a before-state line of their own. */
 const TESTFLIGHT_OWN_LINES = 12;
 
-function groupKindText(internal: boolean | undefined): string {
-  if (internal === undefined) return "kind unknown";
-  return internal ? "internal" : "external";
-}
-
-function publicLinkText(link: "on" | "off" | "unknown"): string {
-  if (link === "on") return "PUBLIC LINK ON (anyone with the link can join)";
-  return link === "off" ? "public link off" : "public link not reported";
-}
+const PUBLIC_LINK_TEXT = {
+  on: "PUBLIC LINK ON (anyone with the link can join)",
+  off: "public link off",
+  unknown: "public link not reported",
+} as const;
 
 function groupLine(g: unknown): string {
   const name = stringAt(g, ["name"]) ?? "(no name)";
   const internal = boolAt(g, ["isInternalGroup"]);
-  const kind = groupKindText(internal);
-  const linkText = publicLinkText(publicLink(g));
-  return `${name} (${kind}; ${linkText})`;
+  let kind = "kind unknown";
+  if (internal !== undefined) kind = internal ? "internal" : "external";
+  return `${name} (${kind}; ${PUBLIC_LINK_TEXT[publicLink(g)]})`;
 }
 
 /**

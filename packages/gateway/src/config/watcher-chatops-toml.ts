@@ -4,13 +4,11 @@ import {
   sectionFallbackSink,
 } from "./layered-config.ts";
 import {
-  isTableHeader,
+  forEachKeyValueInSection,
   parseBool,
   parseIntDec,
   parseString,
   parseStringArray,
-  splitKeyValue,
-  stripComment,
 } from "./toml-primitives.ts";
 
 /**
@@ -202,18 +200,9 @@ export function parseNimbusTomlWatcherChatops(
   onFallback?: SectionFallbackSink,
 ): NimbusWatcherChatopsToml {
   const out: Draft = { ...DEFAULT_WATCHER_CHATOPS_CONFIG };
-  let inSection = false;
-  for (const line of source.split(/\r?\n/)) {
-    const trimmed = stripComment(line).trim();
-    if (trimmed === "") continue;
-    if (isTableHeader(trimmed)) {
-      inSection = trimmed === "[watcher.chatops]";
-      continue;
-    }
-    if (!inSection) continue;
-    const kv = splitKeyValue(trimmed);
-    if (kv !== undefined) applyKey(out, kv.key, kv.valRaw, (m) => onFallback?.(m));
-  }
+  forEachKeyValueInSection(source, "[watcher.chatops]", (key, valRaw) =>
+    applyKey(out, key, valRaw, (m) => onFallback?.(m)),
+  );
   return Object.freeze(out);
 }
 

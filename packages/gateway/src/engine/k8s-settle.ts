@@ -38,6 +38,7 @@ import { codeUnitCompare } from "../util/code-unit-compare.ts";
 import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
 import type { SettledWrite } from "./bound-write-capabilities.ts";
 import { PREPARE_REFUSALS, PrepareRefusedError } from "./prepare-step.ts";
+import { field, isRecord, refuse } from "./settle-shared.ts";
 
 export interface K8sSettleRequest {
   /** The write's input: `{context, namespace, manifest}`. */
@@ -54,20 +55,6 @@ export interface K8sSettleRequest {
 export interface K8sSettleLimits {
   readonly maxRenderedBytes?: number;
   readonly maxObjects?: number;
-}
-
-function refuse(reason: string): PrepareRefusedError {
-  return new PrepareRefusedError(reason);
-}
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
-  const proto: unknown = Object.getPrototypeOf(v);
-  return proto === Object.prototype || proto === null;
-}
-
-function field(o: Record<string, unknown>, key: string): unknown {
-  return Object.hasOwn(o, key) ? o[key] : undefined;
 }
 
 /** A canonical, injective key of one scanned or parsed object (for multiset comparison). */

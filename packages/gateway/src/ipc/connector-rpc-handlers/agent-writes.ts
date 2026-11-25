@@ -58,6 +58,12 @@ export interface AgentWritesDeps {
   readonly now: () => number;
   /** Test seam; production uses the write table. */
   readonly rows?: readonly ConnectorWriteRow[];
+  /**
+   * Phase 10 SA2: per service, the space-separated OAuth scopes its stored credential holds (read
+   * before the call; `undefined` value: it records none). A write whose connector lists it only
+   * with a scope (`gmail_thread_archive`) is shown as not offered, with the re-authorise reason,
+   * when the credential lacks it. A service absent here makes no claim.
+   */
   readonly grantedScopes?: Readonly<Record<string, string | undefined>>;
   /** The connector's raw tool listing keyed `mcpClientToolKey(service, toolId)`. */
   readonly listServerTools?: (

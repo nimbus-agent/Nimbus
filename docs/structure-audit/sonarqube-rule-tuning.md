@@ -492,6 +492,45 @@ line ABOVE the reported await (and were therefore ignored) were moved onto the r
 | `github-actions/registry-action/src/sign.ts` | `typescript:S9382` | 1 |
 | `registry-format/src/trust-feed-build.ts` | `typescript:S9382` | 2 |
 
+## 2026-11-25 — gateway core sweep: 30 findings decided on the board
+
+A sweep of the open findings under `packages/gateway/src/{connectors,ipc,engine,mcp-sink,extensions,
+platform,…}` fixed the rest in code (no rule disabled, no `NOSONAR` marker and no exclusion added). Like
+the 2026-11-10 sweep, the findings below are **Accepted** on the SonarCloud board, each with its reason
+as an issue comment.
+
+- **Re-applied (14).** SonarCloud's re-tracking of 2026-11-23 re-created issues under new keys and dropped
+  the owner's 2026-11-10 dispositions. The twins were accepted again with the same reasons: the
+  `typescript:S9382` loops in `github-sync.ts`, `google-drive-sync.ts` (3), `same-origin-fetch.ts`,
+  `extensions/eval/eval-runtime.ts` (2), `extensions/installed-eval.ts` (2),
+  `extensions/registry/__fixtures__/build-test-registry.ts` and `platform/sandbox/net-forward-host.ts`;
+  `typescript:S1313` in `platform/sandbox/linux-forwarder.ts`; and `typescript:S3776` on
+  `engine/executor.ts` `runGateChecks` and `mcp-sink/capture-act.ts` `acceptAction`.
+- **`typescript:S9382` (13), sequential by design** under the 2026-10-03 rule: the per-server listing
+  of `extensions/eval/eval-role.ts` (2, one server at a time, fail fast), the user-MCP grant revocations
+  and spawn preparation in `connectors/lazy-mesh/mesh/user-mcp-layer.ts` (2) and the iac ACL revocations
+  in `iac-runner/iac-grant-ledger.ts` (one persisted ledger, serial DACL rewrites), the redirect walk of
+  `extensions/registry/registry-fetch.ts`, the JSM on-call and alert reads (`jsm-oncall.ts` 2,
+  `jsm-alerts.ts`; one rate limiter, one budget), the Slack token poll in `slack-read-markers.ts`, two
+  test-helper polls in `ipc/testing/lan-v2.test-helpers.ts` and the ordered fixture child
+  `connectors/testing/k8s-connector-handlers.ts`.
+- **`typescript:S3735` (2)** in `toolgen/toolgen-client.ts`: Bun's `FileSink.write` and `flush` return
+  `number | Promise<number>`, and `void` marks the value as intentionally not awaited (the rule's own
+  exception; the line protocol's reply or the caller's timeout reports a failure).
+- **`typescript:S6582` (1)** in `mcp-sink/capture-gate/reads.ts`: the I28 security-invariant test pins
+  the comparison `row.sessionId !== caller.clientId` by text, so the equivalent optional chain fails it.
+
+Left open, with the reason, rather than split: the `typescript:S3776` findings on ordered security gates
+whose call-site order is pinned by source-order tests (`ipc/capture-rpc.ts` `buildActDeps`, pinned by
+the I42 test that the act wiring reads the user-MCP facts before it builds the executor;
+`ipc/connector-rpc-handlers/agent-writes.ts` and `agent-writes-user-mcp.ts`, pinned by the I42/I58
+enable-order tests), and those in files at their `audit:file-size` cap, where a phase split cannot be
+written without growing the file (`engine/before-state.ts`, `engine/run-ask.ts`, `engine/agent.ts`,
+`connectors/connector-writes/model-write-refusals.ts`, `ipc/server/inline-handlers.ts` (2),
+`ipc/connector-rpc-handlers/model-writes.ts`, `extensions/trust/trust-store.ts`,
+`egress/egress-verify.ts`). `typescript:S107` and `S1788` on `ipc/lan-client.ts`
+`sendFederatedOverWire` stay open: its callers are the federated agents outside this sweep's scope.
+
 If you disable a rule, record:
 
 - Rule key (e.g., `typescript:S1135`)

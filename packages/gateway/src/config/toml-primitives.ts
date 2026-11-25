@@ -116,6 +116,31 @@ export function splitKeyValue(trimmed: string): { key: string; valRaw: string } 
   return { key: trimmed.slice(0, eq).trim(), valRaw: trimmed.slice(eq + 1).trim() };
 }
 
+/**
+ * Calls `onEntry` for every `key = value` line inside `sectionHeader` (exactly, e.g. `[watcher.anomaly]`),
+ * comments stripped; a line that is not `key = value` is skipped. Unlike `forEachSectionEntry`
+ * (`nimbus-toml/shared.ts`), a line with an unterminated string is not skipped here: the section's own
+ * value parser decides.
+ */
+export function forEachKeyValueInSection(
+  source: string,
+  sectionHeader: string,
+  onEntry: (key: string, valRaw: string) => void,
+): void {
+  let inSection = false;
+  for (const line of source.split(/\r?\n/)) {
+    const trimmed = stripComment(line).trim();
+    if (trimmed === "") continue;
+    if (isTableHeader(trimmed)) {
+      inSection = trimmed === sectionHeader;
+      continue;
+    }
+    if (!inSection) continue;
+    const kv = splitKeyValue(trimmed);
+    if (kv !== undefined) onEntry(kv.key, kv.valRaw);
+  }
+}
+
 type QuoteSplit = { parts: string[]; unterminated: boolean };
 
 /** One pass: split on commas outside a double-quoted string. `escapes` decides whether a backslash consumes the next character. */

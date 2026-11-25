@@ -1,7 +1,5 @@
 // packages/gateway/src/ipc/connector-rpc-handlers/model-writes.ts
 // `connector.writesEnable|writesDisable|writesStatus`: the owner's opt-in for model connector writes.
-import type { Database } from "bun:sqlite";
-
 import { removeDoorApprovals } from "../../connectors/connector-writes/door-approval-store.ts";
 import {
   getModelWriteEnablement,
@@ -50,31 +48,44 @@ import type {
   ConnectorWriteWave,
 } from "../../connectors/connector-writes/types.ts";
 import { iacWildcardHosts } from "../../connectors/lazy-mesh/first-party-manifests.ts";
-import type { ToolExecutor } from "../../engine/executor.ts";
 import type { ReachRunner } from "../../extensions/extension-reach.ts";
 import {
   type SandboxNetworkPosture,
   sandboxNetworkPosture,
 } from "../../platform/sandbox/sandbox-posture.ts";
-import type { EnforcedPolicy } from "../../policy/policy-gate.ts";
 import { codeUnitCompare } from "../../util/code-unit-compare.ts";
 import { ConnectorRpcError } from "../connector-rpc-shared.ts";
-import type { ClientKind } from "../server/client-kind.ts";
-import { type AgentEnableReply, handleAgentWritesEnable, parseWriteDoor } from "./agent-writes.ts";
+import {
+  type AgentEnableReply,
+  type AgentWritesDeps,
+  handleAgentWritesEnable,
+  parseWriteDoor,
+} from "./agent-writes.ts";
 import {
   handleUserMcpAgentWritesEnable,
   isUserMcpServiceParam,
   type UserMcpAgentEnableReply,
 } from "./agent-writes-user-mcp.ts";
 
-export interface ModelWritesDeps {
-  readonly db: Database;
-  readonly toolExecutor: ToolExecutor | undefined;
-  /** LIVE resolved policy (I22); `undefined` means "cannot tell" and refuses. */
-  readonly getEnforcedPolicy: () => Pick<EnforcedPolicy, "capabilitiesDisabled"> | undefined;
-  readonly now: () => number;
-  /** Test seam; production uses the write table. */
-  readonly rows?: readonly ConnectorWriteRow[];
+/**
+ * The model door's deps: the members it shares with the agent door (`AgentWritesDeps`, which documents
+ * them; an absent `clientKind` reads as `unknown`) plus its own below.
+ */
+export interface ModelWritesDeps
+  extends Pick<
+    AgentWritesDeps,
+    | "db"
+    | "toolExecutor"
+    | "getEnforcedPolicy"
+    | "now"
+    | "rows"
+    | "grantedScopes"
+    | "listServerTools"
+    | "clientKind"
+    | "agentAnswerWasNonHuman"
+    | "listUserMcpDefinitions"
+    | "userMcpNetworkNote"
+  > {
   /**
    * Called after the `obsidian` opt-in changes (an approved enable, any disable): the mesh stops the
    * Obsidian slot so its next spawn reads the new grant, and on Windows revokes its ACEs. Must
@@ -104,27 +115,6 @@ export interface ModelWritesDeps {
    * What approving the Obsidian append would let its sandbox write now (`LazyConnectorMesh.
    * obsidianWriteScope`), shown in the enable prompt. Absent: the prompt says the folders are unknown.
    */
-  /**
-   * Phase 10 SA2: per service, the space-separated OAuth scopes its stored credential holds (read
-   * before the call; `undefined` value: it records none). A write whose connector lists it only
-   * with a scope (`gmail_thread_archive`) is shown as not offered, with the re-authorise reason,
-   * when the credential lacks it. A service absent here makes no claim.
-   */
-  readonly grantedScopes?: Readonly<Record<string, string | undefined>>;
-  /** Phase 28 AD3a-1 (agent door only): the connector's raw tool listing, as the model door reads it. */
-  readonly listServerTools?: (
-    service: string,
-  ) => Promise<Readonly<Record<string, unknown>> | undefined>;
-  /** The connection's declared kind (`ctx.getClientKind`), never a param; absent reads as `unknown`. */
-  readonly clientKind?: ClientKind;
-  /** True once the human-only consent wrapper turned a non-human approval into a decline. */
-  readonly agentAnswerWasNonHuman?: () => boolean;
-  /** AD5a (agent door, user MCP servers): see `AgentWritesDeps.listUserMcpDefinitions`. */
-  readonly listUserMcpDefinitions?: (
-    serviceId: string,
-  ) => Promise<Readonly<Record<string, unknown>> | undefined>;
-  /** AD5a: see `AgentWritesDeps.userMcpNetworkNote`. */
-  readonly userMcpNetworkNote?: (netHosts: readonly string[]) => string | undefined;
   readonly obsidianWriteScope?: () => {
     readonly roots: readonly string[];
     /** Per vault, its daily-note file pattern (`<vault>/<daily folder>/<format>.md`). */
