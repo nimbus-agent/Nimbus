@@ -156,7 +156,7 @@ describe("bigquery-sync — datasets→tables walk", () => {
     ]);
     const eventsMeta = JSON.parse(rows[0]!.metadata) as Record<string, unknown>;
     expect(eventsMeta.numRows).toBe(100);
-    expect(eventsMeta.schemaFields).toEqual([{ name: "id", type: "STRING" }]);
+    expect(eventsMeta.schemaFields).toEqual([{ name: "id", type: "STRING", nullable: true }]);
   });
 
   test("Authorization Bearer header carries the minted token", async () => {

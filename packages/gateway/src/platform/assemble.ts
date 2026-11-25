@@ -607,15 +607,15 @@ export async function assemblePlatformServices(
   });
   sidecarStops.push(() => toolCallLogRetention.stop());
 
-  // Item history and dbt test retention (IC1): `[index] history_retention_days`, `dbt_test_retention_days`, read per tick; one batched prune per 24 h.
+  const indexCfg = () => loadNimbusIndexFromConfigDir(paths.configDir); // item, schema and dbt test retention, re-read per tick
   const itemHistoryRetention = startItemHistoryRetention(db, {
-    retentionDays: () => loadNimbusIndexFromConfigDir(paths.configDir).historyRetentionDays,
-    dbtTestRetentionDays: () => loadNimbusIndexFromConfigDir(paths.configDir).dbtTestRetentionDays,
+    retentionDays: () => indexCfg().historyRetentionDays,
+    schemaRetentionDays: () => indexCfg().schemaHistoryRetentionDays,
+    dbtTestRetentionDays: () => indexCfg().dbtTestRetentionDays,
   });
   sidecarStops.push(() => itemHistoryRetention.stop());
 
-  // Incident record retention (Phase 10 IC3): `[incident] retention_days`, re-read on every tick. A pruned
-  // record takes its pushed briefs with it, in one transaction per batch.
+  // Incident record retention (IC3): `[incident] retention_days`, re-read per tick; a pruned record takes its pushed briefs.
   const incidentRetention = startIncidentRetention(db, {
     retentionDays: () => loadNimbusIncidentFromConfigDir(paths.configDir).retentionDays,
     onError: (err) => syncLogger.warn({ err }, "incident record retention pass failed"),

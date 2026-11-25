@@ -44,6 +44,8 @@ export type IncidentEngineDeps = {
   readonly emit: (payload: IncidentAssembledPayload) => void;
   readonly loadServiceConfigs: () => ReadonlyMap<string, ServiceConfig>;
   readonly readConfig: () => EngineConfig;
+  /** `[incident] data_schema_lookback_hours`, read per assembly; absent reads the default (24). */
+  readonly readDataSchemaLookbackHours?: () => number;
   /** A demo-rooted gateway runs no sync, so `trigger` is a no-op there (I41). */
   readonly demo: boolean;
   readonly logger: {
@@ -78,7 +80,11 @@ export function createIncidentEngine(deps: IncidentEngineDeps): IncidentEngine {
     const pending = inFlightItems.get(itemId);
     if (pending !== undefined) return pending;
     const work = assembleOne(
-      { db: deps.db, loadServiceConfigs: deps.loadServiceConfigs },
+      {
+        db: deps.db,
+        loadServiceConfigs: deps.loadServiceConfigs,
+        dataSchemaLookbackHours: deps.readDataSchemaLookbackHours?.(),
+      },
       itemId,
       deps.now(),
     )

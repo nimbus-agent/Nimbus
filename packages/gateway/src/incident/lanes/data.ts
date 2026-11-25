@@ -4,15 +4,17 @@ import type { ServiceConfig } from "../../metrics/dora-config.ts";
 import type { DataItemView, DataLane, DataLineageView, GapNote } from "../incident-record-types.ts";
 import { CHAT_WINDOW_BEFORE_MS, codeUnitCompare, DATA_LIST_CAP, gap, oneLine } from "./caps.ts";
 import { dbtGap, dbtTests } from "./data-dbt.ts";
+import { schemaLane } from "./data-schema.ts";
 
 /**
  * Lane 6, data (Phase 10 IC3, design C step 8), for Monte Carlo and Bigeye triggers only: the monitored model
  * keys, one hop of lineage (the `derived_from` edges FROM the model), orchestration items (dbt jobs, Airflow
  * DAGs, Dagster jobs, Prefect deployments) whose TITLE holds the model's last identifier segment as a whole
- * token (a name match, not lineage: those items carry no model reference), and pull requests merged in the 24 h
- * before the trigger whose title or branch holds the same token, and the failing, erroring or warning dbt tests
- * on the monitored models and one hop of their lineage in the incident window (`data-dbt.ts`, a model-KEY
- * match). The run-level lanes still not indexed (DAG-run logs, warehouse schema deltas) are always gaps.
+ * token (a name match, not lineage: those items carry no model reference), pull requests merged in the 24 h
+ * before the trigger whose title or branch holds the same token, the warehouse schema changes of the
+ * monitored and upstream tables (`data-schema.ts`), and the failing, erroring or warning dbt tests on the
+ * monitored models and one hop of their lineage in the incident window (`data-dbt.ts`, a model-KEY match).
+ * The run-level lane still not indexed (DAG-run logs) is always listed as a gap.
  */
 
 export type DataResult = { readonly lane: DataLane; readonly gaps: readonly GapNote[] };
@@ -22,6 +24,7 @@ const MIN_TOKEN = 3;
 export const MODEL_KEY_CAP = 50;
 /** Rows a single lane query may load. A query that returns this many has been cut, and the lane says so. */
 export const SCAN_ROW_CAP = 500;
+const DEFAULT_SCHEMA_LOOKBACK_HOURS = 24;
 
 /** Escape a token for a LIKE pattern (`!` is the ESCAPE character; tokens are already lower-cased). */
 function likeOf(token: string): string {
@@ -208,7 +211,7 @@ export function dataSubstrateGaps(): GapNote[] {
   return [
     gap(
       "missing_entity_type",
-      "DAG-run logs and warehouse schema deltas are not indexed, so what a failing run or a schema change did is absent here.",
+      "DAG-run logs are not indexed, so what a failing run did is absent here.",
     ),
     gap(
       "missing_relation_emit",
@@ -231,6 +234,8 @@ export function pagerdutyDataLane(
     readonly service: string;
     readonly cfg: ServiceConfig | null;
     readonly openedAtMs: number | null;
+    readonly nowMs?: number | null;
+    readonly schemaLookbackHours?: number | undefined;
   },
 ): DataResult | null {
   if (input.service !== "pagerduty" || input.cfg === null || input.cfg.dataModels.length === 0) {
@@ -247,12 +252,21 @@ export function pagerdutyDataLane(
   return dataLane(db, {
     metadata: { monitoredDataModelKeys: keys },
     openedAtMs: input.openedAtMs,
+    nowMs: input.nowMs ?? null,
+    schemaLookbackHours: input.schemaLookbackHours,
   });
 }
 
 export function dataLane(
   db: Database,
-  input: { readonly metadata: Record<string, unknown> | null; readonly openedAtMs: number | null },
+  input: {
+    readonly metadata: Record<string, unknown> | null;
+    readonly openedAtMs: number | null;
+    /** The assembly clock, the end of the schema window; null reads "until 24 hours after the open time". */
+    readonly nowMs?: number | null;
+    /** `[incident] data_schema_lookback_hours`; the default is 24. */
+    readonly schemaLookbackHours?: number | undefined;
+  },
 ): DataResult {
   const allModels = monitoredKeys(input.metadata);
   const models = allModels.slice(0, MODEL_KEY_CAP);
@@ -264,7 +278,14 @@ export function dataLane(
     input.openedAtMs === null ? { items: [] } : mergedPrs(db, tokens, input.openedAtMs, truncated);
   const tests =
     input.openedAtMs === null ? [] : dbtTests(db, models, lin, input.openedAtMs, truncated);
-  const gaps = [...dataSubstrateGaps(), dbtGap(db)];
+  const schema = schemaLane(db, {
+    models,
+    lineage: lin,
+    openedAtMs: input.openedAtMs,
+    nowMs: input.nowMs ?? null,
+    lookbackHours: input.schemaLookbackHours ?? DEFAULT_SCHEMA_LOOKBACK_HOURS,
+  });
+  const gaps = [...dataSubstrateGaps(), ...schema.gaps, dbtGap(db)];
   if (allModels.length > MODEL_KEY_CAP) {
     gaps.push(
       gap(
@@ -302,6 +323,7 @@ export function dataLane(
         prs: prs.items.length,
         dbtTests: tests.length,
       },
+      ...(schema.lane === null ? {} : { schemaDiff: schema.lane }),
     },
     gaps,
   };

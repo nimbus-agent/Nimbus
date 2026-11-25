@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 
 import { pruneDbtTests } from "./dbt-test-retention.ts";
 import { pruneItemHistory } from "./item-history.ts";
+import { runSchemaHistoryPrune } from "./schema-history-retention.ts";
 
 /**
  * The daily `item_history` prune (Phase 10 IC1, `[index] history_retention_days`). The sibling of
@@ -59,6 +60,8 @@ export type StartItemHistoryRetentionOptions = {
   readonly retentionDays: () => number;
   /** `[index] dbt_test_retention_days`, read every tick; the same tick prunes old dbt test results. */
   readonly dbtTestRetentionDays?: () => number;
+  /** `[index] schema_history_retention_days`: when given, the same tick prunes `schema_history` too. */
+  readonly schemaRetentionDays?: () => number;
   readonly nowMs?: () => number;
   readonly yieldToEventLoop?: () => Promise<void>;
   /** Test seams: the per-batch row count and the per-pass batch cap. */
@@ -126,6 +129,13 @@ export function startItemHistoryRetention(
             });
             dbtMore = run.more;
           }
+        }
+        if (opts.schemaRetentionDays !== undefined && !stopped) {
+          await runSchemaHistoryPrune(db, {
+            retentionDays: opts.schemaRetentionDays(),
+            nowMs: clock(),
+            yieldToEventLoop,
+          });
         }
       } catch {
         // Best-effort maintenance: never crash the gateway.

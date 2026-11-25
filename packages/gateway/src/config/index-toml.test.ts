@@ -115,3 +115,29 @@ describe("[index] dbt_test_retention_days", () => {
     expect(seen[0]).toContain("7..365");
   });
 });
+
+describe("[index] schema_history_retention_days", () => {
+  test("defaults to 365 and does not disturb history_retention_days", () => {
+    expect(parseNimbusTomlIndex("").schemaHistoryRetentionDays).toBe(365);
+    const c = parseNimbusTomlIndex(
+      "[index]\nhistory_retention_days = 30\nschema_history_retention_days = 90\n",
+    );
+    expect(c).toEqual({
+      historyRetentionDays: 30,
+      schemaHistoryRetentionDays: 90,
+      dbtTestRetentionDays: 30,
+    });
+  });
+
+  test("out of range is a recorded fallback, never clamped", () => {
+    const seen: string[] = [];
+    for (const v of ["1", "4000", "x"]) {
+      const c = parseNimbusTomlIndex(`[index]\nschema_history_retention_days = ${v}\n`, (m) =>
+        seen.push(m),
+      );
+      expect(c.schemaHistoryRetentionDays).toBe(365);
+    }
+    expect(seen).toHaveLength(3);
+    expect(seen[0]).toContain("schema_history_retention_days");
+  });
+});

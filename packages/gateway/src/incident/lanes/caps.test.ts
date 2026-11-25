@@ -125,3 +125,53 @@ describe("the data cut with dbt tests", () => {
     expect(out.record.data !== null && "dbtTests" in out.record.data).toBe(false);
   });
 });
+
+describe("the data cut counts every list, as the previous cut left it", () => {
+  const test0 = buildDataLane().dbtTests?.[0];
+  if (test0 === undefined) throw new Error("fixture: the data lane has no dbt test");
+  const long = "t".repeat(200);
+
+  test("dbt tests and schema changes are in the cut, and each step's before is the last step's after", () => {
+    const n = 120;
+    const data = buildDataLane({
+      dbtTests: Array.from({ length: n }, (_, i) => ({
+        ...test0,
+        id: `dbt:${String(i)}`,
+        title: long,
+      })),
+      schemaDiff: {
+        changes: Array.from({ length: n }, (_, i) => ({
+          model: "m",
+          via: "monitored" as const,
+          atMs: i,
+          kind: "added" as const,
+          column: `c${String(i)}${long}`,
+          from: null,
+          to: "TEXT",
+          rule: "data:schema_history" as const,
+        })),
+        total: n,
+        windowFromMs: 0,
+        lookbackHours: 24,
+      },
+      totals: { lineage: 1, orchestration: 1, prs: 1, dbtTests: n },
+    });
+    const out = capRecordSize({ ...buildRecord(), data }, 40_000);
+    const steps = out.cuts.filter((c) => c.lane === "data");
+    expect(steps.length).toBeGreaterThan(1);
+    expect(steps[0]?.before).toBe(3 + 2 * n);
+    for (let i = 1; i < steps.length; i += 1) {
+      expect(steps[i]?.before).toBe(steps[i - 1]?.after);
+    }
+    const kept = out.record.data;
+    const left =
+      (kept?.lineage.length ?? 0) +
+      (kept?.orchestration.length ?? 0) +
+      (kept?.prs.length ?? 0) +
+      (kept?.dbtTests?.length ?? 0) +
+      (kept?.schemaDiff?.changes.length ?? 0);
+    expect(steps.at(-1)?.after).toBe(left);
+    expect(kept?.schemaDiff?.changes.length ?? n).toBeLessThan(n);
+    expect(kept?.dbtTests?.length ?? n).toBeLessThan(n);
+  });
+});

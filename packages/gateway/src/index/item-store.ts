@@ -16,6 +16,8 @@ import {
   recordItemUpsertHistory,
 } from "./item-history.ts";
 import { itemPrimaryKey } from "./item-key.ts";
+import { runTrackedItemWrite } from "./item-write-tracking.ts";
+import { deleteSchemaHistoryForService } from "./schema-history.ts";
 
 export { itemPrimaryKey } from "./item-key.ts";
 
@@ -115,9 +117,7 @@ export function upsertIndexedItem(
   // for a stored key because the READ side parse-checks before it canonicalizes.
   const resolveSource = row.canonicalUrl ?? row.url ?? null;
   const resolveKey = resolveSource === null ? null : canonicalizeUrl(resolveSource);
-  // Item history (Phase 10 IC1): a tracked (service, type) pair records the CHANGES to its state keys in
-  // the same savepoint as the upsert, so a crash cannot leave a changed item without its change row. An
-  // untracked pair takes the existing path with no extra statement.
+  // Item history (IC1) and the warehouse schema history (V108) are written in the upsert's transaction.
   const historyBefore = readItemHistoryBefore(db, id, row.service, row.type);
   const writeItem = (): void => {
     dbRun(
@@ -162,22 +162,12 @@ export function upsertIndexedItem(
       ],
     );
   };
-  if (historyBefore === undefined) {
-    writeItem();
-  } else {
-    // One transaction (a savepoint when a caller's is open): a crash or a failing history insert cannot
-    // leave a changed item without its change row.
-    db.transaction(() => {
-      writeItem();
-      recordItemUpsertHistory(db, historyBefore, {
-        id,
-        service: row.service,
-        type: row.type,
-        metadata: meta,
-        syncedAt: row.syncedAt,
-      });
-    })();
-  }
+  const tracked = { service: row.service, type: row.type, metadata: meta, syncedAt: row.syncedAt };
+  const recordHistory =
+    historyBefore === undefined
+      ? undefined
+      : () => recordItemUpsertHistory(db, historyBefore, { id, ...tracked });
+  runTrackedItemWrite(db, { ...tracked, writeItem, recordHistory });
   syncGraphFromIndexedItem(
     db,
     {
@@ -339,6 +329,7 @@ export function deleteAllItemsForService(db: Database, service: string): void {
     }
     dbRun(db, "DELETE FROM item WHERE service = ?", [service]);
     deleteItemHistoryForService(db, service);
+    deleteSchemaHistoryForService(db, service);
   })();
 }
 
