@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795646119482,
+  "lastUpdate": 1795647366947,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "c1bab1081af5eb45d13eb0f21a6ee6d441745cc9",
-          "message": "feat(fleet): subject enumeration — sweep a corpus instead of naming one subject (#1541)\n\nCloses fleet PR 2b, the last unshipped half of the overnight sub-agent\nfleet row. Before this, every `[[fleet.job]]` named exactly one subject\nin config, so org-wide bus-factor coverage stayed manual — an owner had\nto write one job per file or service they already suspected.\n\nA job can now name an enumerator instead of a subject:\n\n```toml\n[[fleet.job]]\nname = \"bus-factor\"\nagent = \"ownership\"\ninterval_seconds = 86400\nsweep = \"paths\"            # paths | services | symbols | terms\nmax_subjects = 200         # REQUIRED with sweep, 1..500, refused not clamped\npath_prefix = \"packages/\"  # optional, paths and symbols only\n```\n\n## How a sweep runs\n\nOne sweep job stays ONE job: one interval, one backoff, one\n`fleet_job_state` row. When it comes due, the scheduler enumerates that\nkind's subjects, takes up to `max_subjects` keys after the job's cursor,\nwrapping, and runs each through the existing invoker. Properties that\nare the point, each pinned by a test that fails without it:\n\n- **Admission is re-checked between SUBJECTS**, not only between jobs,\non one counter shared by config-named jobs and sweep subjects. A\n200-subject job yields when you come back to the machine.\n- **A yield records no job success**, so the job stays due and the next\nrun resumes from the cursor. Yielding never costs coverage.\n- **The cursor is a KEY, not an ordinal**, and advances after every\nsubject, success or failure. An ordinal shifts when a file is added or\ndeleted and would silently skip or repeat; one broken subject cannot pin\nthe rotation.\n- **An empty enumeration is success with a stated reason**, not a\nfailure. A sweep that correctly finds nothing is not pushed into\nbackoff.\n- **The I38 remote budget resets once per run**, never per subject.\n\n## What the index can actually enumerate\n\n| Kind | Source | Agents |\n| --- | --- | --- |\n| `paths` | the ownership pass's own `source_file` / `directory` nodes,\ngit-aware roots only | `ownership` |\n| `services` | configured service ids, the same loader the agents\nresolve `service` against | `oncall`, `changelog`, `ownership` |\n| `symbols` | distinct `graph_entity` symbol labels | `ghost`,\n`conflicts` |\n| `terms` | consolidated glossary terms | `glossary` |\n\n`FLEET_SWEEP_SUPPORT` is compiler-total over the 14 fleet-eligible\nagents, so a fifteenth does not compile until someone classifies it, and\nthe eight non-sweepable agents each carry a recorded reason rather than\nsitting in an exclusion set.\n\n**Two decisions worth reading, both corrections found while designing:**\n\n- **ghost and conflicts sweep SYMBOLS, not paths.** Their `file`\nparameter resolves a `graph_entity` symbol label — exact match first,\nthen a fuzzy basename match. A path sweep would hand every `index.ts`\nthe same fuzzy token and produce hundreds of briefs about whichever\nsymbol matched first.\n- **`paths` enumerates the ownership pass's own nodes, not blame rows.**\nDeriving files from `git_blame_line` and synthesising parent directories\nwould emit directories the pass never wrote a node for, each producing a\nbrief whose only content is a \"no ownership node\" gap.\n\n## Digest, CLI, schema\n\n`nimbus fleet digest` groups each sweep job into one section: a coverage\nline, moved subjects in full, unchanged as a count, threshold-suppressed\ncounted separately, first observations truncated at 10 in Markdown only\nwith JSON carrying every key. Config-named jobs render\n**byte-identically** — guarded by a full-document test whose expected\nliteral was captured from the pre-change renderer, red-proved by\ninjecting a blank line.\n\n`fleet.list` reports each sweep's kind, cap, subject total, cursor and\n`rotationExceedsRetention`; `nimbus fleet briefs --subject <key>`\nfilters by subject. No new IPC method, so no routing entry and no Tauri\nallowlist change.\n\nSchema **V63** rebuilds `fleet_brief` with `subject_key TEXT NOT NULL`\nbackfilled to `job_id` — true history, since a config-named job's\nsubject IS the job — preserving the `ON DELETE CASCADE` a rebuild\nsilently loses, adds sweep state to `fleet_job_state` and subject\ncounters to `fleet_run`, and redefines `idx_fleet_brief_job` while\nadding `idx_fleet_brief_subject`.\n\n## Bounds, stated rather than glossed\n\n- **A rotation longer than `retention_days` cannot report movement** — a\nsubject's predecessor expires before it is revisited. The subject total\nis unknown until enumeration, so this is disclosed on `fleet.list` and\nin the digest rather than refused at config load.\n- **Coverage is eventual, not prioritised.** A risky file waits its\nturn.\n- **Symbol label collisions collapse to one subject.** A label omits\nkind and root, so a same-named function and type in one file share one;\nthe agent briefs whichever its lookup returns.\n- **`janitor` is not enumerable.** Its `resourceRef` is free text probed\nfor mentions and the index holds no resource inventory, so a list would\nbe invented rather than enumerated.\n- **`negotiate` stays deferred**, with enumeration now the settled\nreason: scheduled dossier-building over every indexed person is a\ndifferent act from an owner running one, and no enumerator returns\nperson-shaped subjects.\n- **`paths` covers git-aware roots only**, and only nodes the ownership\npass wrote.\n\nNo new invariant, no new static rule, no new egress class, no HITL\naction type. `fleet.*` stays LAN-forbidden and absent from the Tauri\nallowlist.\n\n## Verification\n\n`bun run preflight:fast` green across all 33 gates; scoped fleet,\nconfig, IPC, CLI and migration suites pass; `bun run typecheck` and\n`typecheck:tests` clean; `audit:platform-test-gaps` clean. Every task\nwent through a task-scoped review, and the branch through a whole-branch\nreview whose findings are fixed here — including a stale\n`docs/schema-reference.md` that still described the pre-V63 fleet\ntables, which no gate catches because `audit:status-drift` only reads\nthe ceiling sentence.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **New Features**\n  * Added fleet sweep jobs for paths, services, symbols, and terms.\n* Added bounded subject rotation, progress tracking, filtering, and\ndigest summaries.\n* Search now reports typed query timeouts, fallback status, and\nincomplete retrieval progress.\n\n* **Bug Fixes**\n* Improved sweep handling for empty results, failures, retention limits,\nand cursor resumption.\n* Media previews now report file sizes more reliably across supported\nsources.\n  * Embedding backfill progress now includes in-process runtimes.\n\n* **Documentation**\n* Updated CLI, architecture, schema, changelog, and roadmap\ndocumentation.\n\n* **Chores**\n  * Advanced the local schema version to V63.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-18T07:10:02Z",
-          "tree_id": "6617b9dc1712e55f53b10054658f1b57cebe2cec",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/c1bab1081af5eb45d13eb0f21a6ee6d441745cc9"
-        },
-        "date": 1789716291747,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 318.89309834999693,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 329.23593350000084,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 260.19682440000213,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ad2e864f041af9358fa4ea49dfd3a10ab764cf47",
+          "message": "refactor(gateway): clear SonarCloud findings in gateway features and tests (#2157)\n\nClears the open SonarCloud findings in `packages/gateway/` outside the\ndirectories another sweep owns (`connectors`, `ipc`, `engine`,\n`mcp-sink`, `extensions`, `platform`, `federation`, `config`, `db` and\nthe rest). That leaves agents, audit, automation, debt, demo, embedding,\nfinops, graph, iac-drift, incident, index, investigation, memory,\noncall-push, packs, perf, postmortem, premortem, prreview, runbook,\nsearch, standing, util, and `packages/gateway/test/`.\n\n151 findings were open in scope. 132 are fixed in code. The other 19,\nall `typescript:S9382`, are marked **Accepted** on the SonarCloud board,\neach with a comment giving its reason. This follows the 2026-11-10\nprecedent in `docs/structure-audit/sonarqube-rule-tuning.md`. No rule\nwas disabled, no exclusion was added, and no `NOSONAR` marker was added.\n\n## Fixed in code, by rule\n\n| Rule | Fixed |\n|---|---|\n| `S3358` nested ternary | 28 |\n| `S4624` nested template literal | 27 |\n| `S3776` cognitive complexity | 24 |\n| `S5906` `toHaveLength` | 12 |\n| `S6582` optional chain | 10 |\n| `S7778` merge `push` calls | 5 |\n| `S7780` `String.raw` | 5 |\n| `S7763` `export … from` | 4 |\n| `S6606` `??` | 3 |\n| `S7747` `Promise.all(iterable)` | 2 |\n| `S2699` test without an assertion | 2 |\n| `S5843` regex complexity | 2 |\n| `S6594` `RegExp.exec` | 2 |\n| `S4144` identical functions | 1 |\n| `S4043` `sort` inside an expression | 1 |\n| `S2301` boolean selector parameter | 1 |\n| `S107` more than 7 parameters | 1 |\n| `S7758` `codePointAt` | 1 |\n| `S7755` `.at(-1)` | 1 |\n\nHow the cognitive-complexity findings were handled:\n\n- **Gates that implement an invariant were split by phase.** The new\nsteps run in sequence at the call site. No check moved into a helper,\nand the order of checks did not change.\n- `automation/workflow-import.ts` (I59): only pure computations moved\nout (the prior signer, the prompt target, rendering the prompt, the\ndeclined error). Every refusal is still inline, steps 1 to 8.\n- `investigation/investigation-live.ts` (I57 (a)): the span, the\ndeduplication of rows, and the status.\n- `agents/_lib/reserved-sections.ts` (I31): the reserved blocks in order\n(the brief's own, then gaps, then freshness).\n- `automation/workflow-runner.ts`: one helper settles a step's outcome.\n- `standing/approval-learning.ts` and `incident/remediation.ts` (I55,\nI57 (b)): only an optional-chain rewrite of the same comparison.\n- **Large non-gate functions were split into named phases.** These are\n`debt/debt-scan.ts`, `incident/handoff-records.ts`,\n`incident/predict-pass.ts`, `incident/cascade.ts`,\n`index/oncall-handoff-query.ts`, `prreview/prreview-build.ts`,\n`audit/agent-door-proof.ts`, `debt/git-history.ts`, `automation/cron.ts`\nand others.\n- **Code moved to new modules** so that files listed in the size\nbaseline do not grow:\n- `automation/workflow-dry-run.ts`. The guard evaluation stays in the\nrunner, because static rule D44(g) allows guard functions only there.\n  - `index/hybrid-search-options.ts`\n  - `index/oncall-handoff-gaps.ts`\n  - `prreview/prreview-gaps.ts`\n\nSix baseline entries went down, and\n`docs/structure-audit/file-size-baseline.json` is updated to match.\n\n## Accepted on the board (19 × `S9382`)\n\nEach of these loops is sequential on purpose. They fall into four\ngroups:\n\n- **Batched retention prunes (9).** The item history, dbt, orchestration\nand schema-history prunes yield to the event loop between batches.\n- **Incident engine (3).** It assembles one record at a time and yields\nbetween records, and a re-run for a service waits until the current pass\nhas finished.\n- **One child process or credential at a time (2).** Debt runs one `git`\nreader at a time. The IaC drift check runs one Terraform workdir at a\ntime.\n- **Shared order, budget or retirement checks (5).** The ChatOps notice\nqueue has a breaker that depends on earlier deliveries, and `whenIdle`\nre-checks the live set. The workflow scheduler checks for retirement\nbefore each run. The IC2 re-graph yields between slices. The `--live`\nSentry read shares one deadline across projects.\n\n## Duplication\n\n- Removed: the duplicated alert-facts builder in\n`incident/trigger-facts.ts` (38 lines) and the duplicated Sentry row\nrenderer in `agents/_lib/investigation-render.ts` (24 lines).\n- Left: `util/invisible-text.ts` is duplicated with `packages/ui` and\n`packages/cli`. The dependency rules forbid sharing code across those\npackages.\n\n## Tests added\n\n- `agents/_lib/incident-update-render.coverage.test.ts`: an unknown\nstatus, https and non-https links, deployment lines, and CI lines with\nand without a conclusion.\n- `finops/cost-anomaly-notice.test.ts`: forgetting the seen set past\n2,000 announcements, and announcing them again.\n- `automation/workflow-runner.coverage.test.ts`: a declared query that\nthrows halts the run.\n\n## Verification\n\n- `bun run preflight:fast` passes.\n- `bun test` over every directory in scope plus\n`packages/gateway/test/{integration,unit}` and\n`scripts/structure-audit`: 10,954 pass, 18 fail. None of the failures is\nin code this branch changed:\n- 8 briefing integration tests fail with Windows `EBUSY` during temp-dir\ncleanup. They fail the same way on `main` locally.\n  - 9 toolgen sandbox tests need a sandbox helper build.\n  - 1 LAN worker crashed. LAN code is outside this branch's scope.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added workflow dry-run previews with step results, guarded-step\nevaluations, and query observations for supported triggers.\n* **Bug Fixes**\n* Improved handling of missing embeddings and incomplete live\ninvestigation reads.\n* Corrected edge cases in incident links, graph anchors, workflow\nerrors, and handoff gap reporting.\n* Expanded support for local dates and date-times, including ISO offsets\nwith uppercase or lowercase `Z`.\n* **Tests**\n* Expanded coverage for workflow errors, incident updates, and large\nanomaly-notification batches.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-25T22:47:39Z",
+          "tree_id": "0228f84ae3b8fc5dc8c4f42556d7b17592b1815b",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/ad2e864f041af9358fa4ea49dfd3a10ab764cf47"
+        },
+        "date": 1795647362326,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 199.17167735000402,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 200.24954729999627,
             "unit": "ms"
           }
         ]
