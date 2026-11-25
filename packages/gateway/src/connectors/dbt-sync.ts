@@ -24,8 +24,9 @@ type DbtCursorV1 = {
 };
 type TestPositions = { tests: Record<string, number>; testRuns: Record<string, number> };
 
-function pass1Cursor(pos: TestPositions = { tests: {}, testRuns: {} }): string {
-  return encodeNimbusJsonCursor(CURSOR_PREFIX, { pass: 1, ...pos } satisfies DbtCursorV1);
+function pass1Cursor(pos?: TestPositions): string {
+  const positions = pos ?? { tests: {}, testRuns: {} };
+  return encodeNimbusJsonCursor(CURSOR_PREFIX, { pass: 1, ...positions } satisfies DbtCursorV1);
 }
 
 function numberMap(raw: unknown): Record<string, number> {

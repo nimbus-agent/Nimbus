@@ -22,7 +22,7 @@ import type { Database } from "bun:sqlite";
 import { guardRequiresPresence, guardRuleLines } from "../automation/workflow-guard.ts";
 import { readImportSource } from "../automation/workflow-import-store.ts";
 import { parseWorkflowSteps, workflowStepsSha256 } from "../automation/workflow-steps.ts";
-import { createOwnerOnlyAsk, type OwnerApproval } from "../engine/owner-only-approval.ts";
+import type { OwnerApproval } from "../engine/owner-only-approval.ts";
 import type { PlannedAction } from "../engine/types.ts";
 import { STANDING_APPROVALS_DISABLED_MESSAGE } from "../standing/standing-rule-capability.ts";
 import { deriveRule, GUARD_ABSENCE_REASON } from "../standing/standing-rule-derive.ts";
@@ -403,7 +403,7 @@ function resumeGuard(
     return { workflowEdited: true };
   }
   const step = steps[rule.stepIndex];
-  if (step === undefined || step.kind !== "write" || step.when === undefined) return {};
+  if (step?.kind !== "write" || step.when === undefined) return {};
   if (!guardRequiresPresence(step.when)) throw ERR("ERR_STANDING_GUARD", GUARD_ABSENCE_REASON);
   return { guardLines: guardRuleLines(step.when, steps) };
 }
@@ -528,4 +528,4 @@ export async function dispatchStandingRpc(
  * The owner's approval of one standing-rule action: the shared owner-only ask (`engine/owner-only-approval.ts`,
  * a gate-only executor with no delegation, a human answer only), kept under its old name.
  */
-export const createStandingOwnerAsk = createOwnerOnlyAsk;
+export { createOwnerOnlyAsk as createStandingOwnerAsk } from "../engine/owner-only-approval.ts";

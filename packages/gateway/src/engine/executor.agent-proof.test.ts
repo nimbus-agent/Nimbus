@@ -186,7 +186,7 @@ describe("Task 1 - the audit row's proposer projection", () => {
   test("a 100-unit label of quotes, backslashes and astral characters plus a 5,000-unit input still leaves the capture id and label readable in the cut row", async () => {
     const astral = String.fromCodePoint(0x1f600);
     const label = `${'"\\'.repeat(20)}${astral.repeat(30)}`;
-    expect(label.length).toBe(100);
+    expect(label).toHaveLength(100);
     const { exec } = rig();
     await exec.execute(
       agentAction(

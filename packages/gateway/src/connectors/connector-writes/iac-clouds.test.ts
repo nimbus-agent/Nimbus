@@ -17,7 +17,7 @@ describe("iac clouds: the hosts and variable names an approval means", () => {
       "login.microsoftonline.com",
     ]);
     expect(iacTerraformHosts(["gcp"])).toEqual(["oauth2.googleapis.com", "www.googleapis.com"]);
-    expect(iacTerraformHosts(["aws", "azure", "gcp"]).length).toBe(
+    expect(iacTerraformHosts(["aws", "azure", "gcp"])).toHaveLength(
       iacTerraformHosts(["aws"]).length + 2 + 2,
     );
   });

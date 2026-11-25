@@ -164,7 +164,7 @@ describe("mapJsmAlertToItem", () => {
 
   test("entity and source are flattened to 200 characters and dropped when blank", () => {
     const m = meta({ id: "a", createdAt: CREATED, entity: "e".repeat(300), source: "  " });
-    expect((m["entity"] as string).length).toBe(200);
+    expect(m["entity"] as string).toHaveLength(200);
     expect(Object.hasOwn(m, "source")).toBe(false);
   });
 

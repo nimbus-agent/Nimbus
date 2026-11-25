@@ -306,7 +306,7 @@ describe("describeActions: the reply cap", () => {
       expect(Buffer.byteLength(JSON.stringify(out)), String(slack)).toBeLessThanOrEqual(
         DESCRIBE_REPLY_MAX_BYTES,
       );
-      expect(out.actions.length).toBe(3);
+      expect(out.actions).toHaveLength(3);
     }
   });
 

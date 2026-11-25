@@ -328,7 +328,7 @@ class Win32ConnectionSource implements ConnectionSource {
       if (k.GetProcessTimes(proc, ptr(t, 0), ptr(t, 8), ptr(t, 16), ptr(t, 24)) === 0) return false;
       const creation = t.readBigUInt64LE(0);
       const known = this.verdicts.get(pid);
-      if (known !== undefined && known.creation === creation) return known.match;
+      if (known?.creation === creation) return known.match;
       const match = this.tokenInContainer(proc);
       if (match === null) return false;
       this.verdicts.set(pid, { creation, match });

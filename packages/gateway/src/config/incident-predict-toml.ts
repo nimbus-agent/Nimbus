@@ -110,12 +110,9 @@ function finish(
   onFallback: SectionFallbackSink | undefined,
 ): void {
   const e = toExpectation(d, seen);
-  const why =
-    typeof e === "string"
-      ? e
-      : out.length >= MAX_EXPECTATIONS
-        ? `more than ${String(MAX_EXPECTATIONS)} entries`
-        : undefined;
+  let why: string | undefined;
+  if (typeof e === "string") why = e;
+  else if (out.length >= MAX_EXPECTATIONS) why = `more than ${String(MAX_EXPECTATIONS)} entries`;
   if (why !== undefined || typeof e === "string") {
     onFallback?.(`[[incident.expect]] #${String(index)} skipped: ${why ?? ""}`);
     return;

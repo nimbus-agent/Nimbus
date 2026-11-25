@@ -115,8 +115,7 @@ export function recordDoorSuspension(
   // Not marked by this call: another observer suspended the same approval (report it from the stored
   // columns), or the owner re-approved or removed it since the snapshot (nothing to report).
   const current = getDoorApproval(deps.db, "agent", a.service, a.toolId);
-  return current !== undefined &&
-    current.suspendedAt !== null &&
+  return typeof current?.suspendedAt === "number" &&
     constantTimeStringEqual(current.definitionSha256, a.definitionSha256)
     ? suspensionFromRow(current)
     : undefined;

@@ -379,8 +379,9 @@ function build(plan: Obj, planSha256: string, limits: PlanPreviewLimits): PlanPr
     for (const o of outputs) lines.add(`  ${escapeOneLine(o.name)}: ${o.label}`);
   }
   // The header counts deletes and replaces apart; so does the footer (a replace is a delete AND a create).
+  const movesText = counts.move > 0 ? `, ${String(counts.move)} moves` : "";
   lines.add(
-    `End of plan: ${String(changeCount)} changes (${String(counts.delete)} deletes, ${String(counts.replace)} replaces)${counts.move > 0 ? `, ${String(counts.move)} moves` : ""}`,
+    `End of plan: ${String(changeCount)} changes (${String(counts.delete)} deletes, ${String(counts.replace)} replaces)${movesText}`,
   );
 
   // The drift block goes after the reads line and before the first change. It is spliced in last

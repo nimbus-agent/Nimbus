@@ -32,7 +32,7 @@ export const MAX_LOGICAL_MESSAGE = 4 * 1024 * 1024;
 /** A record is a Noise transport message: flag byte + chunk + 16-byte tag <= 65,535. */
 export const MAX_RECORD_CHUNK = MAX_NOISE_MESSAGE - 16 - 1;
 /** The largest ciphertext of one record (what a frame may declare). */
-export const MAX_RECORD_FRAME = MAX_NOISE_MESSAGE;
+export { MAX_NOISE_MESSAGE as MAX_RECORD_FRAME } from "./lan-noise.ts";
 
 /** The most records a maximal message can need; more than this in one message is a flood of tiny records. */
 export const MAX_RECORDS_PER_MESSAGE = Math.ceil(MAX_LOGICAL_MESSAGE / MAX_RECORD_CHUNK);

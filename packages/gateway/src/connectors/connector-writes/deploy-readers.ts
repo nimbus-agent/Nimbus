@@ -34,7 +34,7 @@ import type { BeforeStateField, BeforeStateGuard } from "./types.ts";
 function timeAt(v: unknown, path: readonly string[]): string | undefined {
   const s = stringAt(v, path);
   if (s === undefined) return undefined;
-  if (/^[0-9]{12,14}$/.test(s)) {
+  if (/^\d{12,14}$/.test(s)) {
     // At most 14 digits is far below the Date range limit, so the time is always valid.
     return new Date(Number(s)).toISOString();
   }
@@ -432,17 +432,21 @@ function publicLink(g: unknown): "on" | "off" | "unknown" {
 /** Target groups that get a before-state line of their own. */
 const TESTFLIGHT_OWN_LINES = 12;
 
+function groupKindText(internal: boolean | undefined): string {
+  if (internal === undefined) return "kind unknown";
+  return internal ? "internal" : "external";
+}
+
+function publicLinkText(link: "on" | "off" | "unknown"): string {
+  if (link === "on") return "PUBLIC LINK ON (anyone with the link can join)";
+  return link === "off" ? "public link off" : "public link not reported";
+}
+
 function groupLine(g: unknown): string {
   const name = stringAt(g, ["name"]) ?? "(no name)";
   const internal = boolAt(g, ["isInternalGroup"]);
-  const kind = internal === undefined ? "kind unknown" : internal ? "internal" : "external";
-  const link = publicLink(g);
-  const linkText =
-    link === "on"
-      ? "PUBLIC LINK ON (anyone with the link can join)"
-      : link === "off"
-        ? "public link off"
-        : "public link not reported";
+  const kind = groupKindText(internal);
+  const linkText = publicLinkText(publicLink(g));
   return `${name} (${kind}; ${linkText})`;
 }
 

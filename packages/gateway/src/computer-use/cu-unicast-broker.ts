@@ -66,7 +66,7 @@ export class CuUnicastConsentBroker<TInput extends object> {
    */
   respondFrom(requestId: string, approved: boolean, from: CuAnswerFrom): boolean {
     const entry = this.pending.get(requestId);
-    if (entry === undefined || entry.clientId !== from.clientId) return false;
+    if (entry?.clientId !== from.clientId) return false;
     this.pending.delete(requestId);
     clearTimeout(entry.timer);
     entry.resolve(approved === true && from.answerSource === "human");

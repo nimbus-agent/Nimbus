@@ -91,7 +91,7 @@ describe("XXpsk0 pairing: a wrong or absent code", () => {
     raw.writeFrame(wrong.firstFrameBody);
     expect(await raw.nextFrame(500)).toBeUndefined();
     expect(await raw.closed(500)).toBe(true);
-    expect(raw.received().length).toBe(0);
+    expect(raw.received()).toHaveLength(0);
     expect(h.failures).toHaveLength(1);
     expect(h.window.isOpen()).toBe(true);
     // the right code still works afterwards
@@ -108,7 +108,7 @@ describe("XXpsk0 pairing: a wrong or absent code", () => {
     });
     raw.writeFrame(i.firstFrameBody);
     expect(await raw.closed(500)).toBe(true);
-    expect(raw.received().length).toBe(0);
+    expect(raw.received()).toHaveLength(0);
     expect(h.failures).toHaveLength(1);
   });
 
@@ -160,7 +160,7 @@ describe("XXpsk0 pairing: malformed and truncated input", () => {
     const raw = await connectRaw(h.port);
     raw.writeFrame(i.firstFrameBody.slice(0, i.firstFrameBody.length - 1));
     expect(await raw.closed(500)).toBe(true);
-    expect(raw.received().length).toBe(0);
+    expect(raw.received()).toHaveLength(0);
     expect(h.failures).toHaveLength(1);
     expect(h.window.isOpen()).toBe(true);
   });
@@ -179,7 +179,7 @@ describe("XXpsk0 pairing: malformed and truncated input", () => {
       const raw = await connectRaw(h.port);
       raw.writeFrame(bad);
       expect(await raw.closed(500)).toBe(true);
-      expect(raw.received().length).toBe(0);
+      expect(raw.received()).toHaveLength(0);
     }
     expect(h.registered).toHaveLength(0);
     expect(h.window.isOpen()).toBe(true);

@@ -82,7 +82,7 @@ function instantsOf(
 function selfResponseOf(attendees: readonly unknown[]): ReturnType<typeof normalizeSelfResponse> {
   for (const a of attendees) {
     const rec = asRecord(a);
-    if (rec !== undefined && rec["self"] === true) {
+    if (rec?.["self"] === true) {
       return normalizeSelfResponse(rec["responseStatus"]);
     }
   }

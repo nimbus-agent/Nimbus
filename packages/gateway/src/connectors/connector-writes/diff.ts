@@ -97,8 +97,11 @@ function splitLines(text: string): SourceLine[] {
 
 const keyOf = (l: SourceLine): string => (l.eol ? `${l.text}\n` : l.text);
 
+/** A line-level edit: kept, added or removed. */
+type EditOp = " " | "+" | "-";
+
 interface Edit {
-  readonly op: " " | "+" | "-";
+  readonly op: EditOp;
   readonly line: SourceLine;
 }
 
@@ -153,8 +156,8 @@ function myersBacktrack(
   found: number,
   n: number,
   m: number,
-): Array<{ op: " " | "+" | "-"; i: number }> {
-  const moves: Array<{ op: " " | "+" | "-"; i: number }> = [];
+): Array<{ op: EditOp; i: number }> {
+  const moves: Array<{ op: EditOp; i: number }> = [];
   let x = n;
   let y = m;
   for (let d = found; d > 0; d--) {

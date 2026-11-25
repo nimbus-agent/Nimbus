@@ -291,7 +291,7 @@ export async function handleUserMcpAgentWritesEnable(
     // Policy may have changed during the listing or the owner's prompt: read it again, now.
     requireUserMcpAgentPolicy(deps);
     const current = getUserMcpConnector(deps.db, service);
-    if (current === null || current.created_at !== registration.created_at) {
+    if (current?.created_at !== registration.created_at) {
       refuseAgentWrites(
         "ERR_CONNECTOR_WRITES_AGENT_CHANGED",
         "the server was removed or registered again while you were deciding; nothing was enabled",

@@ -228,9 +228,9 @@ describe("LanServer v2 - replay (FS-A2, server half)", () => {
     expect(Buffer.from(message2 as Uint8Array).equals(Buffer.from(first.message2))).toBe(false);
     for (const r of recordedRecords) conn.writeFrame(r);
     expect(await conn.closed()).toBe(true);
-    expect(conn.received().length).toBe(4 + (message2 as Uint8Array).length); // zero further bytes
+    expect(conn.received()).toHaveLength(4 + (message2 as Uint8Array).length); // zero further bytes
     expect(h.messages).toHaveLength(1); // onMessage NOT called again
-    expect(h.failures.length).toBe(failuresBefore + 1); // D-FS-14
+    expect(h.failures).toHaveLength(failuresBefore + 1); // D-FS-14
   });
 });
 

@@ -443,7 +443,7 @@ describe("I35 — computer-use actuation only inside an approved envelope", () =
     );
     const { ConsentBroker } = await import("../util/consent-broker.ts");
     for (const b of [cuEnvelopeConsent, cuActionConsent]) {
-      expect(b instanceof ConsentBroker).toBe(false);
+      expect(b).not.toBeInstanceOf(ConsentBroker);
       expect("setBroadcast" in b).toBe(false);
       expect("request" in b).toBe(false);
     }

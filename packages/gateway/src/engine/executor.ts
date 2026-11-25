@@ -45,17 +45,9 @@ import {
 import type { BoundWriteCapabilities, SettleContext } from "./bound-write-capabilities.ts";
 import { type RemoteApprovalOutcome, resolveDelegatedApproval } from "./delegated-approval.ts";
 import type { DelegationReader } from "./delegation-store.ts";
-import {
-  isStandingRuleActionType,
-  isUserMcpActionType,
-  usesPromptText,
-} from "./executor/action-types.ts";
+import { isStandingRuleActionType, isUserMcpActionType } from "./executor/action-types.ts";
 import { auditedAction, boundValuesDigest } from "./executor/audit-shape.ts";
-import {
-  consentDisplayPayload,
-  formatConsentPrompt,
-  redactPayloadForConsentDisplay,
-} from "./executor/consent-display.ts";
+import { consentDisplayPayload, formatConsentPrompt } from "./executor/consent-display.ts";
 import { assertLinkedActionAllowed, type IncidentLink, promptForRow } from "./incident-link.ts";
 import { isAgentOrigin, isOutsideOrigin } from "./outside-origin.ts";
 import {
@@ -87,13 +79,13 @@ import type {
 
 // The facade: what this path exported before the split (the prompt display and the type predicates
 // now live in `executor/`, importable only from here).
+export { usesPromptText } from "./executor/action-types.ts";
+export { redactPayloadForConsentDisplay } from "./executor/consent-display.ts";
 export {
   consentDisplayPayload,
   formatConsentPrompt,
   isStandingRuleActionType,
   isUserMcpActionType,
-  redactPayloadForConsentDisplay,
-  usesPromptText,
 };
 
 const executorLog = pino({

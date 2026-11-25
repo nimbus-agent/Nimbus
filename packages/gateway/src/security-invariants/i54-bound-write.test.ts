@@ -177,7 +177,7 @@ describe("I54 — a bound connector write is dispatched only with the values its
     const main = stripComments(await read("packages/gateway/src/gateway-main.ts"));
     const at = main.indexOf("const iacDriftScheduler =");
     expect(main.slice(at, at + 200)).toMatch(/platform\.paths\.demo === true\s*\?\s*undefined/);
-    expect(main.split("platform.bindIacDriftRunner(").length).toBe(2);
+    expect(main.split("platform.bindIacDriftRunner(")).toHaveLength(2);
     expect(bindAt).toBeGreaterThan(at);
   });
 

@@ -19,7 +19,7 @@ test("several read in the plural", () => {
 test("the only parameter is a number: a string cannot reach the toast", () => {
   // @ts-expect-error a request-derived string is not a number
   proposalsWaitingToast("slack.message.post: hi");
-  expect(proposalsWaitingToast.length).toBe(1);
+  expect(proposalsWaitingToast).toHaveLength(1);
 });
 
 test("the module imports nothing: no request-derived text can enter by another route", () => {
