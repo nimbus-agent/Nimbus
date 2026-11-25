@@ -1,8 +1,12 @@
+import { itemPrimaryKey } from "../index/item-key.ts";
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
-import { connectorFetch } from "./_lib/fetch-outcome.ts";
+import { connectorFetch, type FetchOutcome } from "./_lib/fetch-outcome.ts";
 import { runSinglePassPaginatedSync, upsertMapped } from "./_lib/paginated-sync.ts";
 import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
-import { mapStackOverflowAnswerToItem } from "./stackoverflow-answer-mapping.ts";
+import {
+  mapStackOverflowAnswerToItem,
+  stackOverflowAnswerExternalId,
+} from "./stackoverflow-answer-mapping.ts";
 import { mapStackOverflowQuestionToItem } from "./stackoverflow-question-mapping.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
@@ -127,8 +131,36 @@ function answeredQuestion(raw: unknown): AnsweredQuestion | null {
 interface AnswersPassResult {
   readonly upserted: number;
   readonly bytes: number;
+  /** Rows removed because the API now reports their answer as deleted. */
+  readonly deleted: number;
   /** Index into this sync's answered questions where the next sync's answers pass starts. */
   readonly nextFrom: number;
+}
+
+/**
+ * Remove the rows of answers the API reports as deleted. The mapper skips a deleted answer, so
+ * without this an answer indexed by an earlier sync would stay searchable after its deletion.
+ * Returns how many rows it removed.
+ */
+function removeDeletedAnswers(ctx: SyncContext, items: readonly unknown[]): number {
+  let removed = 0;
+  for (const raw of items) {
+    const row = asRecord(raw);
+    if (row?.["isDeleted"] !== true) {
+      continue;
+    }
+    const id = numberField(row, "id");
+    if (id === undefined) {
+      continue;
+    }
+    const externalId = stackOverflowAnswerExternalId(String(id));
+    if (!ctx.itemExists(itemPrimaryKey(SERVICE_ID, externalId))) {
+      continue;
+    }
+    ctx.deleteItem(SERVICE_ID, externalId);
+    removed += 1;
+  }
+  return removed;
 }
 
 /**
@@ -137,8 +169,9 @@ interface AnswersPassResult {
  *
  * This runs after the question walk has finished and written its rows, so nothing here can undo
  * or block question indexing. A 404 means that one question is gone and the pass moves on. Any
- * other failed request (a 5xx, a 429, a body that does not parse) ends the pass for this sync,
- * and the next sync resumes at the question that failed.
+ * other failed request (a 5xx, a 429, a body that does not parse, or a request that rejects
+ * because the network failed) ends the pass for this sync, and the next sync resumes at the
+ * question that failed. An answer the API reports as deleted has its row removed.
  */
 async function syncAnswers(
   ctx: SyncContext,
@@ -148,19 +181,31 @@ async function syncAnswers(
   now: number,
 ): Promise<AnswersPassResult> {
   if (questions.length === 0) {
-    return { upserted: 0, bytes: 0, nextFrom: 0 };
+    return { upserted: 0, bytes: 0, deleted: 0, nextFrom: 0 };
   }
   const start = from < questions.length ? from : 0;
   const end = Math.min(start + MAX_ANSWER_REQUESTS_PER_SYNC, questions.length);
   let upserted = 0;
   let bytes = 0;
+  let deleted = 0;
   let index = start;
   for (; index < end; index += 1) {
     const question = questions[index];
     if (question === undefined) {
       break;
     }
-    const outcome = await stackOverflowGet(ctx, creds, answersPath(creds.team, question.id));
+    let outcome: FetchOutcome;
+    try {
+      outcome = await stackOverflowGet(ctx, creds, answersPath(creds.team, question.id));
+    } catch (err) {
+      // A rejected request (network failure, unreadable body) must not fail the run: the
+      // question rows are already written, and the cursor has to keep this position.
+      ctx.logger.warn(
+        { serviceId: SERVICE_ID, questionId: question.id, err },
+        "stackoverflow answers request rejected; ending the answers pass",
+      );
+      break;
+    }
     bytes += outcome.bytes;
     if (outcome.kind === "http_error" && outcome.status === 404) {
       continue;
@@ -169,6 +214,7 @@ async function syncAnswers(
       break;
     }
     const { items } = parseStackOverflowPage(outcome.parsed, 1);
+    deleted += removeDeletedAnswers(ctx, items);
     upserted += upsertMapped(ctx, items, (raw) =>
       mapStackOverflowAnswerToItem(raw, {
         syncedAt: now,
@@ -177,7 +223,7 @@ async function syncAnswers(
       }),
     );
   }
-  return { upserted, bytes, nextFrom: index >= questions.length ? 0 : index };
+  return { upserted, bytes, deleted, nextFrom: index >= questions.length ? 0 : index };
 }
 
 async function syncQuestionsThenAnswers(
@@ -219,6 +265,7 @@ async function syncQuestionsThenAnswers(
     ...questions,
     cursor: pass1Cursor(answers.nextFrom),
     itemsUpserted: questions.itemsUpserted + answers.upserted,
+    itemsDeleted: questions.itemsDeleted + answers.deleted,
     bytesTransferred: (questions.bytesTransferred ?? 0) + answers.bytes,
   };
 }

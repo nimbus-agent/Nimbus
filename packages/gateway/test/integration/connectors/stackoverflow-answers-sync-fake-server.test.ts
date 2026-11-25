@@ -206,6 +206,64 @@ describe("stackoverflow-sync answers against Bun.serve fake API", () => {
     expect(ids).toEqual([{ id: "stackoverflow:answer/11" }]);
   });
 
+  test("an answer that is deleted after it was indexed has its row removed", async () => {
+    const answers: Record<string, FakeAnswers> = { "1": [answer(11, 1), answer(12, 1)] };
+    h = await configured({ pages: [[question(1, { answerCount: 2 })]], answers });
+
+    const first = await syncable().sync(h.ctx, null);
+    expect(first.itemsUpserted).toBe(3);
+    expect(first.itemsDeleted).toBe(0);
+
+    answers["1"] = [answer(11, 1), answer(12, 1, { isDeleted: true })];
+    const second = await syncable().sync(h.ctx, first.cursor);
+
+    expect(second.itemsDeleted).toBe(1);
+    const ids = h.db
+      .query<{ id: string }, []>(
+        "SELECT id FROM item WHERE service = 'stackoverflow' AND type = 'answer'",
+      )
+      .all();
+    expect(ids).toEqual([{ id: "stackoverflow:answer/11" }]);
+
+    // A third sync finds no row left to remove.
+    const third = await syncable().sync(h.ctx, second.cursor);
+    expect(third.itemsDeleted).toBe(0);
+  });
+
+  test("an answers request that rejects ends only the answers pass", async () => {
+    h = await configured({
+      pages: [[question(1), question(2), question(3)]],
+      answers: { "1": [answer(11, 1)], "2": [answer(21, 2)], "3": [answer(31, 3)] },
+    });
+    const rewritten = globalThis.fetch;
+    const restoreRewritten = restoreFetch;
+    let failing = true;
+    globalThis.fetch = ((input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (failing && url.includes("/questions/2/answers?")) {
+        return Promise.reject(new TypeError("fetch failed"));
+      }
+      return rewritten(input, init);
+    }) as typeof fetch;
+    restoreFetch = () => {
+      globalThis.fetch = rewritten;
+      restoreRewritten?.();
+    };
+
+    const first = await syncable().sync(h.ctx, null);
+
+    // The run resolves: three questions and the answer fetched before the rejection.
+    expect(first.itemsUpserted).toBe(4);
+    expect(answersRequestIds(h.fake)).toEqual(["1"]);
+
+    // The next sync resumes at the question whose request was rejected.
+    failing = false;
+    h.fake.requests.length = 0;
+    const second = await syncable().sync(h.ctx, first.cursor);
+    expect(answersRequestIds(h.fake)).toEqual(["2", "3"]);
+    expect(second.itemsUpserted).toBe(5);
+  });
+
   test("no answers request is made when no listed question has answers", async () => {
     h = await configured({
       pages: [[question(1, { answerCount: 0 }), question(2, { answerCount: undefined })]],
