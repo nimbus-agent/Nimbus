@@ -18,6 +18,10 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
 
 ## Post-Phase-6 deliveries
 
+- **2026-11-25: Stack Overflow for Teams answers are indexed (#951; no migration, invariant, IPC method or allowlist change).**
+  What you can do now: the Stack Overflow sync indexes the answers of each listed question as `stackoverflow:answer` items, after the question walk, so search finds the answer text and not only the question. Answer bodies stay on local embeddings (`LOCAL_ONLY_PROSE_TYPES`).
+  Stated bounds: at most 40 answers requests per sync, so a team with more answered questions is covered over several syncs, continuing from the last question handled; a question's top 100 answers by score are indexed; request and reply shapes follow the Teams API v3 documentation and were checked against a fake only, not a live team.
+
 - **2026-11-25: dbt Cloud test results in the Data Incident Brief (Phase 10, S4, owner ruling OR-S4-DATA-INPUTS, input 2; no migration, invariant, IPC method or allowlist change).**
   What you can do now: the dbt sync reads each finished run's `run_results.json` (and `manifest.json` only when a test did not pass) and indexes failing, erroring and warning tests as `data_quality_test` items (status, failure count, timing, run, job and account ids, normalised model keys; never the message, SQL or rows). The Data Incident Brief's data lane lists them on the monitored models and one hop of lineage, from 24 h before the alert to 1 h after, worst first, ten shown with the true total. The "dbt test results" gap is replaced by a dbt-specific one. `[index] dbt_test_retention_days` (default 30, 7 to 365) deletes older test rows daily; only dbt rows are ever selected.
   Stated bounds: passing and skipped tests are not indexed; a pass reads at most 15 runs; a manifest over 32 MiB is not read, so those tests carry no model; reply shapes follow dbt Cloud's documentation, not a live account.

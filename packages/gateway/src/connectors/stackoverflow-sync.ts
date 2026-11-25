@@ -25,23 +25,32 @@ const MAX_PAGES = 20;
  * sync makes at most 20 + 40 = 60 requests, one minute of budget every ten minutes.
  *
  * A team with more than 40 answered questions is covered over several syncs: the cursor
- * remembers where the last pass stopped (`answersFrom`) and the next one continues from there,
- * wrapping to the newest question at the end.
+ * remembers the last question the pass handled (`answersAfter`, a question id) and the next one
+ * continues with the next older question, wrapping to the newest question at the end.
+ *
+ * The rotation point is a question id, not a position in the list. The list is newest first, so
+ * every question posted between two syncs moves all older ones down a place, and a stored
+ * position would then fetch a question twice or leave one waiting an extra round.
  */
 export const MAX_ANSWER_REQUESTS_PER_SYNC = 40;
 
-type StackOverflowCursorV1 = { pass: number; answersFrom?: number };
+type StackOverflowCursorV1 = { pass: number; answersAfter?: string };
 
-function pass1Cursor(answersFrom = 0): string {
-  const payload: StackOverflowCursorV1 = answersFrom > 0 ? { pass: 1, answersFrom } : { pass: 1 };
+function pass1Cursor(answersAfter: string | null = null): string {
+  const payload: StackOverflowCursorV1 =
+    answersAfter === null ? { pass: 1 } : { pass: 1, answersAfter };
   return encodeNimbusJsonCursor(CURSOR_PREFIX, payload);
 }
 
-/** Where the previous sync's answers pass stopped, or 0 for no cursor, an old one or a bad one. */
-function answersFromCursor(cursor: string | null): number {
+/**
+ * The id of the last question the previous sync's answers pass handled, or `null` to start from
+ * the newest question: no cursor, a bad one, or one written before the rotation point became a
+ * question id (it stored a list position under `answersFrom`, which is ignored here).
+ */
+function answersAfterFromCursor(cursor: string | null): string | null {
   const payload = decodeNimbusJsonCursorObject(cursor, CURSOR_PREFIX);
-  const from = payload === null ? undefined : numberField(payload, "answersFrom");
-  return from !== undefined && Number.isInteger(from) && from > 0 ? from : 0;
+  const after = payload === null ? undefined : stringField(payload, "answersAfter");
+  return after !== undefined && after !== "" ? after : null;
 }
 
 export type StackOverflowSyncableOptions = {
@@ -133,8 +142,8 @@ interface AnswersPassResult {
   readonly bytes: number;
   /** Rows removed because the API now reports their answer as deleted. */
   readonly deleted: number;
-  /** Index into this sync's answered questions where the next sync's answers pass starts. */
-  readonly nextFrom: number;
+  /** The last question this pass handled, or `null` when the next pass starts from the newest. */
+  readonly nextAfter: string | null;
 }
 
 /**
@@ -167,6 +176,10 @@ function removeDeletedAnswers(ctx: SyncContext, items: readonly unknown[]): numb
  * Index the answers of up to {@link MAX_ANSWER_REQUESTS_PER_SYNC} of the questions this sync
  * listed, starting where the previous sync stopped.
  *
+ * The pass continues with the question listed right after `after`, the last one the previous pass
+ * handled. When `after` is `null` or is no longer in the list (the question was deleted, lost its
+ * answers, or fell outside the walk), it starts from the newest question.
+ *
  * This runs after the question walk has finished and written its rows, so nothing here can undo
  * or block question indexing. A 404 means that one question is gone and the pass moves on. Any
  * other failed request (a 5xx, a 429, a body that does not parse, or a request that rejects
@@ -177,17 +190,23 @@ async function syncAnswers(
   ctx: SyncContext,
   creds: StackOverflowCreds,
   questions: readonly AnsweredQuestion[],
-  from: number,
+  after: string | null,
   now: number,
 ): Promise<AnswersPassResult> {
   if (questions.length === 0) {
-    return { upserted: 0, bytes: 0, deleted: 0, nextFrom: 0 };
+    return { upserted: 0, bytes: 0, deleted: 0, nextAfter: null };
   }
-  const start = from < questions.length ? from : 0;
+  const afterIndex = after === null ? -1 : questions.findIndex((q) => q.id === after);
+  // `afterIndex + 1` is 0 when `after` is null or not listed, and the list length when `after`
+  // was the oldest question: both start from the newest.
+  const start = afterIndex + 1 < questions.length ? afterIndex + 1 : 0;
   const end = Math.min(start + MAX_ANSWER_REQUESTS_PER_SYNC, questions.length);
   let upserted = 0;
   let bytes = 0;
   let deleted = 0;
+  // The last question handled so far. Until this pass handles one it is the incoming rotation
+  // point, so a pass that fails on its first request leaves the cursor where it was.
+  let handled: string | null = start === 0 ? null : after;
   let index = start;
   for (; index < end; index += 1) {
     const question = questions[index];
@@ -208,6 +227,7 @@ async function syncAnswers(
     }
     bytes += outcome.bytes;
     if (outcome.kind === "http_error" && outcome.status === 404) {
+      handled = question.id;
       continue;
     }
     if (outcome.kind !== "ok") {
@@ -222,8 +242,9 @@ async function syncAnswers(
         questionTitle: question.title,
       }),
     );
+    handled = question.id;
   }
-  return { upserted, bytes, deleted, nextFrom: index >= questions.length ? 0 : index };
+  return { upserted, bytes, deleted, nextAfter: index >= questions.length ? null : handled };
 }
 
 async function syncQuestionsThenAnswers(
@@ -232,13 +253,16 @@ async function syncQuestionsThenAnswers(
   options: StackOverflowSyncableOptions,
 ): Promise<SyncResult> {
   const answered: AnsweredQuestion[] = [];
+  // A question posted during the walk pushes the last row of one page onto the next, so the same
+  // question can be listed twice. It still gets one answers request.
+  const answeredIds = new Set<string>();
   let credsSeen: StackOverflowCreds | undefined;
   let nowSeen = Date.now();
 
   const questions = await runSinglePassPaginatedSync(ctx, cursor, {
     ensureRunning: options.ensureStackOverflowMcpRunning,
     loadCreds: () => loadCreds(ctx),
-    pass1Cursor: () => pass1Cursor(answersFromCursor(cursor)),
+    pass1Cursor: () => pass1Cursor(answersAfterFromCursor(cursor)),
     maxPages: MAX_PAGES,
     startPage: 1,
     fetchPage: (creds, page) => stackOverflowGet(ctx, creds, questionsPath(creds.team, page)),
@@ -247,7 +271,8 @@ async function syncQuestionsThenAnswers(
       credsSeen = creds;
       nowSeen = now;
       const question = answeredQuestion(raw);
-      if (question !== null) {
+      if (question !== null && !answeredIds.has(question.id)) {
+        answeredIds.add(question.id);
         answered.push(question);
       }
       return mapStackOverflowQuestionToItem(raw, { syncedAt: now });
@@ -260,10 +285,16 @@ async function syncQuestionsThenAnswers(
     return questions;
   }
 
-  const answers = await syncAnswers(ctx, credsSeen, answered, answersFromCursor(cursor), nowSeen);
+  const answers = await syncAnswers(
+    ctx,
+    credsSeen,
+    answered,
+    answersAfterFromCursor(cursor),
+    nowSeen,
+  );
   return {
     ...questions,
-    cursor: pass1Cursor(answers.nextFrom),
+    cursor: pass1Cursor(answers.nextAfter),
     itemsUpserted: questions.itemsUpserted + answers.upserted,
     itemsDeleted: questions.itemsDeleted + answers.deleted,
     bytesTransferred: (questions.bytesTransferred ?? 0) + answers.bytes,
