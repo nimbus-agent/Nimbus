@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795567237351,
+  "lastUpdate": 1795570363027,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "49a811663802011adf6fc0dcb393476c11f8a344",
-          "message": "chore: release main (#1522)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.24.0</summary>\n\n##\n[7.24.0](https://github.com/nimbus-agent/Nimbus/compare/v7.23.0...v7.24.0)\n(2026-09-16)\n\n\n### Features\n\n* **cli:** add nimbus tool run to invoke a saved generated tool\n([#1521](https://github.com/nimbus-agent/Nimbus/issues/1521))\n([a89bd27](https://github.com/nimbus-agent/Nimbus/commit/a89bd2762c274d06ccf20d766eb300ebe0e871ed))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-09-16T18:09:26Z",
-          "tree_id": "638839a6c4434219d3a2d2cbf663d4ee58c47155",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/49a811663802011adf6fc0dcb393476c11f8a344"
-        },
-        "date": 1789582909946,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 331.56322910000273,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 333.38209555000793,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 177.91955224999765,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e30e736147ce7bb9ebc43daee9a46bfacdd608fc",
+          "message": "feat(gateway): dbt Cloud test results in the Data Incident Brief data lane (#2147)\n\n## What\n\nInput 2 of the Data Incident Brief inputs (owner ruling\nOR-S4-DATA-INPUTS, 2026-11-24): dbt Cloud test results, indexed by the\ngateway's dbt sync and shown in the data lane.\n\n- **Sync** (`connectors/dbt-test-sync.ts`, best effort, never fails the\ndbt sync): per account, lists finished runs\n(`/runs/?order_by=-finished_at`, at most 3 pages of 100), handles the\noldest 15 per pass, reads each run's `run_results.json`, and reads\n`manifest.json` only when the run has a failing, erroring or warning\ntest (to resolve `depends_on` parents to warehouse relations, normalised\nwith `normalizeDataModelKey`). A per-account position lives in the\nexisting `nimbus-dbt1:` cursor (`tests`), a 5xx/429 on an artifact stops\nthe pass at that run, other 4xx are skipped, an artifact announcing more\nthan 32 MiB is refused, a capped listing deletes nothing. The shared\naccount/credential/fetch code moved to `connectors/dbt-api.ts`.\n- **Item type**: `data_quality_test`, service `dbt` (justification: the\ntype already carries `monitoredDataModelKeys`, which the graph populator\nturns into `data_quality_test --monitors--> data_model` edges in the\nsame key space Monte Carlo and Bigeye use; no registration site needs a\nrow; the trigger sources name their services, so a dbt row can never\nbecome an incident record; `prior`/`service-identity` filter by\nservice). External id `<account>:<run>:<test unique_id>`; `modified_at`\nis the run's finish time.\n- **Metadata keys**: `monitoredDataModelKeys`, `test_unique_id`,\n`test_name`, `status` (`fail`/`warn`/`error`), `failures` (count),\n`execution_time_s`, `run_id`, `job_id`, `project_id`, `account_id`,\n`finished_at`. Passing and skipped tests are not indexed (volume). A\ntest's `message`, compiled SQL, adapter response and failing rows are\nnever read (sentinel test).\n- **Lane** (`incident/lanes/data-dbt.ts`, `// lane-census:` annotated,\nindex only): the failing/warning dbt tests on the monitored models and\n`derived_from` lineage targets (one hop), run finished from 24 h before\nthe trigger to 1 h after, at most 200 keys, listed once against the most\ndirect model, worst status first, capped at 10 with the true total; new\noptional `DataLane.dbtTests` / `totals.dbtTests` (absent in records\nstored earlier), rendered in the Data Incident Brief (`## dbt tests`)\nand the general brief's data lines, and included in the lane cap\nallocation and the cited-services list (`dbt`, so erasing dbt removes\nthe record).\n- **Gaps**: \"dbt test results\" is gone from `dataSubstrateGaps()`. The\nlane adds its own gap: \"no dbt data\" when no `dbt` item exists,\notherwise the stated bound that only failing, erroring and warning tests\nof recent runs are indexed and an empty list does not show the tests\npassed.\n\n- **Retention** (`index/dbt-test-retention.ts`): `[index]\ndbt_test_retention_days` (default 30, 7 to 365; outside the range falls\nback to 30 with a warning like `history_retention_days`). The daily\nitem-history tick deletes `dbt` `data_quality_test` items whose run\nfinished earlier, 500 per transaction with a yield between batches,\nthrough `deleteItemByPrimaryKey` (FTS, embeddings and graph entities go\ntoo). Only service `dbt`: Monte Carlo, Bigeye and Great Expectations\nitems are never selected (tested, red-proved).\n\n- **Fix in `incident/lanes/caps.ts`**: the data lane's size cut measured\nits length from the lane as it was before any cut, so every data cut\nreported `after` as the original total and the halving target came from\nthe original size. The length is now read from the lane as the previous\ncut left it, and the cut covers the dbt tests and the schema-diff list\n(tests assert each step's `before` is the previous step's `after` and\nthat the last `after` is what was kept).\n\n## Stated bounds\n\nVendor reply shapes (runs list, `run_results.json`, `manifest.json`, the\n`status` codes 10/20) follow dbt Cloud's documentation, not a live\naccount. Passing tests and runs beyond the per-pass cap, the 3-page\nlisting or the 7-day first window are absent. A manifest over 32 MiB (by\n`Content-Length`) is not read, so those tests carry no model. A test is\nmatched by model key only when the manifest names its parents.\n\n## Verified\n\n`bun run typecheck`, `typecheck:tests`, `bun run preflight:fast` (all\ngates), `check-nimbus-invariants`, `audit:file-size`,\n`audit:split-privacy`, `audit:status-drift`, the dbt, incident, agents\nand graph tests. One security-invariants test (I15 write-dir marker\nfolder) fails on this Windows machine on main too (pre-existing,\nunrelated).\n\n## For the batch-docs PR\n\n- **roadmap.md** (Automatic incident assembly, \"Still open\"): `DAG-run\nlogs and warehouse schema deltas are not indexed` (dbt test results\ndelivered: the dbt sync indexes failing, erroring and warning tests as\n`data_quality_test` items and the data lane lists them by\nmonitored-model key, one hop of lineage, in the incident window).\n- **CHANGELOG.md**: `Phase 10 (S4, OR-S4-DATA-INPUTS), input 2: dbt\nCloud test results. The dbt sync reads finished runs' run_results.json\n(and manifest.json when a test did not pass) and indexes failing,\nerroring or warning tests as data_quality_test items (status, failure\ncount, timing, run/job ids, normalised model keys; never SQL, message or\nrows). The Data Incident Brief's data lane lists them on the monitored\nmodels and one hop of lineage in the window; the \"dbt test results\" gap\nis replaced by a dbt-specific one. No migration, invariant, IPC method\nor allowlist change.`\n- **Config key** (cli-reference already updated here): `[index]\ndbt_test_retention_days` (30, 7 to 365). Mention it in the CLAUDE.md\nsentence and the CHANGELOG entry below.\n- **CLAUDE.md** (one sentence, after the Data Incident Brief text):\n`Data Incident Brief input 2 (dbt test results, OR-S4-DATA-INPUTS): the\ndbt sync indexes failing, erroring and warning dbt Cloud tests as\ndata_quality_test items keyed account:run:test with\nmonitoredDataModelKeys from the run's manifest, and the data lane lists\nthem by model key (monitored plus one lineage hop, 24 h before to 1 h\nafter the trigger); passes are not indexed, a sync pass reads 15 runs at\nmost, reply shapes are documentation-shaped.`\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrGFPLqt8C3Ybzk2dHq\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Data incident briefs now include relevant failing, warning, and error\ndbt test results, with status, model context, and links to runs when\navailable.\n* Briefs distinguish between results that were not collected, no failing\nor warning tests, and additional results omitted from the display.\n* PagerDuty incidents can qualify for the data lane when their service\nconfiguration declares data models.\n* dbt test results are retained for a configurable period, defaulting to\n30 days.\n* **Documentation**\n* Updated configuration and incident-brief guidance to cover dbt\nresults, retention, and data gaps.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-25T03:24:38+02:00",
+          "tree_id": "ec166632c5095e628c0a85326ae002c762ce0bf8",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/e30e736147ce7bb9ebc43daee9a46bfacdd608fc"
+        },
+        "date": 1795570358924,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 184.39125815000025,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 183.42491549999795,
             "unit": "ms"
           }
         ]
