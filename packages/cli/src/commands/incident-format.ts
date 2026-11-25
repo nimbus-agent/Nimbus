@@ -170,27 +170,43 @@ function parseLiveBudget(v: string | undefined): number | undefined {
   return n < 1 || n > 60 ? undefined : n;
 }
 
+interface InvestigateState {
+  readonly seen: Set<string>;
+  liveBudget: number | undefined;
+  id: string | undefined;
+}
+
+/** Consumes one token; returns the index of the last token used, or undefined when it is refused. */
+function takeInvestigateToken(
+  st: InvestigateState,
+  rest: readonly string[],
+  i: number,
+): number | undefined {
+  const a = rest[i] as string;
+  if (INVESTIGATE_SWITCHES.has(a)) {
+    if (st.seen.has(a)) return undefined;
+    st.seen.add(a);
+    return i;
+  }
+  if (a === "--live-budget") {
+    if (st.liveBudget !== undefined) return undefined;
+    st.liveBudget = parseLiveBudget(takeValue(rest, i));
+    return st.liveBudget === undefined ? undefined : i + 1;
+  }
+  if (a.startsWith("--") || st.id !== undefined) return undefined;
+  st.id = a;
+  return i;
+}
+
 /** `investigate <id> [--live [--live-budget <seconds>]] [--synthesize] [--json]`; each flag at most once. */
 function parseInvestigateArgs(rest: readonly string[]): IncidentArgs | undefined {
-  const seen = new Set<string>();
-  let liveBudget: number | undefined;
-  let id: string | undefined;
+  const st: InvestigateState = { seen: new Set<string>(), liveBudget: undefined, id: undefined };
   for (let i = 0; i < rest.length; i += 1) {
-    const a = rest[i] as string;
-    if (INVESTIGATE_SWITCHES.has(a)) {
-      if (seen.has(a)) return undefined;
-      seen.add(a);
-    } else if (a === "--live-budget") {
-      if (liveBudget !== undefined) return undefined;
-      liveBudget = parseLiveBudget(takeValue(rest, i));
-      if (liveBudget === undefined) return undefined;
-      i += 1;
-    } else if (a.startsWith("--") || id !== undefined) {
-      return undefined;
-    } else {
-      id = a;
-    }
+    const last = takeInvestigateToken(st, rest, i);
+    if (last === undefined) return undefined;
+    i = last;
   }
+  const { seen, liveBudget, id } = st;
   const live = seen.has("--live");
   if (id === undefined || (liveBudget !== undefined && !live)) return undefined;
   return {
@@ -210,26 +226,42 @@ function parseVersionValue(v: string | undefined): number | undefined {
   return n < 1 || n > 1_000_000 ? undefined : n;
 }
 
-function parseTimelineArgs(rest: readonly string[]): IncidentArgs | undefined {
-  let json = false;
-  let version: number | undefined;
-  let id: string | undefined;
-  for (let i = 0; i < rest.length; i += 1) {
-    const a = rest[i] as string;
-    if (a === "--json") {
-      if (json) return undefined;
-      json = true;
-    } else if (a === "--version") {
-      if (version !== undefined) return undefined;
-      version = parseVersionValue(takeValue(rest, i));
-      if (version === undefined) return undefined;
-      i += 1;
-    } else if (a.startsWith("--") || id !== undefined) {
-      return undefined;
-    } else {
-      id = a;
-    }
+interface TimelineState {
+  json: boolean;
+  version: number | undefined;
+  id: string | undefined;
+}
+
+/** Consumes one token; returns the index of the last token used, or undefined when it is refused. */
+function takeTimelineToken(
+  st: TimelineState,
+  rest: readonly string[],
+  i: number,
+): number | undefined {
+  const a = rest[i] as string;
+  if (a === "--json") {
+    if (st.json) return undefined;
+    st.json = true;
+    return i;
   }
+  if (a === "--version") {
+    if (st.version !== undefined) return undefined;
+    st.version = parseVersionValue(takeValue(rest, i));
+    return st.version === undefined ? undefined : i + 1;
+  }
+  if (a.startsWith("--") || st.id !== undefined) return undefined;
+  st.id = a;
+  return i;
+}
+
+function parseTimelineArgs(rest: readonly string[]): IncidentArgs | undefined {
+  const st: TimelineState = { json: false, version: undefined, id: undefined };
+  for (let i = 0; i < rest.length; i += 1) {
+    const last = takeTimelineToken(st, rest, i);
+    if (last === undefined) return undefined;
+    i = last;
+  }
+  const { json, version, id } = st;
   if (id === undefined) return undefined;
   return { verb: "timeline", json, id, ...(version === undefined ? {} : { version }) };
 }
