@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795643516112,
+  "lastUpdate": 1795646119482,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "5d31dabfbfda1cd7e0f576c98ca36a4e032d78bc",
-          "message": "fix(embedding): report the backfill pass from the hybrid and openai runtimes (#1538)\n\nA stated residual of #1535 (the search retrieval disclosure), fixed.\n\n## What was wrong\n\n`getActiveBackfillPass()` returned `null` on the two runtimes that run\n`backfillAll` on the gateway's own thread — `hybrid`\n(`create-routing-runtime.ts`) and `openai` (`lazy-scheduler.ts`). So a\nsearch running during the backfill **those runtimes themselves started**\nwas told no pass was active, and partial results read as complete. Only\nthe worker bridge, which learns of a pass from `backfill_progress`\nmessages, ever reported one. `getBackfillProgress()` — what `nimbus\nstatus` prints — was `null` on both too.\n\n## The fix\n\nOne shared `embedding/backfill-pass-tracker.ts`, keeping the worker\nbridge's semantics rather than inventing new ones:\n\n- a pass is **active from its first progress report** until it settles,\nso a pass with nothing to embed never becomes active (the worker's never\nsends `backfill_progress` in that case either);\n- it stops being active whether the pass finished, was stopped by its\nbattery/shutdown gate (which **returns**, it does not throw), or threw;\n- the final figure survives for `nimbus status`.\n\n`RoutingEmbeddingPipeline.backfillAll` needed a change too. Its two\nsequential passes each count from zero against their own total, so\nforwarding both callbacks unchanged made `done` jump backwards when the\nsecond started. The second half is now offset by the first half's final\nfigures.\n\n**Stated consequence:** while the first half runs, `total` covers only\nthat half and grows when the second begins. Counting both totals up\nfront was rejected: the second half's `COUNT(*)` would run before the\nfirst half had finished changing which rows it counts.\n\n## Tests\n\n- `backfill-pass-tracker.test.ts`: active only after the first report; a\npass with no rows never activates; a throwing pass clears active and\nkeeps the figure; a gate-stopped pass is not left \"running\".\n- `lazy-scheduler.test.ts`: a **real** backfill over three items with an\nembedder that blocks on the second batch, so the \"during\" window is\nobservable rather than raced for — asserts an active pass with `total:\n3`, then `null` after, with the final figure retained. Batch size 1,\nbecause at the default all three embed in one call and no window exists.\n- `routing-pipeline.test.ts`: four items across both halves; `done`\nstrictly increases, `total` never decreases, and the pass ends at\n`{done: 4, total: 4}`.\n- The two existing tests that asserted \"always null\" now assert \"null\nbefore any pass has run\", which is what they were really pinning.\n\nBoth behavioural tests fail against the unfixed source. `preflight:fast`\npasses; `packages/gateway/src/{embedding,index}` is 894 pass / 0 fail.\n\n## Docs\n\n`architecture.md`'s \"Only the worker bridge reports a pass\" sentence is\nnow the history plus what is true today. A new CHANGELOG entry records\nthe `total`-grows-mid-pass consequence.\n\nNo schema, no invariant, no egress class, no config key.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-17T17:57:51Z",
-          "tree_id": "26cb5fc628ef7da00a2010e1d389c4ccf244003f",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/5d31dabfbfda1cd7e0f576c98ca36a4e032d78bc"
-        },
-        "date": 1789668613362,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 327.8175214999988,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 331.2793091000047,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 174.36503984999655,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b074292a20957e670ef9bc92d2e56957fa8ba443",
+          "message": "refactor(gateway): clear SonarCloud findings in the gateway core (#2158)\n\nClears the open SonarCloud findings under the gateway core directories\n(`packages/gateway/src/{connectors,ipc,engine,mcp-sink,extensions,platform,federation,security-invariants,config,toolgen,computer-use,egress,vault,share,identity,teamvault,chatops,exec,multimodal,fleet,locality,llm,policy,clips,auth,db}/`).\nThe fixes are in code. No rule was disabled, and no `NOSONAR` marker,\nexclusion or `sonar.issue.ignore` was added. Behaviour does not change.\n\n149 findings were open in scope. This PR fixes 105 in code. 30 were\naccepted on the SonarCloud board, each with an issue comment giving the\nreason. 14 are left open, with reasons below. These are counts of edits\nmatched to the issue list. The PR analysis is the real measure.\n\n## Fixed in code, by rule\n- `typescript:S5906` (29): uses `toHaveLength`, `not.toBeInstanceOf`,\n`not.toContain` and `toBeUndefined` in tests.\n- `typescript:S3776` (28): the functions are split by phase into named\nsteps called in order. This covers:\n  - config parsers: memory, lan, incident-predict\n  - run-ask's local context\n  - the decisions refresher in the scheduler mesh\n  - `assemblePlatformServices`, using a shared `userMcpNetworkNote`\n  - the connector and automation RPC dispatch\n  - JSM on-call (2) and JSM alerts\n- Slack read markers (one progress record, so a throw keeps the count),\nApple and Outlook\n  - the iCal content line\n  - the Terraform plan preview (3) and the drift readers\n- the diff's per-file lines, the dry-run predictions, the reversibility\ncheck, the enable prompt's per-write line and the CSS comment scan\n  - incident-link (two named phases)\n  - the write-dir placement rule (sub-phases in order)\n- the Obsidian folder walk, the Noise `readMessage` token step and the\nTerraform settle's show step\n- `typescript:S7763` (11): `export … from` re-exports.\n- `typescript:S6582` (11): optional chains, each checked to be\nequivalent given the operand types.\n- `typescript:S3358` (6): nested ternaries removed, using\n`codeUnitCompare` for the two code-unit sorts.\n- One or two each: S7758 (2), S7771 (2), S7778 (2), S6606 (2), S1874 (2,\nincluding `db.exec` → `db.run`, which is the same function in\n`bun:sqlite`), S7737, S7755, S1940 (NaN still marks none), S4323, S4624,\nS5843 (the DURATION regex is split into a date part and a time part that\naccept exactly the same input), S6353, S7744, S7784, and S107 on JSM\n`readSchedule`.\n\n## Duplications removed\n- `cost.*` param checks\n- the `[watcher.anomaly]` and `[watcher.chatops]` section walker (new\n`forEachKeyValueInSection`)\n- the fields shared by `ModelWritesDeps` and `AgentWritesDeps`\n- the bound-write settlers' reply helpers (new\n`engine/settle-shared.ts`)\n- the imported-forwarder write fixtures\n- the user-MCP network note in `assemble.ts` and `connector-rpc.ts`\n\nNot changed: `metrics-server.ts` and `http-server.ts`, because static\nD31 requires each listen site to call `registerListener` itself, and\n`ask-explain-types.ts`, whose twin is in `packages/cli`.\n\n## Accepted on the board (30), with reasons\nThese are recorded in `docs/structure-audit/sonarqube-rule-tuning.md`\nunder 2026-11-25.\n- 14 re-applied owner dispositions from 2026-11-10. SonarCloud's\nre-tracking on 2026-11-23 had dropped them.\n- 13 `S9382` loops that are sequential by design: a rate limiter with\none budget, a persisted ACL ledger, a redirect walk, polls, an ordered\nfixture child.\n- 2 `S3735` on Bun's `FileSink` `number | Promise<number>`.\n- 1 `S6582` that is pinned by the I28 source test.\n\n## Left open, and why\n- `S3776` on ordered security gates whose order is pinned by source\ntests: `capture-rpc.ts` `buildActDeps` (I42 pin) and `agent-writes.ts` /\n`agent-writes-user-mcp.ts` (I42/I58 enable-order pins).\n- `S3776` in files at their `audit:file-size` cap, where a phase split\nwould grow the file: `before-state.ts`, `run-ask.ts`, `agent.ts`,\n`model-write-refusals.ts`, `inline-handlers.ts` (2), `model-writes.ts`,\n`trust-store.ts` and `egress-verify.ts`.\n- `S107` and `S1788` on `lan-client.ts` `sendFederatedOverWire`. Its\ncallers are in `agents/`, which is outside this scope.\n- Any `S9382` whose line changed here, such as the `readSchedule` call,\ngets a new key at the next scan and needs the same board decision.\n\n## Tests\n- New `ipc/server/dispatchers/ops-rpcs-skip-paths.test.ts`. It covers\nthe skip paths and the error-to-RPC mapping of the update-synthesis,\ninvestigation, pre-review, status-page and cost dispatchers. These were\nthe least-covered lines of the least-covered production file in scope.\n- No existing test changed in meaning.\n\n## Verification\n- `bun run preflight:fast`: PASSED.\n- `bun run typecheck` (gateway): passes.\n- Biome: clean.\n- `bun test packages/gateway/src` on Windows: the only failures are 5\nwrite-directory tests and 1 `@mastra/mcp` accessor test, and they fail\nthe same way on `main` on this machine. The write-directory tests fail\nbecause the temp folder sits under `%LOCALAPPDATA%`. The accessor test\npasses when run alone.\n- `audit:file-size --update` lowered the baseline for the files that\nshrank.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-25T22:24:08Z",
+          "tree_id": "07d6c8c4e3834dd0fe1df2ed793dbf1aa7173753",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/b074292a20957e670ef9bc92d2e56957fa8ba443"
+        },
+        "date": 1795646114617,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 265.1163496499994,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 260.19682440000213,
             "unit": "ms"
           }
         ]
