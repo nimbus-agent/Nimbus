@@ -32,6 +32,12 @@
     "packages/gateway/test/helpers/mock-spawn.test.ts": {
       "TS2532": 3
     },
+    "packages/gateway/test/helpers/stackoverflow-fake-server.ts": {
+      "TS2314": 1,
+      "TS2552": 1,
+      "TS2739": 1,
+      "TS2741": 1
+    },
     "packages/gateway/test/integration/connectors/airflow-sync-fake-server.test.ts": {
       "TS2314": 1,
       "TS2739": 1
@@ -174,12 +180,6 @@
       "TS2314": 2,
       "TS2739": 1,
       "TS2741": 2
-    },
-    "packages/gateway/test/integration/connectors/stackoverflow-sync-fake-server.test.ts": {
-      "TS2314": 1,
-      "TS2552": 1,
-      "TS2739": 1,
-      "TS2741": 1
     },
     "packages/gateway/test/integration/connectors/stripe-sync-fake-server.test.ts": {
       "TS2314": 1,
