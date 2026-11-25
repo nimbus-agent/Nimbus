@@ -93,7 +93,7 @@ export function dbRun(db: Database, sql: string, params?: unknown[]): ReturnType
 
 export function dbExec(db: Database, sql: string): void {
   try {
-    db.exec(sql);
+    db.run(sql);
   } catch (err) {
     handleWriteError(err);
   }

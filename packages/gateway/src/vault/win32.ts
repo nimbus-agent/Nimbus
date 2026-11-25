@@ -221,9 +221,7 @@ export class DpapiVault implements NimbusVault {
   }
 
   private getEntropy(): Buffer {
-    if (this.cachedEntropy === undefined) {
-      this.cachedEntropy = loadOrCreateEntropy(this.vaultDir);
-    }
+    this.cachedEntropy ??= loadOrCreateEntropy(this.vaultDir);
     return this.cachedEntropy;
   }
 

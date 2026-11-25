@@ -34,7 +34,7 @@ export function resolveBaseUrl(runtime: string, baseUrl: string | undefined): st
  *  that is not at the end (Sonar S8786). */
 function stripTrailingSlashes(s: string): string {
   let end = s.length;
-  while (end > 0 && s.charCodeAt(end - 1) === 47) end--;
+  while (end > 0 && s.codePointAt(end - 1) === 47) end--;
   return s.slice(0, end);
 }
 

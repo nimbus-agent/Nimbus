@@ -629,10 +629,8 @@ export function boundWriteProblems(
       out.push(`bound field ${JSON.stringify(b.field)} is not allowed`);
     if (named.has(b.field)) out.push(`bound field ${b.field} is a key the preview names`);
   }
-  out.push(...prepareLimitProblems(prepare));
-  out.push(...settleProblems(r, bound, prepareToolIds));
-  out.push(...diffFieldProblems(r.preview, prepare));
-  return out;
+  const tail = [...prepareLimitProblems(prepare), ...settleProblems(r, bound, prepareToolIds)];
+  return [...out, ...tail, ...diffFieldProblems(r.preview, prepare)];
 }
 
 /** Every prepare limit must be a positive integer. */

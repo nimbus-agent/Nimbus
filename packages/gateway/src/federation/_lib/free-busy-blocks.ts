@@ -63,7 +63,8 @@ export function emptyBlocks(w: FreeBusyWindow): Uint8Array {
 
 /** Marks every block the half-open span [startMs, endMs) overlaps. A span with no length marks none. */
 export function markBusy(blocks: Uint8Array, w: FreeBusyWindow, startMs: number, endMs: number) {
-  if (!(endMs > startMs)) return;
+  // A NaN bound marks none, as an empty span does.
+  if (Number.isNaN(startMs) || Number.isNaN(endMs) || endMs <= startMs) return;
   const first = Math.max(0, Math.floor((startMs - w.fromMs) / BLOCK_MS));
   const last = Math.min(blocks.length - 1, Math.ceil((endMs - w.fromMs) / BLOCK_MS) - 1);
   for (let i = first; i <= last; i++) blocks[i] = 1;
@@ -93,7 +94,7 @@ export function parseReply(raw: unknown, w: FreeBusyWindow): Uint8Array | undefi
   const n = blockCount(w);
   if (typeof s !== "string" || s.length !== n || !/^[01]*$/.test(s)) return undefined;
   const out = new Uint8Array(n);
-  for (let i = 0; i < n; i++) out[i] = s.charCodeAt(i) === 49 ? 1 : 0;
+  for (let i = 0; i < n; i++) out[i] = s.codePointAt(i) === 49 ? 1 : 0;
   return out;
 }
 

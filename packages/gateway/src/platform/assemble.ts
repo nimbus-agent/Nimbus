@@ -96,7 +96,7 @@ import { AskExplainRecorder } from "../engine/ask-explain-recorder.ts";
 import type { ExecutorPolicyDep } from "../engine/executor.ts";
 import { execConsent } from "../exec/exec-consent-broker.ts";
 import { resolveRuntimeById } from "../exec/exec-runtimes.ts";
-import { describeNetworkReach } from "../extensions/extension-reach.ts";
+import { userMcpNetworkNote } from "../extensions/extension-reach.ts";
 import type { RegistryFetchDeps } from "../extensions/registry/registry-fetch.ts";
 import {
   buildExtensionRunGrantEnv,
@@ -507,10 +507,7 @@ export async function assemblePlatformServices(
       agentDoorMesh.current?.listUserMcpToolDefinitions(serviceId),
     // The owner's prompt names the reach when the OS cannot limit it host by host (as the
     // registration prompt does).
-    userMcpNetworkNote: (netHosts) => {
-      const reach = describeNetworkReach(sandboxRunner, netHosts);
-      return reach.kind === "hosts" || reach.kind === "none" ? undefined : reach.text;
-    },
+    userMcpNetworkNote: (netHosts) => userMcpNetworkNote(sandboxRunner, netHosts),
     tribalKbConfig: () => tribalKbConfigOf(tribalCfg, tribalUnreadable),
     userMcpPolicy: actClassifyCtx,
     isServiceConfigured,

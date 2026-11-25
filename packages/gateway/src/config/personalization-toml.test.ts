@@ -39,7 +39,7 @@ describe("[personalization]", () => {
     expect(p.tone).toBe("neutral");
     expect(p.verbosity).toBe("default");
     expect(p.hideTools).toEqual(["ok"]);
-    expect(p.warnings.length).toBe(5);
+    expect(p.warnings).toHaveLength(5);
   });
 
   test("a list is capped", () => {

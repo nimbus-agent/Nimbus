@@ -133,12 +133,11 @@ function fulcioString(cert: X509Certificate, oid: string): string | undefined {
 function leafCertificate(bundle: ReturnType<typeof bundleFromJSON>): X509Certificate | undefined {
   const content = bundle.verificationMaterial?.content;
   if (content === undefined) return undefined;
-  const raw =
-    content.$case === "certificate"
-      ? content.certificate.rawBytes
-      : content.$case === "x509CertificateChain"
-        ? content.x509CertificateChain.certificates[0]?.rawBytes
-        : undefined;
+  let raw: Uint8Array | undefined;
+  if (content.$case === "certificate") raw = content.certificate.rawBytes;
+  else if (content.$case === "x509CertificateChain") {
+    raw = content.x509CertificateChain.certificates[0]?.rawBytes;
+  }
   return raw === undefined ? undefined : X509Certificate.parse(Buffer.from(raw));
 }
 

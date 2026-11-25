@@ -2,7 +2,12 @@ import { describe, expect, test } from "bun:test";
 
 import { createDarwinSandboxRunner } from "../platform/sandbox/darwin.ts";
 import type { SandboxPolicy } from "../platform/sandbox/sandbox-policy.ts";
-import { describeNetworkReach, type NetworkReach, type ReachRunner } from "./extension-reach.ts";
+import {
+  describeNetworkReach,
+  type NetworkReach,
+  type ReachRunner,
+  userMcpNetworkNote,
+} from "./extension-reach.ts";
 
 function fakeRunner(opts: {
   platform: "linux" | "darwin" | "win32";
@@ -175,5 +180,23 @@ describe("describeNetworkReach", () => {
   test("a missing reason is stated, not omitted", () => {
     const r = fakeRunner({ platform: "linux", fullyActive: false, reason: null });
     expect(describeNetworkReach(r, HOSTS).text).toContain("reason not reported");
+  });
+});
+
+describe("userMcpNetworkNote", () => {
+  test("no note when the OS limits the server host by host, or the server has no network", () => {
+    const r = fakeRunner({ platform: "linux", fullyActive: true, reason: null });
+    expect(userMcpNetworkNote(r, HOSTS)).toBeUndefined();
+    expect(userMcpNetworkNote(r, [])).toBeUndefined();
+  });
+
+  test("a wider reach the OS cannot limit is named, in the same words as describeNetworkReach", () => {
+    const r = fakeRunner({ platform: "darwin", fullyActive: true, scope: "per_port", reason: "m" });
+    expect(userMcpNetworkNote(r, HOSTS)).toBe(describeNetworkReach(r, HOSTS).text);
+    const whole = fakeRunner({ platform: "linux", fullyActive: false, reason: "no helper" });
+    expect(userMcpNetworkNote(whole, HOSTS)).toContain("the whole network");
+    expect(userMcpNetworkNote(undefined, HOSTS)).toBe(
+      "not known here (the sandbox is not available to ask)",
+    );
   });
 });

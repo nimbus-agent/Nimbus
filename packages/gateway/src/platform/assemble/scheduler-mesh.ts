@@ -62,6 +62,50 @@ import { loadServiceConfigsOrDegrade } from "./boot-misc.ts";
 import { registerFilesystemRootSyncables } from "./index-boot.ts";
 import type { SchedulerWithMesh, SchedulerWithMeshOpts } from "./scheduler-mesh-opts.ts";
 
+/**
+ * Decisions (S1 Local Brain). Construction itself is gated on `[decisions].enabled` — unlike
+ * glossaryRefresher, which is always constructed and gates internally — so a disabled decisions
+ * pass leaves `decisionsRefresher` unset rather than idling.
+ */
+function createDecisionsRefresherFor(
+  opts: Pick<SchedulerWithMeshOpts, "paths" | "db" | "decisionLlm" | "syncLogger">,
+) {
+  const { paths, db, decisionLlm, syncLogger } = opts;
+  const decisionsCfg = loadNimbusDecisionsFromConfigDir(paths.configDir);
+  if (!decisionsCfg.enabled) return undefined;
+  // Gate at the point of use, so the single config read stays single.
+  const extractionLlm = decisionsCfg.useLlm ? decisionLlm : undefined;
+  return createDecisionRefresher({
+    debounceMs: decisionsCfg.debounceMs,
+    runPass: (runOpts) => {
+      const passOpts = {
+        nowMs: Date.now(),
+        useLlm: decisionsCfg.useLlm,
+        maxLlmCalls: decisionsCfg.maxLlmCallsPerPass,
+        // `decisionsCfg.minConfidence` is deliberately NOT passed: it is a
+        // read-path floor (`agents/decisions.ts`), not an extraction filter.
+        retryCooldownMs: decisionsCfg.retryCooldownMs,
+        // Resolved on EVERY run, never at assemble time: a pack install or an owner edit to
+        // `[sources]` applies to the next pass without a restart. Pack install/remove does not
+        // itself trigger a pass; the next post-sync pass (or `nimbus decisions --refresh`) mines it.
+        mapping: sourceMappingFor(paths.configDir),
+        // Catch-up re-reads it between batches, so a type removed mid-run stops there.
+        mappingAt: () => sourceMappingFor(paths.configDir),
+        ...(extractionLlm === undefined ? {} : { llm: extractionLlm }),
+      };
+      // `decisions.rebuild` (ipc/decisions-rpc.ts) is the only caller that ever sets
+      // `rebuild: true` — the debounced post-sync `trigger()` path above never does, and
+      // `decisions.refresh` always passes `false` explicitly. `rebuildDecisions` clears
+      // `decision_record`/`decision_evidence`/the watermark, vetoes included, before
+      // re-running — the sole recovery path for a veto, which is otherwise permanent.
+      return runOpts?.rebuild ? rebuildDecisions(db, passOpts) : runDecisionPass(db, passOpts);
+    },
+    onError: (err) => {
+      syncLogger.warn({ err }, "decision extraction pass failed");
+    },
+  });
+}
+
 export async function createSchedulerWithMesh(
   opts: SchedulerWithMeshOpts,
 ): Promise<SchedulerWithMesh> {
@@ -165,43 +209,7 @@ export async function createSchedulerWithMesh(
     },
   });
 
-  // Decisions (S1 Local Brain). Construction itself is gated on `[decisions].enabled` — unlike
-  // glossaryRefresher, which is always constructed and gates internally — so a disabled decisions
-  // pass leaves `decisionsRefresher` unset rather than idling.
-  const decisionsCfg = loadNimbusDecisionsFromConfigDir(paths.configDir);
-  // Gate at the point of use, so the single config read stays single.
-  const extractionLlm = decisionsCfg.useLlm ? decisionLlm : undefined;
-  const decisionsRefresher = decisionsCfg.enabled
-    ? createDecisionRefresher({
-        debounceMs: decisionsCfg.debounceMs,
-        runPass: (runOpts) => {
-          const passOpts = {
-            nowMs: Date.now(),
-            useLlm: decisionsCfg.useLlm,
-            maxLlmCalls: decisionsCfg.maxLlmCallsPerPass,
-            // `decisionsCfg.minConfidence` is deliberately NOT passed: it is a
-            // read-path floor (`agents/decisions.ts`), not an extraction filter.
-            retryCooldownMs: decisionsCfg.retryCooldownMs,
-            // Resolved on EVERY run, never at assemble time: a pack install or an owner edit to
-            // `[sources]` applies to the next pass without a restart. Pack install/remove does not
-            // itself trigger a pass; the next post-sync pass (or `nimbus decisions --refresh`) mines it.
-            mapping: sourceMappingFor(paths.configDir),
-            // Catch-up re-reads it between batches, so a type removed mid-run stops there.
-            mappingAt: () => sourceMappingFor(paths.configDir),
-            ...(extractionLlm === undefined ? {} : { llm: extractionLlm }),
-          };
-          // `decisions.rebuild` (ipc/decisions-rpc.ts) is the only caller that ever sets
-          // `rebuild: true` — the debounced post-sync `trigger()` path above never does, and
-          // `decisions.refresh` always passes `false` explicitly. `rebuildDecisions` clears
-          // `decision_record`/`decision_evidence`/the watermark, vetoes included, before
-          // re-running — the sole recovery path for a veto, which is otherwise permanent.
-          return runOpts?.rebuild ? rebuildDecisions(db, passOpts) : runDecisionPass(db, passOpts);
-        },
-        onError: (err) => {
-          syncLogger.warn({ err }, "decision extraction pass failed");
-        },
-      })
-    : undefined;
+  const decisionsRefresher = createDecisionsRefresherFor(opts);
 
   // Pre-mortem theme pass (S1 Local Brain). Construction itself is gated on
   // `[premortem].enabled` — like decisionsRefresher above, not glossaryRefresher — so a

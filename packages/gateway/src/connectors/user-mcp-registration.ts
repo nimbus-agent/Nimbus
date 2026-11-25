@@ -6,6 +6,7 @@
 
 import type path from "node:path";
 import { findServiceIdPrefixCollision } from "@nimbus-dev/registry-format";
+import { codeUnitCompare } from "../util/code-unit-compare.ts";
 import { findProtectedOverlap, pathApiFor } from "../util/path-overlap.ts";
 import {
   MAX_WRITE_DIRS,
@@ -233,7 +234,7 @@ function resolveWritePaths(
     if (touchesCode(checked.path)) throw writeRefused(USER_MCP_WRITE_REFUSALS.ownCode);
     out.push(checked.path);
   }
-  return out.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  return out.sort(codeUnitCompare);
 }
 
 export function resolveUserMcpRegistration(

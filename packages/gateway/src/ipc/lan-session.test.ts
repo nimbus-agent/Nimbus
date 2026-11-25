@@ -50,8 +50,8 @@ describe("handshake drivers", () => {
   test("message 1 and message 2 carry no payload (D-FS-4): both are exactly the Noise overhead", () => {
     const { init, message2 } = establish();
     // IK message 1: e(32) + encrypted s(32+16) + payload tag(16); message 2: e(32) + payload tag(16).
-    expect(init.firstFrameBody.length).toBe(4 + 32 + 48 + 16);
-    expect(message2.length).toBe(32 + 16);
+    expect(init.firstFrameBody).toHaveLength(4 + 32 + 48 + 16);
+    expect(message2).toHaveLength(32 + 16);
   });
 
   test("any other magic, version or pattern byte is not a v2 first frame", () => {
@@ -133,7 +133,7 @@ describe("records", () => {
       const { client, server } = establish();
       const message = bytes(n, 0x5a);
       const records = client.sealMessage(message);
-      expect(records.length).toBe(Math.max(1, Math.ceil(n / MAX_RECORD_CHUNK)));
+      expect(records).toHaveLength(Math.max(1, Math.ceil(n / MAX_RECORD_CHUNK)));
       for (const r of records) expect(r.length).toBeLessThanOrEqual(65_535);
       let out: Uint8Array | undefined;
       for (const r of records) out = server.openRecord(r);

@@ -878,4 +878,4 @@ export async function runAsk(p: RunAskParams): Promise<RunAskResult> {
 }
 
 /** Test seam: `buildLocalIndexedContext` is module-private and has no other entry point. */
-export const buildLocalIndexedContextForTest = buildLocalIndexedContext;
+export { buildLocalIndexedContext as buildLocalIndexedContextForTest } from "./run-ask/local-context.ts";

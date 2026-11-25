@@ -184,52 +184,37 @@ async function fetchSelfUserId(
 }
 
 /**
- * Refreshes the owner's Slack read markers for the sync's channels. NEVER throws. Returns the own user
- * id to cache (the new one, or `input.selfUserId` when `auth.test` failed) and the round-robin offset
- * advanced by the channels actually processed.
+ * Fetches each selected channel's marker in order, one rate-limit token each. Ends at the deadline or at
+ * the first `stop`, recording why. Progress lands in `progress` as it goes, so a throw keeps the count.
  */
-export async function refreshSlackReadMarkers(
+async function fetchMarkers(
+  ctx: SyncContext,
+  token: string,
+  todo: readonly string[],
+  pass: { readonly deadline: number; readonly signal: AbortSignal; readonly deps: MarkerPassDeps },
+  progress: { markers: ChatReadMarkerInput[]; attempted: number; stopReason: string | null },
+): Promise<void> {
+  for (const id of todo) {
+    if (!(await acquireWithin(ctx.rateLimiter, pass.deadline, pass.deps))) {
+      progress.stopReason = "deadline";
+      return;
+    }
+    const out = await fetchOne(ctx, token, id, pass.signal, pass.deps);
+    if (out.kind === "stop") {
+      progress.stopReason = out.reason;
+      return;
+    }
+    progress.attempted += 1;
+    if (out.kind === "marker") progress.markers.push(out.marker);
+  }
+}
+
+/** Stores what the pass fetched (pruning by the fresh list only when it was complete). Never throws. */
+function storeMarkers(
   ctx: SyncContext,
   input: MarkerPassInput,
-  deps: MarkerPassDeps = DEFAULT_MARKER_PASS_DEPS,
-): Promise<MarkerPassResult> {
-  const controller = new AbortController();
-  // A ref'd timer of our own: `AbortSignal.timeout`'s does not keep the loop alive.
-  const timer = setTimeout(() => controller.abort(), deps.budgetMs);
-  const deadline = deps.now() + deps.budgetMs;
-  const markers: ChatReadMarkerInput[] = [];
-  let selfUserId = input.selfUserId;
-  let attempted = 0;
-  let stopReason: string | null = null;
-  try {
-    if (await acquireWithin(ctx.rateLimiter, deadline, deps)) {
-      selfUserId = (await fetchSelfUserId(input.token, controller.signal, deps)) ?? selfUserId;
-    } else {
-      stopReason = "deadline";
-    }
-    const todo =
-      stopReason === null ? selectMarkerChannels(input.ids, input.mkIdx, deps.maxChannels) : [];
-    for (const id of todo) {
-      if (!(await acquireWithin(ctx.rateLimiter, deadline, deps))) {
-        stopReason = "deadline";
-        break;
-      }
-      const out = await fetchOne(ctx, input.token, id, controller.signal, deps);
-      if (out.kind === "stop") {
-        stopReason = out.reason;
-        break;
-      }
-      attempted += 1;
-      if (out.kind === "marker") markers.push(out.marker);
-    }
-  } catch (err) {
-    stopReason = err instanceof Error ? err.name : "error";
-  } finally {
-    clearTimeout(timer);
-  }
-  if (stopReason !== null) {
-    ctx.logger.warn({ service: "slack", code: stopReason }, "slack read markers: pass ended early");
-  }
+  markers: readonly ChatReadMarkerInput[],
+): void {
   try {
     if (markers.length > 0 || input.listComplete) {
       ctx.setChatReadMarkers(
@@ -243,5 +228,59 @@ export async function refreshSlackReadMarkers(
       "slack read markers: storing failed",
     );
   }
-  return { selfUserId, mkIdx: advanceMarkerIndex(input.mkIdx, attempted, input.ids.length) };
+}
+
+/**
+ * Refreshes the owner's Slack read markers for the sync's channels. NEVER throws. Returns the own user
+ * id to cache (the new one, or `input.selfUserId` when `auth.test` failed) and the round-robin offset
+ * advanced by the channels actually processed.
+ */
+export async function refreshSlackReadMarkers(
+  ctx: SyncContext,
+  input: MarkerPassInput,
+  deps: MarkerPassDeps = DEFAULT_MARKER_PASS_DEPS,
+): Promise<MarkerPassResult> {
+  const controller = new AbortController();
+  // A ref'd timer of our own: `AbortSignal.timeout`'s does not keep the loop alive.
+  const timer = setTimeout(() => controller.abort(), deps.budgetMs);
+  const deadline = deps.now() + deps.budgetMs;
+  const progress = {
+    markers: [] as ChatReadMarkerInput[],
+    attempted: 0,
+    stopReason: null as string | null,
+  };
+  let selfUserId = input.selfUserId;
+  try {
+    if (await acquireWithin(ctx.rateLimiter, deadline, deps)) {
+      selfUserId = (await fetchSelfUserId(input.token, controller.signal, deps)) ?? selfUserId;
+    } else {
+      progress.stopReason = "deadline";
+    }
+    const todo =
+      progress.stopReason === null
+        ? selectMarkerChannels(input.ids, input.mkIdx, deps.maxChannels)
+        : [];
+    await fetchMarkers(
+      ctx,
+      input.token,
+      todo,
+      { deadline, signal: controller.signal, deps },
+      progress,
+    );
+  } catch (err) {
+    progress.stopReason = err instanceof Error ? err.name : "error";
+  } finally {
+    clearTimeout(timer);
+  }
+  if (progress.stopReason !== null) {
+    ctx.logger.warn(
+      { service: "slack", code: progress.stopReason },
+      "slack read markers: pass ended early",
+    );
+  }
+  storeMarkers(ctx, input, progress.markers);
+  return {
+    selfUserId,
+    mkIdx: advanceMarkerIndex(input.mkIdx, progress.attempted, input.ids.length),
+  };
 }

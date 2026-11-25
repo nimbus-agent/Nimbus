@@ -3,11 +3,7 @@
 // static D43(d)). Split out of `iac-runner.ts` with no behaviour change: it builds no profile and
 // no `ServerSpec`; the runner hands it an already-wrapped spec.
 import type { ChildProcess } from "node:child_process";
-import {
-  IAC_ESCALATE_AFTER_MS,
-  IAC_EXIT_WAIT_MS,
-  iacEscalationGraceMs,
-} from "../../connector-writes/iac-limits.ts";
+import { IAC_ESCALATE_AFTER_MS } from "../../connector-writes/iac-limits.ts";
 import type { ServerSpec } from "../slot.ts";
 
 // ---------------------------------------------------------------------------------------------
@@ -102,9 +98,12 @@ export const STOP_KILL_WAIT_MS = 5_000;
 // The SIGTERM-to-SIGKILL grace, the plan's reap wait and the dispatcher's race over them live in
 // `iac-limits.ts`, so the dispatcher's timeout is derived from the same numbers (it must outlast
 // all of these: the runner always settles first).
-export const escalationGraceMs = iacEscalationGraceMs;
+export {
+  IAC_EXIT_WAIT_MS as EXIT_WAIT_MS,
+  iacEscalationGraceMs as escalationGraceMs,
+} from "../../connector-writes/iac-limits.ts";
+
 const ESCALATE_AFTER_MS = IAC_ESCALATE_AFTER_MS;
-export const EXIT_WAIT_MS = IAC_EXIT_WAIT_MS;
 
 /** What one call to a child produced; `exited` resolves when the process is really gone. */
 export interface ChildCall {

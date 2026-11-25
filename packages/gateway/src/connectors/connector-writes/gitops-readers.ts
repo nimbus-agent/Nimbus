@@ -325,8 +325,7 @@ function tagValueNow(
   const exact = sameName.filter((t) => {
     const segs = identifierSegments(stringAt(t, ["name"]) ?? "");
     return (
-      segs !== undefined &&
-      segs.length === FULLY_QUALIFIED &&
+      segs?.length === FULLY_QUALIFIED &&
       want.length === FULLY_QUALIFIED &&
       segs.every((x, k) => x === want[k])
     );

@@ -318,24 +318,7 @@ export class HandshakeState {
     if (tokens === undefined || this.isMyTurnToWrite()) throw new Error("lan-noise: out of turn");
     try {
       let rest = message;
-      for (const token of tokens) {
-        if (token === "e") {
-          if (rest.length < DHLEN) throw new Error(NOISE_OPEN_FAILED);
-          this.re = rest.slice(0, DHLEN);
-          rest = rest.subarray(DHLEN);
-          this.symmetric.mixHash(this.re);
-          if (this.pskMode) this.symmetric.mixKey(this.re);
-        } else if (token === "psk") {
-          this.symmetric.mixKeyAndHash(this.nextPsk());
-        } else if (token === "s") {
-          const length = DHLEN + (this.symmetric.hasKey() ? TAG_LEN : 0);
-          if (rest.length < length) throw new Error(NOISE_OPEN_FAILED);
-          this.rs = this.symmetric.decryptAndHash(rest.subarray(0, length));
-          rest = rest.subarray(length);
-        } else {
-          this.symmetric.mixKey(this.dhFor(token));
-        }
-      }
+      for (const token of tokens) rest = this.readToken(token, rest);
       const payload = this.symmetric.decryptAndHash(rest);
       this.messageIndex += 1;
       return payload;
@@ -343,6 +326,29 @@ export class HandshakeState {
       this.fail();
       throw new Error(NOISE_OPEN_FAILED);
     }
+  }
+
+  /** Processes one token of an incoming message (Noise § 5.3 ReadMessage) and returns what is left. */
+  private readToken(token: Token, rest: Uint8Array): Uint8Array {
+    if (token === "e") {
+      if (rest.length < DHLEN) throw new Error(NOISE_OPEN_FAILED);
+      this.re = rest.slice(0, DHLEN);
+      this.symmetric.mixHash(this.re);
+      if (this.pskMode) this.symmetric.mixKey(this.re);
+      return rest.subarray(DHLEN);
+    }
+    if (token === "psk") {
+      this.symmetric.mixKeyAndHash(this.nextPsk());
+      return rest;
+    }
+    if (token === "s") {
+      const length = DHLEN + (this.symmetric.hasKey() ? TAG_LEN : 0);
+      if (rest.length < length) throw new Error(NOISE_OPEN_FAILED);
+      this.rs = this.symmetric.decryptAndHash(rest.subarray(0, length));
+      return rest.subarray(length);
+    }
+    this.symmetric.mixKey(this.dhFor(token));
+    return rest;
   }
 
   private isComplete(): boolean {

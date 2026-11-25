@@ -237,7 +237,7 @@ describe("I57 (a) - assembling an incident record is inert: it reads the local i
         .get(out.recordId) as { title: string; markdown: string; record_json: string };
       for (const text of [row.title, row.record_json]) {
         expect(text).not.toContain(String.fromCodePoint(0x1b));
-        expect(text.includes(String.fromCodePoint(0x202e))).toBe(false);
+        expect(text).not.toContain(String.fromCodePoint(0x202e));
       }
       expect(row.title).not.toContain("\n");
       // the one `## Gaps` line is the reserved block built from the record's own gaps, not the title's

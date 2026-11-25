@@ -86,6 +86,32 @@ export function tryDispatchPeopleRpc(ctx: ServerCtx, method: string, params: unk
   return peopleRpcSkipped;
 }
 
+/**
+ * I42 + I29: the executor of the owner's own `connector.userMcpCall`. Unlike the gate-only executor
+ * of `tryDispatchConnectorRpc`, this one DISPATCHES, so it carries a real egress sink and the real
+ * connector dispatcher. No delegation dep: I42 asks the local owner.
+ */
+function userMcpCallExecutor(
+  ctx: ServerCtx,
+  clientId: string,
+  localIndex: NonNullable<ServerCtx["options"]["localIndex"]>,
+  mesh: NonNullable<ServerCtx["options"]["connectorMesh"]>,
+): ToolExecutor {
+  return new ToolExecutor(
+    bindConsentChannel(ctx.consentImpl, clientId),
+    localIndex,
+    createConnectorDispatcher(meshDispatcherClient(mesh)),
+    undefined,
+    makeEgressSink(localIndex.getDatabase()),
+    ctx.options.policyHitl ?? NO_POLICY_OVERLAY,
+    undefined,
+    // I15 (AD5b): the owner's own call shows what the server's code may write.
+    {
+      userMcpWriteGrants: userMcpWriteGrantsReader(() => localIndex.getDatabase()),
+    },
+  );
+}
+
 export async function tryDispatchConnectorRpc(
   ctx: ServerCtx,
   method: string,
@@ -132,24 +158,9 @@ export async function tryDispatchConnectorRpc(
       ctx.options.policyHitl ?? NO_POLICY_OVERLAY,
     );
     const mesh = ctx.options.connectorMesh;
-    const userMcpDb = ctx.options.localIndex;
-    // I42 + I29: unlike the gate-only executor above, this one DISPATCHES, so it carries a real
-    // egress sink and the real connector dispatcher. No delegation dep: I42 asks the local owner.
     const userMcpExecutor =
       method === "connector.userMcpCall" && mesh !== undefined
-        ? new ToolExecutor(
-            bindConsentChannel(ctx.consentImpl, clientId),
-            ctx.options.localIndex,
-            createConnectorDispatcher(meshDispatcherClient(mesh)),
-            undefined,
-            makeEgressSink(ctx.options.localIndex.getDatabase()),
-            ctx.options.policyHitl ?? NO_POLICY_OVERLAY,
-            undefined,
-            // I15 (AD5b): the owner's own call shows what the server's code may write.
-            {
-              userMcpWriteGrants: userMcpWriteGrantsReader(() => userMcpDb.getDatabase()),
-            },
-          )
+        ? userMcpCallExecutor(ctx, clientId, ctx.options.localIndex, mesh)
         : undefined;
     const out = await dispatchConnectorRpc({
       method,

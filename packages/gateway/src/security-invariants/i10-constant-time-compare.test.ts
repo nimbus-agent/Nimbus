@@ -36,7 +36,7 @@ describe("I10 — Constant-time compare helpers live in util/timing-safe-compare
       // The CALL on a definition hash, not the bare name.
       const calls =
         stripComments(src).match(/constantTimeStringEqual\([^)]*\.definitionSha256[^)]*\)/g) ?? [];
-      expect(calls.length).toBe(1);
+      expect(calls).toHaveLength(1);
       expect(src).not.toMatch(/[!=]==\s*\w+(?:\.\w+)*\.definitionSha256/);
       expect(src).not.toMatch(/\.definitionSha256\s*[!=]==/);
     });
@@ -52,7 +52,7 @@ describe("I10 — Constant-time compare helpers live in util/timing-safe-compare
     // The CALL, at both comparison sites (the re-read approval and the listed hash), not the bare name.
     const calls =
       stripComments(src).match(/constantTimeStringEqual\([^)]*\.definitionSha256[^)]*\)/g) ?? [];
-    expect(calls.length).toBe(2);
+    expect(calls).toHaveLength(2);
     expect(src).not.toMatch(/[!=]==\s*\w+(?:\.\w+)*\.definitionSha256/);
     expect(src).not.toMatch(/\.definitionSha256\s*[!=]==/);
   });

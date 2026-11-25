@@ -32,24 +32,40 @@ interface Parsed {
   readonly days: number;
 }
 
-function parseParams(params: unknown): Parsed {
-  if (params === undefined) return { days: 1 };
+/** A `cost.*` params object holding no key but `allowed`; anything else is -32602 naming `method`. */
+function paramsObject(
+  params: unknown,
+  method: string,
+  allowed: readonly string[],
+): Record<string, unknown> {
   if (params === null || typeof params !== "object" || Array.isArray(params)) {
-    throw new CostRpcError(-32602, "cost.anomalies requires an object payload");
+    throw new CostRpcError(-32602, `${method} requires an object payload`);
   }
   const p = params as Record<string, unknown>;
   for (const key of Object.keys(p)) {
-    if (key !== "service" && key !== "days") {
-      throw new CostRpcError(-32602, `cost.anomalies: unknown parameter "${key}"`);
+    if (!allowed.includes(key)) {
+      throw new CostRpcError(-32602, `${method}: unknown parameter "${key}"`);
     }
   }
+  return p;
+}
+
+/** The optional `service` param: absent, or a cost service id. */
+function serviceParam(p: Record<string, unknown>, method: string): string | undefined {
   const service = p["service"];
   if (service !== undefined && (typeof service !== "string" || !isCostServiceId(service))) {
     throw new CostRpcError(
       -32602,
-      "cost.anomalies: service must be a cost service id (for example vantage)",
+      `${method}: service must be a cost service id (for example vantage)`,
     );
   }
+  return service;
+}
+
+function parseParams(params: unknown): Parsed {
+  if (params === undefined) return { days: 1 };
+  const p = paramsObject(params, "cost.anomalies", ["service", "days"]);
+  const service = serviceParam(p, "cost.anomalies");
   const days = p["days"] ?? 1;
   if (
     typeof days !== "number" ||
@@ -85,22 +101,8 @@ function parseWasteParams(params: unknown): {
   kind?: (typeof WASTE_KINDS)[number];
 } {
   if (params === undefined) return {};
-  if (params === null || typeof params !== "object" || Array.isArray(params)) {
-    throw new CostRpcError(-32602, "cost.waste requires an object payload");
-  }
-  const p = params as Record<string, unknown>;
-  for (const key of Object.keys(p)) {
-    if (key !== "service" && key !== "kind") {
-      throw new CostRpcError(-32602, `cost.waste: unknown parameter "${key}"`);
-    }
-  }
-  const service = p["service"];
-  if (service !== undefined && (typeof service !== "string" || !isCostServiceId(service))) {
-    throw new CostRpcError(
-      -32602,
-      "cost.waste: service must be a cost service id (for example vantage)",
-    );
-  }
+  const p = paramsObject(params, "cost.waste", ["service", "kind"]);
+  const service = serviceParam(p, "cost.waste");
   const kind = p["kind"];
   if (kind !== undefined && !isWasteKind(kind)) {
     throw new CostRpcError(-32602, `cost.waste: kind must be one of ${WASTE_KINDS.join(", ")}`);

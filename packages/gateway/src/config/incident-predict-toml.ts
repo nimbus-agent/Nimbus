@@ -110,12 +110,9 @@ function finish(
   onFallback: SectionFallbackSink | undefined,
 ): void {
   const e = toExpectation(d, seen);
-  const why =
-    typeof e === "string"
-      ? e
-      : out.length >= MAX_EXPECTATIONS
-        ? `more than ${String(MAX_EXPECTATIONS)} entries`
-        : undefined;
+  let why: string | undefined;
+  if (typeof e === "string") why = e;
+  else if (out.length >= MAX_EXPECTATIONS) why = `more than ${String(MAX_EXPECTATIONS)} entries`;
   if (why !== undefined || typeof e === "string") {
     onFallback?.(`[[incident.expect]] #${String(index)} skipped: ${why ?? ""}`);
     return;
@@ -133,49 +130,75 @@ function anomalyZOf(raw: string, onFallback: SectionFallbackSink | undefined): n
   return DEFAULT_INCIDENT_PREDICT.anomalyZ;
 }
 
+/** The parse in progress: the section the line is in, the open `[[incident.expect]]` entry and the results. */
+type ParseState = {
+  anomalyZ: number;
+  section: "incident" | "expect" | null;
+  draft: Draft | null;
+  index: number;
+  readonly out: Expectation[];
+  readonly seen: Set<string>;
+};
+
+/** One key of an `[[incident.expect]]` entry; an unknown key is ignored. */
+function applyExpectKey(draft: Draft, key: string, valRaw: string): void {
+  const v = stringValue(valRaw);
+  if (key === "kind") draft.kind = v;
+  else if (key === "service") draft.service = v;
+  else if (key === "type") draft.type = v;
+  else if (key === "max_gap") draft.maxGap = v;
+}
+
+/** One `key = value` line, in whichever section it sits. */
+function applyEntry(
+  st: ParseState,
+  key: string,
+  valRaw: string,
+  onFallback: SectionFallbackSink | undefined,
+): void {
+  if (st.section === "incident" && key === "anomaly_z") {
+    st.anomalyZ = anomalyZOf(valRaw, onFallback);
+  } else if (st.section === "expect" && st.draft !== null) {
+    applyExpectKey(st.draft, key, valRaw);
+  }
+}
+
 export function parseNimbusTomlIncidentPredict(
   source: string,
   onFallback?: SectionFallbackSink,
 ): NimbusIncidentPredictToml {
-  let anomalyZ = DEFAULT_INCIDENT_PREDICT.anomalyZ;
-  const out: Expectation[] = [];
-  const seen = new Set<string>();
-  let section: "incident" | "expect" | null = null;
-  let draft: Draft | null = null;
-  let index = 0;
+  const st: ParseState = {
+    anomalyZ: DEFAULT_INCIDENT_PREDICT.anomalyZ,
+    section: null,
+    draft: null,
+    index: 0,
+    out: [],
+    seen: new Set<string>(),
+  };
   const flush = (): void => {
-    if (draft !== null) finish(draft, index, seen, out, onFallback);
-    draft = null;
+    if (st.draft !== null) finish(st.draft, st.index, st.seen, st.out, onFallback);
+    st.draft = null;
   };
   for (const line of source.split(/\r?\n/)) {
     const trimmed = stripComment(line).trim();
     if (trimmed === "") continue;
     if (trimmed === "[[incident.expect]]") {
       flush();
-      index += 1;
-      draft = {};
-      section = "expect";
+      st.index += 1;
+      st.draft = {};
+      st.section = "expect";
       continue;
     }
     if (isTableHeader(trimmed)) {
       flush();
-      section = trimmed === "[incident]" ? "incident" : null;
+      st.section = trimmed === "[incident]" ? "incident" : null;
       continue;
     }
     const kv = splitKeyValue(trimmed);
-    if (kv === undefined) continue;
-    if (section === "incident" && kv.key === "anomaly_z") {
-      anomalyZ = anomalyZOf(kv.valRaw, onFallback);
-    } else if (section === "expect" && draft !== null) {
-      const v = stringValue(kv.valRaw);
-      if (kv.key === "kind") draft.kind = v;
-      else if (kv.key === "service") draft.service = v;
-      else if (kv.key === "type") draft.type = v;
-      else if (kv.key === "max_gap") draft.maxGap = v;
-    }
+    if (kv !== undefined) applyEntry(st, kv.key, kv.valRaw, onFallback);
   }
   flush();
-  return Object.freeze({ anomalyZ, expectations: Object.freeze(out) });
+  return Object.freeze({ anomalyZ: st.anomalyZ, expectations: Object.freeze(st.out) });
 }
 
 /** Over the layered snapshot (packs, base, active profile); read per call so an edit applies without a restart. */

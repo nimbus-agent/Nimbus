@@ -48,7 +48,7 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
   ...WORKFLOW_HANDLERS,
 };
 
-export async function dispatchAutomationRpc(options: {
+export type AutomationRpcOptions = {
   method: string;
   params: unknown;
   db: Database;
@@ -71,18 +71,13 @@ export async function dispatchAutomationRpc(options: {
   /** Test seam: where an incomplete install rollback is warned; absent means this module's logger. */
   logger?: Pick<Logger, "warn">;
   observationDir?: string | undefined;
-}): Promise<Hit | { kind: "miss" }> {
-  const handler = AUTOMATION_HANDLERS[options.method];
-  if (handler === undefined) {
-    return { kind: "miss" };
-  }
-  const ctx: AutomationCtx = {
-    db: options.db,
-    ...(options.clientKind !== undefined && { clientKind: options.clientKind }),
+};
+
+/** The extension half of the per-call context: each member only when the caller passed it. */
+function extensionCtxOf(options: AutomationRpcOptions): Partial<AutomationCtx> {
+  return {
     ...(options.extensionsDir !== undefined && { extensionsDir: options.extensionsDir }),
     ...(options.mesh !== undefined && { mesh: options.mesh }),
-    ...(options.vault !== undefined && { vault: options.vault }),
-    ...(options.autoUpdate !== undefined && { autoUpdate: options.autoUpdate }),
     ...(options.ownerGate !== undefined && { ownerGate: options.ownerGate }),
     ...(options.runGrantEnv !== undefined && { runGrantEnv: options.runGrantEnv }),
     ...(options.sandboxRunner !== undefined && { sandboxRunner: options.sandboxRunner }),
@@ -96,6 +91,22 @@ export async function dispatchAutomationRpc(options: {
     ...(options.requirementStatuses !== undefined && {
       requirementStatuses: options.requirementStatuses,
     }),
+  };
+}
+
+export async function dispatchAutomationRpc(
+  options: AutomationRpcOptions,
+): Promise<Hit | { kind: "miss" }> {
+  const handler = AUTOMATION_HANDLERS[options.method];
+  if (handler === undefined) {
+    return { kind: "miss" };
+  }
+  const ctx: AutomationCtx = {
+    db: options.db,
+    ...(options.clientKind !== undefined && { clientKind: options.clientKind }),
+    ...(options.vault !== undefined && { vault: options.vault }),
+    ...(options.autoUpdate !== undefined && { autoUpdate: options.autoUpdate }),
+    ...extensionCtxOf(options),
     ...(options.logger !== undefined && { logger: options.logger }),
     observationDir: options.observationDir,
   };

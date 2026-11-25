@@ -88,6 +88,12 @@ export type AppleSyncableOptions = {
   fetchEvents: AppleEventFetcher;
 };
 
+/** The key `parseIcalEventExtras` files an event under: `<uid>`, or `<uid>:<recurrence-id>` for an instance. */
+function extrasKeyOf(ev: { readonly uid: string; readonly recurrenceId: string | null }): string {
+  const uid = ev.uid.trim();
+  return ev.recurrenceId !== null && ev.recurrenceId !== "" ? `${uid}:${ev.recurrenceId}` : uid;
+}
+
 /**
  * Run the CalDAV calendar pass after the mail pass.
  *
@@ -136,11 +142,7 @@ async function runCalendarPass(
       if (calCount >= config.maxInstancesPerCalendar) {
         break;
       }
-      const key =
-        ev.recurrenceId !== null && ev.recurrenceId !== ""
-          ? `${ev.uid.trim()}:${ev.recurrenceId}`
-          : ev.uid.trim();
-      const evExtras = extras.get(key);
+      const evExtras = extras.get(extrasKeyOf(ev));
       const row = mapAppleEventToItem(ev, {
         calendar,
         syncedAt,

@@ -28,36 +28,34 @@ export const DEFAULT_NIMBUS_LAN_TOML: NimbusLanToml = {
   minProtocolIgnored: false,
 };
 
+type LanIntField = "port" | "pairingWindowSeconds" | "maxFailedAttempts" | "lockoutSeconds";
+
+/** The integer keys of `[lan]` and the least value each accepts; a smaller or malformed value is ignored. */
+const LAN_INT_KEYS: Readonly<
+  Record<string, { readonly field: LanIntField; readonly min: number }>
+> = {
+  port: { field: "port", min: 1 },
+  pairing_window_seconds: { field: "pairingWindowSeconds", min: 1 },
+  max_failed_attempts: { field: "maxFailedAttempts", min: 1 },
+  lockout_seconds: { field: "lockoutSeconds", min: 0 },
+};
+
 function applyNimbusLanKey(out: Partial<NimbusLanToml>, key: string, valRaw: string): void {
+  const intKey = Object.hasOwn(LAN_INT_KEYS, key) ? LAN_INT_KEYS[key] : undefined;
+  if (intKey !== undefined) {
+    const n = parseIntDec(valRaw);
+    if (n !== undefined && n >= intKey.min) out[intKey.field] = n;
+    return;
+  }
   switch (key) {
     case "enabled": {
       const b = parseBool(valRaw);
       if (b !== undefined) out.enabled = b;
       break;
     }
-    case "port": {
-      const n = parseIntDec(valRaw);
-      if (n !== undefined && n > 0) out.port = n;
-      break;
-    }
     case "bind":
       out.bind = parseString(valRaw);
       break;
-    case "pairing_window_seconds": {
-      const n = parseIntDec(valRaw);
-      if (n !== undefined && n > 0) out.pairingWindowSeconds = n;
-      break;
-    }
-    case "max_failed_attempts": {
-      const n = parseIntDec(valRaw);
-      if (n !== undefined && n > 0) out.maxFailedAttempts = n;
-      break;
-    }
-    case "lockout_seconds": {
-      const n = parseIntDec(valRaw);
-      if (n !== undefined && n >= 0) out.lockoutSeconds = n;
-      break;
-    }
     case "min_protocol": {
       const n = parseIntDec(valRaw);
       if (n === 1) out.minProtocolIgnored = true;

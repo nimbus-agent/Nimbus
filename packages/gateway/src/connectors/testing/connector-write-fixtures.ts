@@ -56,6 +56,21 @@ export function registerStatusTool(name: string, mutates: string, description: s
   );
 }
 
+/** A fixture whose connector `id` reaches `statusModule(id)`'s exported forwarder; `body` is its server. */
+function importedForwarder(
+  shape: string,
+  id: string,
+  body: string,
+  ids: readonly string[],
+): ShapeFixture {
+  return {
+    shape,
+    sources: [statusModule(id), connector(id, body)],
+    ids,
+    tags: ["literal", "forwarder"],
+  };
+}
+
 /** A shared kit that builds each write-tool id from the `toolPrefix` its CALLER passes. */
 const MAIL_KIT: PackageSource = {
   rel: "shared/fx-mail-kit.ts",
@@ -287,64 +302,40 @@ registerFxWriteTool("fx_exported_frobnicate", ${cfg("fx.exported.frobnicate")}, 
     ids: ["fx_alias_frobnicate"],
     tags: ["literal"],
   },
-  {
-    shape: "an exported forwarder called through a namespace import",
-    sources: [
-      statusModule("fx-namespace"),
-      connector(
-        "fx-namespace",
-        `import * as status from "./status.ts";
+  importedForwarder(
+    "an exported forwarder called through a namespace import",
+    "fx-namespace",
+    `import * as status from "./status.ts";
 status.registerStatusTool("fx_namespace_frobnicate", "fx.namespace.frobnicate", "Frobnicate.");`,
-      ),
-    ],
-    ids: ["fx_namespace_frobnicate"],
-    tags: ["literal", "forwarder"],
-  },
-  {
-    shape: "an exported forwarder aliased off a namespace import",
-    sources: [
-      statusModule("fx-ns-alias"),
-      connector(
-        "fx-ns-alias",
-        `import * as status from "./status.ts";
+    ["fx_namespace_frobnicate"],
+  ),
+  importedForwarder(
+    "an exported forwarder aliased off a namespace import",
+    "fx-ns-alias",
+    `import * as status from "./status.ts";
 const reopen = status.registerStatusTool;
 reopen("fx_nsalias_frobnicate", "fx.nsalias.frobnicate", "Frobnicate.");`,
-      ),
-    ],
-    ids: ["fx_nsalias_frobnicate"],
-    tags: ["literal", "forwarder"],
-  },
-  {
-    shape: "an exported forwarder destructured under a new name from a dynamic import",
-    sources: [
-      statusModule("fx-dynamic"),
-      connector(
-        "fx-dynamic",
-        `export async function registerFxTools(): Promise<void> {
+    ["fx_nsalias_frobnicate"],
+  ),
+  importedForwarder(
+    "an exported forwarder destructured under a new name from a dynamic import",
+    "fx-dynamic",
+    `export async function registerFxTools(): Promise<void> {
   const { registerStatusTool: reopen } = await import("./status.ts");
   reopen("fx_dynamic_frobnicate", "fx.dynamic.frobnicate", "Frobnicate.");
 }`,
-      ),
-    ],
-    ids: ["fx_dynamic_frobnicate"],
-    tags: ["literal", "forwarder"],
-  },
-  {
-    shape: "a dynamic import's module object, bound to a name or dereferenced on the spot",
-    sources: [
-      statusModule("fx-module"),
-      connector(
-        "fx-module",
-        `export async function registerFxTools(): Promise<void> {
+    ["fx_dynamic_frobnicate"],
+  ),
+  importedForwarder(
+    "a dynamic import's module object, bound to a name or dereferenced on the spot",
+    "fx-module",
+    `export async function registerFxTools(): Promise<void> {
   const status = await import("./status.ts");
   status.registerStatusTool("fx_module_bound_frobnicate", "fx.module.bound", "Frobnicate.");
   (await import("./status.ts")).registerStatusTool("fx_module_spot_frobnicate", "fx.module.spot", "Frobnicate.");
 }`,
-      ),
-    ],
-    ids: ["fx_module_bound_frobnicate", "fx_module_spot_frobnicate"],
-    tags: ["literal", "forwarder"],
-  },
+    ["fx_module_bound_frobnicate", "fx_module_spot_frobnicate"],
+  ),
   {
     shape: "an exported registrar called through a namespace import",
     sources: [

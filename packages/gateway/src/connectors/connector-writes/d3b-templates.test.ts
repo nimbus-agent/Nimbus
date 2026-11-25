@@ -624,7 +624,7 @@ describe("D3b readers: golden before-state lines", () => {
       }),
       mcp({ groups: [] }),
     );
-    expect(many.length).toBe(14);
+    expect(many).toHaveLength(14);
     const folded = many.find((f) => f.label === "More target groups (8)")?.value ?? "";
     expect(folded).toContain("g19: g19 (external; PUBLIC LINK ON");
   });

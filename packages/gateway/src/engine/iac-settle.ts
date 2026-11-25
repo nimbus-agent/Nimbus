@@ -62,6 +62,8 @@ export type {
   SettledWrite,
 } from "./bound-write-capabilities.ts";
 
+import { field, isRecord, refuse } from "./settle-shared.ts";
+
 // ---------------------------------------------------------------------------------------------
 // The filesystem, injected.
 
@@ -181,20 +183,6 @@ export interface TerraformSettleLimits {
 
 const PLAN_ID = /^[0-9a-f]{32}$/;
 
-function refuse(reason: string): PrepareRefusedError {
-  return new PrepareRefusedError(reason);
-}
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
-  const proto: unknown = Object.getPrototypeOf(v);
-  return proto === Object.prototype || proto === null;
-}
-
-function field(o: Record<string, unknown>, key: string): unknown {
-  return Object.hasOwn(o, key) ? o[key] : undefined;
-}
-
 interface PlanReply {
   readonly planId: string;
   readonly planFile: string;
@@ -261,6 +249,31 @@ export async function settleTerraformPlan(
   }
 }
 
+/** Step 4 of `settle`: the plan JSON a child with no network and no credential showed, parsed. */
+async function showPlan(
+  ops: TerraformSettleOps,
+  workingDirectory: string,
+  planFile: string,
+  planSha256: string,
+  maxJson: number,
+): Promise<unknown> {
+  const shown = await ops.show({ workingDirectory, planFile });
+  if (!isRecord(shown)) throw refuse(PREPARE_REFUSALS.unbound);
+  const reported = field(shown, "planSha256");
+  if (typeof reported !== "string" || !sha256HexEqualConstantTime(reported, planSha256)) {
+    throw refuse(PREPARE_REFUSALS.unbound);
+  }
+  const planJson = field(shown, "planJson");
+  if (typeof planJson !== "string" || Buffer.byteLength(planJson, "utf8") > maxJson) {
+    throw refuse(PREPARE_REFUSALS.unshowable);
+  }
+  try {
+    return JSON.parse(planJson);
+  } catch {
+    throw refuse(PREPARE_REFUSALS.unshowable);
+  }
+}
+
 async function settle(
   ops: TerraformSettleOps,
   req: TerraformSettleRequest,
@@ -308,22 +321,7 @@ async function settle(
   await fs.chmod(planDir, 0o500);
 
   // 4. Show it, in a child with no network and no credential. The hash it reports must be ours.
-  const shown = await ops.show({ workingDirectory: req.workingDirectory, planFile: moved });
-  if (!isRecord(shown)) throw refuse(PREPARE_REFUSALS.unbound);
-  const reported = field(shown, "planSha256");
-  if (typeof reported !== "string" || !sha256HexEqualConstantTime(reported, planSha256)) {
-    throw refuse(PREPARE_REFUSALS.unbound);
-  }
-  const planJson = field(shown, "planJson");
-  if (typeof planJson !== "string" || Buffer.byteLength(planJson, "utf8") > maxJson) {
-    throw refuse(PREPARE_REFUSALS.unshowable);
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(planJson);
-  } catch {
-    throw refuse(PREPARE_REFUSALS.unshowable);
-  }
+  const parsed = await showPlan(ops, req.workingDirectory, moved, planSha256, maxJson);
 
   // 5. Render the owner's view from that JSON alone.
   const rendered = renderPlanPreview(parsed, planSha256);
