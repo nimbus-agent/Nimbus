@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795647366947,
+  "lastUpdate": 1795649252176,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "d4465f9c3c784532a056cfef0bc63433d2936af2",
-          "message": "fix(connectors): let Jira, Confluence, GitLab, dbt and the Teams bot reach their configured host from the sandbox (#1536)\n\nCloses #1533.\n\n## What was broken\n\nFive connectors' MCP processes call a host that is not in their static\nsandbox manifest:\n\n| Connector | Host it calls | Was allowlisted |\n| --- | --- | --- |\n| Jira | `jira.base_url` (the Atlassian site, e.g. `acme.atlassian.net`)\n| `api.atlassian.com` only |\n| Confluence | `confluence.base_url` | `api.atlassian.com` only |\n| GitLab | `gitlab.api_base`, when set | `gitlab.com` only |\n| dbt | `dbt.api_base`, when set | `cloud.getdbt.com` only |\n| Teams (ChatOps bot) | the Bot Framework `serviceUrl` (default\n`smba.trafficmanager.net`) | Graph + login only |\n\nOn a per-host sandbox — macOS, and Linux with `nimbus-sandbox-helper` —\nthose tools could not reach their API. For Jira and Confluence that was\nevery user, including HITL-approved writes, which failed after the owner\napproved them. Windows and Linux without the helper were unaffected, and\nindexing was never affected (sync runs in the gateway process).\n\n## The fix\n\nJira, Confluence, GitLab and dbt use the pattern Grafana and Jenkins\nalready use: `hostnameFromUrl()` + `manifestWithExtraNetworkHosts()`,\nmerged before `wrapServerSpec()`. An unparseable URL adds nothing. In\n`connector-spawns.ts` the host merge returns a **manifest** rather than\na wrapped spec, so each site still calls `wrapServerSpec` directly\naround its `connectorSpawn` literal, which is the shape the I15 static\nrule (D10) checks. A wrapper function hiding that call failed\n`audit:invariants`, and I did not loosen the rule.\n\n**The Teams bot is deliberately narrower.** The bot sends its credential\nto the activity's `serviceUrl`, and the inbound JWT check does not bind\nthat field. Allowlisting whatever host an activity names would let one\nvalidated-but-crafted activity widen the sandbox to an arbitrary\ndestination. So the spawn allowlists a fixed set of Bot Framework reply\nhosts: the public cloud always, plus GCC / GCC High / DoD when the\nactivity names one. There is no suffix match, because\n`trafficmanager.net` subdomains are Azure-wide. A `serviceUrl` outside\nthe set still fails at the OS, as before.\n\n## Tests\n\nEvery new test reads the allowlist the spawn will actually run under,\nvia the real `parseSandboxPolicy`:\n\n- GitLab: a self-managed host is added; no `api_base` leaves the static\nlist unchanged.\n- Jira: the site host is added; an unparseable `base_url` adds nothing.\n- Confluence: the site host is added.\n- dbt: the `api_base` host is added.\n- Teams: the default host is always present; each sovereign host is\nadded; `attacker.example`, `evil.trafficmanager.net` and\n`smba.trafficmanager.net.attacker.example` are never added.\n\nAll six new assertions fail against the unfixed source and pass with the\nfix. `preflight:fast` and `typecheck:tests` pass.\n\nOne testing note:\n`test/unit/connectors/lazy-mesh/connector-spawns.test.ts` fails to load\nwhen run **on its own** (`Export named 'getValidSalesforceAccessToken'\nnot found`). That happens on `main` too; the file passes as part of the\ndirectory or suite run CI uses (1,778 pass).\n\n## Not covered\n\n- The connectors #1433 tracks (Sentry, Datadog, LaunchDarkly, Flagsmith,\nSonarQube, Wiz, Fastmail).\n- `kubernetes`, which has no network grant at all.\n- A real per-host spawn. Nothing here spawns a macOS child or runs the\nLinux helper; whether per-host mode gives outbound connectivity on Linux\nat all is still the unverified question the issue raises.\n\nNo invariant, no migration, no egress class.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n- **Bug Fixes**\n- Improved sandbox network access for Jira, Confluence, self-managed\nGitLab, regional dbt, and Teams integrations.\n- Valid configured service hosts are now recognized, while invalid or\ndeceptive URLs cannot expand network access.\n- Teams supports approved Bot Framework hosts across public and\nsovereign cloud environments.\n- Default service hosts remain available, preserving connectivity for\nstandard cloud services.\n\n- **Documentation**\n- Added changelog documentation covering these sandbox network access\nupdates.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-18T07:52:11Z",
-          "tree_id": "0962a46f98ed6895d29941394b6ac87e907c603a",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/d4465f9c3c784532a056cfef0bc63433d2936af2"
-        },
-        "date": 1789718606508,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 263.97371969999585,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 263.5881545500048,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 200.24954729999627,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "324c1cf09471094bf85dc1d2a968c63ec1d96451",
+          "message": "fix(gateway): pin @nimbus-dev/connectors 0.17.3 (Vantage cost list without a report token) (#2160)\n\nPins `@nimbus-dev/connectors` 0.17.3\n(nimbus-agent/nimbus-mcp-servers#101, released in #102).\n\nWhat changes for a user: with only `vantage.api_token` set (no\n`vantage.cost_report_token`), the Vantage cost sync no longer fails with\nVantage's 400 `cost_report_token, filter are missing`. The connector now\nsends the filter `()`. On one live account, that filter returned all of\nthe account's costs, the same 84 rows as its All Resources report. With\na cost report token set, nothing changes.\n\n- No gateway code change, migration, invariant, HITL type, egress class\nor IPC method.\n- Docs: CHANGELOG entry. `docs/cli-reference.md` now calls\n`vantage.cost_report_token` optional (#2153 had said to set it). The\nroadmap row was already closed in #2153. Architecture, CLAUDE.md and\nGEMINI.md are unaffected.\n- Stated bound: verified against one live account with a single\nprovider.\n- Verification: the Vantage tests pass (54) and `preflight:fast` passes.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-25T23:19:22Z",
+          "tree_id": "078624baf808ecfd6d25ba95f5d0a7f5b04d4d11",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/324c1cf09471094bf85dc1d2a968c63ec1d96451"
+        },
+        "date": 1795649247599,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 195.81554030000007,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 195.6142883000015,
             "unit": "ms"
           }
         ]
