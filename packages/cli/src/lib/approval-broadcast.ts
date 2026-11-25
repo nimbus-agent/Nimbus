@@ -86,8 +86,8 @@ export function interactiveCommandDeps(confirmPrompt?: ConfirmPrompt): Interacti
       withGatewayIpc(fn, undefined, { requestTimeoutMs: INTERACTIVE_RPC_TIMEOUT_MS }),
     ask: (message) => (confirmPrompt ?? confirm)({ message }),
     sink: {
-      out: (s) => void process.stdout.write(s),
-      err: (s) => void process.stderr.write(s),
+      out: (s) => process.stdout.write(s),
+      err: (s) => process.stderr.write(s),
     },
     setExitCode: (c) => {
       process.exitCode = c;

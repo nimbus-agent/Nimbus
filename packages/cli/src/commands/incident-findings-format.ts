@@ -74,7 +74,9 @@ function summary(f: FindingLike): string {
   if (f.kind === "radar") {
     const last = num(d, "lastAtMs");
     const max = num(d, "maxGapMs");
-    return `no matching event ${last === null ? "ever seen" : `since ${iso(last)}`}${max === null ? "" : ` (expected within ${gap(max)})`}`;
+    const since = last === null ? "ever seen" : `since ${iso(last)}`;
+    const expected = max === null ? "" : ` (expected within ${gap(max)})`;
+    return `no matching event ${since}${expected}`;
   }
   const value = num(d, "value");
   const z = num(d, "z");

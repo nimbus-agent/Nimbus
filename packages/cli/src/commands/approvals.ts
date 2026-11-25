@@ -41,24 +41,28 @@ function isConsentShortcut(a: string): boolean {
   return a === "--yes" || a === "-y" || a.startsWith("--script-consent-source");
 }
 
-function parseWithoutJson(rest: string[], json: boolean): ApprovalsArgs | undefined {
-  const [first, second, third] = rest;
-  if (rest.length === 0 || (first === "list" && rest.length === 1)) return { verb: "list", json };
-  if (first === "show") {
-    return rest.length === 2 && isId(second) ? { verb: "show", id: second, json } : undefined;
-  }
+/** The two-word forms: `show <id>`, `--decline-all-from <label>` and `--decline` on either side of an id. */
+function parsePair(
+  first: string | undefined,
+  second: string | undefined,
+  json: boolean,
+): ApprovalsArgs | undefined {
+  if (first === "show") return isId(second) ? { verb: "show", id: second, json } : undefined;
   if (first === "--decline-all-from") {
-    return rest.length === 2 && second !== undefined && !second.startsWith("--")
+    return second !== undefined && !second.startsWith("--")
       ? { verb: "declineAll", label: second, json }
       : undefined;
   }
-  if (rest.length === 2 && first === "--decline" && isId(second)) {
-    return { verb: "decline", id: second, json };
-  }
-  if (rest.length === 2 && isId(first) && second === "--decline") {
-    return { verb: "decline", id: first, json };
-  }
-  if (rest.length === 1 && isId(first) && third === undefined) {
+  if (first === "--decline" && isId(second)) return { verb: "decline", id: second, json };
+  if (isId(first) && second === "--decline") return { verb: "decline", id: first, json };
+  return undefined;
+}
+
+function parseWithoutJson(rest: string[], json: boolean): ApprovalsArgs | undefined {
+  const [first, second] = rest;
+  if (rest.length === 0 || (first === "list" && rest.length === 1)) return { verb: "list", json };
+  if (rest.length === 2) return parsePair(first, second, json);
+  if (rest.length === 1 && isId(first)) {
     // The prompt owns stdout while it runs, so an approval has no --json form.
     return json ? undefined : { verb: "approve", id: first };
   }

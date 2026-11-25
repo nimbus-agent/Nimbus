@@ -1,4 +1,5 @@
 import { CliExit } from "../lib/cli-exit.ts";
+import { runStatusCall } from "../lib/status-call.ts";
 import { stripControlChars } from "../lib/strip-control-chars.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { getCliPlatformPaths } from "../paths.ts";
@@ -205,22 +206,17 @@ export async function runCostAnomaliesWith(
   a: CostAnomaliesArgs,
   sink: CostSink,
 ): Promise<number> {
-  try {
-    const params: Record<string, unknown> = {};
-    if (a.service !== undefined) params["service"] = a.service;
-    if (a.days !== undefined) params["days"] = a.days;
-    const r = (await c.call("cost.anomalies", params)) as AnomalyResult;
-    if (a.json) {
-      sink.out(`${JSON.stringify(r)}\n`);
-      return r.status === "ok" || r.status === "anomalies" ? 0 : 1;
-    }
-    return renderResult(r, sink);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    if (a.json) sink.out(`${JSON.stringify({ error: msg })}\n`);
-    else sink.err(`${clean(msg)}\n`);
-    return 1;
-  }
+  const params: Record<string, unknown> = {};
+  if (a.service !== undefined) params["service"] = a.service;
+  if (a.days !== undefined) params["days"] = a.days;
+  return runStatusCall({
+    json: a.json,
+    sink,
+    clean,
+    okStatuses: ["ok", "anomalies"],
+    call: async () => (await c.call("cost.anomalies", params)) as AnomalyResult,
+    render: (r) => renderResult(r, sink),
+  });
 }
 
 /** The run for `nimbus cost <args>`, or undefined for a usage error (no gateway is contacted). */

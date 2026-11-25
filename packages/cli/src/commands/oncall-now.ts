@@ -1,4 +1,5 @@
 import { CliExit } from "../lib/cli-exit.ts";
+import { runStatusCall } from "../lib/status-call.ts";
 import { stripControlChars } from "../lib/strip-control-chars.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { getCliPlatformPaths } from "../paths.ts";
@@ -44,6 +45,11 @@ const SOURCE_LABEL: Record<string, string> = {
   jsm: "Jira Service Management",
 };
 
+/** A `--service` value: non-blank and not another flag. */
+function serviceValue(value: string | undefined): string | undefined {
+  return value === undefined || value.trim() === "" || value.startsWith("-") ? undefined : value;
+}
+
 export function parseOncallNowArgs(argv: readonly string[]): OncallNowArgs | undefined {
   let json = false;
   let service: string | undefined;
@@ -54,9 +60,8 @@ export function parseOncallNowArgs(argv: readonly string[]): OncallNowArgs | und
     } else if (a === "--service" || a.startsWith("--service=")) {
       if (service !== undefined) return undefined;
       if (a === "--service") i += 1;
-      const value = a === "--service" ? argv[i] : a.slice("--service=".length);
-      if (value === undefined || value.trim() === "" || value.startsWith("-")) return undefined;
-      service = value;
+      service = serviceValue(a === "--service" ? argv[i] : a.slice("--service=".length));
+      if (service === undefined) return undefined;
     } else {
       return undefined;
     }
@@ -96,26 +101,29 @@ function ageLines(r: NowResult): string {
   return out;
 }
 
+function renderNoMatch(r: NowResult, target: string, sink: OncallNowSink): number {
+  sink.err(`No on-call schedule, policy or service matches "${target}".\n`);
+  if (r.known.length > 0) sink.err(`Known names: ${r.known.map(clean).join(", ")}\n`);
+  for (const g of r.gaps) sink.err(`Note: ${clean(g)}\n`);
+  sink.err(ageLines(r));
+  return 1;
+}
+
+function renderOnCallNow(r: NowResult, sink: OncallNowSink): void {
+  if (r.resolvedVia !== null) sink.out(`Matched by ${r.resolvedVia.replaceAll("_", " ")}.\n`);
+  sink.out("On call now:\n");
+  for (const s of r.shifts) sink.out(`  ${shiftLine(s)}`);
+}
+
 function renderResult(r: NowResult, sink: OncallNowSink): number {
   const target = r.query === null ? "any schedule" : clean(r.query);
   if (r.status === "no_data") {
     for (const g of r.gaps) sink.err(`${clean(g)}\n`);
     return 1;
   }
-  if (r.status === "no_match") {
-    sink.err(`No on-call schedule, policy or service matches "${target}".\n`);
-    if (r.known.length > 0) sink.err(`Known names: ${r.known.map(clean).join(", ")}\n`);
-    for (const g of r.gaps) sink.err(`Note: ${clean(g)}\n`);
-    sink.err(ageLines(r));
-    return 1;
-  }
-  if (r.status === "none_on_call") {
-    sink.out(`No on-call shift covers now for ${target}.\n`);
-  } else {
-    if (r.resolvedVia !== null) sink.out(`Matched by ${r.resolvedVia.replaceAll("_", " ")}.\n`);
-    sink.out("On call now:\n");
-    for (const s of r.shifts) sink.out(`  ${shiftLine(s)}`);
-  }
+  if (r.status === "no_match") return renderNoMatch(r, target, sink);
+  if (r.status === "none_on_call") sink.out(`No on-call shift covers now for ${target}.\n`);
+  else renderOnCallNow(r, sink);
   if (r.next.length > 0) {
     sink.out("Next:\n");
     for (const s of r.next) sink.out(`  ${shiftLine(s)}`);
@@ -130,22 +138,18 @@ export async function runOncallNowWith(
   a: OncallNowArgs,
   sink: OncallNowSink,
 ): Promise<number> {
-  try {
-    const r = (await c.call(
-      "oncall.now",
-      a.service === undefined ? {} : { service: a.service },
-    )) as NowResult;
-    if (a.json) {
-      sink.out(`${JSON.stringify(r)}\n`);
-      return r.status === "ok" || r.status === "none_on_call" ? 0 : 1;
-    }
-    return renderResult(r, sink);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    if (a.json) sink.out(`${JSON.stringify({ error: msg })}\n`);
-    else sink.err(`${clean(msg)}\n`);
-    return 1;
-  }
+  return runStatusCall({
+    json: a.json,
+    sink,
+    clean,
+    okStatuses: ["ok", "none_on_call"],
+    call: async () =>
+      (await c.call(
+        "oncall.now",
+        a.service === undefined ? {} : { service: a.service },
+      )) as NowResult,
+    render: (r) => renderResult(r, sink),
+  });
 }
 
 export async function runOncallNow(argv: string[]): Promise<void> {

@@ -77,93 +77,113 @@ function takeValue(argv: readonly string[], i: number): string | undefined {
   return v === undefined || v.startsWith("--") ? undefined : v;
 }
 
+const LIST_SWITCHES: ReadonlySet<string> = new Set(["--json", "--open", "--cascade"]);
+const LIST_VALUE_FLAGS: ReadonlySet<string> = new Set(["--service", "--source", "--limit"]);
+
+/** Takes one `list` value flag into `flags`; false for a repeat or a value the flag refuses. */
+function takeListValue(flags: ListFlags, a: string, v: string): boolean {
+  if (a === "--service") {
+    if (flags.service !== undefined) return false;
+    flags.service = v;
+    return true;
+  }
+  if (a === "--source") {
+    if (flags.source !== undefined || !SOURCES.includes(v as never)) return false;
+    flags.source = v;
+    return true;
+  }
+  const n = Number(v);
+  if (flags.limit !== undefined || !Number.isInteger(n) || n < 1 || n > 200) return false;
+  flags.limit = n;
+  return true;
+}
+
 function parseListFlags(argv: readonly string[]): { json: boolean; flags: ListFlags } | undefined {
   const flags: ListFlags = { open: false, cascade: false };
-  let json = false;
-  let seenJson = false;
+  const seen = new Set<string>();
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i] as string;
-    if (a === "--json") {
-      if (seenJson) return undefined;
-      seenJson = true;
-      json = true;
-    } else if (a === "--open") {
-      if (flags.open) return undefined;
-      flags.open = true;
-    } else if (a === "--cascade") {
-      if (flags.cascade) return undefined;
-      flags.cascade = true;
-    } else if (a === "--service" || a === "--source" || a === "--limit") {
+    if (LIST_SWITCHES.has(a)) {
+      if (seen.has(a)) return undefined;
+      seen.add(a);
+    } else if (LIST_VALUE_FLAGS.has(a)) {
       const v = takeValue(argv, i);
-      const dup = a === "--service" ? flags.service : a === "--source" ? flags.source : flags.limit;
-      if (v === undefined || dup !== undefined) return undefined;
+      if (v === undefined || !takeListValue(flags, a, v)) return undefined;
       i += 1;
-      if (a === "--service") flags.service = v;
-      else if (a === "--source") {
-        if (!SOURCES.includes(v as never)) return undefined;
-        flags.source = v;
-      } else {
-        const n = Number(v);
-        if (!Number.isInteger(n) || n < 1 || n > 200) return undefined;
-        flags.limit = n;
-      }
     } else {
       return undefined;
     }
   }
-  return { json, flags };
+  flags.open = seen.has("--open");
+  flags.cascade = seen.has("--cascade");
+  return { json: seen.has("--json"), flags };
 }
+
+function parseListArgs(rest: readonly string[]): IncidentArgs | undefined {
+  const parsed = parseListFlags(rest);
+  if (parsed === undefined) return undefined;
+  const { flags } = parsed;
+  return {
+    verb: "list",
+    json: parsed.json,
+    open: flags.open,
+    cascade: flags.cascade,
+    ...(flags.service === undefined ? {} : { service: flags.service }),
+    ...(flags.source === undefined ? {} : { source: flags.source }),
+    ...(flags.limit === undefined ? {} : { limit: flags.limit }),
+  };
+}
+
+function parseShowArgs(rest: readonly string[]): IncidentArgs | undefined {
+  const json = rest.filter((a) => a === "--json");
+  const ids = rest.filter((a) => a !== "--json");
+  const [id] = ids;
+  if (json.length > 1) return undefined;
+  if (ids.length !== 1 || id === undefined || id.startsWith("--")) return undefined;
+  return { verb: "show", json: json.length === 1, id };
+}
+
+const VERB_PARSERS: Readonly<
+  Record<string, (rest: readonly string[]) => IncidentArgs | undefined>
+> = {
+  list: parseListArgs,
+  show: parseShowArgs,
+  investigate: (rest) => parseInvestigateArgs(rest),
+  timeline: (rest) => parseTimelineArgs(rest),
+  debt: parseDebtArgs,
+  findings: parseFindingsArgs,
+};
 
 export function parseIncidentArgs(argv: readonly string[]): IncidentArgs | undefined {
   const [verb, ...rest] = argv;
-  if (verb === "list") {
-    const parsed = parseListFlags(rest);
-    if (parsed === undefined) return undefined;
-    const { flags } = parsed;
-    return {
-      verb: "list",
-      json: parsed.json,
-      open: flags.open,
-      cascade: flags.cascade,
-      ...(flags.service === undefined ? {} : { service: flags.service }),
-      ...(flags.source === undefined ? {} : { source: flags.source }),
-      ...(flags.limit === undefined ? {} : { limit: flags.limit }),
-    };
-  }
-  if (verb === "show") {
-    const json = rest.filter((a) => a === "--json");
-    const ids = rest.filter((a) => a !== "--json");
-    const [id] = ids;
-    if (json.length > 1) return undefined;
-    if (ids.length !== 1 || id === undefined || id.startsWith("--")) return undefined;
-    return { verb, json: json.length === 1, id };
-  }
-  if (verb === "investigate") return parseInvestigateArgs(rest);
-  if (verb === "timeline") return parseTimelineArgs(rest);
-  if (verb === "debt") return parseDebtArgs(rest);
-  if (verb === "findings") return parseFindingsArgs(rest);
-  return parseRemediationArgs(verb, rest);
+  const parse =
+    verb !== undefined && Object.hasOwn(VERB_PARSERS, verb) ? VERB_PARSERS[verb] : undefined;
+  return parse === undefined ? parseRemediationArgs(verb, rest) : parse(rest);
+}
+
+const INVESTIGATE_SWITCHES: ReadonlySet<string> = new Set(["--json", "--synthesize", "--live"]);
+
+/** `--live-budget <seconds>`: 1 to 60, at most two digits. */
+function parseLiveBudget(v: string | undefined): number | undefined {
+  if (v === undefined || !/^\d{1,2}$/.test(v)) return undefined;
+  const n = Number(v);
+  return n < 1 || n > 60 ? undefined : n;
 }
 
 /** `investigate <id> [--live [--live-budget <seconds>]] [--synthesize] [--json]`; each flag at most once. */
 function parseInvestigateArgs(rest: readonly string[]): IncidentArgs | undefined {
-  let json = false;
-  let synthesize = false;
-  let live = false;
+  const seen = new Set<string>();
   let liveBudget: number | undefined;
   let id: string | undefined;
   for (let i = 0; i < rest.length; i += 1) {
     const a = rest[i] as string;
-    if (a === "--json" || a === "--synthesize" || a === "--live") {
-      if (a === "--json" ? json : a === "--live" ? live : synthesize) return undefined;
-      if (a === "--json") json = true;
-      else if (a === "--live") live = true;
-      else synthesize = true;
+    if (INVESTIGATE_SWITCHES.has(a)) {
+      if (seen.has(a)) return undefined;
+      seen.add(a);
     } else if (a === "--live-budget") {
-      const v = takeValue(rest, i);
-      if (v === undefined || liveBudget !== undefined || !/^\d{1,2}$/.test(v)) return undefined;
-      liveBudget = Number(v);
-      if (liveBudget < 1 || liveBudget > 60) return undefined;
+      if (liveBudget !== undefined) return undefined;
+      liveBudget = parseLiveBudget(takeValue(rest, i));
+      if (liveBudget === undefined) return undefined;
       i += 1;
     } else if (a.startsWith("--") || id !== undefined) {
       return undefined;
@@ -171,15 +191,23 @@ function parseInvestigateArgs(rest: readonly string[]): IncidentArgs | undefined
       id = a;
     }
   }
+  const live = seen.has("--live");
   if (id === undefined || (liveBudget !== undefined && !live)) return undefined;
   return {
     verb: "investigate",
-    json,
+    json: seen.has("--json"),
     id,
-    ...(synthesize ? { synthesize: true } : {}),
+    ...(seen.has("--synthesize") ? { synthesize: true } : {}),
     ...(live ? { live: true } : {}),
     ...(liveBudget === undefined ? {} : { liveBudget }),
   };
+}
+
+/** `--version <n>`: 1 to 1,000,000, at most seven digits. */
+function parseVersionValue(v: string | undefined): number | undefined {
+  if (v === undefined || !/^\d{1,7}$/.test(v)) return undefined;
+  const n = Number(v);
+  return n < 1 || n > 1_000_000 ? undefined : n;
 }
 
 function parseTimelineArgs(rest: readonly string[]): IncidentArgs | undefined {
@@ -192,11 +220,9 @@ function parseTimelineArgs(rest: readonly string[]): IncidentArgs | undefined {
       if (json) return undefined;
       json = true;
     } else if (a === "--version") {
-      const v = takeValue(rest, i);
-      if (v === undefined || version !== undefined || !/^\d{1,7}$/.test(v)) return undefined;
-      const n = Number(v);
-      if (n < 1 || n > 1_000_000) return undefined;
-      version = n;
+      if (version !== undefined) return undefined;
+      version = parseVersionValue(takeValue(rest, i));
+      if (version === undefined) return undefined;
       i += 1;
     } else if (a.startsWith("--") || id !== undefined) {
       return undefined;

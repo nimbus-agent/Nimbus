@@ -13,18 +13,36 @@ type SearchFlags = {
   positional: string[];
 };
 
+/** The flags whose value is taken only when one follows (a trailing one is consumed alone). */
+const SEARCH_VALUE_FLAGS: Readonly<Record<string, (f: SearchFlags, v: string) => void>> = {
+  "--limit": (f, v) => {
+    f.limit = Math.min(500, Math.max(1, Number.parseInt(v, 10) || 20));
+  },
+  "--service": (f, v) => {
+    f.service = v;
+  },
+  "--type": (f, v) => {
+    f.itemType = v;
+  },
+};
+const SEARCH_FLAG_ALIASES: Readonly<Record<string, string>> = {
+  "-n": "--limit",
+  "-s": "--service",
+  "-t": "--type",
+};
+
 function consumeSearchArg(args: string[], i: number, f: SearchFlags): number {
   const a = args[i];
   if (a === undefined) {
     return i + 1;
   }
-  if (a === "--limit" || a === "-n") {
-    const n = args[i + 1];
-    if (n !== undefined) {
-      f.limit = Math.min(500, Math.max(1, Number.parseInt(n, 10) || 20));
-      return i + 2;
-    }
-    return i + 1;
+  const flag = Object.hasOwn(SEARCH_FLAG_ALIASES, a) ? (SEARCH_FLAG_ALIASES[a] as string) : a;
+  const take = Object.hasOwn(SEARCH_VALUE_FLAGS, flag) ? SEARCH_VALUE_FLAGS[flag] : undefined;
+  if (take !== undefined) {
+    const v = args[i + 1];
+    if (v === undefined) return i + 1;
+    take(f, v);
+    return i + 2;
   }
   if (a === "--semantic") {
     f.semantic = true;
@@ -32,22 +50,6 @@ function consumeSearchArg(args: string[], i: number, f: SearchFlags): number {
   }
   if (a === "--no-semantic" || a === "--keyword-only") {
     f.semantic = false;
-    return i + 1;
-  }
-  if (a === "--service" || a === "-s") {
-    const v = args[i + 1];
-    if (v !== undefined) {
-      f.service = v;
-      return i + 2;
-    }
-    return i + 1;
-  }
-  if (a === "--type" || a === "-t") {
-    const v = args[i + 1];
-    if (v !== undefined) {
-      f.itemType = v;
-      return i + 2;
-    }
     return i + 1;
   }
   if (a === "--at") {

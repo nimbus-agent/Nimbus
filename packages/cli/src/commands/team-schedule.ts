@@ -27,6 +27,15 @@ export type ScheduleArgs = {
 
 const REL_RE = /^\+(\d{1,4})([mhd])$/;
 const UNIT_MS = { m: 60_000, h: 3_600_000, d: 86_400_000 } as const;
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const ISO_TIME_RE = /^T\d{2}:\d{2}(:\d{2})?(Z|[+-]\d{2}:\d{2})?$/;
+
+/** `YYYY-MM-DD`, optionally followed by `THH:MM[:SS]` and an optional zone. */
+function isIsoWhen(raw: string): boolean {
+  if (!ISO_DATE_RE.test(raw.slice(0, 10))) return false;
+  const time = raw.slice(10);
+  return time === "" || ISO_TIME_RE.test(time);
+}
 
 /** One time spelling to epoch ms, or undefined. A zone-less ISO form reads as local time. */
 export function parseWhen(raw: string, nowMs: number): number | undefined {
@@ -35,8 +44,7 @@ export function parseWhen(raw: string, nowMs: number): number | undefined {
   if (rel !== null) {
     return nowMs + Number(rel[1]) * UNIT_MS[rel[2] as keyof typeof UNIT_MS];
   }
-  if (!/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?(Z|[+-]\d{2}:\d{2})?)?$/.test(raw))
-    return undefined;
+  if (!isIsoWhen(raw)) return undefined;
   const ms = Date.parse(raw.length === 10 ? `${raw}T00:00` : raw);
   return Number.isFinite(ms) ? ms : undefined;
 }
@@ -94,7 +102,10 @@ function local(ms: number): string {
 }
 
 export function renderSchedule(reply: AskReply): string {
-  if (reply.kind === "error") return `${ERROR_TEXT[reply.error] ?? `Refused: ${reply.error}`}\n`;
+  if (reply.kind === "error") {
+    const text = ERROR_TEXT[reply.error] ?? `Refused: ${reply.error}`;
+    return `${text}\n`;
+  }
   if (reply.slots.length === 0) {
     return `No ${String(reply.durationMs / 60_000)}-minute slot is free for both of you in that window.\n`;
   }
@@ -106,7 +117,8 @@ export function renderSchedule(reply: AskReply): string {
     return `  ${start} - ${end.slice(4, 14) === start.slice(4, 14) ? end.slice(-5) : end}`;
   });
   const more = reply.slots.length - shown.length;
-  return `Free for both (start anywhere inside a run that fits ${String(reply.durationMs / 60_000)} minutes):\n${lines.join("\n")}\n${more > 0 ? `  ... and ${String(more)} more\n` : ""}`;
+  const moreLine = more > 0 ? `  ... and ${String(more)} more\n` : "";
+  return `Free for both (start anywhere inside a run that fits ${String(reply.durationMs / 60_000)} minutes):\n${lines.join("\n")}\n${moreLine}`;
 }
 
 export type ScheduleDeps = {
@@ -142,14 +154,18 @@ type WithIpc = <T>(
   opts?: { requestTimeoutMs?: number },
 ) => Promise<T>;
 
+type ScheduleIo = { out(s: string): void; err(s: string): void; nowMs(): number };
+
+const PROCESS_IO: ScheduleIo = {
+  out: (s) => process.stdout.write(s),
+  err: (s) => process.stderr.write(s),
+  nowMs: () => Date.now(),
+};
+
 export async function runTeamSchedule(
   argv: string[],
   run: WithIpc = withGatewayIpc,
-  io: { out(s: string): void; err(s: string): void; nowMs(): number } = {
-    out: (s) => process.stdout.write(s),
-    err: (s) => process.stderr.write(s),
-    nowMs: () => Date.now(),
-  },
+  io: ScheduleIo = PROCESS_IO,
 ): Promise<void> {
   let code = 0;
   try {

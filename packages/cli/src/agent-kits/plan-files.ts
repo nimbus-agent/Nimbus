@@ -85,10 +85,8 @@ export function findBlock(text: string, kit: string, style: BlockStyle): FoundBl
   const open = style === "html" ? "<!-- " : "# ";
   const close = style === "html" ? " -->" : "";
   const head = escapeRegExp(`${open}>>> nimbus agent kit ${kit} v`);
-  const begin = new RegExp(
-    `^${head}${String.raw`(\d+) sha256:([0-9a-f]{64}) >>>`}${escapeRegExp(close)}$`,
-    "gm",
-  );
+  const marker = String.raw`(\d+) sha256:([0-9a-f]{64}) >>>`;
+  const begin = new RegExp(`^${head}${marker}${escapeRegExp(close)}$`, "gm");
   const first = begin.exec(text);
   if (first === null) return undefined;
   if (begin.exec(text) !== null) {

@@ -142,6 +142,16 @@ export function toTimeParam(raw: string): string {
   return m === null ? t : `-${m[1] as string}${(m[2] as string).toLowerCase()}`;
 }
 
+/** A flag's value as sent: a service as given (never a flag), a time through `toTimeParam`. */
+function handoffValue(
+  key: "since" | "until" | "service",
+  value: string | undefined,
+): string | undefined {
+  if (value === undefined || value.trim() === "") return undefined;
+  if (key !== "service") return toTimeParam(value);
+  return value.startsWith("-") ? undefined : value;
+}
+
 export function parseOncallHandoffArgs(argv: readonly string[]): OncallHandoffArgs | undefined {
   let json = false;
   const v: { since?: string; until?: string; service?: string } = {};
@@ -156,21 +166,10 @@ export function parseOncallHandoffArgs(argv: readonly string[]): OncallHandoffAr
     if (flag === undefined) return undefined;
     const key = flag.slice(2) as "since" | "until" | "service";
     if (v[key] !== undefined) return undefined;
-    let value: string | undefined;
-    if (a === flag) {
-      i += 1;
-      value = argv[i];
-    } else {
-      value = a.slice(flag.length + 1);
-    }
-    if (
-      value === undefined ||
-      value.trim() === "" ||
-      (value.startsWith("-") && key === "service")
-    ) {
-      return undefined;
-    }
-    v[key] = key === "service" ? value : toTimeParam(value);
+    if (a === flag) i += 1;
+    const value = handoffValue(key, a === flag ? argv[i] : a.slice(flag.length + 1));
+    if (value === undefined) return undefined;
+    v[key] = value;
   }
   return {
     json,
@@ -210,16 +209,21 @@ function more<T>(c: Counted<T>): string {
     : "";
 }
 
+/** `resolved status: open -> closed`, `changed status`, or the bare kind for any other event. */
+function eventWhat(e: Event): string {
+  if (e.kind !== "state_changed" && e.kind !== "resolved") return e.kind;
+  const verb = e.kind === "resolved" ? "resolved" : "changed";
+  const key = e.key === null ? "" : ` ${clean(e.key)}`;
+  const change =
+    e.from === null && e.to === null
+      ? ""
+      : `: ${clean(e.from ?? "none")} -> ${clean(e.to ?? "none")}`;
+  return `${verb}${key}${change}`;
+}
+
 function eventLine(e: Event): string {
   const basis = e.atBasis === "observed" ? " (observed)" : "";
-  const what =
-    e.kind === "state_changed" || e.kind === "resolved"
-      ? `${e.kind === "resolved" ? "resolved" : "changed"}${e.key === null ? "" : ` ${clean(e.key)}`}${
-          e.from === null && e.to === null
-            ? ""
-            : `: ${clean(e.from ?? "none")} -> ${clean(e.to ?? "none")}`
-        }`
-      : e.kind;
+  const what = eventWhat(e);
   return `- ${utc(e.atMs)}${basis} ${label(e.source)} ${what}: ${clean(e.title)} [${clean(e.itemId)}]\n`;
 }
 
@@ -272,7 +276,8 @@ function renderOpen(r: Result): string {
     const age = o.openedAtMs === null ? "opened time unknown" : `opened ${utc(o.openedAtMs)}`;
     const extra = [o.status, o.severity].filter((x): x is string => x !== null).map(clean);
     if (o.acknowledged === true) extra.push("acknowledged");
-    out += `- ${label(o.source)} ${clean(o.title)} [${clean(o.itemId)}] ${age}${extra.length === 0 ? "" : ` (${extra.join(", ")})`}\n`;
+    const extraText = extra.length === 0 ? "" : ` (${extra.join(", ")})`;
+    out += `- ${label(o.source)} ${clean(o.title)} [${clean(o.itemId)}] ${age}${extraText}\n`;
   }
   out += more(r.stillOpen);
   return out;
@@ -345,39 +350,53 @@ function renderWatch(r: Result): string {
   return out;
 }
 
-function renderTail(r: Result): string {
-  let out = "## Gaps\n";
-  for (const g of r.gaps) out += `- ${clean(g.detail)}\n`;
-  for (const g of r.records?.gaps ?? []) out += `- ${clean(g.detail)}\n`;
-  out += "## Data freshness\n";
-  for (const f of r.freshness) {
-    out += `- ${label(f.source)} last synced: ${f.lastSyncMs === null ? "never recorded" : `${utc(f.lastSyncMs)} (${String(Math.max(0, Math.round((r.asOfMs - f.lastSyncMs) / 60_000)))} min ago)`}\n`;
-  }
-  for (const s of r.shift.sources) {
-    const age =
-      s.oldestFetchedMs === null
-        ? "age unknown"
-        : `${String(Math.max(0, Math.round((r.asOfMs - s.oldestFetchedMs) / 60_000)))} min old`;
-    out += `- ${label(s.source)} shifts: ${age}${s.stale ? " (older than 1 h; the shift may have changed)" : ""}\n`;
-  }
+function minutesAgo(r: Result, ms: number): string {
+  return String(Math.max(0, Math.round((r.asOfMs - ms) / 60_000)));
+}
+
+function syncedText(r: Result, lastSyncMs: number | null): string {
+  if (lastSyncMs === null) return "never recorded";
+  return `${utc(lastSyncMs)} (${minutesAgo(r, lastSyncMs)} min ago)`;
+}
+
+function shiftAgeLine(r: Result, s: Result["shift"]["sources"][number]): string {
+  const age =
+    s.oldestFetchedMs === null ? "age unknown" : `${minutesAgo(r, s.oldestFetchedMs)} min old`;
+  const stale = s.stale ? " (older than 1 h; the shift may have changed)" : "";
+  return `- ${label(s.source)} shifts: ${age}${stale}`;
+}
+
+/** The record sources other than PagerDuty and Jira (whose freshness is listed above). */
+function recordFreshnessLines(r: Result): string[] {
+  const lines: string[] = [];
   for (const f of r.records?.freshness ?? []) {
     if (f.service === "pagerduty" || f.service === "jira") continue;
-    const when = !f.connected
-      ? "not connected"
-      : f.lastSyncMs === null
-        ? "never recorded"
-        : utc(f.lastSyncMs);
-    out += `- ${label(f.service)} last synced: ${when}\n`;
+    let when = "not connected";
+    if (f.connected) when = f.lastSyncMs === null ? "never recorded" : utc(f.lastSyncMs);
+    lines.push(`- ${label(f.service)} last synced: ${when}`);
   }
-  out +=
+  return lines;
+}
+
+function renderTail(r: Result): string {
+  const lines = [
+    "## Gaps",
+    ...r.gaps.map((g) => `- ${clean(g.detail)}`),
+    ...(r.records?.gaps ?? []).map((g) => `- ${clean(g.detail)}`),
+    "## Data freshness",
+    ...r.freshness.map((f) => `- ${label(f.source)} last synced: ${syncedText(r, f.lastSyncMs)}`),
+    ...r.shift.sources.map((s) => shiftAgeLine(r, s)),
+    ...recordFreshnessLines(r),
     r.historyStartsMs === null
-      ? "- State-change history: none recorded yet\n"
-      : `- State-change history begins ${utc(r.historyStartsMs)}\n`;
-  return out;
+      ? "- State-change history: none recorded yet"
+      : `- State-change history begins ${utc(r.historyStartsMs)}`,
+  ];
+  return `${lines.join("\n")}\n`;
 }
 
 export function renderHandoff(r: Result): string {
-  const head = `# On-call handoff${r.service === null ? "" : ` for ${clean(r.service)}`}\n`;
+  const forService = r.service === null ? "" : ` for ${clean(r.service)}`;
+  const head = `# On-call handoff${forService}\n`;
   return [
     head + renderShift(r),
     renderEvents(r),

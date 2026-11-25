@@ -281,10 +281,10 @@ describe("registerScheduleListener", () => {
     handler({ requestId: "r1", peerId: "a", fromMs: 1, toMs: 2 });
     handler({ requestId: "r2", peerId: "b", fromMs: 1, toMs: 2 });
     await new Promise((r) => setTimeout(r, 10));
-    expect(releases.length).toBe(1);
+    expect(releases).toHaveLength(1);
     releases[0]?.();
     await new Promise((r) => setTimeout(r, 10));
-    expect(releases.length).toBe(2);
+    expect(releases).toHaveLength(2);
     releases[1]?.();
     await new Promise((r) => setTimeout(r, 10));
     expect(maxOpen).toBe(1);
@@ -294,5 +294,44 @@ describe("registerScheduleListener", () => {
     const seen: string[] = [];
     registerScheduleListener({ onNotification: (m: string) => seen.push(m) } as never);
     expect(seen).toEqual(["federation.scheduleRequest"]);
+  });
+});
+
+describe("parseWhen, the ISO date and time parts", () => {
+  test.each([
+    "2026-11-25T09:00:30",
+    "2026-11-25T09:00:30Z",
+    "2026-11-25T09:00+02:00",
+    "2026-11-25T09:00:30-05:30",
+  ])("accepts %p", (s) => {
+    expect(parseWhen(s, NOW)).toBe(Date.parse(s));
+  });
+  test.each([
+    "2026-11-25T",
+    "2026-11-25T09",
+    "2026-11-25T09:00+0200",
+    "2026-11-25T09:00:30.5Z",
+    "2026-11-2",
+    "T09:00",
+    "x2026-11-25",
+  ])("refuses %p", (s) => {
+    expect(parseWhen(s, NOW)).toBeUndefined();
+  });
+  test("a well-formed spelling of a date that does not exist is refused", () => {
+    expect(parseWhen("2026-13-45", NOW)).toBeUndefined();
+  });
+});
+
+describe("rendering, the edges", () => {
+  test("an error code with no text of its own is shown as a refusal", () => {
+    expect(renderSchedule({ kind: "error", error: "brand_new_code" } as never)).toBe(
+      "Refused: brand_new_code\n",
+    );
+  });
+  test("a request with no peer or window shows question marks, and one with no id shows nothing", () => {
+    expect(scheduleRequestMessage({ requestId: "r1" })).toContain(
+      "Peer ? asks when you are free between ? and ?.",
+    );
+    expect(scheduleRequestMessage({ peerId: "p" })).toBeUndefined();
   });
 });

@@ -51,12 +51,15 @@ describe("runExtensionKeygen", () => {
     expect(readFileSync(out, "utf8").trim().length).toBeGreaterThan(0);
   });
 
-  test("--out with no value falls back to the default file under the home directory", async () => {
-    // On macOS `os.homedir()` ignores an in-process HOME, so the default would be a real profile.
-    if (!homedir().startsWith(root)) return;
-    expect(await runExtensionKeygen(["--out"])).toBe(0);
-    expect(existsSync(join(homedir(), ".nimbus", "publisher-key"))).toBe(true);
-  });
+  // On macOS `os.homedir()` ignores an in-process HOME, so the default would be a real profile.
+  test.skipIf(process.platform === "darwin")(
+    "--out with no value falls back to the default file under the home directory",
+    async () => {
+      expect(homedir().startsWith(root)).toBe(true);
+      expect(await runExtensionKeygen(["--out"])).toBe(0);
+      expect(existsSync(join(homedir(), ".nimbus", "publisher-key"))).toBe(true);
+    },
+  );
 });
 
 describe("runExtensionSign", () => {
