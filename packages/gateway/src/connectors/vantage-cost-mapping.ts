@@ -10,6 +10,7 @@ import {
 } from "../finops/cost-item-contract.ts";
 import type { MappedRow } from "./mapped-row.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
+import { vantageTagDimensions } from "./vantage-cost-tags.ts";
 
 const SERVICE = "vantage";
 const TITLE_MAX = 200;
@@ -126,14 +127,22 @@ export function mapVantageCostRow(raw: unknown, ctx: VantageCostMapContext): Cos
   const rawCurrency = stringField(row, "currency");
   const currency =
     rawCurrency !== undefined && /^[A-Za-z]{3}$/.test(rawCurrency) ? rawCurrency : null;
-  const names = dimensionNames(row, ctx.groupBy);
+  // Each `tag:<key>` grouping becomes a field of its own, read from `tags` (vantage-cost-tags.ts);
+  // the raw `tag` / `tags` then stop being candidates, so `tag` is never a second dimension.
+  const { dims: tagDims, consumed } = vantageTagDimensions(row, ctx.groupBy);
+  const fields: Record<string, unknown> = Object.fromEntries(
+    Object.entries({ ...row, ...tagDims }).filter(
+      ([name]) => !consumed || (name !== "tag" && name !== "tags"),
+    ),
+  );
+  const names = dimensionNames(fields, ctx.groupBy);
   const first = names[0];
   const { kind, key } =
     first === undefined ? { kind: "other" as const, key: null } : kindAndKey(first);
   const value =
     first === undefined
       ? "total"
-      : boundedValue(names.map((n) => escapeValue(String(row[n]))).join(" / "));
+      : boundedValue(names.map((n) => escapeValue(String(fields[n]))).join(" / "));
   const provider = stringField(row, "provider");
   const service = stringField(row, "service");
   return {

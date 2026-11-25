@@ -18,6 +18,10 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
 
 ## Post-Phase-6 deliveries
 
+- **2026-11-25: Vantage per-tag cost attribution (Phase 10 FinOps, owner ruling 14; no migration, invariant, HITL type, egress class or IPC method).**
+  What you can do now: `vantage.group_by` takes `tag:<key>` entries (for example `provider,service,tag:team`), so every tag value is its own cost series in the index and in `nimbus cost anomalies`; cost without that tag is kept as an `__untagged__` series, never dropped. The sync no longer refuses a `tag:` grouping.
+  Stated bounds: the reply shape (a row's `tags` array of `"<key>:<value>"` strings, `"<key>:"` when untagged, and the deprecated single `tag` field) is verified against one live account's reply (2026-11-25, GitHub costs whose amounts were all zero); a tag grouping that only a saved cost report names is split at the first colon of each entry, so its key must not hold one; the same live check found that `GET /v2/costs` rejects a request with neither `vantage.cost_report_token` nor a filter (400), which is the connector's request whenever no cost report token is set (a connectors fix, not in this change).
+
 - **2026-11-25: Stack Overflow for Teams answers are indexed (#951; no migration, invariant, IPC method or allowlist change).**
   What you can do now: the Stack Overflow sync indexes the answers of each listed question as `stackoverflow:answer` items, after the question walk, so search finds the answer text and not only the question. Answer bodies stay on local embeddings (`LOCAL_ONLY_PROSE_TYPES`).
   Stated bounds: at most 40 answers requests per sync, so a team with more answered questions is covered over several syncs, continuing from the last question handled; a question's top 100 answers by score are indexed; request and reply shapes follow the Teams API v3 documentation and were checked against a fake only, not a live team.

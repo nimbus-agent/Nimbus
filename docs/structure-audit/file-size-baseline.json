@@ -205,7 +205,7 @@
     "packages/gateway/src/connectors/sonarqube-sync.test.ts": 782,
     "packages/gateway/src/connectors/testing/connector-write-registrations.test.ts": 1035,
     "packages/gateway/src/connectors/testing/remote-content-fixtures.ts": 665,
-    "packages/gateway/src/connectors/vantage-sync.test.ts": 502,
+    "packages/gateway/src/connectors/vantage-sync.test.ts": 500,
     "packages/gateway/src/connectors/zoom-sync.test.ts": 1274,
     "packages/gateway/src/db/latency-ring-buffer.test.ts": 512,
     "packages/gateway/src/db/repair.test.ts": 750,
