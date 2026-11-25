@@ -14,7 +14,7 @@ import { getConnectorHealth } from "../connectors/health.ts";
 import { asRecord } from "../connectors/unknown-record.ts";
 import { writeToolCallLog } from "../db/tool-call-log.ts";
 import { wrapLedgeredMastraModel } from "../egress/mastra-model-egress.ts";
-import type { IndexSearchQuery, LocalIndex, TraverseGraphOptions } from "../index/local-index.ts";
+import type { LocalIndex, TraverseGraphOptions } from "../index/local-index.ts";
 import type { OncallServiceBinding } from "../index/oncall-now-query.ts";
 import { retrievalNoteFor } from "../index/search-retrieval.ts";
 import type { SessionMemoryStore } from "../memory/session-memory-store.ts";
@@ -34,6 +34,7 @@ import {
   recordExplainToolCall,
   recordPointInTimeFacts,
 } from "./agent-request-context.ts";
+import { clipToolString, parseSearchLocalIndexArgs } from "./agent-search-args.ts";
 import type { CollectedToolCall } from "./ask-explain-types.ts";
 import {
   buildSearchLocalIndexHealthExtras,
@@ -50,8 +51,6 @@ import { applyToolPreferences } from "./personalization.ts";
 import { POINT_IN_TIME_TOOL_IDS } from "./point-in-time.ts";
 import { wrapToolOutput } from "./tool-output-envelope.ts";
 import { buildUserMcpAgentTools, type UserMcpAgentToolSource } from "./user-mcp-agent-tools.ts";
-
-const MAX_TOOL_STRING_LEN = 2000;
 
 /**
  * Reads the `searchLocalIndex` tool's own ranking summary off its raw result, for `nimbus explain
@@ -165,10 +164,6 @@ function wrapToolForLlm<T>(
   } as unknown as T;
 }
 
-function clipToolString(s: string, max = MAX_TOOL_STRING_LEN): string {
-  return s.length > max ? s.slice(0, max) : s;
-}
-
 /**
  * Builds the `"<provider>/<model>"` router id Mastra resolves against.
  *
@@ -275,35 +270,12 @@ export function createNimbusEngineAgent(deps: NimbusEngineAgentDeps): {
       "Ranked search of the local SQLite index: FTS5 keywords plus optional semantic (vector) fusion when enabled. Set semantic false for keyword-only. Returns a context window (top full items) plus sourceSummary. When `service` is set, `connectorHealthCaveat` warns if that connector is unhealthy; when `service` is omitted, `connectorHealthCaveats` lists up to 5 warnings for services appearing in the window that are unhealthy — tell the user. Use fetchMoreIndexResults to page within a bucket. It ranks and returns items that MATCH; it cannot answer which items do NOT match. For a negation — PRs that don't touch a path, deployments with no downstream incident, people who haven't reviewed — use findPrsNotTouching, findDeploymentsWithoutIncident or findPeopleWithoutReviews, which prove their substrate before answering.",
     execute: async (inputData: unknown) => {
       const q = asRecord(inputData) ?? {};
-      const name =
-        typeof q["name"] === "string" ? clipToolString(q["name"].trim()) || undefined : undefined;
-      const serviceRaw = typeof q["service"] === "string" ? q["service"] : undefined;
-      const service =
-        serviceRaw === undefined ? undefined : clipToolString(serviceRaw.trim()) || undefined;
-      const itemType =
-        typeof q["itemType"] === "string"
-          ? clipToolString(q["itemType"].trim()) || undefined
-          : undefined;
-      const limit =
-        typeof q["limit"] === "number" && Number.isFinite(q["limit"])
-          ? Math.min(500, Math.max(1, Math.floor(q["limit"])))
-          : 20;
-      const semantic = q["semantic"] !== false;
-      const contextChunks =
-        typeof q["contextChunks"] === "number" && Number.isFinite(q["contextChunks"])
-          ? Math.min(8, Math.max(0, Math.floor(q["contextChunks"])))
-          : 2;
-      const query: IndexSearchQuery = { limit };
-      if (name !== undefined) {
-        query.name = name;
-      }
-      const serviceForQuery = service !== undefined && service !== "" ? service : undefined;
-      if (serviceForQuery !== undefined) {
-        query.service = serviceForQuery;
-      }
-      if (itemType !== undefined) {
-        query.itemType = itemType;
-      }
+      const {
+        query,
+        service: serviceForQuery,
+        semantic,
+        contextChunks,
+      } = parseSearchLocalIndexArgs(q);
       // Point-in-time turn (`nimbus ask --at`): the instant is read from the request store, never from the
       // model's arguments, so the model cannot lift it. Connector health is a CURRENT fact and is omitted.
       const atMs = getAgentRequestPointInTimeMs();

@@ -237,6 +237,32 @@ type ScanTally = {
   truncated: number;
 };
 
+/** Records the symbols of one file judged to be debt (the newest incidents shown first). */
+function recordDebtSymbols(
+  db: Database,
+  root: string,
+  rel: string,
+  incidents: ReadonlyMap<string, DebtIncident>,
+  lastTouchMs: number | null,
+  t: ScanTally,
+): void {
+  const shown = [...incidents.values()]
+    .sort((a, b) => b.openedAtMs - a.openedAtMs || (a.id < b.id ? -1 : 1))
+    .slice(0, INCIDENTS_SHOWN);
+  const names = symbolsInFile(db, root, rel);
+  if (names.length === 0) t.noSymbols += 1;
+  for (const name of names) {
+    t.found.set(`${root}\u0000${rel}\u0000${name}`, {
+      name,
+      file: rel,
+      root,
+      incidentCount: incidents.size,
+      lastTouchMs,
+      incidents: shown,
+    });
+  }
+}
+
 /** Judges each qualifying file of one scanned root and records its symbols when it is debt. */
 function judgeRootFiles(
   db: Database,
@@ -255,22 +281,8 @@ function judgeRootFiles(
     t.filesJudged += 1;
     if (verdict.kind === "unknown") t.unknown += 1;
     else if (verdict.kind === "truncated") t.truncated += 1;
-    if (verdict.kind !== "debt") continue;
-    const shown = [...incidents.values()]
-      .sort((a, b) => b.openedAtMs - a.openedAtMs || (a.id < b.id ? -1 : 1))
-      .slice(0, INCIDENTS_SHOWN);
-    const names = symbolsInFile(db, root, rel);
-    if (names.length === 0) t.noSymbols += 1;
-    for (const name of names) {
-      t.found.set(`${root}\u0000${rel}\u0000${name}`, {
-        name,
-        file: rel,
-        root,
-        incidentCount: incidents.size,
-        lastTouchMs: verdict.lastTouchMs,
-        incidents: shown,
-      });
-    }
+    if (verdict.kind === "debt")
+      recordDebtSymbols(db, root, rel, incidents, verdict.lastTouchMs, t);
   }
 }
 
