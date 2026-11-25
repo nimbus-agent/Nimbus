@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { create } from "zustand";
+import { create, type StoreApi, type UseBoundStore } from "zustand";
 import { createDashboardSlice, type DashboardSlice } from "../../src/store/slices/dashboard";
 
 describe("dashboard slice", () => {
-  let useStore: ReturnType<typeof create<DashboardSlice>>;
+  let useStore: UseBoundStore<StoreApi<DashboardSlice>>;
   beforeEach(() => {
     useStore = create<DashboardSlice>()((...a) => createDashboardSlice(...a));
   });
