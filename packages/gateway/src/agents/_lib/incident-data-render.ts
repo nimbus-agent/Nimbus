@@ -10,6 +10,7 @@ import {
   summaryLines,
   utcLabel,
 } from "./incident-render.ts";
+import { runSectionLines } from "./incident-run-lines.ts";
 import { schemaChangeLines } from "./incident-schema-lines.ts";
 import type { IncidentDataBrief } from "./incident-types.ts";
 import { hardenedTitleLink, type RenderOpts, renderGaps } from "./render.ts";
@@ -23,9 +24,9 @@ import { hardenedTitleLink, type RenderOpts, renderGaps } from "./render.ts";
  * byte-identical across machines. Every provider-supplied string goes through `hardenedTitleLink` or
  * `hardenedPlain`; the fixed text is ours.
  *
- * What the index does NOT hold (DAG-run logs, dbt test results) is never invented
+ * What the index does NOT hold (dbt test results) is never invented
  * here: the record lists each as a gap, and the reserved `## Gaps` block (I31) carries them to the reader.
- * The orchestration and pull-request entries are matches by NAME (a model's last identifier segment as a whole
+ * Runs are listed for the jobs so matched (failed, or inside the incident window), as metadata: no log is indexed. The orchestration and pull-request entries are matches by NAME (a model's last identifier segment as a whole
  * token), never lineage, and the text says so.
  */
 
@@ -87,6 +88,7 @@ export function renderIncidentData(brief: IncidentDataBrief, opts?: RenderOpts):
           section("Monitored models", modelLines(r.data)),
           section("Built from", lineageLines(r.data)),
           section("Jobs by name", orchestrationLines(r.data)),
+          section("Runs of those jobs", runSectionLines(r.data)),
           section("Merged before the alert", mergedLines(r.data)),
           section("Schema changes", schemaLines(r.data)),
         ];

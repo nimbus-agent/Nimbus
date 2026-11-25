@@ -11,11 +11,15 @@ describe("embedding exclusions", () => {
     expect(isEmbeddingExcludedType("cost_recommendation")).toBe(false);
     expect(isEmbeddingExcludedType("incident")).toBe(false);
     expect(isEmbeddingExcludedType("email")).toBe(false);
-    expect(EMBEDDING_EXCLUDED_TYPES).toEqual(["cost_allocation"]);
+    expect(EMBEDDING_EXCLUDED_TYPES).toEqual(["cost_allocation", "dag_run", "job_run", "flow_run"]);
+    for (const t of ["dag_run", "job_run", "flow_run"])
+      expect(isEmbeddingExcludedType(t)).toBe(true);
   });
 
   test("the SQL fragment is exact", () => {
-    expect(notEmbeddingExcludedSql("i")).toBe("i.type NOT IN ('cost_allocation')");
+    expect(notEmbeddingExcludedSql("i")).toBe(
+      "i.type NOT IN ('cost_allocation', 'dag_run', 'job_run', 'flow_run')",
+    );
   });
 });
 
@@ -25,7 +29,7 @@ describe("local-only types", () => {
     expect(isEmbeddingExcludedType("cost_recommendation", true)).toBe(true);
     expect(isEmbeddingExcludedType("email", true)).toBe(false);
     expect(notEmbeddingExcludedSql("i", true)).toBe(
-      "i.type NOT IN ('cost_allocation', 'cost_recommendation')",
+      "i.type NOT IN ('cost_allocation', 'dag_run', 'job_run', 'flow_run', 'cost_recommendation')",
     );
   });
 });

@@ -1322,6 +1322,7 @@ Text from the index (a title, a sender) is stripped of control characters before
 | `[briefing.deadlines] enabled` | `false` | independent of `[briefing] enabled` |
 | `[briefing.deadlines] lead_hours` | `24` | 1 to 168 |
 | `[briefing.deadlines] quiet_hours` | `24` | 1 to 336 |
+| `[orchestration] run_retention_days` | `30` | 7 to 365, an integer; Airflow, Dagster and Prefect run rows (`airflow:dag_run`, `dagster:job_run`, `prefect:flow_run`) whose run ended (else started) longer ago are deleted by a daily pass; the DAG, job and deployment rows are never pruned by it |
 | `[index] schema_history_retention_days` | `365` | 7 to 3650, an integer; how long warehouse column-set observations (the schema history behind the Data Incident Brief) are kept, pruned daily. The newest observation of each table is always kept; a value outside the range falls back to 365 with a warning |
 | `[index] history_retention_days` | `180` | 7 to 3650, an integer; how long item-history rows (the change log behind `--at`) are kept, pruned daily in batches. There is no `0` (an unbounded history table is not a mode); a value outside the range falls back to 180 and `nimbus config explain index.history_retention_days` says so |
 

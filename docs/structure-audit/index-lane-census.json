@@ -6,13 +6,13 @@
   ],
   "sqlLiteralScopeNote": "A raw scan of packages/gateway/src/**/*.ts (minus *.test.ts) with extractSqlLiterals finds 483 SQL-shaped literals. This artifact's file set additionally excludes *-sql.ts files (an existing, repo-wide iterateSourceFiles() convention, not specific to this gate), which drops exactly 4 literals in 4 files: index/entity-metadata-v54-sql.ts, index/fleet-subjects-v63-sql.ts, index/glossary-manual-v46-sql.ts, index/unified-item-v3-sql.ts. Three are schema DDL (their only SQL-shaped text is an internal FTS-sync SELECT inside a CREATE TRIGGER body); the fourth is a one-time graph_entity migration UPDATE, already out of scope by table. None is a live read predicate reachable at runtime, so this fully explains the 483-vs-479 gap with zero effect on reads/writes/unmatchedItemReads below.",
   "counts": {
-    "reads": 499,
-    "writes": 138,
-    "unmatchedItemReads": 59,
-    "totalAbsence": 22,
-    "partialCoverage": 37,
+    "reads": 536,
+    "writes": 141,
+    "unmatchedItemReads": 69,
+    "totalAbsence": 24,
+    "partialCoverage": 45,
     "ambiguousReadCount": 10,
-    "parameterizedReads": 34,
+    "parameterizedReads": 36,
     "nonItemReads": 7,
     "unscopedReads": 10,
     "annotationErrors": 0
@@ -73,6 +73,132 @@
       "value": "excerptStartLine",
       "file": "packages/gateway/src/security/scan.ts",
       "line": 79
+    },
+    {
+      "table": "item",
+      "kind": "type",
+      "value": "pr",
+      "file": "packages/gateway/src/prreview/prreview-build.ts",
+      "line": 174
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "merged_at",
+      "file": "packages/gateway/src/prreview/prreview-build.ts",
+      "line": 169
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "merged_at",
+      "file": "packages/gateway/src/prreview/prreview-build.ts",
+      "line": 170
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "repo",
+      "file": "packages/gateway/src/prreview/prreview-build.ts",
+      "line": 175
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "state",
+      "file": "packages/gateway/src/prreview/prreview-build.ts",
+      "line": 176
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "merged_at",
+      "file": "packages/gateway/src/prreview/prreview-build.ts",
+      "line": 177
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "additions",
+      "file": "packages/gateway/src/prreview/prreview-build.ts",
+      "line": 195
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "deletions",
+      "file": "packages/gateway/src/prreview/prreview-build.ts",
+      "line": 196
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "number",
+      "file": "packages/gateway/src/prreview/prreview-build.ts",
+      "line": 199
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "repo",
+      "file": "packages/gateway/src/prreview/prreview-build.ts",
+      "line": 332
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "number",
+      "file": "packages/gateway/src/prreview/prreview-build.ts",
+      "line": 339
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "state",
+      "file": "packages/gateway/src/prreview/prreview-build.ts",
+      "line": 342
+    },
+    {
+      "table": "item",
+      "kind": "type",
+      "value": "review",
+      "file": "packages/gateway/src/prreview/prreview-notes.ts",
+      "line": 60
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "repo",
+      "file": "packages/gateway/src/prreview/prreview-notes.ts",
+      "line": 61
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "pr_number",
+      "file": "packages/gateway/src/prreview/prreview-notes.ts",
+      "line": 62
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "state",
+      "file": "packages/gateway/src/prreview/prreview-notes.ts",
+      "line": 63
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "pr_number",
+      "file": "packages/gateway/src/prreview/prreview-notes.ts",
+      "line": 72
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "state",
+      "file": "packages/gateway/src/prreview/prreview-notes.ts",
+      "line": 73
     },
     {
       "table": "item",
@@ -926,7 +1052,7 @@
       "kind": "metadata-key",
       "value": "bodyFetch",
       "file": "packages/gateway/src/index/item-store.ts",
-      "line": 374
+      "line": 365
     },
     {
       "table": "graph_relation",
@@ -1049,6 +1175,41 @@
     },
     {
       "table": "item",
+      "kind": "type",
+      "value": "dag_run",
+      "file": "packages/gateway/src/index/orchestration-run-retention.ts",
+      "line": 47
+    },
+    {
+      "table": "item",
+      "kind": "type",
+      "value": "job_run",
+      "file": "packages/gateway/src/index/orchestration-run-retention.ts",
+      "line": 48
+    },
+    {
+      "table": "item",
+      "kind": "type",
+      "value": "flow_run",
+      "file": "packages/gateway/src/index/orchestration-run-retention.ts",
+      "line": 49
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "end_ms",
+      "file": "packages/gateway/src/index/orchestration-run-retention.ts",
+      "line": 42
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "start_ms",
+      "file": "packages/gateway/src/index/orchestration-run-retention.ts",
+      "line": 43
+    },
+    {
+      "table": "item",
       "kind": "metadata-key",
       "value": "branch",
       "file": "packages/gateway/src/index/resolve-by-url.ts",
@@ -1164,42 +1325,42 @@
       "kind": "metadata-key",
       "value": "assignee_emails",
       "file": "packages/gateway/src/incident/assemble.ts",
-      "line": 99
+      "line": 101
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "assignedTo",
       "file": "packages/gateway/src/incident/assemble.ts",
-      "line": 104
+      "line": 106
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "pagerduty_service_id",
       "file": "packages/gateway/src/incident/assemble.ts",
-      "line": 324
+      "line": 333
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "pagerduty_service_id",
       "file": "packages/gateway/src/incident/assemble.ts",
-      "line": 325
+      "line": 334
     },
     {
       "table": "item",
       "kind": "type",
       "value": "error_issue",
       "file": "packages/gateway/src/incident/investigate.ts",
-      "line": 188
+      "line": 191
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "project",
       "file": "packages/gateway/src/incident/investigate.ts",
-      "line": 189
+      "line": 192
     },
     {
       "table": "item",
@@ -1286,46 +1447,81 @@
       "line": 80
     },
     {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "parent_item_id",
+      "file": "packages/gateway/src/incident/lanes/data-runs.ts",
+      "line": 116
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "outcome",
+      "file": "packages/gateway/src/incident/lanes/data-runs.ts",
+      "line": 117
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "start_ms",
+      "file": "packages/gateway/src/incident/lanes/data-runs.ts",
+      "line": 118
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "end_ms",
+      "file": "packages/gateway/src/incident/lanes/data-runs.ts",
+      "line": 119
+    },
+    {
       "table": "graph_relation",
       "kind": "type",
       "value": "derived_from",
       "file": "packages/gateway/src/incident/lanes/data.ts",
-      "line": 92
+      "line": 98
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "data_model",
       "file": "packages/gateway/src/incident/lanes/data.ts",
-      "line": 94
+      "line": 100
     },
     {
       "table": "item",
       "kind": "type",
       "value": "pr",
       "file": "packages/gateway/src/incident/lanes/data.ts",
-      "line": 176
+      "line": 182
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "merged_at",
       "file": "packages/gateway/src/incident/lanes/data.ts",
-      "line": 174
+      "line": 180
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "merged_at",
       "file": "packages/gateway/src/incident/lanes/data.ts",
-      "line": 177
+      "line": 183
+    },
+    {
+      "table": "graph_entity",
+      "kind": "type",
+      "value": "data_model",
+      "file": "packages/gateway/src/incident/lanes/data.ts",
+      "line": 246
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "monitoredDataModelKeys",
       "file": "packages/gateway/src/incident/lanes/data.ts",
-      "line": 76
+      "line": 82
     },
     {
       "table": "graph_entity",
@@ -1655,6 +1851,69 @@
       "value": "periodStartMs",
       "file": "packages/gateway/src/finops/cost-series.ts",
       "line": 160
+    },
+    {
+      "table": "item",
+      "kind": "type",
+      "value": "event",
+      "file": "packages/gateway/src/federation/_lib/free-busy-read.ts",
+      "line": 48
+    },
+    {
+      "table": "item",
+      "kind": "type",
+      "value": "event",
+      "file": "packages/gateway/src/federation/_lib/free-busy-read.ts",
+      "line": 100
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "start_ms",
+      "file": "packages/gateway/src/federation/_lib/free-busy-read.ts",
+      "line": 105
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "end_ms",
+      "file": "packages/gateway/src/federation/_lib/free-busy-read.ts",
+      "line": 105
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "status",
+      "file": "packages/gateway/src/federation/_lib/free-busy-read.ts",
+      "line": 79
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "self_response",
+      "file": "packages/gateway/src/federation/_lib/free-busy-read.ts",
+      "line": 81
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "start_ms",
+      "file": "packages/gateway/src/federation/_lib/free-busy-read.ts",
+      "line": 83
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "end_ms",
+      "file": "packages/gateway/src/federation/_lib/free-busy-read.ts",
+      "line": 85
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "all_day",
+      "file": "packages/gateway/src/federation/_lib/free-busy-read.ts",
+      "line": 88
     },
     {
       "table": "graph_entity",
@@ -3533,6 +3792,26 @@
       "line": 103
     },
     {
+      "service": "airflow",
+      "itemType": "dag_run",
+      "metadataKeys": [
+        "run_id",
+        "parent_item_id",
+        "parent_name",
+        "state",
+        "outcome",
+        "start_ms",
+        "end_ms",
+        "duration_ms",
+        "failed_tasks",
+        "failed_task_count",
+        "trigger",
+        "canonical_url"
+      ],
+      "file": "packages/gateway/src/connectors/airflow-run-mapping.ts",
+      "line": 59
+    },
+    {
       "service": "apple",
       "itemType": "event",
       "metadataKeys": [
@@ -3628,6 +3907,8 @@
         "tableId",
         "tableType",
         "schemaFields",
+        "schemaComplete",
+        "dataModelKey",
         "numRows",
         "numBytes",
         "creationTime",
@@ -3635,7 +3916,7 @@
         "description"
       ],
       "file": "packages/gateway/src/connectors/bigquery-table-mapping.ts",
-      "line": 147
+      "line": 164
     },
     {
       "service": "bitbucket",
@@ -3778,6 +4059,26 @@
       ],
       "file": "packages/gateway/src/connectors/dagster-job-mapping.ts",
       "line": 120
+    },
+    {
+      "service": "dagster",
+      "itemType": "job_run",
+      "metadataKeys": [
+        "run_id",
+        "parent_item_id",
+        "parent_name",
+        "state",
+        "outcome",
+        "start_ms",
+        "end_ms",
+        "duration_ms",
+        "failed_tasks",
+        "failed_task_count",
+        "trigger",
+        "canonical_url"
+      ],
+      "file": "packages/gateway/src/connectors/dagster-run-mapping.ts",
+      "line": 99
     },
     {
       "service": "dataprofile",
@@ -4374,7 +4675,7 @@
         "rowCount"
       ],
       "file": "packages/gateway/src/connectors/k8s-cost-mapping.ts",
-      "line": 96
+      "line": 97
     },
     {
       "service": "kubecost",
@@ -4401,7 +4702,7 @@
         "rowCount"
       ],
       "file": "packages/gateway/src/connectors/k8s-cost-mapping.ts",
-      "line": 96
+      "line": 97
     },
     {
       "service": "kubernetes",
@@ -4898,6 +5199,26 @@
       "line": 114
     },
     {
+      "service": "prefect",
+      "itemType": "flow_run",
+      "metadataKeys": [
+        "run_id",
+        "parent_item_id",
+        "parent_name",
+        "state",
+        "outcome",
+        "start_ms",
+        "end_ms",
+        "duration_ms",
+        "failed_tasks",
+        "failed_task_count",
+        "trigger",
+        "canonical_url"
+      ],
+      "file": "packages/gateway/src/connectors/prefect-run-mapping.ts",
+      "line": 59
+    },
+    {
       "service": "raindrop",
       "itemType": "bookmark",
       "metadataKeys": [
@@ -5053,11 +5374,12 @@
       "metadataKeys": [
         "dataModelKey",
         "columns",
+        "columnsComplete",
         "rowCountEstimate",
         "lastAltered"
       ],
       "file": "packages/gateway/src/connectors/snowflake-data-model-mapping.ts",
-      "line": 35
+      "line": 44
     },
     {
       "service": "snyk",
@@ -5643,6 +5965,64 @@
     {
       "table": "item",
       "kind": "metadata-key",
+      "value": "merged_at",
+      "file": "packages/gateway/src/prreview/prreview-build.ts",
+      "line": 169,
+      "matchState": "partial",
+      "partialCoverage": [
+        "github",
+        "gitlab"
+      ]
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "merged_at",
+      "file": "packages/gateway/src/prreview/prreview-build.ts",
+      "line": 170,
+      "matchState": "partial",
+      "partialCoverage": [
+        "github",
+        "gitlab"
+      ]
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "merged_at",
+      "file": "packages/gateway/src/prreview/prreview-build.ts",
+      "line": 177,
+      "matchState": "partial",
+      "partialCoverage": [
+        "github",
+        "gitlab"
+      ]
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "additions",
+      "file": "packages/gateway/src/prreview/prreview-build.ts",
+      "line": 195,
+      "matchState": "partial",
+      "partialCoverage": [
+        "github"
+      ]
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "deletions",
+      "file": "packages/gateway/src/prreview/prreview-build.ts",
+      "line": 196,
+      "matchState": "partial",
+      "partialCoverage": [
+        "github"
+      ]
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
       "value": "repo",
       "file": "packages/gateway/src/preflight/preflight.ts",
       "line": 187,
@@ -5872,7 +6252,7 @@
       "kind": "metadata-key",
       "value": "bodyFetch",
       "file": "packages/gateway/src/index/item-store.ts",
-      "line": 374,
+      "line": 365,
       "matchState": "partial",
       "partialCoverage": [
         "google_drive"
@@ -5913,6 +6293,71 @@
       "table": "item",
       "kind": "metadata-key",
       "value": "start_ms",
+      "file": "packages/gateway/src/federation/_lib/free-busy-read.ts",
+      "line": 105,
+      "matchState": "unmatched"
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "end_ms",
+      "file": "packages/gateway/src/federation/_lib/free-busy-read.ts",
+      "line": 105,
+      "matchState": "unmatched"
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "status",
+      "file": "packages/gateway/src/federation/_lib/free-busy-read.ts",
+      "line": 79,
+      "matchState": "partial",
+      "partialCoverage": [
+        "apple"
+      ]
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "self_response",
+      "file": "packages/gateway/src/federation/_lib/free-busy-read.ts",
+      "line": 81,
+      "matchState": "partial",
+      "partialCoverage": [
+        "apple"
+      ]
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "start_ms",
+      "file": "packages/gateway/src/federation/_lib/free-busy-read.ts",
+      "line": 83,
+      "matchState": "unmatched"
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "end_ms",
+      "file": "packages/gateway/src/federation/_lib/free-busy-read.ts",
+      "line": 85,
+      "matchState": "unmatched"
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "all_day",
+      "file": "packages/gateway/src/federation/_lib/free-busy-read.ts",
+      "line": 88,
+      "matchState": "partial",
+      "partialCoverage": [
+        "apple"
+      ]
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "start_ms",
       "file": "packages/gateway/src/connectors/google-calendar-sync.ts",
       "line": 218,
       "matchState": "unmatched"
@@ -5923,22 +6368,6 @@
       "value": "end_ms",
       "file": "packages/gateway/src/connectors/google-calendar-sync.ts",
       "line": 220,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "run_id",
-      "file": "packages/gateway/src/connectors/great-expectations-sync.ts",
-      "line": 42,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "run_id",
-      "file": "packages/gateway/src/connectors/great-expectations-sync.ts",
-      "line": 54,
       "matchState": "unmatched"
     },
     {
@@ -6278,7 +6707,7 @@
     },
     {
       "file": "packages/gateway/src/index/item-store.ts",
-      "line": 394
+      "line": 385
     },
     {
       "file": "packages/gateway/src/index/local-index.ts",
@@ -6309,8 +6738,16 @@
       "line": 104
     },
     {
+      "file": "packages/gateway/src/incident/lanes/data-runs.ts",
+      "line": 92
+    },
+    {
+      "file": "packages/gateway/src/incident/lanes/data-runs.ts",
+      "line": 120
+    },
+    {
       "file": "packages/gateway/src/incident/lanes/data.ts",
-      "line": 127
+      "line": 133
     },
     {
       "file": "packages/gateway/src/graph/graph-populator.ts",

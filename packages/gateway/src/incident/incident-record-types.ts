@@ -178,6 +178,25 @@ export type DataItemView = {
   readonly rule: "name_match" | "data:pr_title_or_branch";
 };
 
+/** One orchestration run (Airflow, Dagster, Prefect) of a job the lane matched by name: metadata only, never a log. */
+export type DataRunView = {
+  readonly id: string;
+  readonly service: string;
+  readonly type: string;
+  /** The title of the DAG, job or deployment the run belongs to (as indexed), one line. */
+  readonly job: string;
+  readonly state: string | null;
+  readonly outcome: "failed" | "success" | "running" | "other";
+  readonly startMs: number | null;
+  readonly endMs: number | null;
+  /** At most five failed task or step names, sorted; `failedTaskCount` is the true count. */
+  readonly failedTasks: readonly string[];
+  readonly failedTaskCount: number;
+  readonly trigger: string | null;
+  readonly url: string | null;
+  readonly rule: "data:run_of_matched_job";
+};
+
 export type DataLineageView = {
   readonly model: string;
   readonly to: string;
@@ -212,10 +231,13 @@ export type DataLane = {
   readonly lineage: readonly DataLineageView[];
   readonly orchestration: readonly DataItemView[];
   readonly prs: readonly DataItemView[];
+  /** Runs of the matched jobs that failed or ran in the incident window, newest first. Absent in a record stored before DAG runs were indexed. */
+  readonly runs?: readonly DataRunView[];
   readonly totals: {
     readonly lineage: number;
     readonly orchestration: number;
     readonly prs: number;
+    readonly runs?: number;
   };
   /** Absent in a record assembled before the schema history existed. */
   readonly schemaDiff?: DataSchemaLane;
