@@ -4,8 +4,10 @@ import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/c
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 
-const mod = await import("./audit.ts");
-const { formatAuditDoorListing, parseAuditDoorArgs, runAudit, runAuditByDoor, runAuditList } = mod;
+const { runAudit, runAuditList } = await import("./audit.ts");
+const { formatAuditDoorListing, parseAuditDoorArgs, runAuditByDoor } = await import(
+  "./audit-door.ts"
+);
 
 const out = captureOutput();
 afterAll(() => {

@@ -295,6 +295,15 @@ describe("nimbus pack branches", () => {
     expect(b.stderr.join("")).toContain("plain string failure");
   });
 
+  it("remove skips --file and its value to find the id, and a blank id is a usage error", async () => {
+    const a = harness({ reply: () => ({ removed: true }) });
+    expect(await runPackWith(["remove", "--file", "p.toml", " pm "], a.io, a.call)).toBe(0);
+    expect(a.calls).toEqual([{ method: "pack.remove", params: { id: "pm" } }]);
+    const b = harness();
+    expect(await runPackWith(["remove", "   "], b.io, b.call)).toBe(2);
+    expect(b.calls).toEqual([]);
+  });
+
   it("list renders versionUnknown, a missing bundledVersion, listError, skipped, and a cleaned source", async () => {
     const h = harness({
       reply: () => ({

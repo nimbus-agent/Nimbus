@@ -492,6 +492,16 @@ line ABOVE the reported await (and were therefore ignored) were moved onto the r
 | `github-actions/registry-action/src/sign.ts` | `typescript:S9382` | 1 |
 | `registry-format/src/trust-feed-build.ts` | `typescript:S9382` | 2 |
 
+### 2026-11-25 — the `packages/cli` findings accepted again after the tracking reset
+
+The 2026-11-23 analysis re-created existing issues under new keys and dropped their dispositions,
+so the nine `packages/cli` `typescript:S9382` findings above came back open. They were accepted
+again on the board with the same reasons (the `extension.ts` one now sits in
+`cli/src/commands/extension/lifecycle.ts`, where #2097 moved it). One more was accepted with them:
+`cli/src/agent-kits/apply.ts` `renameWithRetry`, a bounded rename retry whose wait must elapse, and
+whose plan is re-checked, before the next attempt. No marker was added. Every other `packages/cli`
+finding of that sweep was fixed in code.
+
 ## 2026-11-25 — gateway core sweep: 30 findings decided on the board
 
 A sweep of the open findings under `packages/gateway/src/{connectors,ipc,engine,mcp-sink,extensions,

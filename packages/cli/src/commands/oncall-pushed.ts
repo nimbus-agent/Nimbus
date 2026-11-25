@@ -86,21 +86,21 @@ function recordDiagnostics(r: ListResult): string[] {
   return out;
 }
 
+const PUSHED_SWITCHES: ReadonlySet<string> = new Set(["--json", "--retry", "--remediate"]);
+
 export function parseOncallPushedArgs(argv: readonly string[]): OncallPushedArgs | undefined {
-  let json = false;
-  let retry = false;
-  let remediate = false;
+  const seen = new Set<string>();
   const pos: string[] = [];
   for (const a of argv) {
-    if (a === "--json") json = true;
-    else if (a === "--retry") retry = true;
-    else if (a === "--remediate") remediate = true;
+    if (PUSHED_SWITCHES.has(a)) seen.add(a);
     else if (a.startsWith("-")) return undefined;
     else pos.push(a);
   }
   if (pos.length > 1) return undefined;
+  const json = seen.has("--json");
+  const retry = seen.has("--retry");
   // A run holds the terminal for the owner's prompt: it names one push, and has no --retry or --json form.
-  if (remediate) {
+  if (seen.has("--remediate")) {
     if (pos.length !== 1 || pos[0] === "list" || retry || json) return undefined;
     return {
       mode: "one",

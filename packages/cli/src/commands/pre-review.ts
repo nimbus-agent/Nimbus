@@ -25,7 +25,7 @@ const BOOL_FLAGS: ReadonlySet<string> = new Set(["--json"]);
 /** Parses the arguments after `pre-review`; `undefined` is a usage error. */
 export function parsePreReviewArgs(argv: readonly string[]): PreReviewArgs | undefined {
   const f = scanFlags(argv, new Set(), BOOL_FLAGS);
-  if (f === undefined || f.id === undefined) return undefined;
+  if (f?.id === undefined) return undefined;
   return { url: f.id, json: f.bools.has("--json") };
 }
 

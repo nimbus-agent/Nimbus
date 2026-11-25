@@ -185,72 +185,77 @@ function renderHitlResolved(at: string, payload: Record<string, unknown>): strin
   return `${at} [hitl]      ${str(payload, "requestId") ?? "?"}: ${verdict}${suffix}`;
 }
 
+type KindRenderer = (at: string, payload: Record<string, unknown>) => string | null;
+
+function renderSyncCompleted(at: string, payload: Record<string, unknown>): string {
+  const svc = str(payload, "serviceId") ?? "?";
+  const up = payload["itemsUpserted"];
+  const del = payload["itemsDeleted"];
+  const ms = payload["durationMs"];
+  return `${at} [sync]      ${svc}: +${String(up)} items, -${String(del)} (${String(ms)}ms)`;
+}
+
+function renderBriefPushed(at: string, payload: Record<string, unknown>): string | null {
+  const id = str(payload, "incidentId");
+  if (id === null) return null;
+  const word = str(payload, "status") === "ok" ? "ready" : "FAILED";
+  return `${at} [oncall] brief ${word} for ${id} — nimbus oncall pushed ${id}`;
+}
+
+function renderBriefingReady(at: string, payload: Record<string, unknown>): string | null {
+  const headline = str(payload, "headline");
+  return headline === null ? null : `${at} [briefing] ${oneLine(headline)} - nimbus briefing`;
+}
+
+function renderIncidentAssembled(at: string, payload: Record<string, unknown>): string | null {
+  const recordId = str(payload, "recordId");
+  const version = payload["version"];
+  const status = str(payload, "status");
+  if (recordId === null || typeof version !== "number" || status === null) return null;
+  return `${at} [incident] ${oneLine(recordId, 40)} v${String(version)} ${oneLine(status, 20)} - nimbus incident show ${oneLine(recordId, 40)}`;
+}
+
+function renderIncidentFinding(at: string, payload: Record<string, unknown>): string | null {
+  const opened = payload["opened"];
+  const cleared = payload["cleared"];
+  if (typeof opened !== "number" || typeof cleared !== "number") return null;
+  return `${at} [incident] findings: ${String(opened)} opened, ${String(cleared)} cleared - nimbus incident findings`;
+}
+
+function renderUpdateDrafted(at: string, payload: Record<string, unknown>): string | null {
+  const recordId = str(payload, "recordId");
+  const version = payload["version"];
+  const queued = payload["queued"];
+  if (recordId === null || typeof version !== "number" || typeof queued !== "number") return null;
+  return `${at} [incident] update drafted for ${oneLine(recordId, 40)} v${String(version)} (${String(queued)} waiting) - nimbus incident update --queued`;
+}
+
+/** The known kinds; a renderer that returns null (a malformed payload) falls back to the raw line. */
+const KIND_RENDERERS: Readonly<Record<string, KindRenderer>> = {
+  "sync.completed": renderSyncCompleted,
+  "watcher.fired": (at, payload) =>
+    `${at} [watcher]   ${str(payload, "name") ?? "?"}: ${oneLine(str(payload, "summary") ?? "")}`,
+  "extension.stateChanged": (at, payload) =>
+    `${at} [extension] ${str(payload, "extensionId") ?? "?"}: ${str(payload, "action") ?? "?"}${extensionFailureSuffix(payload)}`,
+  "hitl.requested": (at, payload) =>
+    `${at} [hitl]      ${str(payload, "requestId") ?? "?"}: requested — ${str(payload, "actionType") ?? "?"}`,
+  "hitl.resolved": renderHitlResolved,
+  "oncall.briefPushed": renderBriefPushed,
+  "briefing.ready": renderBriefingReady,
+  "incident.assembled": renderIncidentAssembled,
+  "incident.finding": renderIncidentFinding,
+  "incident.updateDrafted": renderUpdateDrafted,
+};
+
 /** One `gateway.event` envelope, by its `kind`; `null` only when the envelope has no `kind`. */
 function renderGatewayEvent(o: Record<string, unknown>): string | null {
   const kind = str(o, "kind");
   if (kind === null) return null;
   const payload = rec(o["payload"]) ?? {};
   const at = ts(o["ts"]);
-
-  if (kind === "sync.completed") {
-    const svc = str(payload, "serviceId") ?? "?";
-    const up = payload["itemsUpserted"];
-    const del = payload["itemsDeleted"];
-    const ms = payload["durationMs"];
-    return `${at} [sync]      ${svc}: +${String(up)} items, -${String(del)} (${String(ms)}ms)`;
-  }
-  if (kind === "watcher.fired") {
-    return `${at} [watcher]   ${str(payload, "name") ?? "?"}: ${oneLine(str(payload, "summary") ?? "")}`;
-  }
-  if (kind === "extension.stateChanged") {
-    return `${at} [extension] ${str(payload, "extensionId") ?? "?"}: ${str(payload, "action") ?? "?"}${extensionFailureSuffix(payload)}`;
-  }
-  if (kind === "hitl.requested") {
-    return `${at} [hitl]      ${str(payload, "requestId") ?? "?"}: requested — ${str(payload, "actionType") ?? "?"}`;
-  }
-  if (kind === "hitl.resolved") {
-    return renderHitlResolved(at, payload);
-  }
-
-  if (kind === "oncall.briefPushed") {
-    const id = str(payload, "incidentId");
-    if (id !== null) {
-      const word = str(payload, "status") === "ok" ? "ready" : "FAILED";
-      return `${at} [oncall] brief ${word} for ${id} — nimbus oncall pushed ${id}`;
-    }
-  }
-
-  if (kind === "briefing.ready") {
-    const headline = str(payload, "headline");
-    if (headline !== null) return `${at} [briefing] ${oneLine(headline)} - nimbus briefing`;
-  }
-
-  if (kind === "incident.assembled") {
-    const recordId = str(payload, "recordId");
-    const version = payload["version"];
-    const status = str(payload, "status");
-    if (recordId !== null && typeof version === "number" && status !== null) {
-      return `${at} [incident] ${oneLine(recordId, 40)} v${String(version)} ${oneLine(status, 20)} - nimbus incident show ${oneLine(recordId, 40)}`;
-    }
-  }
-
-  if (kind === "incident.finding") {
-    const opened = payload["opened"];
-    const cleared = payload["cleared"];
-    if (typeof opened === "number" && typeof cleared === "number") {
-      return `${at} [incident] findings: ${String(opened)} opened, ${String(cleared)} cleared - nimbus incident findings`;
-    }
-  }
-
-  if (kind === "incident.updateDrafted") {
-    const recordId = str(payload, "recordId");
-    const version = payload["version"];
-    const queued = payload["queued"];
-    if (recordId !== null && typeof version === "number" && typeof queued === "number") {
-      return `${at} [incident] update drafted for ${oneLine(recordId, 40)} v${String(version)} (${String(queued)} waiting) - nimbus incident update --queued`;
-    }
-  }
-
+  const render = Object.hasOwn(KIND_RENDERERS, kind) ? KIND_RENDERERS[kind] : undefined;
+  const line = render === undefined ? null : render(at, payload);
+  if (line !== null) return line;
   // Never dropped: a stream that discards what it does not recognise is the same failure as a
   // brief that renders a missing section as empty.
   return `${at} [unknown: ${kind}] ${JSON.stringify(payload)}`;

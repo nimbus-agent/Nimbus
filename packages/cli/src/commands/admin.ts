@@ -106,7 +106,7 @@ const defaultRunAdminDeps: RunAdminDeps = {
   getPaths: getCliPlatformPaths,
   readGatewayState,
   makeClient: (socketPath) => new IPCClient(socketPath),
-  writeErr: (s) => void process.stderr.write(s),
+  writeErr: (s) => process.stderr.write(s),
   exit: (code) => process.exit(code),
 };
 

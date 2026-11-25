@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { create } from "zustand";
+import { create, type StoreApi, type UseBoundStore } from "zustand";
 import { createDashboardSlice, type DashboardSlice } from "../../src/store/slices/dashboard";
 
 describe("dashboard slice", () => {
-  let useStore: ReturnType<typeof create<DashboardSlice>>;
+  let useStore: UseBoundStore<StoreApi<DashboardSlice>>;
   beforeEach(() => {
     useStore = create<DashboardSlice>()((...a) => createDashboardSlice(...a));
   });
@@ -44,5 +44,18 @@ describe("dashboard slice", () => {
     expect(useStore.getState().highlightConnector).toBe("drive");
     useStore.getState().clearHighlight();
     expect(useStore.getState().highlightConnector).toBeNull();
+  });
+
+  it("setMetrics, setMetricsError and setAudit store what they are given", () => {
+    const metrics = { itemCount: 3 } as unknown as Parameters<DashboardSlice["setMetrics"]>[0];
+    useStore.getState().setMetrics(metrics);
+    expect(useStore.getState().metrics).toBe(metrics);
+    useStore.getState().setMetricsError("offline");
+    expect(useStore.getState().metricsError).toBe("offline");
+    useStore.getState().setMetricsError(null);
+    expect(useStore.getState().metricsError).toBeNull();
+    const audit = [{ id: 1 }] as unknown as Parameters<DashboardSlice["setAudit"]>[0];
+    useStore.getState().setAudit(audit);
+    expect(useStore.getState().audit).toBe(audit);
   });
 });

@@ -90,5 +90,5 @@ test("the real seams build without connecting: a wrapped client and a state read
   // A read of the CLI's own state file: it is absent or names a gateway; neither is acted on here.
   await io.readGatewayState();
   const d = defaultTeamEntryDeps();
-  expect(d.listen.length).toBe(1);
+  expect(d.listen).toHaveLength(1);
 });

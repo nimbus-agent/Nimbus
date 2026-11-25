@@ -96,7 +96,7 @@ describe("small helpers", () => {
 
   test("slugOf makes a file-safe, bounded slug", () => {
     expect(slugOf("Acme/Tool X")).toBe("acme-toolx");
-    expect(slugOf("a".repeat(200)).length).toBe(64 - "takedown-".length - 1 - 8);
+    expect(slugOf("a".repeat(200))).toHaveLength(64 - "takedown-".length - 1 - 8);
   });
 
   test("parseArgs refuses a missing value and an unknown option", () => {

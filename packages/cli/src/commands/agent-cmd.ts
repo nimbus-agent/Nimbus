@@ -37,8 +37,8 @@ export interface AgentIo {
 export const REAL_AGENT_IO: AgentIo = {
   paths: getCliPlatformPaths,
   readStdin: Bun.stdin.text.bind(Bun.stdin),
-  stdout: (s) => void process.stdout.write(s),
-  stderr: (s) => void process.stderr.write(s),
+  stdout: (s) => process.stdout.write(s),
+  stderr: (s) => process.stderr.write(s),
   which: (name) => Bun.which(name),
   exec: execFile as ExecFileLike,
 };

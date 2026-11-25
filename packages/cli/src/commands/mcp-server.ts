@@ -120,7 +120,7 @@ export function parseMcpServerArgs(args: string[]): McpServerArgs {
   if (agent === undefined || !AGENT_KIT_NAME_RE.test(agent)) {
     return { kind: "usage", message: AGENT_USAGE };
   }
-  if (args.indexOf("--agent", at + 1) !== -1) {
+  if (args.includes("--agent", at + 1)) {
     return { kind: "usage", message: "--agent may be given once" };
   }
   if (!stdio) {
