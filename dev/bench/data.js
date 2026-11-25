@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795639798694,
+  "lastUpdate": 1795643070658,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "c6c7e27b75901cbfa19f7b03b4514d6fb63d831c",
-          "message": "feat(search): disclose keyword-only and mid-backfill results; typed embedding query timeout (#1535)\n\nThe follow-up #1500 deferred. V62 fixed the quadratic vector-search\nplan. Two false greens survived it, and a search could still report a\nkeyword-only or incomplete result as complete.\n\n## What was wrong\n\n1. **A query embed that timed out resolved `null`.**\n`worker-bridge.ts`'s 60 s timeout arm and its `.catch` both resolved\n`null`, identical to the permanent `unavailable` state. Hybrid search\nsilently became BM25, and an empty result read as \"found nothing\" —\n#928's false green on the arm that fix missed. The 60 s bound also sat\nOUTSIDE the CLI's 30 s IPC bound, so it had never fired. The `hybrid`\nand `openai` runtimes had no query bound at all.\n2. **Nothing disclosed a running backfill.** Readiness is `ready` for\nthe whole backfill, even at 0 %.\n3. **The rows cannot carry either fact.** A timed-out query's rows still\nsay `scoringFormula: \"hybrid_rrf\"`, so `nimbus explain last` labelled it\n\"primary search (hybrid RRF)\". Briefs guessed semantic availability from\n`vectorRank`, which read wrong whenever a working vector search matched\nnothing.\n\n## What changed\n\n- **`EmbeddingTimeoutError`**, brand-checked like the warming error. One\nhelper, `withEmbeddingQueryTimeout`, bounds all three runtimes. The\ndefault is **5 s**, inside the CLI's 30 s IPC bound, with\n`NIMBUS_EMBEDDING_QUERY_TIMEOUT_MS` as the override. The hybrid runtime\nbounds each half separately, so a stalled OpenAI request keeps the local\nvector and is marked `partial`. The lazy runtime bounds the embed, never\nthe first-call model load.\n- **`LocalIndex.searchRankedAsync` returns `{ items, retrieval }`**,\nbuilt once at the only site that knows both facts:\n  - `vectorRanked`: whether a query vector was actually used;\n  - `reason`: why not;\n  - `partial`: a hybrid result ranked on one dimension only;\n  - `backfill`: present only while a pass runs.\n\n  The wording lives in ONE place, `describeRetrieval`.\n- **Consumers:**\n- the agent's `searchLocalIndex` tool result (inside the I11 envelope);\n  - briefs' `semanticAvailable`;\n  - the `explain last` record (`primaryRetrieval`) and its label;\n- `nimbus search`: notes go to **stderr**, and stdout stays the plain\narray;\n- the MCP search tools: notes as a separate text block, rows block\nunchanged.\n- **Wire: opt-in.** `index.searchRanked` returns the bare array unless\nthe request passes `envelope: true`, which returns `{ items, retrieval,\nnotes }`. The notes are the gateway's own wording, sent over the wire so\nno client keeps a copy.\n\n## Decisions settled before implementation\n\n1. **Opt-in envelope kept.** The published `@nimbus-dev/client` 0.17.3\nasserts this method returns an array, so an unconditional envelope would\nmake every published client throw. The client's `searchRanked` also\nforwards only six named params, so **`nimbus-vscode` cannot opt in**\nuntil a client release adds the flag — filed as\nnimbus-agent/nimbus-client#86.\n2. **Coverage is worded as pass progress, never index coverage.** The\nspec's \"8,400/60,000 items\" is not derivable:\n`getBackfillProgress().total` is the count of items with no vector when\nTHIS pass started, `done` includes failures, and the value was never\ncleared. A new `getActiveBackfillPass()` returns it only while a pass is\nrunning. The note says \"8,400 of 51,600 items processed this pass\" and\npoints at `nimbus index health`, which stays authoritative. It is not\ncomputed per query: `readPerService` is a full scan.\n3. **No JSON-RPC code (-32022).** Every path degrades through\n`embedQueryDualOutcome`, so the timeout error cannot cross IPC; its\nreason travels in `retrieval.reason`.\n4. **The timeout bound applies to the `hybrid` and `openai` runtimes\ntoo**, not only the worker bridge.\n\n## Out of scope, unchanged\n\n- **Worker admission control, spec §4.1:** measured at 7–9 ms vs 2–3 ms\nidle, which is immaterial.\n- **`[embedding] query_timeout_ms` TOML key:** deferred.\n- **Converging `index health` onto the search-time figure:** deferred.\n- **`vec-store-join-order.test.ts` and\n`session-memory-join-order.test.ts`:** untouched, 25 pass.\n\n## Verification\n\n- **TDD, each new arm red-proved by reverting the fix:**\n- **Worker bridge timeout:** the test drives the REAL timer with a\nworker that never replies. Reverted to `resolve(null)`, it fails with\n`Received value: null`.\n- **Disclosure wiring in `searchRankedAsync`:** real vec0 rows. With the\nreason and backfill dropped, 3 of 4 fail.\n- **`nimbus search` stderr notes:** fails when the notes are not\nprinted.\n- **Explain label:** fails when the label ignores the recorded\nretrieval.\n- **Real-socket e2e** in `gateway-bind-first.e2e.test.ts`, covering the\nenvelope and a keyword-only search after a failed model fetch. Both fail\nwhen the handler's envelope branch is removed — this is what proves the\nparam survives real routing, not only the handler.\n- **Lazy and hybrid runtime bounds:** removing the bound makes the call\nnever settle, observed as a hang rather than a clean assertion failure,\nbecause those tests set their own 30 s timeout.\n- **Gates:** `bun run preflight:fast` all green; `bun run\ntypecheck:tests` 0 new.\n- **Scoped suites** (search, memory, embedding, index, engine, ipc,\nbriefs, toolgen grounding, CLI commands/mcp/lib, engine integration):\n6865 pass, 0 fail.\n\nNo schema migration, no new invariant, no egress class, no Tauri\nallowlist change. Design:\n`2026-09-12-cold-start-search-starvation-design.md` §4.2–4.5; durable\ndecisions recorded in `docs/architecture.md` and `docs/CHANGELOG.md`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **New Features**\n* Search results now disclose semantic-ranking status, keyword-only\nfallback reasons, partial ranking, and embedding backfill progress.\n* Embedding query timeouts now produce typed errors with a configurable\n5-second default.\n* CLI, MCP, briefs, and explain views surface retrieval notes without\nchanging result rows.\n* **Compatibility**\n* Opt-in response envelopes expose retrieval metadata and notes while\nlegacy arrays remain supported.\n* CLI results remain on stdout; diagnostic notes are written to stderr.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-17T16:41:49Z",
-          "tree_id": "7e73b2a882f887355edd86d82f3dadf0b8f00abc",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/c6c7e27b75901cbfa19f7b03b4514d6fb63d831c"
-        },
-        "date": 1789664011211,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 256.70208299999683,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 260.4140179000075,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 177.39495349999487,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "bd881b1894ba823a754754fc6c578f43e6d42657",
+          "message": "feat(gateway): Vantage per-tag cost attribution (#2153)\n\nCloses the Phase 10 **Cost anomaly detection** row. This PR builds its\nper-tag half (owner ruling 14). Its last clause, detection on the\nplatforms the row names, is closed by owner ruling 2026-11-25: AWS,\nAzure, GCP, Snowflake and Databricks spend reaches the detector through\nVantage, which ingests all five, and Kubernetes spend through OpenCost\nand Kubecost. Direct per-platform billing connectors are not built. FO2\nrefused a `tag:` entry in `vantage.group_by` because where Vantage puts\na tag value in a `GET /v2/costs` reply was undocumented. That shape is\nnow verified against one live account's reply.\n\n## The reply shape (live, 2026-11-25; groupings\n`provider,service,tag:owner,tag:repo`, `date_bin=day`)\n\n- `tags` is an array of `\"<key>:<value>\"` strings, one per tag grouping,\nin the order requested: `[\"owner:<org>\", \"repo:<repo>\"]`.\n- A row without the requested tag carries `\"<key>:\"` and no `tag` field\n(`tag:team` gave `[\"team:\"]` on every row).\n- `tag` is a string holding only the value of the **first** tag\ngrouping; the OpenAPI file marks it deprecated.\n- Top level: `links` (`next`/`last` null on one page), `total_cost`,\n`costs`. Zero-cost days are still listed.\n\n## Change\n\n- `connectors/vantage-cost-tags.ts` (new): reads each `tag:<key>` that\n`vantage.group_by` names from `tags`, by the key's own `<key>:` prefix,\nso a key holding a colon (`aws:cloudformation:stack-name`) is not split.\nWhen the array lines up with the requested keys, each entry belongs to\nits position; otherwise each entry goes to the longest requested key it\ncarries. A missing or empty value becomes `__untagged__`, its own\nseries, so untagged spend is never dropped or merged. A literal value\nspelled `__untagged__` is written `%5F_untagged__`. Without `tags`, the\ndeprecated `tag` string is read as the first requested key's value. With\nno `tag:` entry in `vantage.group_by` nothing changes, so FO2's series\nidentities stand.\n- `vantage-cost-mapping.ts`: the tag values become dimension fields, and\nthe raw `tag`/`tags` are no longer dimension candidates. A `tag:` field\nis a dimension even when its key ends in `_cost` or `_amount`.\n- `vantage-sync.ts`: the `tag:` refusal is gone.\n- Tests: a redacted live-shape fixture in `vantage-cost-tags.test.ts`.\nKey names and nesting are the vendor's; every id, value and amount is a\nplaceholder. The sync test's refusal case is replaced by an end-to-end\nsync that indexes `core`, `data` and `__untagged__` series. That file\nshrinks from 502 to 500 lines, and the baseline is lowered.\n- Docs: roadmap row, CHANGELOG, architecture and cli-reference\n(`vantage.group_by`). The roadmap row is closed (see above). CLAUDE.md\nand GEMINI.md are unchanged: since #2154 their status block is a summary\nthat is still true.\n\nNo migration, invariant, HITL type, egress class, IPC method or\nallowlist change.\n\n## Stated bounds\n\n- The shape is verified against **one** live account's reply, and every\namount in it was zero (GitHub Actions costs). A reply with non-zero\namounts was not seen; a Custom Provider upload is pending in Vantage to\ncheck it.\n- A tag grouping that only a saved cost report names (with no `tag:`\nentry in `vantage.group_by`) keeps FO2's reading: the first tag's value,\nas one `tag` dimension.\n- **Found in the same live check, not fixed here:** `GET /v2/costs`\nreturns 400 (`cost_report_token, filter are missing`) when the request\nhas neither, and that is the connector's request whenever\n`vantage.cost_report_token` is unset. The fix belongs in\nnimbus-mcp-servers; cli-reference now tells you to set the report token.\n\n## Verification\n\n- `bun run preflight:fast` passed.\n- `bun test packages/gateway/src/connectors/vantage`: 54 pass.\n`vantage-cost-tags.ts` and `vantage-cost-mapping.ts` are at 100% line\ncoverage locally.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-25T21:33:24Z",
+          "tree_id": "db745f67512314ac3ba06ed39032d62e3885e2de",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/bd881b1894ba823a754754fc6c578f43e6d42657"
+        },
+        "date": 1795643065012,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 261.7393692500027,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 264.48621035001304,
             "unit": "ms"
           }
         ]
