@@ -12,6 +12,18 @@ import {
 } from "./connector-sync-test-helpers.ts";
 import { createPrefectSyncable } from "./prefect-sync.ts";
 
+/**
+ * The sync also lists runs (`/flow_runs/filter`, `/task_runs/filter`) after the deployments; these tests are
+ * about the deployment pass, so every other URL answers an empty page (the run pass has its own tests in
+ * `test/integration/connectors/prefect-sync-fake-server.test.ts`).
+ */
+function deploymentsOnly(inner: typeof fetch): typeof fetch {
+  return ((input: SyncTestFetchParams[0], init?: SyncTestFetchParams[1]) =>
+    urlFromFetchInput(input).includes("/deployments/filter")
+      ? inner(input, init)
+      : Promise.resolve(new Response("[]", { status: 200 }))) as typeof fetch;
+}
+
 /** Minimal valid deployment fixture. */
 const FULL_DEPLOYMENT = {
   id: "dep-uuid-1",
@@ -60,14 +72,14 @@ describeWithFetchRestore("prefect-sync", () => {
   // ─── Happy path: items upserted, cursor advances ─────────────────────────
   test("indexes deployments and advances cursor", async () => {
     const db = createMemoryIndexDb();
-    globalThis.fetch = (async (
+    globalThis.fetch = deploymentsOnly((async (
       input: SyncTestFetchParams[0],
       _init?: SyncTestFetchParams[1],
     ): Promise<Response> => {
       const u = urlFromFetchInput(input);
       expect(u).toContain("/deployments/filter");
       return new Response(makeDeploymentPage([FULL_DEPLOYMENT]), { status: 200 });
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     const vault = createStubVault({
       "prefect.api_url": "https://api.prefect.cloud/api/accounts/a/workspaces/w",
@@ -86,13 +98,13 @@ describeWithFetchRestore("prefect-sync", () => {
   test("trims trailing slash from api_url before using it", async () => {
     const db = createMemoryIndexDb();
     let capturedUrl = "";
-    globalThis.fetch = (async (
+    globalThis.fetch = deploymentsOnly((async (
       input: SyncTestFetchParams[0],
       _init?: SyncTestFetchParams[1],
     ): Promise<Response> => {
       capturedUrl = urlFromFetchInput(input);
       return new Response(makeDeploymentPage([FULL_DEPLOYMENT]), { status: 200 });
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     const vault = createStubVault({
       // Trailing slash — trimTrailingSlash must strip it
@@ -115,10 +127,10 @@ describeWithFetchRestore("prefect-sync", () => {
     const db = createMemoryIndexDb();
     // Prefect filter endpoint returns a bare array; simulate a buggy server
     // returning an object instead — extractDeployments falls through to [].
-    globalThis.fetch = (() =>
+    globalThis.fetch = deploymentsOnly((() =>
       Promise.resolve(
         new Response(JSON.stringify({ results: [] }), { status: 200 }),
-      )) as unknown as typeof fetch;
+      )) as unknown as typeof fetch);
 
     const vault = createStubVault({
       "prefect.api_url": "https://api.prefect.cloud/api/accounts/a/workspaces/w",
@@ -139,10 +151,10 @@ describeWithFetchRestore("prefect-sync", () => {
     const db = createMemoryIndexDb();
     const noId = { name: "broken", flow_id: "f1" }; // no id → mapper returns null
     const withId = { ...FULL_DEPLOYMENT, id: "dep-uuid-good" };
-    globalThis.fetch = (() =>
+    globalThis.fetch = deploymentsOnly((() =>
       Promise.resolve(
         new Response(makeDeploymentPage([noId, withId]), { status: 200 }),
-      )) as unknown as typeof fetch;
+      )) as unknown as typeof fetch);
 
     const vault = createStubVault({
       "prefect.api_url": "https://api.prefect.cloud/api/accounts/a/workspaces/w",
@@ -159,11 +171,11 @@ describeWithFetchRestore("prefect-sync", () => {
   // ─── Also: non-object entry in array → asRecord returns undefined ─────────
   test("skips non-object entries in deployment array (asRecord → undefined)", async () => {
     const db = createMemoryIndexDb();
-    globalThis.fetch = (() =>
+    globalThis.fetch = deploymentsOnly((() =>
       Promise.resolve(
         // First entry is a primitive string; second is valid
         new Response(makeDeploymentPage(["not-an-object", FULL_DEPLOYMENT]), { status: 200 }),
-      )) as unknown as typeof fetch;
+      )) as unknown as typeof fetch);
 
     const vault = createStubVault({
       "prefect.api_url": "https://api.prefect.cloud/api/accounts/a/workspaces/w",
@@ -180,10 +192,10 @@ describeWithFetchRestore("prefect-sync", () => {
   // Covers branch: outcome.kind !== "ok" AND page === 0 AND kind === "http_error"
   test("returns http-empty result when page 0 returns HTTP error", async () => {
     const db = createMemoryIndexDb();
-    globalThis.fetch = (() =>
+    globalThis.fetch = deploymentsOnly((() =>
       Promise.resolve(
         new Response("Internal Server Error", { status: 500 }),
-      )) as unknown as typeof fetch;
+      )) as unknown as typeof fetch);
 
     const vault = createStubVault({
       "prefect.api_url": "https://api.prefect.cloud/api/accounts/a/workspaces/w",
@@ -205,13 +217,13 @@ describeWithFetchRestore("prefect-sync", () => {
   test("returns parse-empty result when page 0 returns invalid JSON", async () => {
     const db = createMemoryIndexDb();
     // status 200 but body is not JSON → connectorFetch returns parse_error
-    globalThis.fetch = (() =>
+    globalThis.fetch = deploymentsOnly((() =>
       Promise.resolve(
         new Response("not-valid-json!!!", {
           status: 200,
           headers: { "Content-Type": "text/plain" },
         }),
-      )) as unknown as typeof fetch;
+      )) as unknown as typeof fetch);
 
     const vault = createStubVault({
       "prefect.api_url": "https://api.prefect.cloud/api/accounts/a/workspaces/w",
@@ -239,7 +251,7 @@ describeWithFetchRestore("prefect-sync", () => {
     }));
     let callCount = 0;
 
-    globalThis.fetch = (async (
+    globalThis.fetch = deploymentsOnly((async (
       _input: SyncTestFetchParams[0],
       _init?: SyncTestFetchParams[1],
     ): Promise<Response> => {
@@ -249,7 +261,7 @@ describeWithFetchRestore("prefect-sync", () => {
       }
       // Page 1 returns server error → break path
       return new Response("Server Error", { status: 500 });
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     const vault = createStubVault({
       "prefect.api_url": "https://api.prefect.cloud/api/accounts/a/workspaces/w",
@@ -268,10 +280,10 @@ describeWithFetchRestore("prefect-sync", () => {
   // ─── Empty results: short page terminates loop early ─────────────────────
   test("terminates loop on empty deployment array (short page)", async () => {
     const db = createMemoryIndexDb();
-    globalThis.fetch = (() =>
+    globalThis.fetch = deploymentsOnly((() =>
       Promise.resolve(
         new Response(makeDeploymentPage([]), { status: 200 }),
-      )) as unknown as typeof fetch;
+      )) as unknown as typeof fetch);
 
     const vault = createStubVault({
       "prefect.api_url": "https://api.prefect.cloud/api/accounts/a/workspaces/w",
@@ -288,10 +300,10 @@ describeWithFetchRestore("prefect-sync", () => {
   test("handles deployment with minimal fields (no optional fields)", async () => {
     const db = createMemoryIndexDb();
     const minimal = { id: "dep-min-1" }; // only id present
-    globalThis.fetch = (() =>
+    globalThis.fetch = deploymentsOnly((() =>
       Promise.resolve(
         new Response(makeDeploymentPage([minimal]), { status: 200 }),
-      )) as unknown as typeof fetch;
+      )) as unknown as typeof fetch);
 
     const vault = createStubVault({
       "prefect.api_url": "https://api.prefect.cloud/api/accounts/a/workspaces/w",
@@ -307,8 +319,8 @@ describeWithFetchRestore("prefect-sync", () => {
   // ─── Existing cursor is passed through on http_error (null cursor) ────────
   test("uses default cursor when incoming cursor is null and http error on page 0", async () => {
     const db = createMemoryIndexDb();
-    globalThis.fetch = (() =>
-      Promise.resolve(new Response("Bad Gateway", { status: 502 }))) as unknown as typeof fetch;
+    globalThis.fetch = deploymentsOnly((() =>
+      Promise.resolve(new Response("Bad Gateway", { status: 502 }))) as unknown as typeof fetch);
 
     const vault = createStubVault({
       "prefect.api_url": "https://api.prefect.cloud/api/accounts/a/workspaces/w",

@@ -4,6 +4,7 @@ import { trimTrailingSlash } from "./_lib/field-helpers.ts";
 import { bareArrayPage, runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapPrefectDeploymentToItem } from "./prefect-deployment-mapping.ts";
+import { syncPrefectRuns } from "./prefect-runs.ts";
 
 const SERVICE_ID = "prefect";
 const CURSOR_PREFIX = "nimbus-prefect1:";
@@ -41,15 +42,28 @@ async function loadCreds(ctx: SyncContext): Promise<PrefectCreds | null> {
  * endpoints. POST `<api_url>/deployments/filter` with `{ limit, offset, sort }`
  * returns a bare JSON array of deployment objects.
  */
-function deploymentsFilter(ctx: SyncContext, creds: PrefectCreds, offset: number) {
-  return connectorFetch(ctx, SERVICE_ID, `${creds.apiUrl}/deployments/filter`, {
+function prefectPost(
+  ctx: SyncContext,
+  creds: PrefectCreds,
+  path: string,
+  body: Record<string, unknown>,
+) {
+  return connectorFetch(ctx, SERVICE_ID, `${creds.apiUrl}${path}`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${creds.apiKey}`,
       "Content-Type": "application/json",
       Accept: "application/json",
     },
-    body: JSON.stringify({ limit: PAGE_SIZE, offset, sort: "CREATED_DESC" }),
+    body: JSON.stringify(body),
+  });
+}
+
+function deploymentsFilter(ctx: SyncContext, creds: PrefectCreds, offset: number) {
+  return prefectPost(ctx, creds, "/deployments/filter", {
+    limit: PAGE_SIZE,
+    offset,
+    sort: "CREATED_DESC",
   });
 }
 
@@ -61,8 +75,8 @@ export function createPrefectSyncable(options: PrefectSyncableOptions): Syncable
     // The POST /deployments/filter endpoint returns a bare array with no
     // total count; walk a single forward offset pass per cycle, stopping on
     // a short/empty page or the page cap.
-    sync: (ctx, cursor) =>
-      runSinglePassPaginatedSync(ctx, cursor, {
+    async sync(ctx, cursor) {
+      const result = await runSinglePassPaginatedSync(ctx, cursor, {
         ensureRunning: options.ensurePrefectMcpRunning,
         loadCreds: () => loadCreds(ctx),
         pass1Cursor,
@@ -72,6 +86,27 @@ export function createPrefectSyncable(options: PrefectSyncableOptions): Syncable
         parsePage: (parsed) => bareArrayPage(parsed, PAGE_SIZE),
         map: (raw, creds, now) =>
           mapPrefectDeploymentToItem(raw, { apiUrl: creds.apiUrl, syncedAt: now }),
-      }),
+      });
+      // Flow runs are a best-effort second pass: a failure here never fails the deployment sync.
+      const creds = await loadCreds(ctx);
+      if (creds === null) {
+        return result;
+      }
+      try {
+        const runs = await syncPrefectRuns(
+          ctx,
+          (path, body) => prefectPost(ctx, creds, path, body),
+          Date.now(),
+        );
+        return {
+          ...result,
+          itemsUpserted: result.itemsUpserted + runs.upserted,
+          bytesTransferred: (result.bytesTransferred ?? 0) + runs.bytes,
+        };
+      } catch (err) {
+        ctx.logger.warn({ serviceId: SERVICE_ID, err }, "prefect run sync failed");
+        return result;
+      }
+    },
   };
 }

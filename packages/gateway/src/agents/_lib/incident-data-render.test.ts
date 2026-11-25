@@ -15,6 +15,7 @@ describe("renderIncidentData", () => {
       "## Monitored models",
       "## Built from",
       "## Jobs by name",
+      "## Runs of those jobs",
       "## dbt tests",
       "## Merged before the alert",
       "## Schema changes",
@@ -32,6 +33,31 @@ describe("renderIncidentData", () => {
     );
     expect(md).toContain("[orders nightly](https://dbt.example/jobs/1) - dbt (rule: name_match)");
     expect(md).toContain("merged 1970-01-01 00:15 UTC (rule: data:pr_title_or_branch)");
+  });
+
+  test("lists a failed run with its state, timing, failed tasks and trigger; logs are never claimed", () => {
+    const md = renderIncidentData(buildDataBriefFixture());
+    expect(md).toContain(
+      "[orders_etl](https://airflow.example/dags/orders_etl/grid?dag_run_id=r1) - airflow run failed, started 1970-01-01 00:10 UTC, took 5m 0s, failed tasks: `dedupe`, `load_orders` (and 1 more), trigger scheduled (rule: data:run_of_matched_job)",
+    );
+    expect(md).toContain("logs are never indexed");
+  });
+
+  test("an empty run list says no run failed or ran in the window; an old record says runs were not recorded", () => {
+    const none = renderIncidentData(
+      buildDataBriefFixture({
+        data: buildDataLane({
+          runs: [],
+          totals: { lineage: 1, orchestration: 1, prs: 1, runs: 0 },
+        }),
+      }),
+    );
+    expect(none).toContain(
+      "_No run of the jobs listed above failed or ran in the incident window._",
+    );
+    const { runs: _runs, ...old } = buildDataLane();
+    const md = renderIncidentData(buildDataBriefFixture({ data: old }));
+    expect(md).toContain("_Runs were not recorded in this version of the record._");
   });
 
   test("lists schema changes with kind, column and types only, and says what it did not check", () => {
@@ -134,13 +160,15 @@ describe("renderIncidentData", () => {
           lineage: [],
           orchestration: [],
           prs: [],
-          totals: { lineage: 0, orchestration: 0, prs: 0 },
+          runs: [],
+          totals: { lineage: 0, orchestration: 0, prs: 0, runs: 0 },
         }),
       }),
     );
     expect(md).toContain("_No monitored table._");
     expect(md).toContain("_No upstream model recorded for the monitored table._");
     expect(md).toContain("_No orchestration job matched by name._");
+    expect(md).toContain("_No orchestration job matched, so no run was looked up._");
     expect(md).toContain("_No change merged in the 24 hours before the alert matched by name._");
   });
 

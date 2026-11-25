@@ -140,17 +140,19 @@ export function capRecordSize(
         d.prs.length +
         d.lineage.length +
         dbtCount(d) +
-        (d.schemaDiff?.changes.length ?? 0)
+        (d.schemaDiff?.changes.length ?? 0) +
+        (d.runs?.length ?? 0)
       );
     };
     shrink("data", dataLength, (n) => {
       const changes = data.schemaDiff?.changes ?? [];
-      const [lin, orch, prs, dbt, sch] = allocate(n, [
+      const [lin, orch, prs, dbt, sch, runs] = allocate(n, [
         data.lineage.length,
         data.orchestration.length,
         data.prs.length,
         dbtCount(data),
         changes.length,
+        data.runs?.length ?? 0,
       ]);
       work.data = {
         ...data,
@@ -161,6 +163,7 @@ export function capRecordSize(
         ...(data.schemaDiff === undefined
           ? {}
           : { schemaDiff: { ...data.schemaDiff, changes: changes.slice(0, sch) } }),
+        ...(data.runs === undefined ? {} : { runs: data.runs.slice(0, runs) }),
       };
     });
   }

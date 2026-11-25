@@ -34,6 +34,24 @@ export function buildDataLane(over: Partial<DataLane> = {}): DataLane {
         rule: "data:pr_title_or_branch",
       },
     ],
+    runs: [
+      {
+        id: "airflow:orders_etl|r1",
+        service: "airflow",
+        type: "dag_run",
+        job: "orders_etl",
+        state: "failed",
+        outcome: "failed",
+        startMs: 600_000,
+        endMs: 900_000,
+        failedTasks: ["dedupe", "load_orders"],
+        failedTaskCount: 3,
+        trigger: "scheduled",
+        url: "https://airflow.example/dags/orders_etl/grid?dag_run_id=r1",
+        rule: "data:run_of_matched_job",
+      },
+    ],
+    totals: { lineage: 1, orchestration: 1, prs: 1, runs: 1, dbtTests: 1 },
     dbtTests: [
       {
         id: "dbt:1:1:test.shop.not_null_orders_id.ab",
@@ -48,7 +66,6 @@ export function buildDataLane(over: Partial<DataLane> = {}): DataLane {
         rule: "data:dbt_test",
       },
     ],
-    totals: { lineage: 1, orchestration: 1, prs: 1, dbtTests: 1 },
     ...over,
   };
 }

@@ -22,28 +22,42 @@ interface FakeAirflowConfig {
   pages?: Record<string, unknown[]>;
   totalEntries?: number;
   status?: number;
+  // DAG runs and failed task instances served on the run endpoints (a missing list is an empty one).
+  runs?: unknown;
+  failedTasks?: unknown[];
+  // The run endpoints answer HTTP 500.
+  runsFail?: boolean;
 }
 
 interface FakeAirflow {
   baseUrl: string;
   requests: RecordedReq[];
+  runRequests: RecordedReq[];
   stop(): void;
 }
 
 function startFakeAirflow(config: FakeAirflowConfig): FakeAirflow {
   const requests: RecordedReq[] = [];
+  const runRequests: RecordedReq[] = [];
   let server: Server | undefined;
   server = Bun.serve({
     port: 0,
     fetch: (req) => {
       const u = new URL(req.url);
-      requests.push({
+      const isRun = u.pathname.startsWith("/api/v1/dags/~/dagRuns");
+      (isRun ? runRequests : requests).push({
         method: req.method,
         path: u.pathname,
         offset: u.searchParams.get("offset"),
         limit: u.searchParams.get("limit"),
         authorization: req.headers.get("authorization"),
       });
+      if (isRun) {
+        if (config.runsFail === true) return new Response("error", { status: 500 });
+        return u.pathname.endsWith("/taskInstances")
+          ? Response.json({ task_instances: config.failedTasks ?? [] })
+          : Response.json({ dag_runs: config.runs ?? [] });
+      }
       if (u.pathname !== "/api/v1/dags") {
         return new Response("not found", { status: 404 });
       }
@@ -56,7 +70,7 @@ function startFakeAirflow(config: FakeAirflowConfig): FakeAirflow {
     },
   });
   const baseUrl = `http://${server.hostname}:${server.port}`;
-  return { baseUrl, requests, stop: () => server?.stop(true) };
+  return { baseUrl, requests, runRequests, stop: () => server?.stop(true) };
 }
 
 interface Harness {
@@ -246,5 +260,110 @@ describe("airflow-sync against Bun.serve fake API", () => {
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(1);
     expect(h.fake.requests).toHaveLength(1);
+  });
+
+  test("indexes recent DAG runs as metadata only, with the failed task ids", async () => {
+    h = startHarness({
+      pages: { "0": [dag("nightly_etl")] },
+      runs: [
+        {
+          dag_id: "nightly_etl",
+          dag_run_id: "scheduled__2026-06-01",
+          state: "failed",
+          start_date: "2026-06-01T02:00:00+00:00",
+          end_date: "2026-06-01T02:10:00+00:00",
+          run_type: "scheduled",
+          conf: { secret_customer_email: "a@example.com" },
+        },
+        {
+          dag_id: "nightly_etl",
+          dag_run_id: "manual__1",
+          state: "success",
+          start_date: "2026-06-01T03:00:00+00:00",
+          end_date: "2026-06-01T03:01:00+00:00",
+          run_type: "manual",
+        },
+      ],
+      failedTasks: [
+        { dag_id: "nightly_etl", dag_run_id: "scheduled__2026-06-01", task_id: "load_orders" },
+        { dag_id: "nightly_etl", dag_run_id: "scheduled__2026-06-01", task_id: "dedupe" },
+      ],
+    });
+    await setCreds(h);
+    const syncable = createAirflowSyncable({ ensureAirflowMcpRunning: async () => {} });
+    const result = await syncable.sync(h.ctx, null);
+
+    expect(result.itemsUpserted).toBe(3);
+    expect(h.fake.runRequests.some((r) => r.path.endsWith("/taskInstances"))).toBe(true);
+    const rows = h.db
+      .query<{ external_id: string; metadata: string }, []>(
+        "SELECT external_id, metadata FROM item WHERE service = 'airflow' AND type = 'dag_run' ORDER BY external_id",
+      )
+      .all();
+    expect(rows.map((r) => r.external_id)).toEqual([
+      "nightly_etl|manual__1",
+      "nightly_etl|scheduled__2026-06-01",
+    ]);
+    const failed = JSON.parse(rows[1]?.metadata ?? "{}") as Record<string, unknown>;
+    expect(failed["parent_item_id"]).toBe("airflow:nightly_etl");
+    expect(failed["outcome"]).toBe("failed");
+    expect(failed["failed_tasks"]).toEqual(["dedupe", "load_orders"]);
+    expect(failed["duration_ms"]).toBe(600_000);
+    expect(failed["trigger"]).toBe("scheduled");
+    expect(rows[1]?.metadata).not.toContain("secret_customer_email");
+  });
+
+  test("a failing run endpoint never fails the DAG sync", async () => {
+    h = startHarness({ pages: { "0": [dag("a")] }, runsFail: true });
+    await setCreds(h);
+    const syncable = createAirflowSyncable({ ensureAirflowMcpRunning: async () => {} });
+    const result = await syncable.sync(h.ctx, null);
+    expect(result.itemsUpserted).toBe(1);
+    expect(result.cursor?.startsWith("nimbus-airflow1:")).toBe(true);
+    expect(h.fake.runRequests.length).toBeGreaterThan(0);
+  });
+
+  test("the run walk stops at its page cap", async () => {
+    const full = Array.from({ length: 100 }, (_, i) => ({
+      dag_id: "d",
+      dag_run_id: `r${String(i)}`,
+      state: "success",
+    }));
+    h = startHarness({ pages: { "0": [dag("d")] }, runs: full });
+    await setCreds(h);
+    const syncable = createAirflowSyncable({ ensureAirflowMcpRunning: async () => {} });
+    await syncable.sync(h.ctx, null);
+    expect(h.fake.runRequests).toHaveLength(5);
+  });
+
+  test("malformed failed-task rows and a non-list run reply are skipped, never thrown", async () => {
+    h = startHarness({
+      pages: { "0": [dag("nightly_etl")] },
+      runs: [{ dag_id: "nightly_etl", dag_run_id: "r1", state: "failed" }],
+      failedTasks: [
+        null,
+        { dag_run_id: "r1", task_id: "t" },
+        { dag_id: "nightly_etl", task_id: "t" },
+        { dag_id: "nightly_etl", dag_run_id: "r1" },
+        { dag_id: "nightly_etl", dag_run_id: "r1", task_id: "good" },
+      ],
+    });
+    await setCreds(h);
+    const syncable = createAirflowSyncable({ ensureAirflowMcpRunning: async () => {} });
+    await syncable.sync(h.ctx, null);
+    const row = h.db
+      .query<{ metadata: string }, []>(
+        "SELECT metadata FROM item WHERE service = 'airflow' AND type = 'dag_run'",
+      )
+      .get();
+    expect((JSON.parse(row?.metadata ?? "{}") as Record<string, unknown>)["failed_tasks"]).toEqual([
+      "good",
+    ]);
+    h.cleanup();
+
+    h = startHarness({ pages: { "0": [dag("a")] }, runs: { oops: true } });
+    await setCreds(h);
+    const result = await syncable.sync(h.ctx, null);
+    expect(result.itemsUpserted).toBe(1);
   });
 });

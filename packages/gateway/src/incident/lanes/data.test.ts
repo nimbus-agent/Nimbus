@@ -130,8 +130,8 @@ describe("lane 6, data", () => {
     expect(r.lane.orchestration.every((o) => o.rule === "name_match")).toBe(true);
     expect(r.lane.prs.map((p) => p.id)).toEqual([byTitle, byBranch]);
     expect(r.lane.prs.every((p) => p.rule === "data:pr_title_or_branch")).toBe(true);
-    expect(r.lane.totals).toEqual({ lineage: 2, orchestration: 3, prs: 2, dbtTests: 0 });
-    expect(r.gaps.map((g) => g.detail).join(" ")).toContain("DAG-run logs");
+    expect(r.lane.totals).toEqual({ lineage: 2, orchestration: 3, prs: 2, runs: 0, dbtTests: 0 });
+    expect(r.gaps.map((g) => g.detail).join(" ")).toContain("No Airflow run is indexed");
   });
 
   test("an unmatched model gives empty lists, the always-present gaps and no throw", () => {
