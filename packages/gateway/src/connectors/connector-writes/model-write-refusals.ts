@@ -46,6 +46,7 @@ import {
   type RemoteContentFormat,
   remoteContentIn,
 } from "./remote-content.ts";
+import { tagStrippedForms } from "./tag-strip.ts";
 import { foldAndStrip, settle } from "./text-normalise.ts";
 import type { TribalKbConfig } from "./types.ts";
 
@@ -360,66 +361,6 @@ const BROADCAST_RULES: Readonly<Record<BroadcastService, readonly RegExp[]>> = {
   gitlab: [GITLAB_ALL, GITLAB_PATH],
   teams: [TEAMS_AT_TAG, TEAMS_WORDS],
 };
-
-/**
- * The tag-stripped forms a broadcast scan also matches (never rendered or sent anywhere). Each
- * `tag` pattern is applied until the text stops changing and every pass is kept, so a tag split
- * by another tag is seen whole before a later pass removes it. Two tokenisations: innermost-first
- * (`<[^<>]*>`) and greedy (`<[^>]*>`, where `<x<y>` is one tag).
- *
- * The B3r remote-content detectors do NOT reuse this: a strip-and-match form is the shape of an
- * incomplete sanitizer (a tag rebuilt by a strip passes it), so they read the tokens of the
- * structural tokenizer (`markup-tokens.ts`) instead. Here it only ADDS matching forms.
- */
-const TAG_STRIPPERS: ReadonlyArray<(text: string) => string> = [
-  (text) => stripTags(text, true),
-  (text) => stripTags(text, false),
-];
-
-/**
- * Removes every `<...>` run left to right, in one linear pass (the equivalent regular expressions,
- * `/<[^<>]*>/g` and `/<[^>]*>/g`, rescan to the end of the text from every `<` that has no `>`).
- * `innermost`: the run holds no `<` (`<x<y>` removes only `<y>`); otherwise it runs to the first `>`.
- */
-function stripTags(text: string, innermost: boolean): string {
-  let out = "";
-  let from = 0;
-  let at = text.indexOf("<");
-  while (at !== -1) {
-    let close = -1;
-    let stop = at + 1;
-    if (innermost) {
-      while (stop < text.length && text[stop] !== "<" && text[stop] !== ">") stop++;
-      if (text[stop] === ">") close = stop;
-    } else {
-      close = text.indexOf(">", at + 1);
-      if (close === -1) break;
-    }
-    if (close === -1) {
-      // No run starts at `at`; the next candidate is the `<` that stopped the scan.
-      at = text[stop] === "<" ? stop : -1;
-      continue;
-    }
-    out += text.slice(from, at);
-    from = close + 1;
-    at = text.indexOf("<", from);
-  }
-  return out + text.slice(from);
-}
-
-function tagStrippedForms(text: string): string[] {
-  const out: string[] = [];
-  for (const strip of TAG_STRIPPERS) {
-    let prev = text;
-    for (;;) {
-      const next = strip(prev);
-      if (next === prev) break;
-      out.push(next);
-      prev = next;
-    }
-  }
-  return out;
-}
 
 /**
  * OR1: whether `text`, posted to `service`, carries a broadcast mention (see the table above).

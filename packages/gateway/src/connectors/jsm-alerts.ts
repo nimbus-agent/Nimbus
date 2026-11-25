@@ -92,6 +92,24 @@ function isLastPage(
   return cutoffMs !== null && lastUpdated !== null && lastUpdated < cutoffMs;
 }
 
+/** Marks a listing incomplete after a failed or unparseable page (status 0 when the body did not parse). */
+function markFailed(out: Listing, status: number): void {
+  out.complete = false;
+  out.failedStatus = status;
+}
+
+/** Keeps the page's wanted alerts; a page with a skipped record makes the listing incomplete. */
+function keepPage(
+  out: Listing,
+  parsed: { alerts: readonly Record<string, unknown>[]; skipped: number },
+  keep: (a: Record<string, unknown>) => boolean,
+): void {
+  if (parsed.skipped > 0) out.complete = false;
+  for (const a of parsed.alerts) {
+    if (keep(a)) out.alerts.push(a);
+  }
+}
+
 /**
  * Reads up to `JSM_ALERT_MAX_PAGES` pages. `keep` decides which records are kept; `stopWhenOlder` (closed
  * pass and the unfiltered fallback) ends the read at the first page whose LAST alert is older than the
@@ -115,14 +133,10 @@ async function readPages(
     );
     const parsed = res.ok ? parseAlertList(res.text) : null;
     if (parsed === null) {
-      out.complete = false;
-      out.failedStatus = res.ok ? 0 : res.status;
+      markFailed(out, res.ok ? 0 : res.status);
       return out;
     }
-    if (parsed.skipped > 0) out.complete = false;
-    for (const a of parsed.alerts) {
-      if (opts.keep(a)) out.alerts.push(a);
-    }
+    keepPage(out, parsed, opts.keep);
     if (isLastPage(parsed, opts.cutoffMs)) return out;
   }
   // The page cap was reached with a full last page: there may be more.

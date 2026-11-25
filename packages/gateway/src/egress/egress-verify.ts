@@ -1,7 +1,12 @@
 import type { Database } from "bun:sqlite";
 import { GENESIS_HASH } from "../db/audit-chain.ts";
-import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
 import { BOOT_MARKER_METHOD } from "./egress-boot-marker.ts";
+import {
+  type ChainWalk,
+  readAttestedBoundaries,
+  readStartHash,
+  verifyPageRows,
+} from "./egress-chain-walk.ts";
 import {
   ALL_NONE_COVERAGE,
   COVERAGE_CLASSES,
@@ -9,7 +14,6 @@ import {
   parseCoverage,
   weakestCoverage,
 } from "./egress-coverage.ts";
-import { computeEgressRowHash } from "./egress-ledger.ts";
 import { MARKER_SOURCE_TYPES } from "./egress-source-type.ts";
 
 /** Rows read per page while verifying the chain; bounds memory, never the result. */
@@ -98,16 +102,7 @@ export function verifyEgressChain(db: Database, fromId = 0, toId?: number): Egre
   const end = toId === undefined ? Number.MAX_SAFE_INTEGER : Math.floor(toId);
   if (end < start) throw new RangeError("verifyEgressChain: toId is below fromId");
 
-  // Pre-scan: collect every boundary hash attested by a prune tombstone (source_id on prune rows).
-  const attestedBoundaries = new Set<string>(
-    (
-      db
-        .query(
-          `SELECT source_id FROM egress_ledger WHERE source_type = 'prune' AND source_id IS NOT NULL`,
-        )
-        .all() as { source_id: string }[]
-    ).map((r) => r.source_id),
-  );
+  const attestedBoundaries = readAttestedBoundaries(db);
 
   // `payload_summary` is deliberately absent from this SELECT — and it is the widest
   // column in the table (capped at 256 bytes by `redactAuditPayload`, against a handful
@@ -127,63 +122,19 @@ export function verifyEgressChain(db: Database, fromId = 0, toId?: number): Egre
        FROM egress_ledger WHERE id > ? AND id <= ? ORDER BY id ASC LIMIT ?`,
   );
 
-  let prev =
-    start > 0
-      ? ((
-          db.query(`SELECT row_hash FROM egress_ledger WHERE id = ?`).get(start) as
-            | { row_hash: string }
-            | undefined
-        )?.row_hash ?? GENESIS_HASH)
-      : GENESIS_HASH;
-
-  let verified = 0;
-  let isFirst = true;
-  let after = start;
+  const walk: ChainWalk = {
+    prev: readStartHash(db, start),
+    verified: 0,
+    isFirst: true,
+    after: start,
+  };
   for (;;) {
-    const rows = page.all(after, end, VERIFY_PAGE_ROWS);
-    for (const r of rows) {
-      if (!sha256HexEqualConstantTime(r.prev_hash, prev)) {
-        // Accept a boundary mismatch only at the very first row of the walk when the prev_hash is
-        // an attested prune boundary. A mid-chain mismatch is always a real break (fail-closed).
-        if (isFirst && attestedBoundaries.has(r.prev_hash)) {
-          // Legitimate prune boundary: advance `prev` to the attested boundary so the row_hash
-          // recomputation below uses the correct prevHash the row was originally written with.
-          prev = r.prev_hash;
-        } else {
-          return {
-            ok: false,
-            verifiedRows: verified,
-            brokenAt: r.id,
-            reason: `prev_hash mismatch at id ${String(r.id)}`,
-          };
-        }
-      }
-      const expected = computeEgressRowHash({
-        prevHash: prev,
-        timestamp: r.timestamp,
-        sourceType: r.source_type,
-        sourceId: r.source_id,
-        destination: r.destination,
-        method: r.method,
-        hitlStatus: r.hitl_status,
-        resultStatus: r.result_status,
-      });
-      if (!sha256HexEqualConstantTime(expected, r.row_hash)) {
-        return {
-          ok: false,
-          verifiedRows: verified,
-          brokenAt: r.id,
-          reason: `row_hash mismatch at id ${String(r.id)}`,
-        };
-      }
-      prev = r.row_hash;
-      verified += 1;
-      isFirst = false;
-      after = r.id;
-    }
+    const rows = page.all(walk.after, end, VERIFY_PAGE_ROWS);
+    const failure = verifyPageRows(rows, walk, attestedBoundaries);
+    if (failure !== null) return failure;
     if (rows.length < VERIFY_PAGE_ROWS) break;
   }
-  return { ok: true, verifiedRows: verified };
+  return { ok: true, verifiedRows: walk.verified };
 }
 
 export function egressHead(db: Database): { head: string; count: number } {

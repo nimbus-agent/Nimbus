@@ -145,12 +145,7 @@ import { spawnGeneratedTool } from "../toolgen/toolgen-client.ts";
 import { assertToolConfinement } from "../toolgen/toolgen-confinement.ts";
 import { toolgenConsent, toolgenSaveConsent } from "../toolgen/toolgen-consent-broker.ts";
 import { sweepToolgenCredentialsOrWarn } from "../toolgen/toolgen-credential-sweep.ts";
-import {
-  deleteCredentialsForTool,
-  deleteToolCredential,
-  readToolCredential,
-  writeToolCredential,
-} from "../toolgen/toolgen-credentials.ts";
+import { deleteCredentialsForTool, readToolCredential } from "../toolgen/toolgen-credentials.ts";
 import { createDraftToolClosure } from "../toolgen/toolgen-draft.ts";
 import {
   createToolgenDraftLlm,
@@ -251,6 +246,10 @@ import { createSchedulerWithMesh } from "./assemble/scheduler-mesh.ts";
 import { buildStatusReaders } from "./assemble/status-readers.ts";
 import { createStubAutostart, createUnimplementedNotifications } from "./assemble/stubs.ts";
 import { buildTeamCredentialContexts } from "./assemble/team-credentials.ts";
+import {
+  createBindToolCredentials,
+  createRevokeToolCredentials,
+} from "./assemble/toolgen-credential-wiring.ts";
 import { bootTribalKnowledge, tribalKbConfigOf } from "./assemble/tribal-boot.ts";
 import {
   autoUpdateIpcOpts,
@@ -1679,40 +1678,10 @@ export async function assemblePlatformServices(
         toolgenRegistry.markTerminated(envelope.artifact.toolId),
       ),
     requestApproval: (input, ttlMs) => toolgenConsent.request(input, ttlMs),
-    // A SEQUENTIAL per-host write loop -- acceptable because the gate (Task 9) already carries the
-    // compensating guarantee: it records the ATTEMPTED host set and flips its own `credentialsBound`
-    // flag BEFORE awaiting this call, so a throw partway through still leaves the gate with an
-    // accurate cleanup list. No compensating logic belongs here too -- that would be a second place
-    // for the same guarantee to drift from the gate's.
-    bindCredentials: async (toolId, credentials) => {
-      const bound: string[] = [];
-      for (const c of credentials) {
-        await writeToolCredential(vault, toolId, c.host, c.binding); // NOSONAR S9382: Vault WRITES - macOS set() updates `.keyindex.json` by an unlocked read-modify-write, so concurrent sets lose index entries; one at a time also stops at the first failure rather than writing more secrets for a tool that may never register
-        bound.push(c.host);
-      }
-      return bound;
-    },
-    // Idempotent by contract: called on paths where a binding may never have been written, and
-    // `deleteToolCredential` on an absent key is a no-op. `hosts` comes from the GATE's ATTEMPTED
-    // set (Task 9 step 8), never a registry lookup -- the tool is by definition unregistered on
-    // every path that calls this.
-    // EVERY host is attempted even when one delete rejects. Without the per-host guard the first
-    // Vault or keychain error skipped every remaining host, and the gate's `safeRevokeCredentials`
-    // then swallowed it -- so a single transient failure could leave later bearer tokens in the
-    // Vault under a toolId that never registers, which is the exact leak this callback exists to
-    // close. The last error is re-thrown AFTER the loop so the gate stays the single place that
-    // decides to ignore a cleanup failure.
-    revokeCredentials: async (toolId, hosts) => {
-      let lastError: unknown;
-      for (const host of hosts) {
-        try {
-          await deleteToolCredential(vault, toolId, host); // NOSONAR S9382: macOS Vault deletes update `.keyindex.json` by unlocked read-modify-write, so concurrent deletes lose index entries; the per-host catch already attempts every host
-        } catch (err) {
-          lastError = err;
-        }
-      }
-      if (lastError !== undefined) throw lastError;
-    },
+    // The sequential per-host write loop and the every-host-attempted revoke live in
+    // `assemble/toolgen-credential-wiring.ts`, beside the guarantees their docstrings state.
+    bindCredentials: createBindToolCredentials(vault),
+    revokeCredentials: createRevokeToolCredentials(vault),
     now: () => Date.now(),
     newId: () => randomUUID(),
   };

@@ -138,7 +138,12 @@ describe("I61 - long-term episodic memory is opt-in, local-model only, and built
     const runAsk = stripComments(await read("packages/gateway/src/engine/run-ask.ts"));
     expect(runAsk).toContain("recordEpisodicTurn(p, sessionId, result.reply)");
     expect(runAsk).toContain("recallBlockFor(p, atMs)");
-    expect(runAsk).toContain("episodicRecall: memoryBlock");
+    // The recalled block reaches the agent's input through the one builder (`run-ask/conversational.ts`).
+    expect(runAsk).toContain("conversationalAgentParams(p, {");
+    const conversational = stripComments(
+      await read("packages/gateway/src/engine/run-ask/conversational.ts"),
+    );
+    expect(conversational).toContain("episodicRecall: c.memoryBlock");
     // The recorded text is the request's own input, never the prompt built around it.
     const turnHelper = turn.slice(turn.indexOf("export function recordEpisodicTurn"));
     expect(turnHelper).toContain("recordOwnerTurn(sessionId, p.input, reply)");

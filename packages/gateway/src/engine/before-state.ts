@@ -49,16 +49,9 @@
  */
 
 import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
+import { findConnectorWriteRow, isPlainObject } from "../connectors/connector-writes/preview.ts";
 import {
-  findConnectorWriteRow,
-  isPlainObject,
-  sanitisePreviewText,
-} from "../connectors/connector-writes/preview.ts";
-import {
-  BEFORE_STATE_MAX_FIELDS,
   type BeforeGuardContext,
-  type BeforeStateField,
-  type BeforeStateRead,
   type BeforeStateReader,
   type BeforeStateUnavailableReason,
   beforeReaderArgKeys,
@@ -67,6 +60,14 @@ import {
   pickBeforeReaderArgs,
 } from "../connectors/connector-writes/types.ts";
 import { mcpClientToolKey } from "../connectors/lazy-mesh/tool-map.ts";
+import {
+  guardAllows,
+  guardApplies,
+  type Replies,
+  readArgs,
+  selectFields,
+  snapshotGuardContext,
+} from "./before-state-guard.ts";
 import { isOutsideOrigin } from "./outside-origin.ts";
 import { serviceOf } from "./service-of.ts";
 import { extractToolInput } from "./tool-input.ts";
@@ -224,46 +225,6 @@ export function classifyBeforeStateError(err: unknown): "not configured" | "fail
   return msg === "Tool not found" ? "not configured" : "failed";
 }
 
-/** What the selection and the guard see; `alsoReply` is `undefined` exactly when there is no `also`. */
-interface Replies {
-  readonly reply: unknown;
-  readonly alsoReply: unknown;
-  readonly picked: Readonly<Record<string, unknown>>;
-}
-
-/**
- * The reader's fields, sanitised and capped; `undefined` when `select` throws or returns anything
- * but an array of `{ label: string, value: string }`, and, for a Wave 4 row, when no field has a
- * non-blank value. Values are never cut; fields past the cap are
- * counted.
- */
-function selectFields(
-  row: ConnectorWriteRow,
-  reader: BeforeStateReader,
-  replies: Replies,
-): ConnectorWriteBeforeState | undefined {
-  let raw: unknown;
-  try {
-    raw = reader.select(replies.reply, replies.picked, replies.alsoReply);
-  } catch {
-    return undefined;
-  }
-  if (!Array.isArray(raw)) return undefined;
-  const fields: BeforeStateField[] = [];
-  for (const entry of raw as unknown[]) {
-    if (!isPlainObject(entry)) return undefined;
-    const { label, value } = entry;
-    if (typeof label !== "string" || typeof value !== "string") return undefined;
-    fields.push({ label: sanitisePreviewText(label), value: sanitisePreviewText(value) });
-  }
-  // D1: a Wave 4 prompt must show the target as it is now, so a selection that shows nothing (no
-  // field, or only blank values) counts as a failed read, which a Wave 4 row turns into a refusal.
-  if (row.wave === 4 && fields.every((f) => f.value.trim() === "")) return undefined;
-  const shown = fields.slice(0, BEFORE_STATE_MAX_FIELDS);
-  const notShown = fields.length - shown.length;
-  return notShown > 0 ? { status: "ok", fields: shown, notShown } : { status: "ok", fields: shown };
-}
-
 /** The longest captured value (the store caps the whole record far below the table's own limit). */
 export const CAPTURE_VALUE_MAX = 512;
 
@@ -296,80 +257,6 @@ function validCapture(
     out[k] = v;
   }
   return Object.freeze(out);
-}
-
-/** One read's input from its OWN `argKeys` only; `undefined` when it cannot be built. */
-function readArgs(
-  read: BeforeStateRead,
-  input: Readonly<Record<string, unknown>>,
-): Record<string, unknown> | undefined {
-  try {
-    const args = read.args(pickBeforeReaderArgs(read.argKeys, input));
-    return isPlainObject(args) ? args : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/** `v` and everything reachable from it frozen (a value already frozen is not walked again). */
-function deepFreeze<T>(v: T): T {
-  if (typeof v === "object" && v !== null && !Object.isFrozen(v)) {
-    Object.freeze(v);
-    for (const inner of Object.values(v)) deepFreeze(inner);
-  }
-  return v;
-}
-
-/**
- * ONE snapshot of the guard context: the accessor's `kb`, deep-copied and frozen. `undefined`
- * (the config could not be read) when there is no accessor, it throws, it returns a non-object,
- * its `kb` is present but not a plain object (`null`, a string, an array), or the copy fails.
- */
-function snapshotGuardContext(
-  accessor: (() => BeforeGuardContext) | undefined,
-): BeforeGuardContext | undefined {
-  if (accessor === undefined) return undefined;
-  try {
-    const raw: unknown = accessor();
-    if (!isPlainObject(raw)) return undefined;
-    const kb = raw["kb"];
-    if (kb !== undefined && !isPlainObject(kb)) return undefined;
-    return deepFreeze(structuredClone({ kb }) as BeforeGuardContext);
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * Whether the reader's guard applies to this write. Fail closed: a non-object input (nothing to
- * pick) or a throwing `appliesTo` applies; only an exact `false` does not.
- */
-function guardApplies(
-  reader: BeforeStateReader,
-  picked: Readonly<Record<string, unknown>> | undefined,
-  ctx: BeforeGuardContext | undefined,
-): boolean {
-  const guard = reader.guard;
-  if (guard === undefined) return false;
-  if (picked === undefined) return true;
-  try {
-    return guard.appliesTo(picked, ctx) !== false;
-  } catch {
-    return true;
-  }
-}
-
-/** Whether the guard allows the write over these replies: exactly `true`, never a throw. */
-function guardAllows(
-  reader: BeforeStateReader,
-  replies: Replies,
-  ctx: BeforeGuardContext | undefined,
-): boolean {
-  try {
-    return reader.guard?.allows(replies.reply, replies.picked, replies.alsoReply, ctx) === true;
-  } catch {
-    return false;
-  }
 }
 
 type GatedRead =
@@ -447,6 +334,114 @@ function unreadableRowOutcome(row: ConnectorWriteRow): BeforeStateOutcome | unde
   return row.wave === 4 ? refusalOf(WAVE4_BEFORE_REFUSAL) : undefined;
 }
 
+type Located =
+  | { readonly kind: "none"; readonly outcome: BeforeStateOutcome | undefined }
+  | {
+      readonly kind: "reader";
+      readonly row: ConnectorWriteRow;
+      readonly reader: BeforeStateReader;
+    };
+
+/** Phase 1: the write's row and reader, or the outcome for an action that has none to read. */
+function locateReader(
+  action: PlannedAction,
+  rows: readonly ConnectorWriteRow[],
+  options: BeforeStateRunnerOptions,
+): Located {
+  if (!isOutsideOrigin(action) && options.readsEveryOrigin !== true)
+    return { kind: "none", outcome: undefined };
+  const row = findConnectorWriteRow(action, rows);
+  if (row === undefined) return { kind: "none", outcome: undefined };
+  const reader = row.before;
+  if (reader === undefined || row.preview === undefined) {
+    return { kind: "none", outcome: unreadableRowOutcome(row) };
+  }
+  return { kind: "reader", row, reader };
+}
+
+/** Phase 2's result: the guard decision, and what a failed or impossible read becomes. */
+interface ReadStance {
+  readonly picked: Readonly<Record<string, unknown>> | undefined;
+  readonly ctx: BeforeGuardContext | undefined;
+  readonly guarded: boolean;
+  readonly refusal: BeforeStateRefusal;
+  /** A refusal where one is owed (a guard that applies, or a Wave 4 row), else `unavailable`. */
+  readonly fail: (reason: BeforeStateUnavailableReason) => BeforeStateOutcome;
+}
+
+/** Phase 2: whether the guard applies to this write, from its input and ONE config snapshot. */
+function readStance(
+  row: ConnectorWriteRow,
+  reader: BeforeStateReader,
+  input: unknown,
+  guardContext: (() => BeforeGuardContext) | undefined,
+): ReadStance {
+  const picked = isPlainObject(input)
+    ? pickBeforeReaderArgs(beforeReaderArgKeys(reader), input)
+    : undefined;
+  const ctx = reader.guard === undefined ? undefined : snapshotGuardContext(guardContext);
+  const guarded = guardApplies(reader, picked, ctx);
+  // A guard that applies refuses with its own reason; a Wave 4 row without one refuses with the
+  // fixed Wave 4 text. Any other row only shows `unavailable`.
+  const mustRead = guarded || row.wave === 4;
+  const guardReason = guarded ? reader.guard?.reason : undefined;
+  const refusal = refusalOf(guardReason ?? WAVE4_BEFORE_REFUSAL);
+  return {
+    picked,
+    ctx,
+    guarded,
+    refusal,
+    fail: (reason) => (mustRead ? refusal : unavailable(reason)),
+  };
+}
+
+/** Phase 3: the first read, and `also` when declared; `undefined` when either cannot be built. */
+function planReads(
+  row: ConnectorWriteRow,
+  reader: BeforeStateReader,
+  input: unknown,
+  picked: Readonly<Record<string, unknown>> | undefined,
+  readerUnlisted: boolean,
+):
+  | {
+      readonly first: PlannedAction;
+      readonly second: PlannedAction | undefined;
+      readonly picked: Readonly<Record<string, unknown>>;
+    }
+  | undefined {
+  if (readerUnlisted || picked === undefined || !isPlainObject(input)) return undefined;
+  const args = readArgs(reader, input);
+  const also = reader.also;
+  const alsoArgs = also === undefined ? undefined : readArgs(also, input);
+  if (args === undefined || (also !== undefined && alsoArgs === undefined)) return undefined;
+  const service = serviceOf(row.actionType);
+  const first = beforeReadAction(service, reader.tool, args);
+  const second =
+    also === undefined || alsoArgs === undefined
+      ? undefined
+      : beforeReadAction(service, also.tool, alsoArgs);
+  return { first, second, picked };
+}
+
+/** Phase 5: the guard's verdict over the replies, then the fields shown and any capture. */
+function finishRead(
+  action: PlannedAction,
+  row: ConnectorWriteRow,
+  reader: BeforeStateReader,
+  replies: Replies,
+  stance: ReadStance,
+  onCaptured: BeforeStateRunnerOptions["onCaptured"],
+): BeforeStateOutcome {
+  if (stance.guarded && !guardAllows(reader, replies, stance.ctx)) return stance.refusal;
+  const shown = selectFields(row, reader, replies);
+  if (shown === undefined) return stance.fail("failed");
+  if (onCaptured !== undefined) {
+    const captured = validCapture(reader, replies);
+    if (captured !== undefined) onCaptured(action, captured);
+  }
+  return shown;
+}
+
 export function createBeforeStateRunner(options: BeforeStateRunnerOptions = {}): BeforeStateRunner {
   const rows = options.rows ?? CONNECTOR_WRITE_ROWS;
   const timeoutMs = options.timeoutMs ?? BEFORE_STATE_TIMEOUT_MS;
@@ -497,54 +492,28 @@ export function createBeforeStateRunner(options: BeforeStateRunnerOptions = {}):
   return {
     rows,
     async read(action, ops, opts = {}) {
-      if (!isOutsideOrigin(action) && options.readsEveryOrigin !== true) return undefined;
-      const row = findConnectorWriteRow(action, rows);
-      if (row === undefined) return undefined;
-      const reader = row.before;
-      if (reader === undefined || row.preview === undefined) return unreadableRowOutcome(row);
+      // 1. The row: only an outside-origin action (or any, for the workflow runner), and only a row
+      //    that declares a reader and a preview.
+      const located = locateReader(action, rows, options);
+      if (located.kind === "none") return located.outcome;
+      const { row, reader } = located;
+      // 2. Whether the guard applies, decided FIRST from the input and ONE config snapshot (the
+      //    one `allows` gets), so every failure below refuses instead of `unavailable`.
       const input = extractToolInput(action);
-      const picked = isPlainObject(input)
-        ? pickBeforeReaderArgs(beforeReaderArgKeys(reader), input)
-        : undefined;
-      // Whether the guard applies is decided FIRST, from the write's input and ONE config
-      // snapshot (the same one `allows` gets), so every early exit and every failure below
-      // refuses instead of showing `unavailable`.
-      const ctx =
-        reader.guard === undefined ? undefined : snapshotGuardContext(options.guardContext);
-      const guarded = guardApplies(reader, picked, ctx);
-      // A guard that applies refuses with its own reason; a Wave 4 row without one refuses with
-      // the fixed Wave 4 text. Any other row only shows `unavailable`.
-      const mustRead = guarded || row.wave === 4;
-      const guardReason = guarded ? reader.guard?.reason : undefined;
-      const refusal = refusalOf(guardReason ?? WAVE4_BEFORE_REFUSAL);
-      const fail = (reason: BeforeStateUnavailableReason): BeforeStateOutcome =>
-        mustRead ? refusal : unavailable(reason);
-      if (opts.readerUnlisted === true || picked === undefined || !isPlainObject(input)) {
-        return fail("failed");
-      }
-      const args = readArgs(reader, input);
-      const also = reader.also;
-      const alsoArgs = also === undefined ? undefined : readArgs(also, input);
-      if (args === undefined || (also !== undefined && alsoArgs === undefined)) {
-        return fail("failed");
-      }
-      const service = serviceOf(row.actionType);
-      const first = beforeReadAction(service, reader.tool, args);
-      const second =
-        also === undefined || alsoArgs === undefined
-          ? undefined
-          : beforeReadAction(service, also.tool, alsoArgs);
-      const outcome = await race((spent) => readInOrder(first, second, ops, spent));
-      if (outcome.kind === "unavailable") return fail(outcome.reason);
-      const replies: Replies = { reply: outcome.reply, alsoReply: outcome.alsoReply, picked };
-      if (guarded && !guardAllows(reader, replies, ctx)) return refusal;
-      const shown = selectFields(row, reader, replies);
-      if (shown === undefined) return fail("failed");
-      if (options.onCaptured !== undefined) {
-        const captured = validCapture(reader, replies);
-        if (captured !== undefined) options.onCaptured(action, captured);
-      }
-      return shown;
+      const stance = readStance(row, reader, input, options.guardContext);
+      // 3. The reads to run; none can be built when the reader tool is unlisted or an `args` fails.
+      const plan = planReads(row, reader, input, stance.picked, opts.readerUnlisted === true);
+      if (plan === undefined) return stance.fail("failed");
+      // 4. The reads, in order, against ONE cap.
+      const outcome = await race((spent) => readInOrder(plan.first, plan.second, ops, spent));
+      if (outcome.kind === "unavailable") return stance.fail(outcome.reason);
+      // 5. The guard's verdict over the replies, then the fields shown (and any capture).
+      const replies: Replies = {
+        reply: outcome.reply,
+        alsoReply: outcome.alsoReply,
+        picked: plan.picked,
+      };
+      return finishRead(action, row, reader, replies, stance, options.onCaptured);
     },
   };
 }
