@@ -16,79 +16,76 @@ type AskArgs = {
   computer?: string;
 };
 
+type AskFlags = Omit<AskArgs, "rest" | "devil"> & { devil: boolean };
+
+/**
+ * The valued flags that must never silently vanish or leak into the question: dropping `--at` would
+ * answer from CURRENT data a question that asked for an earlier time, and `--computer` names the
+ * computer-use session the model may drive (I35, OR-MCU-1), an id `nimbus computer` printed.
+ */
+const REQUIRED_VALUE: Readonly<Record<string, { key: "at" | "computer"; missing: string }>> = {
+  "--at": {
+    key: "at",
+    missing: "--at needs a time (e.g. 2026-11-11T09:00, yesterday-09:00, -2h)",
+  },
+  "--computer": {
+    key: "computer",
+    missing: "--computer needs the session id `nimbus computer` printed",
+  },
+};
+
+/** The flags whose value is taken only when one follows. */
+const OPTIONAL_VALUE: Readonly<Record<string, "sessionId" | "agent">> = {
+  "--session": "sessionId",
+  "--agent": "agent",
+};
+
+/** Takes the flag at `i` into `flags`; the number of arguments it used, or 0 for a question word. */
+function takeAskFlag(flags: AskFlags, args: string[], i: number): number {
+  const a = args[i] as string;
+  const v = args[i + 1];
+  const required = Object.hasOwn(REQUIRED_VALUE, a) ? REQUIRED_VALUE[a] : undefined;
+  if (required !== undefined) {
+    if (v === undefined || v.trim() === "" || v.startsWith("--")) throw new Error(required.missing);
+    flags[required.key] = v;
+    return 2;
+  }
+  const optional = Object.hasOwn(OPTIONAL_VALUE, a) ? OPTIONAL_VALUE[a] : undefined;
+  if (optional !== undefined && v !== undefined) {
+    flags[optional] = v;
+    return 2;
+  }
+  // A valueless flag: consumed here so it never reaches `rest` and gets joined into the
+  // question, which would ask the model to reason about the literal text "--devil".
+  if (a === "--devil") {
+    flags.devil = true;
+    return 1;
+  }
+  return 0;
+}
+
 function parseAskArgs(args: string[]): AskArgs {
   const rest: string[] = [];
-  let sessionId: string | undefined;
-  let agent: string | undefined;
-  let devil = false;
-  let at: string | undefined;
-  let computer: string | undefined;
+  const flags: AskFlags = { devil: false };
   for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    // A valued flag that must never silently vanish or leak into the question: dropping it would answer
-    // from CURRENT data a question that asked for an earlier time.
-    if (a === "--at") {
-      const v = args[i + 1];
-      if (v === undefined || v.trim() === "" || v.startsWith("--")) {
-        throw new Error("--at needs a time (e.g. 2026-11-11T09:00, yesterday-09:00, -2h)");
-      }
-      at = v;
-      i += 1;
-      continue;
-    }
-    // The computer-use session the model may drive (I35, OR-MCU-1): an id `nimbus computer` printed.
-    // Valued and never silently dropped, for the same reason as `--at`.
-    if (a === "--computer") {
-      const v = args[i + 1];
-      if (v === undefined || v.trim() === "" || v.startsWith("--")) {
-        throw new Error("--computer needs the session id `nimbus computer` printed");
-      }
-      computer = v;
-      i += 1;
-      continue;
-    }
-    if (a === "--session" && args[i + 1] !== undefined) {
-      sessionId = args[i + 1];
-      i += 1;
-      continue;
-    }
-    if (a === "--agent" && args[i + 1] !== undefined) {
-      agent = args[i + 1];
-      i += 1;
-      continue;
-    }
-    // A valueless flag: consumed here so it never reaches `rest` and gets joined into the
-    // question, which would ask the model to reason about the literal text "--devil".
-    if (a === "--devil") {
-      devil = true;
-      continue;
-    }
-    if (a !== undefined) {
-      rest.push(a);
-    }
+    const used = takeAskFlag(flags, args, i);
+    if (used === 0) rest.push(args[i] as string);
+    else i += used - 1;
   }
+  const { sessionId, agent, devil, at, computer } = flags;
   if (computer !== undefined && at !== undefined) {
     throw new Error(
       "--computer cannot be combined with --at: a point-in-time answer drives nothing",
     );
   }
-  const out: AskArgs = { rest };
-  if (computer !== undefined) {
-    out.computer = computer;
-  }
-  if (sessionId !== undefined) {
-    out.sessionId = sessionId;
-  }
-  if (agent !== undefined) {
-    out.agent = agent;
-  }
-  if (devil) {
-    out.devil = true;
-  }
-  if (at !== undefined) {
-    out.at = at;
-  }
-  return out;
+  return {
+    rest,
+    ...(computer === undefined ? {} : { computer }),
+    ...(sessionId === undefined ? {} : { sessionId }),
+    ...(agent === undefined ? {} : { agent }),
+    ...(devil ? { devil: true } : {}),
+    ...(at === undefined ? {} : { at }),
+  };
 }
 
 /**

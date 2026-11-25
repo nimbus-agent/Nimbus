@@ -3,9 +3,20 @@ import type { SyncContext } from "../sync/types.ts";
 import { usableActorEmail } from "./actor-email.ts";
 import { basicAuthHeader } from "./atlassian-api-sync-helpers.ts";
 import { isAtlassianCloudId } from "./atlassian-cloud-id.ts";
+import {
+  type Participant,
+  parseJson,
+  parseParticipants,
+  parseSchedules,
+  type Schedule,
+  type SchedulePage,
+} from "./jsm-oncall-parse.ts";
 import { type OncallShiftInput, upsertOncallShift } from "./oncall-shift-items.ts";
 import type { OncallOutcome } from "./pagerduty-oncall.ts";
-import { asRecord, stringField } from "./unknown-record.ts";
+import { stringField } from "./unknown-record.ts";
+
+// The reply parsers live in `jsm-oncall-parse.ts`; every importer of this path keeps its names.
+export { parseParticipants, parseSchedules, type SchedulePage } from "./jsm-oncall-parse.ts";
 
 /**
  * The Jira Service Management Operations half of the on-call refresh (Phase 10 MB3), inside the existing
@@ -27,7 +38,6 @@ const REQUEST_TIMEOUT_MS = 30_000;
 const RATE_LIMIT_PENALTY_MS = 60_000;
 /** Exported for the alert pass (`jsm-alerts.ts`), which validates an alert id before it enters a path. */
 export const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
-const SAFE_ACCOUNT_ID = /^[A-Za-z0-9:_.-]{1,128}$/;
 
 export interface JsmCreds {
   token: string;
@@ -106,26 +116,6 @@ export async function jsmGet(
   }
 }
 
-function parseJson(text: string): Record<string, unknown> | undefined {
-  try {
-    return asRecord(JSON.parse(text) as unknown);
-  } catch {
-    return undefined;
-  }
-}
-
-/** The body at the root or under `data` / `result`, whichever carries `key`. */
-function bodyWith(
-  root: Record<string, unknown> | undefined,
-  keys: readonly string[],
-): Record<string, unknown> | undefined {
-  if (root === undefined) return undefined;
-  for (const candidate of [root, asRecord(root["data"]), asRecord(root["result"])]) {
-    if (candidate !== undefined && keys.some((k) => k in candidate)) return candidate;
-  }
-  return undefined;
-}
-
 function isAtlassianNetSite(baseUrl: string): boolean {
   try {
     const u = new URL(baseUrl);
@@ -176,56 +166,6 @@ async function accountIdOf(ctx: SyncContext, creds: JsmCreds): Promise<string | 
   return id === undefined || id === "" ? null : id;
 }
 
-type Schedule = { id: string; name: string };
-
-export type SchedulePage = {
-  schedules: Schedule[];
-  /** Entries that carried no usable id: the page is not a complete list. */
-  skipped: number;
-  /** The raw `links.next`, or null when there is none. */
-  next: string | null;
-};
-
-/**
- * One `/schedules` page (`values`, `schedules` or a bare list) with its `links.next`. Null when the reply
- * is not that shape, or `links.next` is present but not a string.
- */
-export function parseSchedules(text: string): SchedulePage | null {
-  let root: unknown;
-  try {
-    root = JSON.parse(text) as unknown;
-  } catch {
-    return null;
-  }
-  const rec = asRecord(root);
-  const holder = bodyWith(rec, ["values", "schedules"]);
-  const list = Array.isArray(root)
-    ? (root as unknown[])
-    : (holder?.["values"] ?? holder?.["schedules"]);
-  if (!Array.isArray(list)) return null;
-  let next: string | null = null;
-  const links = holder === undefined ? undefined : holder["links"];
-  if (links !== undefined) {
-    const linkRec = asRecord(links);
-    if (linkRec === undefined) return null;
-    const raw = linkRec["next"];
-    if (typeof raw === "string" && raw !== "") next = raw;
-    else if (raw !== undefined && raw !== null) return null;
-  }
-  const schedules: Schedule[] = [];
-  let skipped = 0;
-  for (const raw of list) {
-    const s = asRecord(raw);
-    const id = s === undefined ? undefined : stringField(s, "id");
-    if (s === undefined || id === undefined) {
-      skipped += 1;
-      continue;
-    }
-    schedules.push({ id, name: stringField(s, "name") ?? id });
-  }
-  return { schedules, skipped, next };
-}
-
 /**
  * The URL a `links.next` points at, or null when it must not be followed. Atlassian documents the link as a
  * path relative to the Operations API base (`/v1/schedules?offset=50&size=25`), so a value starting with
@@ -252,69 +192,6 @@ export function resolvePinnedNextUrl(next: string, cloudId: string): string | nu
     u.hash === "" &&
     u.pathname === `${rootUrl.pathname}/${cloudId}/v1/schedules`;
   return pinned ? u.toString() : null;
-}
-
-type Participant = { id: string; name: string };
-
-const NESTED_KEYS = ["onCallParticipants", "nextOnCallParticipants"] as const;
-const MAX_NESTING = 4;
-
-/** `unreadableUsers` counts entries typed `user` whose id cannot be used: they block a replacement. */
-type Walk = { users: Map<string, Participant>; skipped: number; unreadableUsers: number };
-
-/** Walks a participant list; false when any list has the wrong type or nests deeper than allowed. */
-function walkParticipants(list: unknown, depth: number, out: Walk): boolean {
-  if (!Array.isArray(list) || depth > MAX_NESTING) return false;
-  for (const raw of list) {
-    const p = asRecord(raw);
-    if (p === undefined) {
-      out.skipped += 1;
-      continue;
-    }
-    const id = stringField(p, "id");
-    const type = stringField(p, "type")?.toLowerCase();
-    if (type === "user") {
-      if (id === undefined || !SAFE_ACCOUNT_ID.test(id)) {
-        out.skipped += 1;
-        out.unreadableUsers += 1;
-      } else if (!out.users.has(id)) {
-        out.users.set(id, { id, name: stringField(p, "name") ?? id });
-      }
-      continue;
-    }
-    // An escalation (or any non-user) may carry the users it resolves to under a nested list.
-    const nested = NESTED_KEYS.filter((k) => k in p);
-    if (nested.length === 0) {
-      out.skipped += 1;
-      continue;
-    }
-    for (const k of nested) {
-      if (!walkParticipants(p[k], depth + 1, out)) return false;
-    }
-  }
-  return true;
-}
-
-/**
- * The user participants of an on-calls reply (nested escalation participants included, each user once), and
- * how many participants were skipped. Null when the reply is not the expected shape: no key present, the
- * selected key is not a list, or a nested list is malformed.
- */
-export function parseParticipants(
-  text: string,
-  keys: readonly string[],
-): { users: Participant[]; skipped: number; unreadableUsers: number } | null {
-  const body = bodyWith(parseJson(text), keys);
-  if (body === undefined) return null;
-  const key = keys.find((k) => k in body);
-  if (key === undefined) return null;
-  const out: Walk = { users: new Map(), skipped: 0, unreadableUsers: 0 };
-  if (!walkParticipants(body[key], 0, out)) return null;
-  return {
-    users: [...out.users.values()],
-    skipped: out.skipped,
-    unreadableUsers: out.unreadableUsers,
-  };
 }
 
 const CURRENT_KEYS = ["onCallParticipants"] as const;
@@ -349,16 +226,22 @@ function toShift(
 
 type ReadSchedules = { keep: string[]; complete: boolean; skipped: number };
 
+/** What every schedule's read of one refresh shares. */
+type ScheduleReadCtx = {
+  readonly ctx: SyncContext;
+  readonly creds: JsmCreds;
+  readonly root: string;
+  readonly accountId: string | null;
+  readonly nowMs: number;
+  readonly remaining: Remaining;
+};
+
 async function readSchedule(
-  ctx: SyncContext,
-  creds: JsmCreds,
-  root: string,
+  rc: ScheduleReadCtx,
   schedule: Schedule,
-  accountId: string | null,
-  nowMs: number,
   acc: ReadSchedules,
-  remaining: Remaining,
 ): Promise<void> {
+  const { ctx, creds, root, accountId, nowMs, remaining } = rc;
   const base = `${root}/schedules/${encodeURIComponent(schedule.id)}`;
   for (const [path, keys, shift] of [
     ["on-calls", CURRENT_KEYS, "current"],
@@ -478,6 +361,7 @@ export async function runJsmOncall(
   const found = await collectSchedules(ctx, creds, id.cid, first, remaining);
   const capped = found.capped;
   const acc: ReadSchedules = { keep: [], complete: found.complete, skipped: found.skipped };
+  const rc: ScheduleReadCtx = { ctx, creds, root, accountId, nowMs, remaining };
   for (const schedule of found.schedules) {
     if (!SAFE_ID.test(schedule.id)) {
       acc.skipped += 1;
@@ -488,7 +372,7 @@ export async function runJsmOncall(
       acc.complete = false;
       break;
     }
-    await readSchedule(ctx, creds, root, schedule, accountId, nowMs, acc, remaining);
+    await readSchedule(rc, schedule, acc);
   }
   const deleted = acc.complete ? ctx.replaceItemSet(ONCALL_SHIFT_ITEM_TYPE, acc.keep) : 0;
   const outcome = { complete: acc.complete, upserted: acc.keep.length, deleted };

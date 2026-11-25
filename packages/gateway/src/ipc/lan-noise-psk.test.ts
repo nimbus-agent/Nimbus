@@ -69,7 +69,7 @@ function xxPatternFor(protocolName: string): HandshakePattern {
 
 describe("Noise XX with psk tokens, published vectors", () => {
   test("the fixture is not empty and covers psk0 and a late psk", () => {
-    expect(fixture.vectors.length).toBe(5);
+    expect(fixture.vectors).toHaveLength(5);
     const names = fixture.vectors.map((v) => v.protocol_name);
     expect(names.some((n) => n.includes("psk0"))).toBe(true);
     expect(names).toContain("Noise_XXpsk3_25519_AESGCM_SHA256");
@@ -161,8 +161,8 @@ describe("XXpsk0 (random keys)", () => {
     initiator.readMessage(responder.writeMessage(EMPTY));
     responder.readMessage(initiator.writeMessage(EMPTY));
     expect(toHex(initiator.handshakeHash())).toBe(toHex(responder.handshakeHash()));
-    expect(initiator.remoteStatic().length).toBe(32);
-    expect(responder.remoteStatic().length).toBe(32);
+    expect(initiator.remoteStatic()).toHaveLength(32);
+    expect(responder.remoteStatic()).toHaveLength(32);
   });
 
   test("a different psk fails at message 1, with the one fixed error", () => {

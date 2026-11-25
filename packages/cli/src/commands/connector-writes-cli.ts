@@ -3,6 +3,14 @@ import { declareCliClientKind } from "../lib/declare-client-kind.ts";
 import { INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { stripControl } from "./captures-format.ts";
+import {
+  type DoorFlag,
+  type Parsed,
+  parseEnableArgs,
+  takeDoor,
+  USER_MCP_ID,
+  type WaveFlag,
+} from "./connector-writes-enable-args.ts";
 
 /** What a call needs beyond the method: the agent door's approval is a person's alone. */
 export interface ConnectorWritesCallOptions {
@@ -203,154 +211,6 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-type Parsed<T> =
-  | { readonly ok: true; readonly value: T }
-  | {
-      readonly ok: false /** A second line that says why, when the usage alone would not. */;
-      readonly note?: string;
-    };
-
-/** The id shape of an owner-registered user MCP server (the gateway's `USER_MCP_SERVICE_ID_PATTERN`). */
-const USER_MCP_ID = /^mcp_[a-z0-9_]{1,62}$/;
-
-/** The approved scope of `enable iac` (D2): every flag repeats, `--cloud` also takes a comma list. */
-interface IacScope {
-  workdirs: string[];
-  clouds: string[];
-  regions: string[];
-  net: string[];
-}
-
-/** One `--grant <namespace>@<context>`, split at the FIRST `@` (a namespace is a DNS label; a context may hold `@`). */
-interface K8sGrantArg {
-  namespace: string;
-  context: string;
-}
-
-function parseGrantArg(v: string): K8sGrantArg | undefined {
-  const at = v.indexOf("@");
-  if (at <= 0 || at === v.length - 1) return undefined;
-  return { namespace: v.slice(0, at), context: v.slice(at + 1) };
-}
-
-const IAC_FLAGS: Readonly<Record<string, keyof IacScope>> = {
-  "--workdir": "workdirs",
-  "--cloud": "clouds",
-  "--region": "regions",
-  "--net": "net",
-};
-
-/** Takes the value of an `enable iac` scope flag into its list; false when the value is missing. */
-function takeIacValue(iac: IacScope, key: keyof IacScope, v: string | undefined): boolean {
-  if (v === undefined || v === "") return false;
-  iac[key].push(...(key === "clouds" ? v.split(",") : [v]));
-  return true;
-}
-
-interface EnableFlags {
-  wave: 2 | 3 | 4 | undefined;
-  iac: IacScope;
-  grants: K8sGrantArg[];
-  /** `--door agent`: the owner's approval list for outside agents. */
-  door: "model" | "agent" | undefined;
-  approve: string[];
-}
-
-/** Whether `a` is one of the `enable` flags that take a value. */
-function isEnableValueFlag(a: string): boolean {
-  return (
-    a === "--wave" ||
-    a === "--grant" ||
-    a === "--door" ||
-    a === "--approve" ||
-    Object.hasOwn(IAC_FLAGS, a)
-  );
-}
-
-/** `--door agent|model`, given at most once; false for anything else. */
-function takeDoor(flags: { door: "model" | "agent" | undefined }, v: string | undefined): boolean {
-  if ((v !== "agent" && v !== "model") || flags.door !== undefined) return false;
-  flags.door = v;
-  return true;
-}
-
-/** Takes one `enable` flag's value into `flags`; false when the value is missing or malformed. */
-function takeEnableFlag(flags: EnableFlags, a: string, v: string | undefined): boolean {
-  if (a === "--wave") {
-    if (v !== "2" && v !== "3" && v !== "4") return false;
-    flags.wave = Number(v) as 2 | 3 | 4;
-    return true;
-  }
-  if (a === "--door") return takeDoor(flags, v);
-  if (a === "--approve") {
-    if (v === undefined || v === "") return false;
-    flags.approve.push(v);
-    return true;
-  }
-  if (a === "--grant") {
-    const g = parseGrantArg(v ?? "");
-    if (g === undefined) return false;
-    flags.grants.push(g);
-    return true;
-  }
-  return takeIacValue(flags.iac, IAC_FLAGS[a] as keyof IacScope, v);
-}
-
-function parseEnableArgs(tail: string[]): Parsed<{
-  service: string;
-  wave: 2 | 3 | 4 | undefined;
-  iac: IacScope;
-  grants: K8sGrantArg[];
-  agent: boolean;
-  approve: string[];
-}> {
-  let service: string | undefined;
-  const flags: EnableFlags = {
-    wave: undefined,
-    iac: { workdirs: [], clouds: [], regions: [], net: [] },
-    grants: [],
-    door: undefined,
-    approve: [],
-  };
-  for (let i = 0; i < tail.length; i++) {
-    const a = tail[i] as string;
-    if (isEnableValueFlag(a)) {
-      if (!takeEnableFlag(flags, a, tail[++i])) return { ok: false };
-    } else if (a.startsWith("-") || service !== undefined) {
-      return { ok: false };
-    } else {
-      service = a;
-    }
-  }
-  const { wave, iac, grants, approve } = flags;
-  const agent = flags.door === "agent";
-  const hasIac = Object.values(iac).some((l) => l.length > 0);
-  if (service === undefined) return { ok: false };
-  if (USER_MCP_ID.test(service)) {
-    // A user MCP server has one door (outside agents) and no waves: say so instead of a bare usage.
-    if (!agent) {
-      return {
-        ok: false,
-        note: "A user MCP server is approved for outside agents only: add --door agent.",
-      };
-    }
-    if (wave !== undefined) {
-      return { ok: false, note: "A user MCP server has no waves; do not pass --wave." };
-    }
-  }
-  // `--approve` belongs to the agent door; the agent door reads the model's scope and takes none.
-  if (approve.length > 0 && !agent) return { ok: false };
-  if (agent) {
-    if (hasIac || grants.length > 0) return { ok: false };
-    return { ok: true, value: { service, wave, iac, grants, agent, approve } };
-  }
-  // The scope flags belong to `iac` alone: any other service would silently ignore them.
-  if (hasIac && service !== "iac") return { ok: false };
-  // `--grant` belongs to `kubernetes` alone, and `kubernetes` needs at least one.
-  if (grants.length > 0 !== (service === "kubernetes")) return { ok: false };
-  return { ok: true, value: { service, wave, iac, grants, agent, approve } };
-}
-
 async function runEnable(d: ConnectorWritesDeps, tail: string[]): Promise<void> {
   const parsed = parseEnableArgs(tail);
   if (!parsed.ok) {
@@ -387,7 +247,7 @@ async function runEnable(d: ConnectorWritesDeps, tail: string[]): Promise<void> 
 async function runAgentEnable(
   d: ConnectorWritesDeps,
   service: string,
-  wave: 2 | 3 | 4 | undefined,
+  wave: WaveFlag,
   approve: string[],
 ): Promise<void> {
   try {
@@ -467,9 +327,8 @@ function logUserMcpTools(
   const todo = tools.filter((t) => t.state !== "already_approved");
   if (todo.length > 0) {
     d.log("To approve tools for outside agents, name each one:");
-    d.log(
-      `  nimbus connector writes enable ${service} --door agent ${todo.map((t) => `--approve ${clean(t.toolId)}`).join(" ")}`,
-    );
+    const approveFlags = todo.map((t) => `--approve ${clean(t.toolId)}`).join(" ");
+    d.log(`  nimbus connector writes enable ${service} --door agent ${approveFlags}`);
   } else if (tools.length > 0) {
     d.log("Every listed tool is approved for outside agents already.");
   }
@@ -514,7 +373,7 @@ function parseDisableArgs(tail: string[]): Parsed<{ service: string; agent: bool
   if (service === undefined || service.startsWith("-")) return { ok: false };
   const rest = tail.slice(1);
   if (rest.length === 0) return { ok: true, value: { service, agent: false } };
-  const flags: { door: "model" | "agent" | undefined } = { door: undefined };
+  const flags: { door: DoorFlag } = { door: undefined };
   // Only `--door agent` is a door here: a model disable has no door, and `--door model` would send a
   // plain (full) disable that also removes the agent list.
   if (rest.length !== 2 || rest[0] !== "--door" || rest[1] !== "agent" || !takeDoor(flags, rest[1]))

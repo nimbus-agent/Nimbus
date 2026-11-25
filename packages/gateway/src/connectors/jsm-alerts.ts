@@ -79,6 +79,20 @@ function listUrl(root: string, offset: number, query: string | null): string {
 }
 
 /**
+ * Whether a page ends the read: a short page is the last one, and (with a cutoff) a page whose LAST alert
+ * is older than the cutoff ends it too, since the list is sorted by `updatedAt` descending.
+ */
+function isLastPage(
+  parsed: { alerts: readonly Record<string, unknown>[]; skipped: number },
+  cutoffMs: number | null,
+): boolean {
+  if (parsed.alerts.length + parsed.skipped < JSM_ALERT_PAGE_SIZE) return true;
+  const last = parsed.alerts.at(-1);
+  const lastUpdated = last === undefined ? null : updatedAtOf(last);
+  return cutoffMs !== null && lastUpdated !== null && lastUpdated < cutoffMs;
+}
+
+/**
  * Reads up to `JSM_ALERT_MAX_PAGES` pages. `keep` decides which records are kept; `stopWhenOlder` (closed
  * pass and the unfiltered fallback) ends the read at the first page whose LAST alert is older than the
  * cutoff, since the list is sorted by `updatedAt` descending.
@@ -109,11 +123,7 @@ async function readPages(
     for (const a of parsed.alerts) {
       if (opts.keep(a)) out.alerts.push(a);
     }
-    const last = parsed.alerts.at(-1);
-    const lastUpdated = last === undefined ? null : updatedAtOf(last);
-    const olderThanCutoff =
-      opts.cutoffMs !== null && lastUpdated !== null && lastUpdated < opts.cutoffMs;
-    if (parsed.alerts.length + parsed.skipped < JSM_ALERT_PAGE_SIZE || olderThanCutoff) return out;
+    if (isLastPage(parsed, opts.cutoffMs)) return out;
   }
   // The page cap was reached with a full last page: there may be more.
   out.complete = false;

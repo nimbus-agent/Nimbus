@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.5 inputHash=sha256:87d13af91f2a4ced7a4a1de7382f4d070109f0dbfdb65933f09a5d64a8cd773c
+// nimbus-action-dist bun=1.4.5 inputHash=sha256:b805ab100e950852c69fa06b50f1129b407b1a756943de8f7bd457d75ea23bff
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -5421,6 +5421,26 @@ var FS_DENIED_CODES = new Set(["EACCES", "EPERM", "EBUSY"]);
 // ../../registry-format/src/index-format.ts
 var import_tweetnacl3 = __toESM(require_nacl_fast(), 1);
 
+// ../../registry-format/src/json-file.ts
+function decodeJsonFile(bytes, name, maxBytes, invalid) {
+  if (bytes.byteLength > maxBytes) {
+    throw new RegistryError("ERR_REGISTRY_TOO_LARGE", `${name} exceeds ${String(maxBytes)} bytes`);
+  }
+  let text;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    throw invalid(`${name} is not valid UTF-8`);
+  }
+  if (text.startsWith("\uFEFF"))
+    text = text.slice(1);
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw invalid(`${name} is not valid JSON`);
+  }
+}
+
 // ../../registry-format/src/manifest.ts
 var import_semver = __toESM(require_semver2(), 1);
 
@@ -6138,23 +6158,7 @@ function readStatementList(raw) {
   return { statements, dropped, unknownKinds };
 }
 function parseTrustFeed(bytes) {
-  if (bytes.byteLength > MAX_TRUST_FEED_BYTES) {
-    throw new RegistryError("ERR_REGISTRY_TOO_LARGE", `trust.json exceeds ${String(MAX_TRUST_FEED_BYTES)} bytes`);
-  }
-  let text;
-  try {
-    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
-  } catch {
-    throw invalid3("trust.json is not valid UTF-8");
-  }
-  if (text.startsWith("\uFEFF"))
-    text = text.slice(1);
-  let raw;
-  try {
-    raw = JSON.parse(text);
-  } catch {
-    throw invalid3("trust.json is not valid JSON");
-  }
+  const raw = decodeJsonFile(bytes, "trust.json", MAX_TRUST_FEED_BYTES, invalid3);
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     throw invalid3("trust.json must be an object");
   }
@@ -6342,23 +6346,7 @@ function parseExtensionEntry(raw, id) {
   return { ...o, publisher: { ...p, id: pid, key }, versions };
 }
 function parseRegistryIndex(bytes) {
-  if (bytes.byteLength > MAX_INDEX_BYTES) {
-    throw new RegistryError("ERR_REGISTRY_TOO_LARGE", `index.json exceeds ${String(MAX_INDEX_BYTES)} bytes`);
-  }
-  let text;
-  try {
-    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
-  } catch {
-    throw invalid4("index.json is not valid UTF-8");
-  }
-  if (text.startsWith("\uFEFF"))
-    text = text.slice(1);
-  let raw;
-  try {
-    raw = JSON.parse(text);
-  } catch {
-    throw invalid4("index.json is not valid JSON");
-  }
+  const raw = decodeJsonFile(bytes, "index.json", MAX_INDEX_BYTES, invalid4);
   const o = asObject2(raw, "index");
   requireKeys(o, ["format", "rootKey", "sequence", "generatedAt", "extensions", "signature"], "index");
   if (o["format"] !== 1)
@@ -9769,23 +9757,7 @@ function invalid5(detail) {
   return new RegistryError("ERR_LIVENESS_INVALID", detail);
 }
 function parseLivenessFile(bytes) {
-  if (bytes.byteLength > MAX_LIVENESS_BYTES) {
-    throw new RegistryError("ERR_REGISTRY_TOO_LARGE", `liveness.json exceeds ${String(MAX_LIVENESS_BYTES)} bytes`);
-  }
-  let text;
-  try {
-    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
-  } catch {
-    throw invalid5("liveness.json is not valid UTF-8");
-  }
-  if (text.startsWith("\uFEFF"))
-    text = text.slice(1);
-  let raw;
-  try {
-    raw = JSON.parse(text);
-  } catch {
-    throw invalid5("liveness.json is not valid JSON");
-  }
+  const raw = decodeJsonFile(bytes, "liveness.json", MAX_LIVENESS_BYTES, invalid5);
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     throw invalid5("liveness.json must be an object");
   }
@@ -12714,12 +12686,13 @@ async function probeHosts(entries, deps = REAL_HOST_PROBE) {
   let answered = 0;
   let next = 0;
   const worker = async () => {
-    while (next < work.length) {
-      const entry = work[next];
-      next += 1;
-      if (await probeHost(entry, deps))
-        answered += 1;
-    }
+    const entry = work[next];
+    if (entry === undefined)
+      return;
+    next += 1;
+    if (await probeHost(entry, deps))
+      answered += 1;
+    await worker();
   };
   await Promise.all(Array.from({ length: Math.min(HOST_CONCURRENCY, work.length) }, worker));
   return { declared: work.length, answered };
@@ -13363,7 +13336,8 @@ async function takeCandidate(o, b, run, opts, deps) {
   const proven = await provenanceFor(v, candidate.packageBytes, { work: b.work, verifiedAt: b.publishedAt }, { io: deps.io, verify: deps.provenance ?? ghProvenance(opts.githubToken ?? "") }, run.memo);
   const bundleBytes = proven?.bundle === undefined ? undefined : new TextEncoder().encode(proven.bundle);
   const bundlePath = provenanceBundlePath(v.id, v.version);
-  const provenance = proven === undefined ? undefined : bundleBytes === undefined ? proven.provenance : { ...proven.provenance, bundle: bundlePath, bundleSha256: sha256Hex5(bundleBytes) };
+  const bundleRef = bundleBytes === undefined ? {} : { bundle: bundlePath, bundleSha256: sha256Hex5(bundleBytes) };
+  const provenance = proven === undefined ? undefined : { ...proven.provenance, ...bundleRef };
   addVersion(b.extensions, v, b.publishedAt, {
     ...provenance !== undefined && { provenance },
     ...q.quality !== undefined && { quality: q.quality },

@@ -14,7 +14,6 @@ import {
 } from "./lan-session.ts";
 import {
   type LanPeerMatch,
-  MAX_ENCRYPTED_FRAME,
   MAX_HANDSHAKE_FRAME,
   MAX_PENDING_BYTES,
   type PairingService,
@@ -26,8 +25,9 @@ import {
   type QueuedSocketWriter,
 } from "./server/queued-socket-writer.ts";
 
+export { MAX_ENCRYPTED_FRAME } from "./lan-wire.ts";
 export type { LanPeerMatch, PairingService, RateLimiterService };
-export { MAX_ENCRYPTED_FRAME, MAX_HANDSHAKE_FRAME, MAX_PENDING_BYTES };
+export { MAX_HANDSHAKE_FRAME, MAX_PENDING_BYTES };
 
 export interface LanServerOptions {
   bind: string;

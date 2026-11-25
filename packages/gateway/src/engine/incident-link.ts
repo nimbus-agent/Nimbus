@@ -200,19 +200,16 @@ export function promptForRow(shown: string): PromptForRow {
   return { promptSha256, prompt: text.slice(0, end), promptCut: cut };
 }
 
+type LinkedActionFields = Pick<
+  PlannedAction,
+  "incident" | "origin" | "proposer" | "provenance" | "engineProposal" | "runbookStep"
+>;
+
 /**
- * ONE named step, run at the START of the gate (before the I2 checks): a linked action is a local-owner
- * action (spec D-IC-3), so a bad link or any outside-party field records and dispatches nothing. `scopeLink`
- * is the parent's link a sub-step carries. Throws {@link IncidentLinkError}.
+ * Phase 1 of {@link assertLinkedActionAllowed}: the fields an incident link carries (a runbook step, an
+ * engine proposal) travel only with that link, never together, each in exactly its own shape.
  */
-export function assertLinkedActionAllowed(
-  action: Pick<
-    PlannedAction,
-    "incident" | "origin" | "proposer" | "provenance" | "engineProposal" | "runbookStep"
-  >,
-  scopeLink: IncidentLink | undefined,
-): void {
-  const own = Object.hasOwn(action, "incident") ? action.incident : undefined;
+function assertCarriedFields(action: LinkedActionFields, own: IncidentLink | undefined): void {
   if (Object.hasOwn(action, "runbookStep")) {
     // IC6: a runbook step travels only with its incident link, never beside an engine proposal.
     if (own === undefined) {
@@ -232,6 +229,17 @@ export function assertLinkedActionAllowed(
     }
     assertEngineProposal(action.engineProposal);
   }
+}
+
+/**
+ * Phase 2 of {@link assertLinkedActionAllowed}: the action's own link and the parent's are well formed,
+ * and a linked action is the owner's own (no origin, proposer or provenance).
+ */
+function assertLinksAndOwnership(
+  action: LinkedActionFields,
+  own: IncidentLink | undefined,
+  scopeLink: IncidentLink | undefined,
+): void {
   if (own === undefined && scopeLink === undefined) return;
   if (own !== undefined) assertIncidentLink(own);
   if (scopeLink !== undefined) assertIncidentLink(scopeLink);
@@ -246,4 +254,18 @@ export function assertLinkedActionAllowed(
       );
     }
   }
+}
+
+/**
+ * ONE named step, run at the START of the gate (before the I2 checks): a linked action is a local-owner
+ * action (spec D-IC-3), so a bad link or any outside-party field records and dispatches nothing. `scopeLink`
+ * is the parent's link a sub-step carries. Throws {@link IncidentLinkError}. Its two phases run in order.
+ */
+export function assertLinkedActionAllowed(
+  action: LinkedActionFields,
+  scopeLink: IncidentLink | undefined,
+): void {
+  const own = Object.hasOwn(action, "incident") ? action.incident : undefined;
+  assertCarriedFields(action, own);
+  assertLinksAndOwnership(action, own, scopeLink);
 }

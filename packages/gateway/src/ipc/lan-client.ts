@@ -1,18 +1,12 @@
 import type { Socket } from "bun";
 import type { BoxKeypair } from "./lan-crypto.ts";
 import { createInitiatorHandshake, MAX_RECORD_FRAME } from "./lan-session.ts";
-import {
-  buildFrame,
-  DEFAULT_TIMEOUT_MS,
-  flushWriter,
-  MAX_HANDSHAKE_FRAME,
-  makeFrameReader,
-  writeFrame,
-} from "./lan-wire.ts";
+import { DEFAULT_TIMEOUT_MS, flushWriter, makeFrameReader, writeFrame } from "./lan-wire.ts";
 
 /** The production outbound pair handshake (PeerPairing DI default): Noise XXpsk0, FS2. */
 export { outboundPairHandshake } from "./lan-pair-client.ts";
-export { buildFrame, MAX_HANDSHAKE_FRAME, makeFrameReader, writeFrame };
+export { buildFrame, MAX_HANDSHAKE_FRAME } from "./lan-wire.ts";
+export { makeFrameReader, writeFrame };
 
 /**
  * The link policy for one peer (LAN forward secrecy, invariant I56). Built by

@@ -167,6 +167,25 @@ function segmentRefusal(
   return undefined;
 }
 
+/** Step 2, for one level: `dir` is a real folder, created when missing. */
+function ensureFolder(dir: string, fs: DailyNoteFs): DailyNoteSkip | undefined {
+  try {
+    const st = fs.lstat(dir);
+    if (st.isSymbolicLink()) return "link";
+    if (!st.isDirectory()) return "not-a-file";
+  } catch (err) {
+    if (errCode(err) !== "ENOENT") return "unwritable";
+    try {
+      fs.mkdir(dir);
+      const made = fs.lstat(dir);
+      if (made.isSymbolicLink() || !made.isDirectory()) return "link";
+    } catch {
+      return "unwritable";
+    }
+  }
+  return undefined;
+}
+
 /** Step 2: every folder on the way is a real folder (created one level at a time when missing). */
 function ensureFolders(
   api: PathApi,
@@ -177,20 +196,8 @@ function ensureFolders(
   let cur = vault;
   for (const seg of segments.slice(0, -1)) {
     cur = api.join(cur, seg);
-    try {
-      const st = fs.lstat(cur);
-      if (st.isSymbolicLink()) return "link";
-      if (!st.isDirectory()) return "not-a-file";
-    } catch (err) {
-      if (errCode(err) !== "ENOENT") return "unwritable";
-      try {
-        fs.mkdir(cur);
-        const made = fs.lstat(cur);
-        if (made.isSymbolicLink() || !made.isDirectory()) return "link";
-      } catch {
-        return "unwritable";
-      }
-    }
+    const skip = ensureFolder(cur, fs);
+    if (skip !== undefined) return skip;
   }
   return undefined;
 }

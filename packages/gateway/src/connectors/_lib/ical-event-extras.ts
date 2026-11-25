@@ -30,10 +30,27 @@ type ContentLine = {
   readonly value: string;
 };
 
+/** The index of the first `;` or `:` at or after `from`, or the line length when there is none. */
+function delimiterAt(line: string, from: number): number {
+  let i = from;
+  while (i < line.length && line[i] !== ";" && line[i] !== ":") i += 1;
+  return i;
+}
+
+/** One parameter value starting at `i` (quoted or bare) and the index just past it, or `undefined`. */
+function readParamValue(line: string, i: number): { val: string; next: number } | undefined {
+  if (line[i] !== '"') {
+    const end = delimiterAt(line, i);
+    return { val: line.slice(i, end), next: end };
+  }
+  const close = line.indexOf('"', i + 1);
+  if (close < 0) return undefined;
+  return { val: line.slice(i + 1, close), next: close + 1 };
+}
+
 /** Splits `NAME;P=V;Q="a:b":value`, honoring double quotes in parameter values. */
 function parseContentLine(line: string): ContentLine | undefined {
-  let i = 0;
-  while (i < line.length && line[i] !== ";" && line[i] !== ":") i += 1;
+  let i = delimiterAt(line, 0);
   if (i === 0 || i >= line.length) return undefined;
   const name = line.slice(0, i).toUpperCase();
   const params = new Map<string, string>();
@@ -42,25 +59,19 @@ function parseContentLine(line: string): ContentLine | undefined {
     const eq = line.indexOf("=", i);
     if (eq < 0) return undefined;
     const key = line.slice(i, eq).toUpperCase();
-    i = eq + 1;
-    let val = "";
-    if (line[i] === '"') {
-      const close = line.indexOf('"', i + 1);
-      if (close < 0) return undefined;
-      val = line.slice(i + 1, close);
-      i = close + 1;
-    } else {
-      const start = i;
-      while (i < line.length && line[i] !== ";" && line[i] !== ":") i += 1;
-      val = line.slice(start, i);
-    }
-    params.set(key, val);
+    const read = readParamValue(line, eq + 1);
+    if (read === undefined) return undefined;
+    params.set(key, read.val);
+    i = read.next;
   }
   if (line[i] !== ":") return undefined;
   return { name, params, value: line.slice(i + 1).trim() };
 }
 
-const DURATION_RE = /^P(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/;
+// The date part (weeks, days) and the time part (from `T`) are matched apart, one simple pattern each.
+// Together they accept exactly `P[nW][nD][T[nH][nM][nS]]`.
+const DURATION_DATE_RE = /^P(?:(\d+)W)?(?:(\d+)D)?(T.*)?$/;
+const DURATION_TIME_RE = /^T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/;
 
 export interface IcalDurationParts {
   /** Nominal calendar days (weeks x 7 + days). */
@@ -72,9 +83,12 @@ export interface IcalDurationParts {
 /** An RFC 5545 DURATION split into nominal days and exact ms; a negative or malformed value is `undefined`. */
 export function parseIcalDurationParts(raw: string): IcalDurationParts | undefined {
   const text = raw.trim().replace(/^\+/, "");
-  const m = DURATION_RE.exec(text);
-  if (m === null || text === "P" || text.endsWith("T")) return undefined;
-  const [, w = "0", d = "0", h = "0", mi = "0", s = "0"] = m;
+  const date = DURATION_DATE_RE.exec(text);
+  if (date === null || text === "P" || text.endsWith("T")) return undefined;
+  const [, w = "0", d = "0", timePart] = date;
+  const time = timePart === undefined ? [] : DURATION_TIME_RE.exec(timePart);
+  if (time === null) return undefined;
+  const [, h = "0", mi = "0", s = "0"] = time;
   return {
     days: Number(w) * 7 + Number(d),
     ms: (Number(h) * 3_600 + Number(mi) * 60 + Number(s)) * 1000,

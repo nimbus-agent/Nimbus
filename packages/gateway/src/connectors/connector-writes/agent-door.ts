@@ -194,7 +194,7 @@ export interface AgentOfferFacts {
 export function agentOffered(row: ConnectorWriteRow, facts: AgentOfferFacts): boolean {
   if (!enabledAndOfferable(facts.enablement, row)) return false;
   if (agentDoorRow(row.actionType, facts.rows ?? CONNECTOR_WRITE_ROWS) !== row) return false;
-  if (facts.approval === undefined || facts.approval.suspendedAt !== null) return false;
+  if (facts.approval?.suspendedAt !== null) return false;
   if (!agentDoorPolicyAllows(facts.enforced)) return false;
   if (!scopeAvailable(row, facts.hasWorkdir, facts.hasK8sPair)) return false;
   if (scopeGatedReason(row.toolId, facts.grantedScopes) !== undefined) return false;

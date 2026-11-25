@@ -31,7 +31,7 @@ export type SnapshotFetch =
 
 /** The interval in ms; an absent value is the 15-minute default (config validates 5..240). */
 export function snapshotIntervalMs(minutes?: number): number {
-  const m = minutes === undefined ? DEFAULT_SNAPSHOT_INTERVAL_MINUTES : minutes;
+  const m = minutes ?? DEFAULT_SNAPSHOT_INTERVAL_MINUTES;
   return m * 60_000;
 }
 

@@ -131,3 +131,61 @@ describe("nimbus incident update --synthesize", () => {
     expect(h.calls.map((c) => c.method)).not.toContain("incident.updateSynthesize");
   });
 });
+
+describe("nimbus incident update, the fallbacks of the synthesis note and the file write", () => {
+  const draft = { mode: "draft", id: REC, json: false, force: false, synthesize: true } as const;
+
+  test("a note with no reason or model names a generic one", async () => {
+    const cases: [Record<string, unknown>, string][] = [
+      [{ lead: null, synthesis: { attempted: false } }, "No model was used (unavailable)"],
+      [{ synthesis: { attempted: true, used: true } }, "first paragraph was written by the model"],
+      [
+        { lead: null, synthesis: { attempted: true, used: false } },
+        "lead was not used (none written)",
+      ],
+    ];
+    for (const [over, expected] of cases) {
+      const h = harness({ "incident.updateSynthesize": reply(over) });
+      expect(await runUpdateWith(h.ipc, draft, h.sink, realUpdateFs)).toBe(0);
+      expect(h.err.join("")).toContain(expected);
+    }
+  });
+
+  test("an existing --out file is refused without --force, and the note follows a written file", async () => {
+    const exists = Object.assign(new Error("exists"), { code: "EEXIST" });
+    const refused = harness({ "incident.updateSynthesize": reply() });
+    const code = await runUpdateWith(refused.ipc, { ...draft, out: "u.md" }, refused.sink, {
+      ...realUpdateFs,
+      writeText: () => {
+        throw exists;
+      },
+    });
+    expect(code).toBe(1);
+    expect(refused.err.join("")).toContain("u.md already exists; pass --force to overwrite it.");
+
+    const written: { path: string; exclusive: boolean }[] = [];
+    const ok = harness({ "incident.updateSynthesize": reply() });
+    const wrote = await runUpdateWith(ok.ipc, { ...draft, out: "u.md", force: true }, ok.sink, {
+      ...realUpdateFs,
+      writeText: (path, _text, exclusive) => {
+        written.push({ path, exclusive });
+      },
+    });
+    expect(wrote).toBe(0);
+    expect(written).toEqual([{ path: "u.md", exclusive: false }]);
+    expect(ok.err.join("")).toContain("first paragraph was written by m1");
+    expect(ok.out.join("")).toContain("to u.md");
+  });
+
+  test("any other write failure is reported as an error, not as an existing file", async () => {
+    const h = harness({ "incident.updateSynthesize": reply() });
+    const code = await runUpdateWith(h.ipc, { ...draft, out: "u.md" }, h.sink, {
+      ...realUpdateFs,
+      writeText: () => {
+        throw Object.assign(new Error("disk full"), { code: "ENOSPC" });
+      },
+    });
+    expect(code).toBe(1);
+    expect(h.err.join("")).toBe("disk full\n");
+  });
+});

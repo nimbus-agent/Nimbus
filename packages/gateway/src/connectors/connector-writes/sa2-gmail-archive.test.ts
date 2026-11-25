@@ -120,9 +120,9 @@ describe("scopeGatedReason", () => {
   });
   test("modify or the full-mailbox scope lifts the gate; anything else keeps it", () => {
     expect(scopeGatedReason("gmail_thread_archive", { gmail: `a ${MODIFY}` })).toBeUndefined();
-    expect(scopeGatedReason("gmail_thread_archive", { gmail: "https://mail.google.com/" })).toBe(
-      undefined,
-    );
+    expect(
+      scopeGatedReason("gmail_thread_archive", { gmail: "https://mail.google.com/" }),
+    ).toBeUndefined();
     for (const gmail of [undefined, "", "https://www.googleapis.com/auth/gmail.readonly"]) {
       expect(scopeGatedReason("gmail_thread_archive", { gmail })).toBe(
         "re-authorise Gmail to grant gmail.modify",

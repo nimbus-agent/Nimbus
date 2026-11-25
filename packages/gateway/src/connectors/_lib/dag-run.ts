@@ -5,6 +5,7 @@
  * the raw state name, start and end, duration, the NAMES of its failed tasks or steps and how it was
  * triggered (the key set is the same in the three mappers; a test pins it). Never a log line, an error message, a run configuration or a parameter value.
  */
+import { codeUnitCompare } from "../../util/code-unit-compare.ts";
 
 /** Runs are fetched for this long back from the sync; older ones stay as indexed until the owner erases them. */
 export const DAG_RUN_WINDOW_MS = 7 * 24 * 3_600_000;
@@ -33,7 +34,7 @@ export function failedTaskNames(names: Iterable<string>): { list: string[]; tota
     if (c !== "") set.add(c);
   }
   // By code unit, never by locale, so the stored order is the same on every machine.
-  const all = [...set].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  const all = [...set].sort(codeUnitCompare);
   return { list: all.slice(0, DAG_RUN_MAX_FAILED_TASKS), total: all.length };
 }
 

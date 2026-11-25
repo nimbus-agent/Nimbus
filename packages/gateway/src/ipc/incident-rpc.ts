@@ -264,7 +264,7 @@ function groupOut(
 ): Omit<CascadeGroup, "members"> & { readonly members: readonly CascadeMemberOut[] } {
   return {
     ...g,
-    members: g.members.map((m) => ({ ...m, ...(info.get(m.recordId) ?? {}) })),
+    members: g.members.map((m) => ({ ...m, ...info.get(m.recordId) })),
   };
 }
 

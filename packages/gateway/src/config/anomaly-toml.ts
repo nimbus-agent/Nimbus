@@ -3,13 +3,7 @@ import {
   type SectionFallbackSink,
   sectionFallbackSink,
 } from "./layered-config.ts";
-import {
-  isTableHeader,
-  parseBool,
-  parseIntDec,
-  splitKeyValue,
-  stripComment,
-} from "./toml-primitives.ts";
+import { forEachKeyValueInSection, parseBool, parseIntDec } from "./toml-primitives.ts";
 
 /**
  * `[watcher.anomaly]` - the owner's notice of an unusual sync (Phase 10 carried item). DEFAULT OFF:
@@ -95,18 +89,9 @@ export function parseNimbusTomlAnomaly(
   onFallback?: SectionFallbackSink,
 ): NimbusAnomalyToml {
   const out: Draft = { ...DEFAULT_ANOMALY_CONFIG };
-  let inSection = false;
-  for (const line of source.split(/\r?\n/)) {
-    const trimmed = stripComment(line).trim();
-    if (trimmed === "") continue;
-    if (isTableHeader(trimmed)) {
-      inSection = trimmed === "[watcher.anomaly]";
-      continue;
-    }
-    if (!inSection) continue;
-    const kv = splitKeyValue(trimmed);
-    if (kv !== undefined) applyKey(out, kv.key, kv.valRaw, (m) => onFallback?.(m));
-  }
+  forEachKeyValueInSection(source, "[watcher.anomaly]", (key, valRaw) =>
+    applyKey(out, key, valRaw, (m) => onFallback?.(m)),
+  );
   return Object.freeze(out);
 }
 

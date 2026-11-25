@@ -48,7 +48,9 @@ export async function runExtensionVerifyProvenance(
     deps.out(`${JSON.stringify(r, undefined, 2)}\n`);
     return status === "verified" ? 0 : 1;
   }
-  const label = `${stripControlChars(String(r.id ?? id))}@${stripControlChars(String(r.version ?? "?"))}`;
+  const shownId = typeof r.id === "string" ? r.id : id;
+  const shownVersion = typeof r.version === "string" ? r.version : "?";
+  const label = `${stripControlChars(shownId)}@${stripControlChars(shownVersion)}`;
   if (status === "none") {
     deps.out(`${label}: no build provenance was recorded when it was installed.\n`);
     return 1;

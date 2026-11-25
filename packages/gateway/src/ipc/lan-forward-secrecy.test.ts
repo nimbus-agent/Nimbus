@@ -178,7 +178,7 @@ describe("FS3 - the old wire is gone: a peer from before LAN forward secrecy is 
         ),
       );
       expect(await conn.closed()).toBe(true);
-      expect(conn.received().length).toBe(0);
+      expect(conn.received()).toHaveLength(0);
     }
     expect(refused).toEqual(["127.0.0.1", "127.0.0.1"]);
     expect(failures).toEqual(["127.0.0.1", "127.0.0.1"]);

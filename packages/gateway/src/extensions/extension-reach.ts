@@ -90,3 +90,15 @@ export function describeNetworkReach(
     return UNKNOWN;
   }
 }
+
+/**
+ * The reach line an owner's prompt adds for a user MCP server whose network the OS cannot limit host
+ * by host, or `undefined` when it can (or the server has no network): the registration prompt's rule.
+ */
+export function userMcpNetworkNote(
+  runner: ReachRunner | undefined,
+  hosts: readonly string[],
+): string | undefined {
+  const reach = describeNetworkReach(runner, hosts);
+  return reach.kind === "hosts" || reach.kind === "none" ? undefined : reach.text;
+}

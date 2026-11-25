@@ -301,8 +301,8 @@ export interface OutcomeSink {
 }
 
 const defaultSink: OutcomeSink = {
-  out: (s) => void process.stdout.write(s),
-  err: (s) => void process.stderr.write(s),
+  out: (s) => process.stdout.write(s),
+  err: (s) => process.stderr.write(s),
 };
 
 function layerLabel(l: FleetLayerShape): string {

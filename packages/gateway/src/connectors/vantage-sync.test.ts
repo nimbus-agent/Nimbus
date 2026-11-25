@@ -242,22 +242,20 @@ describe("createVantageSyncable", () => {
     expect(rowsOf(db)).toHaveLength(writes);
   });
 
-  test("a tag: grouping is refused with a fixed message before any session, and no secret is in it", async () => {
-    let opened = 0;
-    __setFinopsSessionRunnerForTest(async (_req, body) => {
-      opened += 1;
-      return body({ call: async () => ({ content: [] }) });
+  test("a tag: grouping indexes one series per tag value, untagged spend included", async () => {
+    // Live-verified row shape (vantage-cost-tags.ts): `tags` holds `"<key>:<value>"`, `"<key>:"` untagged.
+    const row = (team: string) => ({
+      ...(costRows(["Actions"], 1)[0] as object),
+      tags: [`team:${team}`],
     });
-    const { ctx } = setup({ "vantage.group_by": "provider, tag:team" });
-    let message = "";
-    try {
-      await createVantageSyncable().sync(ctx, null);
-    } catch (err) {
-      message = err instanceof Error ? err.message : String(err);
-    }
-    expect(message).toContain("tag: grouping is not supported");
-    expect(message).not.toContain(TOKEN);
-    expect(opened).toBe(0);
+    fakeSession({ costs: [row("core"), row("data"), row("")], recommendations: [] });
+    const { db, ctx } = setup({ "vantage.group_by": "service, tag:team" });
+    await createVantageSyncable().sync(ctx, null);
+    const values = rowsOf(db).flatMap((r) => {
+      const m = JSON.parse((r as { metadata: string }).metadata) as Record<string, unknown>;
+      return m["dimensionValue"] === undefined ? [] : [m["dimensionValue"]];
+    });
+    expect(values.sort()).toEqual(["Actions / __untagged__", "Actions / core", "Actions / data"]);
   });
 
   test("the cost report token becomes the scope of every series", async () => {

@@ -68,14 +68,8 @@ export function createVantageSyncable(options: VantageSyncableOptions = {}): Syn
     cursorRowType: "cost_allocation",
     cursorScope: (p) => seriesScopeOf(p),
     async configure(ctx) {
+      // A `tag:<key>` entry is read from each row's `tags` array (vantage-cost-tags.ts).
       const groupBy = parseGroupBy(await ctx.getSecret("group_by"));
-      if (groupBy.some((name) => name.startsWith("tag:"))) {
-        // Where Vantage returns the value of a tag grouping is not documented (spec R2): refuse
-        // rather than index a series whose dimension we cannot read.
-        throw new Error(
-          "vantage.group_by: a tag: grouping is not supported yet; use provider, service, account_id or another named field",
-        );
-      }
       const scope = (await ctx.getSecret("cost_report_token"))?.trim() ?? "";
       const workspace = (await ctx.getSecret("workspace_token"))?.trim() ?? "";
       // With a saved report the report's own groupings apply and the mapper orders by name; without

@@ -1,7 +1,7 @@
 // What the vendor's published OpenAPI file and the connector's documentation-shaped fixtures say
 // (nimbus-mcp-servers connectors/vantage/test/fixtures.ts, read 2026-11-12), recorded for FO2 Task 0:
-// - R2: the groupable fields are top-level keys of a cost row; where the value of a `tag:<key>`
-//   grouping lands is NOT documented, so the sync refuses a `tag:` entry in `vantage.group_by`.
+// - R2: the groupable fields are top-level keys of a cost row, except a `tag:<key>` grouping,
+//   whose value is read from the `tags` array (live-verified 2026-11-25; vantage-cost-tags.ts).
 // - R5 (Cost schema): `amount` is a STRING ("100.0"), `accrued_at` is a date ("2023-06-05").
 // - R3: `start_date`/`end_date` are plain ISO 8601 strings; the connector sends YYYY-MM-DD.
 // Every fixture below is documentation-shaped, never a live recording and never a real token.

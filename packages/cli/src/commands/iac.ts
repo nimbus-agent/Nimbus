@@ -207,11 +207,16 @@ const PROCESS_SINK: Sink = {
   err: (s) => process.stderr.write(s),
 };
 
+/** Whether stdin and stdout are terminals, read at each call. */
+function processTty(): Tty {
+  return { stdin: process.stdin.isTTY === true, stdout: process.stdout.isTTY === true };
+}
+
 export async function runIacCmd(
   argv: string[],
   ipc: IacIpc = GATEWAY_IPC,
   sink: Sink = PROCESS_SINK,
-  tty: Tty = { stdin: process.stdin.isTTY === true, stdout: process.stdout.isTTY === true },
+  tty: Tty = processTty(),
 ): Promise<void> {
   if (wantsIacHelp(argv)) {
     sink.out(`${IAC_USAGE}\n`);

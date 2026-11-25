@@ -266,7 +266,7 @@ export const BREAKERS: readonly Breaker[] = [
   {
     name: "a different workflow hash (one edited byte of the steps)",
     apply: (s) => {
-      const edited = JSON.parse(JSON.stringify(ARCHIVE_STEPS)) as Array<Record<string, unknown>>;
+      const edited = structuredClone(ARCHIVE_STEPS) as unknown as Array<Record<string, unknown>>;
       (edited[0] as { query: { limit: number } }).query.limit = 199;
       const wf2 = seedWorkflow(s.db, edited);
       withProvenance(s, { workflowSha256: wf2.sha });

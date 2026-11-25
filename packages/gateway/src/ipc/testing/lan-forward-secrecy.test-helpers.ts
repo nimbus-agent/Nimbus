@@ -90,7 +90,7 @@ export function startRecordingProxy(targetPort: number): RecordingProxy {
           pipe.rec.c2s.push(f);
         }
         if (pipe.upstream) pipe.upstream.write(chunk);
-        else pipe.pending.push(chunk.slice());
+        else pipe.pending.push(chunk.subarray());
       },
       close(client) {
         client.data.clientEnded = true;
@@ -126,8 +126,8 @@ function aesGcmOpens(key: Uint8Array, n: number, sealed: Uint8Array): boolean {
   try {
     const d = createDecipheriv("aes-256-gcm", key, nonce, { authTagLength: 16 });
     d.setAAD(new Uint8Array(0));
-    d.setAuthTag(sealed.subarray(sealed.length - 16));
-    d.update(sealed.subarray(0, sealed.length - 16));
+    d.setAuthTag(sealed.subarray(-16));
+    d.update(sealed.subarray(0, -16));
     d.final();
     return true;
   } catch {

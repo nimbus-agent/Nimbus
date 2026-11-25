@@ -66,7 +66,7 @@ describe("applySnapshot", () => {
       throw new Error("x".repeat(500));
     });
     expect(replaced).toEqual([]);
-    expect(String(logs[0]?.obj["reason"]).length).toBe(200);
+    expect(String(logs[0]?.obj["reason"])).toHaveLength(200);
   });
 
   test("a throwing replace is logged, never thrown", async () => {

@@ -397,11 +397,6 @@
     "packages/ui/test/pages/settings/audit/audit-row-utils.test.ts": {
       "TS18048": 1
     },
-    "packages/ui/test/store/dashboard.test.ts": {
-      "TS2322": 1,
-      "TS2339": 13,
-      "TS7006": 2
-    },
     "packages/ui/test/store/hitl.test.ts": {
       "TS2322": 1,
       "TS2339": 12

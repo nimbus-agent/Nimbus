@@ -7,7 +7,7 @@ import {
   type RpcMethodHandlerMap,
   type RpcMissOrHit,
 } from "./_lib/dispatch-by-method.ts";
-import { type AgentsRpcContext, AgentsRpcError } from "./agents-rpc/_shared.ts";
+import type { AgentsRpcContext } from "./agents-rpc/_shared.ts";
 import {
   handleDecisions,
   handleGlossary,
@@ -33,10 +33,10 @@ import {
   handlePreflight,
 } from "./agents-rpc/handlers-federated.ts";
 
-export type { AgentsRpcContext };
 // The error class and the context type live in `agents-rpc/_shared.ts` (the validator and handler
 // modules beside it import them from there); every importer of this path keeps its names.
-export { AgentsRpcError };
+export { AgentsRpcError } from "./agents-rpc/_shared.ts";
+export type { AgentsRpcContext };
 
 /**
  * The `agents.*` methods this module answers.

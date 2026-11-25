@@ -100,12 +100,8 @@ export function decodeOutlookSyncCursor(raw: string): OutlookSyncCursorV2 | unde
   return legacy === undefined ? undefined : { v: 2, mail: { nextUrl: legacy.nextUrl } };
 }
 
-function upsertMessage(ctx: SyncContext, m: GraphMessage, now: number): void {
-  const id = m.id;
-  if (id === undefined || id === "") {
-    return;
-  }
-  const subject = typeof m.subject === "string" && m.subject !== "" ? m.subject : "(no subject)";
+/** The message's indexed body: its text with the quoted tail stripped, or its preview when that is empty. */
+function messageBodyInput(m: GraphMessage): IndexedItemBodyInput {
   const raw = typeof m.body?.content === "string" ? m.body.content : "";
   // `parseODataDeltaPage` validates only the top-level `value` array and casts
   // each element to `GraphMessage` without runtime validation — this is
@@ -125,18 +121,30 @@ function upsertMessage(ctx: SyncContext, m: GraphMessage, now: number): void {
   // `$select` projection and still fetched, so handing it over here costs
   // nothing and keeps the message searchable at `body_complete = 0`.
   const preview = typeof m.bodyPreview === "string" ? m.bodyPreview : "";
-  const bodyInput: IndexedItemBodyInput = body === "" ? { bodyPreview: preview } : { body };
+  return body === "" ? { bodyPreview: preview } : { body };
+}
+
+/** The sender as a person id, or null when the message names no address. */
+function messageAuthorId(ctx: SyncContext, m: GraphMessage): string | null {
+  const addr = m.from?.emailAddress?.address;
+  if (addr === undefined || addr === "") return null;
+  const fromName = m.from?.emailAddress?.name;
+  return ctx.resolvePerson({
+    canonicalEmail: addr,
+    displayName: fromName !== undefined && fromName !== "" ? fromName : addr,
+  });
+}
+
+function upsertMessage(ctx: SyncContext, m: GraphMessage, now: number): void {
+  const id = m.id;
+  if (id === undefined || id === "") {
+    return;
+  }
+  const subject = typeof m.subject === "string" && m.subject !== "" ? m.subject : "(no subject)";
+  const bodyInput = messageBodyInput(m);
   const url = typeof m.webLink === "string" ? m.webLink : null;
   const modified = modifiedMsFromIso(m.lastModifiedDateTime ?? m.receivedDateTime, now);
-  const addr = m.from?.emailAddress?.address;
-  const fromName = m.from?.emailAddress?.name;
-  const authorId =
-    addr !== undefined && addr !== ""
-      ? ctx.resolvePerson({
-          canonicalEmail: addr,
-          displayName: fromName !== undefined && fromName !== "" ? fromName : addr,
-        })
-      : null;
+  const authorId = messageAuthorId(ctx, m);
 
   ctx.upsertItem({
     service: SERVICE_ID,

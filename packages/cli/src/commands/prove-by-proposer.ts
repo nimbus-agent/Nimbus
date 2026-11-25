@@ -62,6 +62,29 @@ function usage(why: string): ProveUsageError {
   return new ProveUsageError(`${why}\n${PROVE_BY_PROPOSER_USAGE}`);
 }
 
+const SIGN_REFUSAL =
+  "--by-proposer cannot be signed: a receipt over labels the clients chose themselves would read as proof of who acted.";
+
+type ProveScan = { sinceMs?: number; proposer?: string; json: boolean };
+
+/** Takes `--since <dur>` or `--proposer <label>` (the value already read) into the scan. */
+function takeProveValue(s: ProveScan, flag: string, v: string, now: number): void {
+  if (flag === "--since") {
+    if (s.sinceMs !== undefined) throw usage("--since was given more than once.");
+    s.sinceMs = now - parseSinceDurationToMs(v);
+    return;
+  }
+  if (s.proposer !== undefined) throw usage("--proposer was given more than once.");
+  s.proposer = v;
+}
+
+/** Why an argument that is none of the accepted flags is refused. */
+function refusalFor(a: string): ProveUsageError {
+  if (a === "--receipt" || a === "--sign") return usage(SIGN_REFUSAL);
+  if (a.startsWith("--")) return usage(`Unknown option ${stripControlChars(a)}.`);
+  return usage("--by-proposer runs no query and takes no positional argument.");
+}
+
 /**
  * Parse the arguments of the `--by-proposer` form. This runs BEFORE the query path of `nimbus prove`
  * and never reaches it: a positional argument is a usage error (nothing is asked of the agent), and
@@ -72,42 +95,34 @@ export function parseProveByProposerArgs(
   args: readonly string[],
   now: number,
 ): ProveByProposerArgs {
-  let sinceMs: number | undefined;
-  let proposer: string | undefined;
-  let json = false;
+  const s: ProveScan = { json: false };
   for (let i = 0; i < args.length; i += 1) {
     const a = args[i] ?? "";
     if (a === "--by-proposer") continue;
     if (a === "--json") {
-      json = true;
+      s.json = true;
     } else if (a.startsWith("--proposer=")) {
       // The unambiguous form: the label may start with `--`.
-      if (proposer !== undefined) throw usage("--proposer was given more than once.");
-      proposer = a.slice("--proposer=".length);
-      if (proposer === "") throw usage("--proposer needs a non-empty label.");
+      if (s.proposer !== undefined) throw usage("--proposer was given more than once.");
+      s.proposer = a.slice("--proposer=".length);
+      if (s.proposer === "") throw usage("--proposer needs a non-empty label.");
     } else if (a === "--since" || a === "--proposer") {
       const v = args[i + 1];
       if (v === undefined || v.startsWith("--")) throw usage(`${a} needs a value.`);
       i += 1;
-      if (a === "--since") {
-        if (sinceMs !== undefined) throw usage("--since was given more than once.");
-        sinceMs = now - parseSinceDurationToMs(v);
-      } else {
-        if (proposer !== undefined) throw usage("--proposer was given more than once.");
-        proposer = v;
-      }
-    } else if (a === "--receipt" || a === "--sign") {
-      throw usage(
-        "--by-proposer cannot be signed: a receipt over labels the clients chose themselves would read as proof of who acted.",
-      );
-    } else if (a.startsWith("--")) {
-      throw usage(`Unknown option ${stripControlChars(a)}.`);
+      takeProveValue(s, a, v, now);
     } else {
-      throw usage("--by-proposer runs no query and takes no positional argument.");
+      throw refusalFor(a);
     }
   }
-  if (proposer !== undefined && proposer === "") throw usage("--proposer needs a non-empty label.");
-  return { sinceMs, proposer, json };
+  if (s.proposer === "") throw usage("--proposer needs a non-empty label.");
+  return { sinceMs: s.sinceMs, proposer: s.proposer, json: s.json };
+}
+
+function cutSideName(x: string): string {
+  if (x === "audit") return "the audit log";
+  if (x === "egress") return "the egress ledger";
+  return stripControlChars(x);
 }
 
 /** One plain sentence per reason a proof is indeterminate. */
@@ -117,10 +132,9 @@ const CAUSE_SENTENCES: Readonly<Record<string, (p: ProposerProofView) => string>
   unreadable_row: (p) =>
     `${String(p.completeness.unreadableRows)} audit row(s) of this kind could not be read, so they were not counted.`,
   scan_cut: (p) => {
-    const sides = (p.scanCutSides ?? []).map((x) =>
-      x === "audit" ? "the audit log" : x === "egress" ? "the egress ledger" : stripControlChars(x),
-    );
-    return `The scan stopped at its row cap${sides.length === 0 ? "" : ` on ${sides.join(" and ")}`}, so rows may be missing from this report.`;
+    const sides = (p.scanCutSides ?? []).map(cutSideName);
+    const where = sides.length === 0 ? "" : ` on ${sides.join(" and ")}`;
+    return `The scan stopped at its row cap${where}, so rows may be missing from this report.`;
   },
   audit_chain_broken: () =>
     "The audit log's hash chain does not verify, so its rows cannot be trusted.",
@@ -136,18 +150,16 @@ function labelText(label: string | null): string {
   return label === null ? "(no label)" : `"${stripControlChars(label)}"`;
 }
 
-/** The printable report. Pure, so the tests need no gateway. */
-export function formatProposerProof(proof: ProposerProofView, proposer?: string): string {
-  const lines: string[] = [];
+function headerLines(proof: ProposerProofView, proposer: string | undefined): string[] {
   const window =
     proof.sinceMs === null
       ? "the whole audit log"
       : `since ${new Date(proof.sinceMs).toISOString().replace("T", " ").slice(0, 19)} UTC`;
-  lines.push(`Actions proposed by outside agents (MCP), by proposer: ${window}`);
-  lines.push(
+  const lines = [
+    `Actions proposed by outside agents (MCP), by proposer: ${window}`,
     "Every label below is the client's own claim and is UNVERIFIED: any program can send any label, and a label does not identify a program.",
-  );
-  lines.push("");
+    "",
+  ];
   if (proof.groups.length === 0) {
     const total = proof.totalGroups ?? 0;
     lines.push(
@@ -156,39 +168,65 @@ export function formatProposerProof(proof: ProposerProofView, proposer?: string)
         : "No outside-agent proposals were recorded in this window.",
     );
   }
-  for (const g of proof.groups) {
-    lines.push(`UNVERIFIED label ${labelText(g.label)} (${stripControlChars(g.labelSource)})`);
-    lines.push(
-      `  proposed ${String(g.proposed)}, refused at submit ${String(g.refusedAtSubmit)}, approved ${String(g.approved)}, declined ${String(g.declined)}, executed ${String(g.executed)}, failed ${String(g.failed)}, expired ${String(g.expired)}, waiting ${String(g.waiting)}`,
-    );
-    lines.push(
-      `  authorized writes in the egress ledger: ${String(g.dispatches)}; connections: ${String(g.connections)} (an id lasts one gateway run)`,
-    );
-  }
-  lines.push("");
+  return lines;
+}
+
+function groupLines(g: ProposerGroupView): string[] {
+  return [
+    `UNVERIFIED label ${labelText(g.label)} (${stripControlChars(g.labelSource)})`,
+    `  proposed ${String(g.proposed)}, refused at submit ${String(g.refusedAtSubmit)}, approved ${String(g.approved)}, declined ${String(g.declined)}, executed ${String(g.executed)}, failed ${String(g.failed)}, expired ${String(g.expired)}, waiting ${String(g.waiting)}`,
+    `  authorized writes in the egress ledger: ${String(g.dispatches)}; connections: ${String(g.connections)} (an id lasts one gateway run)`,
+  ];
+}
+
+function causeLine(proof: ProposerProofView, cause: string): string {
+  const f = CAUSE_SENTENCES[cause];
+  const sentence = f === undefined ? `Unrecognised reason ${stripControlChars(cause)}.` : f(proof);
+  return `  - ${sentence}`;
+}
+
+/** The verdict: nothing checked, both ledgers agree, or why the report is not proof. */
+function verdictLines(proof: ProposerProofView, nothingChecked: boolean): string[] {
   const c = proof.completeness;
-  const nothingChecked = c.status === "ok" && c.checkedCaptures === 0;
   if (nothingChecked) {
     const held = c.notChecked.preVersionCaptures + c.notChecked.prunedGateRows > 0;
-    lines.push(
+    return [
       held
         ? "Nothing in this window could be checked: no proposal had both ledgers to compare (see the not-checked counts below)."
         : "Nothing in this window could be checked: it holds no proposal for the two ledgers to compare.",
-    );
-  } else if (c.status === "ok") {
-    lines.push(`Both ledgers agree for the ${String(c.checkedCaptures)} proposal(s) checked.`);
-  } else {
-    lines.push("INDETERMINATE: this report is not proof, for these reasons:");
-    for (const cause of c.causes) {
-      const f = CAUSE_SENTENCES[cause];
-      lines.push(
-        `  - ${f === undefined ? `Unrecognised reason ${stripControlChars(cause)}.` : f(proof)}`,
-      );
-    }
-    for (const m of c.mismatches) {
-      lines.push(`    ${stripControlChars(m.code)}  ${stripControlChars(m.captureId)}`);
-    }
+    ];
   }
+  if (c.status === "ok") {
+    return [`Both ledgers agree for the ${String(c.checkedCaptures)} proposal(s) checked.`];
+  }
+  return [
+    "INDETERMINATE: this report is not proof, for these reasons:",
+    ...c.causes.map((cause) => causeLine(proof, cause)),
+    ...c.mismatches.map(
+      (m) => `    ${stripControlChars(m.code)}  ${stripControlChars(m.captureId)}`,
+    ),
+  ];
+}
+
+function conclusionLine(status: string, nothingChecked: boolean): string {
+  if (nothingChecked) {
+    return "You can conclude nothing about the two ledgers agreeing from this report: no proposal was compared across them.";
+  }
+  return status === "ok"
+    ? "You can conclude: these proposals were recorded, the owner's gate decided this many of them, and both ledgers agree capture by capture."
+    : "You can conclude nothing from this report until the reasons above are resolved.";
+}
+
+/** The printable report. Pure, so the tests need no gateway. */
+export function formatProposerProof(proof: ProposerProofView, proposer?: string): string {
+  const c = proof.completeness;
+  const nothingChecked = c.status === "ok" && c.checkedCaptures === 0;
+  const lines = [
+    ...headerLines(proof, proposer),
+    ...proof.groups.flatMap(groupLines),
+    "",
+    ...verdictLines(proof, nothingChecked),
+  ];
   if ((c.foreignRows ?? 0) > 0) {
     lines.push(
       `${String(c.foreignRows)} egress row(s) in the reserved agent range name no capture and were not counted; the gateway never writes one.`,
@@ -196,19 +234,7 @@ export function formatProposerProof(proof: ProposerProofView, proposer?: string)
   }
   lines.push(
     `Not checked: ${String(c.notChecked.preVersionCaptures)} proposal(s) accepted before this version recorded the label source; ${String(c.notChecked.prunedGateRows)} gate row(s) older than the newest egress prune.`,
-  );
-  if (nothingChecked) {
-    lines.push(
-      "You can conclude nothing about the two ledgers agreeing from this report: no proposal was compared across them.",
-    );
-  } else {
-    lines.push(
-      c.status === "ok"
-        ? "You can conclude: these proposals were recorded, the owner's gate decided this many of them, and both ledgers agree capture by capture."
-        : "You can conclude nothing from this report until the reasons above are resolved.",
-    );
-  }
-  lines.push(
+    conclusionLine(c.status, nothingChecked),
     "You cannot conclude which program sent them, whether the remote service applied a write, anything an agent did with its own credentials, or anything that never reached the executor.",
   );
   return lines.join("\n");

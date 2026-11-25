@@ -2,22 +2,9 @@
 // The consent text for `connector.writes.enable`: exactly which writes become model-offerable.
 import { escapeUnverifiedLine } from "../../engine/proposer-block.ts";
 import { userMcpWriteLines } from "../../engine/user-mcp-write-lines.ts";
+import { modelWriteLine } from "./enable-prompt-model-lines.ts";
 import { OBSIDIAN_APPEND_TOOL_ID } from "./enablement-store.ts";
 import { sanitisePreviewText } from "./preview.ts";
-
-/** The marker each write's line carries, by its `state` (F7). */
-const STATE_MARKERS: Readonly<Record<string, string>> = {
-  already_approved: "(offered to the model)",
-  newly_offerable: "(new: offered after you approve)",
-  not_offerable: "(not offered yet)",
-};
-
-function markerFor(state: unknown, offerable: boolean): string | undefined {
-  if (typeof state !== "string" || !Object.hasOwn(STATE_MARKERS, state)) return undefined;
-  // A state that contradicts `offerable` is malformed: never mark a write offered that is not.
-  if ((state === "not_offerable") === offerable) return undefined;
-  return STATE_MARKERS[state];
-}
 
 /**
  * How the prompt names each reason a found vault, or its daily note, is not writable
@@ -238,31 +225,9 @@ export function enableWritesPromptLines(
   }
   const lines = [`Service: ${sanitisePreviewText(service)}`, `Up to wave: ${maxWave}`];
   for (const w of writes as unknown[]) {
-    const r = w as {
-      toolId?: unknown;
-      actionType?: unknown;
-      wave?: unknown;
-      offerable?: unknown;
-      state?: unknown;
-      reason?: unknown;
-    } | null;
-    if (
-      typeof r?.toolId !== "string" ||
-      typeof r.actionType !== "string" ||
-      typeof r.wave !== "number" ||
-      typeof r.offerable !== "boolean"
-    ) {
-      return undefined;
-    }
-    const marker = markerFor(r.state, r.offerable);
-    if (marker === undefined) return undefined;
-    if (r.reason !== undefined && (typeof r.reason !== "string" || r.offerable)) return undefined;
-    // A write not offered because its credential lacks a scope says what to do (SA2).
-    const shown =
-      typeof r.reason === "string" ? `(not offered yet: ${sanitisePreviewText(r.reason)})` : marker;
-    lines.push(
-      `  ${sanitisePreviewText(r.toolId)}  ${sanitisePreviewText(r.actionType)}  wave ${r.wave}  ${shown}`,
-    );
+    const line = modelWriteLine(w);
+    if (line === undefined) return undefined;
+    lines.push(line);
   }
   const scope = serviceScopeLines(service, payload, writes as unknown[]);
   if (scope === undefined) return undefined;

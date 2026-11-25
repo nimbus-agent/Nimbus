@@ -44,7 +44,7 @@ export type DagsterGql = (
 export function runResults(parsed: unknown): unknown[] {
   const r = asRecord(asRecord(parsed)?.["runsOrError"]);
   const results = r?.["results"];
-  return r !== undefined && r["__typename"] === "Runs" && Array.isArray(results) ? results : [];
+  return r?.["__typename"] === "Runs" && Array.isArray(results) ? results : [];
 }
 
 export async function syncDagsterRuns(
@@ -65,7 +65,7 @@ export async function syncDagsterRuns(
     upserted += upsertMapped(ctx, results, (raw) =>
       mapDagsterRunToItem(raw, { baseUrl, syncedAt: now }),
     );
-    const last = asRecord(results[results.length - 1]);
+    const last = asRecord(results.at(-1));
     cursor = last === undefined ? null : (stringField(last, "runId") ?? null);
     if (results.length < DAGSTER_RUN_PAGE || cursor === null) break;
   }

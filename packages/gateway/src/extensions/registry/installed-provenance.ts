@@ -182,7 +182,7 @@ function readStored(
     .get(id) as { provenance_json: string | null; provenance_bundle: string | null } | null;
   if (row?.provenance_json == null) return undefined;
   const record = parseRecord(row.provenance_json);
-  if (record === undefined || record.version !== version) return undefined;
+  if (record?.version !== version) return undefined;
   return { record, bundle: row.provenance_bundle };
 }
 

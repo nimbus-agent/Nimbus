@@ -48,6 +48,18 @@ function retentionOrDefault(raw: string, onFallback: SectionFallbackSink | undef
   return DEFAULT_MEMORY_CONFIG.retentionDays;
 }
 
+/** A `true`/`false` key of `[memory]`; anything else is a fallback to `false`, recorded. */
+function boolOrFalse(
+  key: string,
+  raw: string,
+  onFallback: SectionFallbackSink | undefined,
+): boolean {
+  const b = parseBool(raw);
+  if (b !== undefined) return b;
+  onFallback?.(`[memory].${key} must be true or false (got: ${raw}); using false`);
+  return false;
+}
+
 export function parseNimbusTomlMemory(
   source: string,
   onFallback?: SectionFallbackSink,
@@ -67,19 +79,9 @@ export function parseNimbusTomlMemory(
     const kv = splitKeyValue(trimmed);
     if (kv === undefined) continue;
     if (kv.key === "episodic") {
-      const b = parseBool(kv.valRaw);
-      if (b === undefined) {
-        onFallback?.(`[memory].episodic must be true or false (got: ${kv.valRaw}); using false`);
-        episodic = false;
-      } else episodic = b;
+      episodic = boolOrFalse(kv.key, kv.valRaw, onFallback);
     } else if (kv.key === "recall_remote") {
-      const b = parseBool(kv.valRaw);
-      if (b === undefined) {
-        onFallback?.(
-          `[memory].recall_remote must be true or false (got: ${kv.valRaw}); using false`,
-        );
-        recallRemote = false;
-      } else recallRemote = b;
+      recallRemote = boolOrFalse(kv.key, kv.valRaw, onFallback);
     } else if (kv.key === "retention_days") {
       retentionDays = retentionOrDefault(kv.valRaw, onFallback);
     }

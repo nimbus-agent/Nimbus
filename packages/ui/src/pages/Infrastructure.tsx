@@ -3,6 +3,7 @@ import { PageHeader } from "../components/chrome/PageHeader";
 import { isRecord, safeText, stamp } from "../components/incidents/safe";
 import { useIpcQuery } from "../hooks/useIpcQuery";
 import type { IacDriftFinding, IacDriftLatestResult } from "../ipc/iac-types";
+import { withContentKeys } from "../lib/content-keys";
 
 const STATUSES = new Set(["drift", "clean", "failed", "busy"]);
 
@@ -51,14 +52,47 @@ function FindingRow({ f }: { readonly f: IacDriftFinding }): ReactNode {
       )}
       {f.lines.length > 0 && (
         <ul className="text-xs font-mono">
-          {f.lines.slice(0, 100).map((line, i) => (
-            // lines are the gateway's escaped drift lines (names, never values); order is stable
-            // biome-ignore lint/suspicious/noArrayIndexKey: a finding's lines have no id
-            <li key={i}>{safeText(line, 300)}</li>
+          {/* the gateway's escaped drift lines (names, never values); they carry no id */}
+          {withContentKeys(f.lines.slice(0, 100), (line) => line).map(({ key, item: line }) => (
+            <li key={key}>{safeText(line, 300)}</li>
           ))}
         </ul>
       )}
     </li>
+  );
+}
+
+function FindingsBody({
+  error,
+  res,
+}: {
+  readonly error: string | null;
+  readonly res: IacDriftLatestResult | null;
+}): ReactNode {
+  if (res === null) {
+    if (error !== null) {
+      return (
+        <p role="alert" className="text-sm">
+          {`Could not load the drift findings: ${safeText(error)}. From a terminal: nimbus iac drift --latest`}
+        </p>
+      );
+    }
+    return <p className="text-sm text-[var(--color-fg-muted)]">Loading...</p>;
+  }
+  if (res.findings.length === 0) {
+    return (
+      <p className="text-sm">
+        No drift check has run yet. Approve a directory with nimbus connector writes enable iac,
+        then run nimbus iac drift.
+      </p>
+    );
+  }
+  return (
+    <ul className="space-y-3">
+      {res.findings.map((f) => (
+        <FindingRow key={f.workdir} f={f} />
+      ))}
+    </ul>
   );
 }
 
@@ -77,24 +111,7 @@ export function Infrastructure(): ReactNode {
         <p className="text-xs text-[var(--color-fg-muted)]">
           Terraform drift in the directories you approved. To check now, run: nimbus iac drift
         </p>
-        {error !== null && res === null ? (
-          <p role="alert" className="text-sm">
-            {`Could not load the drift findings: ${safeText(error)}. From a terminal: nimbus iac drift --latest`}
-          </p>
-        ) : res === null ? (
-          <p className="text-sm text-[var(--color-fg-muted)]">Loading...</p>
-        ) : res.findings.length === 0 ? (
-          <p className="text-sm">
-            No drift check has run yet. Approve a directory with nimbus connector writes enable iac,
-            then run nimbus iac drift.
-          </p>
-        ) : (
-          <ul className="space-y-3">
-            {res.findings.map((f) => (
-              <FindingRow key={f.workdir} f={f} />
-            ))}
-          </ul>
-        )}
+        <FindingsBody error={error} res={res} />
       </div>
     </>
   );

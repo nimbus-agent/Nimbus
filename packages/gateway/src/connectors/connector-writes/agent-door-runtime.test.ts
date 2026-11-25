@@ -796,7 +796,7 @@ describe("acceptedTypes", () => {
       });
       upsertDoorApprovals(db, "agent", id, [{ toolId: "t", definitionSha256: "a".repeat(64) }], 1);
     }
-    expect((await door().acceptedTypes()).length).toBe(200);
+    expect(await door().acceptedTypes()).toHaveLength(200);
   });
 });
 

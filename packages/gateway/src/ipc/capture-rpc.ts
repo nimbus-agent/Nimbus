@@ -283,7 +283,7 @@ export function buildActDeps(
       let vetoCode: ActionRejectCode | undefined;
       // What the prompt showed, carried to the check after the answer: the registration it named and
       // the FULL hash of the approval. Only a user-MCP call has facts; one with no approval is refused.
-      if (userMcpCall !== undefined && userMcpCall.approval === null) {
+      if (userMcpCall?.approval === null) {
         return { status: "rejected", reason: USER_MCP_FACTS_UNCHECKED };
       }
       const shown: UserMcpCallBinding | undefined =

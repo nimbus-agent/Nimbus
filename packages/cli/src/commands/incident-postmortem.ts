@@ -63,7 +63,7 @@ type Flags = { values: Map<string, string>; bools: Set<string>; id: string };
 
 function scan(argv: readonly string[]): Flags | undefined {
   const f = scanFlags(argv, VALUE_FLAGS, BOOL_FLAGS);
-  return f === undefined || f.id === undefined ? undefined : { ...f, id: f.id };
+  return f?.id === undefined ? undefined : { ...f, id: f.id };
 }
 
 function onlyThese(f: Flags, values: readonly string[], bools: readonly string[]): boolean {
@@ -73,25 +73,33 @@ function onlyThese(f: Flags, values: readonly string[], bools: readonly string[]
   );
 }
 
+/** The draft form: no `--push`, only the draft flags. */
+function parseDraftArgs(f: Flags): PostmortemArgs | undefined {
+  if (!onlyThese(f, ["--out", "--template"], [...BOOL_FLAGS])) return undefined;
+  const out = f.values.get("--out");
+  const template = f.values.get("--template");
+  return {
+    mode: "draft",
+    id: f.id,
+    json: f.bools.has("--json"),
+    force: f.bools.has("--force"),
+    synthesize: f.bools.has("--synthesize"),
+    ...(out === undefined ? {} : { out }),
+    ...(template === undefined ? {} : { template }),
+  };
+}
+
 /** Parses the arguments after `postmortem`; `undefined` is a usage error. */
 export function parsePostmortemArgs(argv: readonly string[]): PostmortemArgs | undefined {
   const f = scan(argv);
   if (f === undefined) return undefined;
   const push = f.values.get("--push");
-  if (push === undefined) {
-    if (!onlyThese(f, ["--out", "--template"], [...BOOL_FLAGS])) return undefined;
-    const out = f.values.get("--out");
-    const template = f.values.get("--template");
-    return {
-      mode: "draft",
-      id: f.id,
-      json: f.bools.has("--json"),
-      force: f.bools.has("--force"),
-      synthesize: f.bools.has("--synthesize"),
-      ...(out === undefined ? {} : { out }),
-      ...(template === undefined ? {} : { template }),
-    };
-  }
+  if (push === undefined) return parseDraftArgs(f);
+  return parsePushArgs(f, push);
+}
+
+/** The push form: `--push notion --parent <id>` or `--push confluence --space <key>`. */
+function parsePushArgs(f: Flags, push: string): PostmortemArgs | undefined {
   if (push !== "notion" && push !== "confluence") return undefined;
   if (!onlyThese(f, ["--push", "--parent", "--space", "--file", "--title"], [])) return undefined;
   const parent = f.values.get("--parent");
@@ -220,11 +228,11 @@ async function runDraft(
 
 function pushMessage(r: PushReply): { code: number; text: string } {
   switch (r.outcome) {
-    case "pushed":
-      return {
-        code: 0,
-        text: `Pushed. ${r.pageId === null ? "The page was created." : `The page id is ${safeText(r.pageId)}.`}\n`,
-      };
+    case "pushed": {
+      const page =
+        r.pageId === null ? "The page was created." : `The page id is ${safeText(r.pageId)}.`;
+      return { code: 0, text: `Pushed. ${page}\n` };
+    }
     case "refused":
       return { code: 1, text: `Not pushed (${safeText(r.code)}): ${safeText(r.reason)}\n` };
     case "denied":
