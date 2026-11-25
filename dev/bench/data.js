@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795570851280,
+  "lastUpdate": 1795571322194,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "52fb7cfea808893955c6267caf08a5cb18aae943",
-          "message": "fix(sandbox): stop the Windows helper leaking an ACE per run; tool run follow-ups (#1524)\n\n## Summary\n\n### The Windows sandbox leaked an ACE per run until confinement broke\nmachine-wide\n\n`nimbus-sandbox-helper.exe` grants an AppContainer SID an ACE on the cwd\nand every policy path, and nothing ever removed one. Deleting the\nprofile, whether by the boot reaper or `--delete-profile`, leaves the\nACE behind as an unresolvable `S-1-15-2-*` entry. Measured on a temp\ndir:\n\n| step | ACEs |\n| --- | --- |\n| start | 5 |\n| spawn with profile A | 7 |\n| spawn with profile A again | 7: `GRANT_ACCESS` merges for the same SID\n|\n| spawn with profile B | 9 |\n| delete both profiles | 9: the ACEs survive |\n\nSo growth comes from **distinct SIDs**, and three callers use an id that\nis new on every run: `exec-<executionId>`, `cu-terminal-<sessionId>`,\nand one `toolgen.<toolId>` per tool. The ACEs land on paths that outlive\nthe run, above all the runtime bin dir every exec and generated-tool\nspawn is granted. A development machine reached **1366 ACEs** there,\nwhere `SetEntriesInAclW` fails with `87` and every confined spawn\nrefuses: I33 exec, the I35 terminal lane, and I39/I40 toolgen at once.\nThis is pre-existing and was found while verifying #1521.\n\n**Fix: two helper modes and two consumers.**\n\n- `--revoke-grants --profile <name> [--path <p>]...` derives the SID\nfrom the name, so it works after the profile is gone and never\nre-registers one. It removes that SID's explicit ACEs from each path,\nand a missing path counts as success.\n- `--sweep-orphaned-aces <path>...` removes an explicit ACE only when\nall three hold:\n  - its SID is an app-container SID;\n- it has **no** subkey under the per-user Mappings key, which also lists\ninstalled Store packages;\n  - it does **not** resolve via `LookupAccountSidW`.\n- **Released on exit, from the gateway.**\n`SandboxSpawnOptions.releaseGrantsOnExit` is set only by exec and the\nterminal lane, whose ids are unique per run. With it set, the win32\nrunner revokes the grants and then deletes the profile when the helper\nprocess exits or fails to launch. This runs in the gateway, not the\nhelper, because terminal close and exec timeouts `child.kill()` the\nhelper (`TerminateProcess`), so nothing after its wait would run.\n- **Not released for shared ids.** Revoking removes *every* ACE the SID\nholds, which would strip a concurrent sibling's access mid-run. That\nrules out:\n  - extensions and `toolgen.<toolId>`;\n  - `nimbus.preflight`, a fixed id;\n- the toolgen confinement probe, whose id the approved tool then spawns\nunder.\n- **Swept at boot.** `reapAppContainersAtBoot` sweeps the runtime's\nrequired read paths after its existing profile reap, so the profiles\njust reaped are exactly the ones whose ACEs are now orphaned. A missing\nhelper stays silent; any other failure warns and changes nothing the\nreap reports. That covers reaped generated tools, a crashed gateway, and\nthe existing backlog.\n\n**Residuals, stated.**\n- **Owner directories after a crash:** a gateway crash mid-run leaves\nthat run's ACEs on the owner's directories (exec grants, the terminal\ncwd). The sweep does not visit them, since nothing records which owner\ndirectories past runs were granted.\n- **Two gateways for one user:** they can still race through the\npre-existing boot reap.\n- **Shared install directory:** assumed not to carry another Windows\nuser's live Nimbus SIDs.\n\nAll three are in `docs/sandbox.md` § Grants are released.\n\n### `nimbus tool run` follow-ups from #1521's review\n\n- **An unconfinable sandbox now refuses.** `invokeSavedTool` asks\n`confinementUnavailable` before spawning. Production binds it to\n`SandboxRunner.canConfine` over `savedToolSpawnPolicy`, the same\nmanifest builder `spawnSavedTool` uses. It now refuses with\n`ERR_TOOLGEN_SANDBOX_DEGRADED`, the code `tool create` already used and\nnow a shared constant. Previously the spawn threw, and the audit\nrecorded `outcome: \"failed\"` with exit 1, claiming the tool ran.\nConfinement was fail-closed either way; only the classification was\nfalse.\n- **The duration is printed on stderr** in human mode: `nimbus:\ncompleted in <n> ms` or `nimbus: failed after <n> ms`. Stdout stays the\nbare result, so piping still works, and `--json` is unchanged.\n- **`help.test.ts` derives the `nimbus tool` subcommands** from\n`ParsedToolArgs` and requires each one in both `tool.ts`'s usage text\nand the contiguous `nimbus help` tool block. The test was red-proven two\nways: removing `save` from help, and adding a new `sub` literal.\n- **Docs:** `cli-reference.md` and `roadmap.md` still said \"exactly one\n`tool.invoke` audit row\". Those were restatements #1521's review\ncorrected elsewhere but missed here; both are corrected.\n\nNo migration, no new invariant, no new egress class, no new IPC method.\n\n## Verification\n\n- **Helper modes, by hand against real DACLs.** An orphan sweep removed\n2 of 3 SIDs and kept the live profile's. A revoke returned the directory\nto its pre-spawn baseline. A profile outside the namespace and a sweep\nwith no paths both exit 64.\n- **New Windows integration test**\n`test/integration/platform/sandbox/win32-ace-release.test.ts`, run\nagainst the real helper: 3 pass. It checks three things:\n- the ACE appears mid-run and is gone afterwards, and the profile is\ndeleted;\n  - a **killed** execution (wall-clock) releases too;\n  - the sweep removes an orphan and keeps a live profile's ACE.\n- **Red proof:** with `releaseGrantsOnExit` switched off, both execution\ncases fail.\n- **Unit tests:** `win32-release.test.ts` and the boot-sweep cases in\n`win32-reap.test.ts` (POSIX stand-in helper). Those four sweep cases\nskip on Windows and were run red, then green, under Linux Bun 1.3.14 in\nWSL.\n- **Test suites:** sandbox 102 pass, apart from the 2 local-environment\nfailures noted below. exec + computer-use 547 pass. toolgen +\ntoolgen-rpc 643 pass. `tool.test.ts` 146 pass. `help.test.ts` 11 pass.\n- **Preflight:** every static gate passed; test:ci red on exactly the\ntwo known win32.test.ts cases (`reports itself as not fully active…` /\n`explains the degradation…`), unchanged from main, which fail on this\nmachine only because a copy of nimbus-sandbox-helper.exe sits next to\nbun.exe in ~/.bun/bin. The same two failures were disclosed on #1521.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **New Features**\n- Windows sandbox permissions are now cleaned up after execution and\nterminal sessions, with recovery cleanup for orphaned permissions after\ngateway restarts.\n- Tool runs now report execution duration on stderr in human-readable\nmode and include duration in JSON results.\n\n- **Bug Fixes**\n- Tool runs refuse to start when sandbox confinement is unavailable,\nreturning a clear error.\n  - Cleanup now also handles interrupted or failed executions.\n\n- **Documentation**\n- Updated CLI, sandbox, roadmap, and changelog documentation with the\nlatest behavior and audit guarantees.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-17T09:27:19+03:00",
-          "tree_id": "a9e8e5de964b9c14a1d389c89b4ed76af6c75d2f",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/52fb7cfea808893955c6267caf08a5cb18aae943"
-        },
-        "date": 1789627312061,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 329.8040119499994,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 327.89727520000343,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 187.04406645000054,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e72839daaa6633f558155539f9dd347fd418fb6f",
+          "message": "docs: S4 batch status for FS3 and the Data Incident Brief inputs (#2151)\n\n## What\n\nThe second S4 batch-docs PR (the first was #2138). Documentation only:\n`docs/roadmap.md`, `docs/CHANGELOG.md`, `CLAUDE.md`, `GEMINI.md` (kept\nin step) and the `nimbus-db-migrations` skill. Every claim was checked\nagainst code on main, not only the PR bodies.\n\n## PRs covered\n\n- #2148 (Airflow, Dagster and Prefect runs), #2147 (dbt Cloud test\nresults) and #2150 (warehouse schema diff, V108): the three inputs of\nowner ruling OR-S4-DATA-INPUTS. The roadmap's Automatic incident\nassembly row now records them as delivered with their stated bounds and\nis ticked, since nothing else in it remained open; the IC3 stated bound\nis reworded as historical. CHANGELOG entries and one CLAUDE.md/GEMINI.md\nstatus passage cover all three.\n- #2146 (FS3, the old LAN wire removed): it updated CLAUDE.md,\nGEMINI.md, roadmap and CHANGELOG itself; verified only (the LAN forward\nsecrecy row is ticked, the CHANGELOG entry and status sentence exist, no\nchange needed).\n- #2141, #2143, #2145 and #2140 already carried their own doc edits;\nnothing needed.\n\n## Derived numbers\n\nSchema V108 (highest step in `index/migrations/runner.ts`, matches the\nV108 SQL module), connectors pin ^0.17.2, config keys and defaults read\nfrom `config/index-toml.ts`, `config/orchestration-toml.ts` and\n`config/incident-toml.ts`: `[index] schema_history_retention_days` 365\n(7 to 3650), `[index] dbt_test_retention_days` 30 (7 to 365),\n`[orchestration] run_retention_days` 30 (7 to 365), `[incident]\ndata_schema_lookback_hours` 24 (1 to 168); dbt pass 15 runs and 3 pages,\nBigQuery describe budget 50 (`MAX_TABLE_DETAIL`). No invariant text\nchanged in these PRs, so the I-list is untouched.\n\n## Checks\n\n`audit:status-drift`, `audit:doc-refs`, `audit:release-please`,\nmarkdownlint on the four docs and `bun run preflight:fast` pass.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrGFPLqt8C3Ybzk2dHq\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-25T03:40:51+02:00",
+          "tree_id": "2ea1a8dc9cb0ab754db60d66969cccd50028af72",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/e72839daaa6633f558155539f9dd347fd418fb6f"
+        },
+        "date": 1795571318053,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 178.0260671500011,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 181.46868284999837,
             "unit": "ms"
           }
         ]
