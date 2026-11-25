@@ -16,6 +16,7 @@ import nacl from "tweetnacl";
 import { MAX_ROLE_PACK_MANIFEST_BYTES } from "./caps.ts";
 import { RegistryError } from "./errors.ts";
 import { assertSafeExtensionId } from "./extension-id.ts";
+import { decodeJsonFile } from "./json-file.ts";
 import { PUBLISHER_ID_RE } from "./manifest.ts";
 import { ROLE_PACK_ID_RE } from "./role-pack.ts";
 import { isValidSemver } from "./semver.ts";
@@ -279,25 +280,7 @@ export function readRegistryPacks(index: RegistryIndex): RegistryPacksRead {
 }
 
 export function parseRegistryIndex(bytes: Uint8Array): RegistryIndex {
-  if (bytes.byteLength > MAX_INDEX_BYTES) {
-    throw new RegistryError(
-      "ERR_REGISTRY_TOO_LARGE",
-      `index.json exceeds ${String(MAX_INDEX_BYTES)} bytes`,
-    );
-  }
-  let text: string;
-  try {
-    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
-  } catch {
-    throw invalid("index.json is not valid UTF-8");
-  }
-  if (text.startsWith("﻿")) text = text.slice(1);
-  let raw: unknown;
-  try {
-    raw = JSON.parse(text);
-  } catch {
-    throw invalid("index.json is not valid JSON");
-  }
+  const raw = decodeJsonFile(bytes, "index.json", MAX_INDEX_BYTES, invalid);
   const o = asObject(raw, "index");
   requireKeys(
     o,

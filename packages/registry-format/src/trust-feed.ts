@@ -15,6 +15,7 @@ import { canonicalize } from "@nimbus-dev/sdk"; // NOSONAR S1874
 import nacl from "tweetnacl";
 import { privateKeyFromSeed } from "./ed25519-seed.ts";
 import { RegistryError } from "./errors.ts";
+import { decodeJsonFile } from "./json-file.ts";
 import {
   isKnownStatementKind,
   parseTrustStatement,
@@ -91,25 +92,7 @@ export function readStatementList(raw: unknown): StatementsRead {
 }
 
 export function parseTrustFeed(bytes: Uint8Array): TrustFeed {
-  if (bytes.byteLength > MAX_TRUST_FEED_BYTES) {
-    throw new RegistryError(
-      "ERR_REGISTRY_TOO_LARGE",
-      `trust.json exceeds ${String(MAX_TRUST_FEED_BYTES)} bytes`,
-    );
-  }
-  let text: string;
-  try {
-    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
-  } catch {
-    throw invalid("trust.json is not valid UTF-8");
-  }
-  if (text.startsWith("﻿")) text = text.slice(1);
-  let raw: unknown;
-  try {
-    raw = JSON.parse(text);
-  } catch {
-    throw invalid("trust.json is not valid JSON");
-  }
+  const raw = decodeJsonFile(bytes, "trust.json", MAX_TRUST_FEED_BYTES, invalid);
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     throw invalid("trust.json must be an object");
   }

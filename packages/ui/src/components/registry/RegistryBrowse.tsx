@@ -1,4 +1,4 @@
-import { type FormEvent, type ReactNode, useState } from "react";
+import { type ReactNode, type SubmitEvent, useState } from "react";
 import { useIpcQuery } from "../../hooks/useIpcQuery";
 import { createIpcClient } from "../../ipc/client";
 import type { RegistryInfoResult, RegistrySearchHit, RegistrySearchResult } from "../../ipc/types";
@@ -54,7 +54,7 @@ export function RegistryBrowse({ offline }: { readonly offline: boolean }): Reac
   const [tile, setTile] = useState<{ info: RegistryInfoResult; name: string } | null>(null);
   const [tileError, setTileError] = useState<string | null>(null);
 
-  async function onSubmit(e: FormEvent): Promise<void> {
+  async function onSubmit(e: SubmitEvent): Promise<void> {
     e.preventDefault();
     const q = query.trim();
     if (q === "" || busy) return;

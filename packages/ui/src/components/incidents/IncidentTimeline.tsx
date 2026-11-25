@@ -1,7 +1,17 @@
 import type { ReactNode } from "react";
 import { useIpcQuery } from "../../hooks/useIpcQuery";
+import { withContentKeys } from "../../lib/content-keys";
 import { asIncidentTimeline } from "./guards";
 import { safeText, stamp } from "./safe";
+
+/** Events carry no id: a key is built from what the event says (see `withContentKeys`). */
+function eventContent(e: {
+  readonly atMs: number;
+  readonly kind: string;
+  readonly text: string;
+}): string {
+  return `${String(e.atMs)}|${e.kind}|${e.text}`;
+}
 
 export function IncidentTimeline({ recordId }: { readonly recordId: string }): ReactNode {
   const { data, error } = useIpcQuery<unknown>("incident.timeline", 60_000, { id: recordId });
@@ -13,7 +23,7 @@ export function IncidentTimeline({ recordId }: { readonly recordId: string }): R
       </p>
     );
   }
-  if (tl === null || tl.recordId !== recordId) {
+  if (tl?.recordId !== recordId) {
     return <p className="text-sm text-[var(--color-fg-muted)]">Loading timeline...</p>;
   }
   return (
@@ -23,9 +33,8 @@ export function IncidentTimeline({ recordId }: { readonly recordId: string }): R
         <p className="text-xs text-[var(--color-fg-muted)]">No events are known for this record.</p>
       ) : (
         <ol className="space-y-1 text-xs">
-          {tl.events.map((e, i) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: events carry no id; the list is read-only and never reordered
-            <li key={i} className="flex gap-2">
+          {withContentKeys(tl.events, eventContent).map(({ key, item: e }) => (
+            <li key={key} className="flex gap-2">
               <span className="font-mono shrink-0">
                 {`${stamp(e.atMs)}${e.atBasis === "observed" ? " (observed)" : ""}`}
               </span>
