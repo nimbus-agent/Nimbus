@@ -8,11 +8,6 @@ import { workflowRunLock } from "../../automation/workflow-run-lock.ts";
 import { nonRunStepLabels, parseWorkflowSteps } from "../../automation/workflow-steps.ts";
 import { abandonWorkflowRunRow, getWorkflowByName } from "../../automation/workflow-store.ts";
 import { asRecord } from "../../connectors/unknown-record.ts";
-import {
-  describeEmbeddingWarming,
-  EMBEDDING_WARMING_CODE,
-  EMBEDDING_WARMING_RPC_CODE,
-} from "../../embedding/embedding-readiness.ts";
 import { getAgentLimits } from "../../engine/agent-limits.ts";
 import {
   type AgentRequestContext,
@@ -20,20 +15,27 @@ import {
 } from "../../engine/agent-request-context.ts";
 import { ComputerUseTurnError } from "../../engine/computer-use-turn-error.ts";
 import { GatewayAgentUnavailableError } from "../../engine/gateway-agent-error.ts";
-import { GAS_LIMIT_REACHED_NOTIFICATION, type GasLimitEvent } from "../../engine/step-budget.ts";
 import { driftHintsFromIndex } from "../../index/drift-hints.ts";
-import { pointInTimeDisclosure } from "../../index/item-history-at.ts";
-import type { IndexSearchQuery } from "../../index/local-index.ts";
-import { describeRetrieval } from "../../index/search-retrieval.ts";
-import { type AtTimeError, parseAtParam } from "../../util/point-in-time-parse.ts";
-import { gatewayZone } from "../../util/zoned-time.ts";
 import type { AgentInvokeContext } from "../agent-invoke.ts";
 import { type AgentInvokeContextLike, createAskStreamHandler } from "../engine-ask-stream.ts";
 import type { ClientSession } from "../session.ts";
 import { assertStreamIdHasNoNulByte, workflowRegistryKey } from "../workflow-cancel.ts";
 import type { WorkflowRunContext } from "../workflow-invoke.ts";
+import {
+  agentInvokeRequestStore,
+  buildAgentInvokePayload,
+  parseAgentInvokeParams,
+  parseOptionalString,
+  sendAgentChunkIfStreaming,
+} from "./agent-invoke-params.ts";
 import type { ClientKind } from "./client-kind.ts";
 import type { ServerCtx } from "./context.ts";
+import {
+  assertSemanticSearchReady,
+  buildSearchRankedQuery,
+  searchRankedOptions,
+  shapeSearchRankedResult,
+} from "./index-search-ranked.ts";
 import { RpcMethodError } from "./rpc-error.ts";
 
 /**
@@ -111,141 +113,32 @@ function requireNonEmptyRpcString(rec: Record<string, unknown> | undefined, key:
   return v.trim();
 }
 
-function parseOptionalString(
-  rec: Record<string, unknown> | undefined,
-  key: string,
-): string | undefined {
-  const raw = rec?.[key];
-  if (typeof raw !== "string" || raw.trim() === "") return undefined;
-  return raw.trim();
-}
-
-function sendAgentChunkIfStreaming(
-  session: ClientSession,
-  stream: boolean,
-  text: string,
-  streamId?: string,
-): void {
-  if (!stream) {
-    return;
-  }
-  session.writeNotification({
-    jsonrpc: "2.0",
-    method: "agent.chunk",
-    // Additive by design: without a streamId the params are byte-identical to
-    // what every shipped client already parses.
-    params: streamId === undefined ? { text } : { streamId, text },
-  });
-}
-
-/**
- * UNICAST to the acting session — never `ctx.broadcastNotification`: the event describes one
- * caller's turn, and its `streamId` is that caller's own. Sent whether or not the call streams
- * (the reply's disclosure line carries the same fact for clients that ignore notifications).
- */
-function sendGasLimitReached(
-  session: ClientSession,
-  event: GasLimitEvent,
-  streamId: string | undefined,
-): void {
-  session.writeNotification({
-    jsonrpc: "2.0",
-    method: GAS_LIMIT_REACHED_NOTIFICATION,
-    params: streamId === undefined ? { ...event } : { ...event, streamId },
-  });
-}
-
-function parseAgentInvokeAt(raw: unknown): number | undefined {
-  try {
-    return parseAtParam(raw, Date.now(), gatewayZone());
-  } catch (e) {
-    throw new RpcMethodError(-32602, `agent.invoke: ${(e as AtTimeError).message}`);
-  }
-}
-
 export async function dispatchAgentInvoke(
   ctx: ServerCtx,
   session: ClientSession,
   clientId: string,
   params: unknown,
 ): Promise<unknown> {
-  const rec = asRecord(params);
-  const input = rec !== undefined && typeof rec["input"] === "string" ? rec["input"] : "";
-  const stream = rec?.["stream"] === true;
-  const sessionIdRaw = rec?.["sessionId"];
-  const sessionId =
-    typeof sessionIdRaw === "string" && sessionIdRaw.trim() !== ""
-      ? sessionIdRaw.trim()
-      : undefined;
-  const agentRaw = rec?.["agent"];
-  const agent =
-    typeof agentRaw === "string" && agentRaw.trim() !== "" ? agentRaw.trim() : undefined;
-  // `=== true`, matching `stream` above: a truthy non-boolean from a hand-rolled client must
-  // not silently switch the answer's whole posture.
-  const devil = rec?.["devil"] === true;
-  // `--at`: refused BEFORE the agent runs when present but unusable or in the future. Never ignored.
-  const pointInTimeMs = parseAgentInvokeAt(rec?.["at"]);
-  const streamId = parseOptionalString(rec, "streamId");
+  const req = parseAgentInvokeParams(params);
   const clientKind = ctx.getClientKind(clientId);
-  const offerUserMcpTools = USER_MCP_OFFER_BY_KIND[clientKind];
-  const offerConnectorWriteTools = CONNECTOR_WRITE_OFFER_BY_KIND[clientKind];
-  const offerComputerUse = COMPUTER_USE_OFFER_BY_KIND[clientKind];
-  // `nimbus ask --computer <id>`: the session the owner opened; honoured only for a `cli` caller,
-  // refused with `--at` (a point-in-time turn drives nothing).
-  const computerSessionId = parseOptionalString(rec, "computerSession");
-  if (computerSessionId !== undefined && pointInTimeMs !== undefined) {
-    throw new RpcMethodError(-32602, "computerSession cannot be combined with at");
-  }
+  const offers = {
+    offerUserMcpTools: USER_MCP_OFFER_BY_KIND[clientKind],
+    offerConnectorWriteTools: CONNECTOR_WRITE_OFFER_BY_KIND[clientKind],
+    offerComputerUse: COMPUTER_USE_OFFER_BY_KIND[clientKind],
+  };
   const handler = ctx.getAgentInvokeHandler();
   if (handler === undefined) {
     return {
-      reply: `Agent invoke is not configured (no handler). Echo: ${input.slice(0, 500)}`,
-      stream,
+      reply: `Agent invoke is not configured (no handler). Echo: ${req.input.slice(0, 500)}`,
+      stream: req.stream,
     };
   }
   try {
-    const requestStore: AgentRequestContext = {};
-    if (sessionId !== undefined) {
-      requestStore.sessionId = sessionId;
-    }
-    if (pointInTimeMs !== undefined) {
-      requestStore.pointInTimeMs = pointInTimeMs;
-    }
-    return await agentRequestContext.run(requestStore, async () => {
-      const payload: AgentInvokeContext = {
-        clientId,
-        input,
-        stream,
-        sendChunk: (text: string) => {
-          sendAgentChunkIfStreaming(session, stream, text, streamId);
-        },
-        offerUserMcpTools,
-        offerConnectorWriteTools,
-        offerComputerUse,
-        ...(computerSessionId === undefined ? {} : { computerSessionId }),
-        notifyGasLimit: (event: GasLimitEvent) => {
-          sendGasLimitReached(session, event, streamId);
-        },
-      };
-      if (sessionId !== undefined) {
-        payload.sessionId = sessionId;
-      }
-      if (agent !== undefined) {
-        payload.agent = agent;
-      }
-      if (devil) {
-        payload.devil = true;
-      }
-      if (pointInTimeMs !== undefined) {
-        payload.pointInTimeMs = pointInTimeMs;
-      }
-      return handler(payload);
-    });
+    return await agentRequestContext.run(agentInvokeRequestStore(req), async () =>
+      handler(buildAgentInvokePayload(req, clientId, session, offers)),
+    );
   } catch (e) {
-    if (e instanceof GatewayAgentUnavailableError) {
-      throw new RpcMethodError(-32000, e.message);
-    }
-    if (e instanceof ComputerUseTurnError) {
+    if (e instanceof GatewayAgentUnavailableError || e instanceof ComputerUseTurnError) {
       throw new RpcMethodError(-32000, e.message);
     }
     throw e;
@@ -528,14 +421,6 @@ export function rpcGatewayPing(ctx: ServerCtx, params: unknown): unknown {
   return { ...base, drift: { lines } };
 }
 
-function parseSearchAt(raw: unknown): number | undefined {
-  try {
-    return parseAtParam(raw, Date.now(), gatewayZone());
-  } catch (e) {
-    throw new RpcMethodError(-32602, `index.searchRanked: ${(e as AtTimeError).message}`);
-  }
-}
-
 export async function rpcIndexSearchRanked(ctx: ServerCtx, params: unknown): Promise<unknown> {
   if (ctx.options.localIndex === undefined) {
     throw new RpcMethodError(-32603, "Local index is not available");
@@ -544,81 +429,11 @@ export async function rpcIndexSearchRanked(ctx: ServerCtx, params: unknown): Pro
   if (rec === undefined) {
     throw new RpcMethodError(-32602, "Invalid params");
   }
-  const name = typeof rec["name"] === "string" ? rec["name"] : "";
-  const service = typeof rec["service"] === "string" ? rec["service"] : undefined;
-  const itemType = typeof rec["itemType"] === "string" ? rec["itemType"] : undefined;
-  const limit =
-    typeof rec["limit"] === "number" && Number.isFinite(rec["limit"])
-      ? Math.min(500, Math.max(1, Math.floor(rec["limit"])))
-      : 20;
-  const semantic = rec["semantic"] !== false;
-  const contextChunks =
-    typeof rec["contextChunks"] === "number" && Number.isFinite(rec["contextChunks"])
-      ? Math.min(8, Math.max(0, Math.floor(rec["contextChunks"])))
-      : 2;
-  // #928 false-green guard. The gateway now binds BEFORE the embedding model is loaded, so a
-  // semantic query can arrive with no vectors yet. Serving it anyway silently degrades to BM25
-  // — and a query with no lexical overlap then returns `[]`, which reads exactly like "searched
-  // everything, found nothing". Say "not yet" instead, and hand back the readiness so the client
-  // can show progress or retry. Only WARMING is transient: `disabled`/`unavailable` are
-  // permanent for this process, so those serve keyword results as before.
-  const readiness = ctx.options.embeddingReadiness?.();
-  if (semantic && readiness?.state === "warming") {
-    throw new RpcMethodError(
-      EMBEDDING_WARMING_RPC_CODE,
-      `index.searchRanked: ${describeEmbeddingWarming(readiness)}`,
-      { code: EMBEDDING_WARMING_CODE, readiness },
-    );
-  }
-
-  const query: IndexSearchQuery = { limit };
-  // `at` (Phase 10 IC1): a PRESENT but unusable value is refused, and an undisclosed historical answer is
-  // the failure this feature exists to prevent, so `at` requires the envelope that carries the disclosure.
-  const atMs = parseSearchAt(rec["at"]);
-  if (atMs !== undefined) {
-    if (rec["envelope"] !== true) {
-      throw new RpcMethodError(-32602, "index.searchRanked: at requires envelope: true");
-    }
-    query.atMs = atMs;
-  }
-  if (name !== "") {
-    query.name = name;
-  }
-  if (service !== undefined) {
-    query.service = service;
-  }
-  if (itemType !== undefined) {
-    query.itemType = itemType;
-  }
-  const result = await ctx.options.localIndex.searchRankedAsync(query, {
-    semantic,
-    contextChunks,
-  });
-  // OPT-IN, and only on the wire. The published `@nimbus-dev/client` (0.17.3) asserts this method
-  // returns an array, so an unconditional envelope would make every existing client throw. First-party
-  // callers pass `envelope: true` and get the disclosure plus the gateway's own wording for it, so no
-  // client keeps a second copy of the notes. A caller that does not ask still receives undisclosed
-  // partial results — the stated residual (docs/architecture.md, search retrieval disclosure).
-  if (rec["envelope"] === true) {
-    const notes = describeRetrieval(result.retrieval);
-    if (result.pointInTime === undefined) {
-      return { items: result.items, retrieval: result.retrieval, notes };
-    }
-    const zone = gatewayZone();
-    const disclosure = pointInTimeDisclosure({ ...result.pointInTime, zone });
-    return {
-      items: result.items,
-      retrieval: result.retrieval,
-      notes: [...notes, ...disclosure],
-      asOf: {
-        atMs: result.pointInTime.atMs,
-        zone,
-        historyStartMs: result.pointInTime.historyStartMs,
-        gapCount: result.pointInTime.gapCount,
-      },
-    };
-  }
-  return result.items;
+  const options = searchRankedOptions(rec);
+  assertSemanticSearchReady(ctx, options.semantic);
+  const query = buildSearchRankedQuery(rec);
+  const result = await ctx.options.localIndex.searchRankedAsync(query, options);
+  return shapeSearchRankedResult(result, rec["envelope"] === true);
 }
 
 export function rpcConsentRespond(ctx: ServerCtx, clientId: string, params: unknown): unknown {

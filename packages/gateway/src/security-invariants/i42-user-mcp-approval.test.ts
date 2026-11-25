@@ -565,12 +565,11 @@ describe("I42 — every user-MCP tool call needs the local owner's approval", ()
     test("source pin: the act wiring reads the call facts (one listing and the definition check) before it builds the executor", async () => {
       const src = await read("packages/gateway/src/ipc/capture-rpc.ts");
       const body = src.slice(src.indexOf("export function buildActDeps("));
-      const facts = body.indexOf("userMcpCallFacts(actionType, provenance.basis");
-      const build = body.indexOf("buildAgentWriteExecutor(");
-      expect(facts).toBeGreaterThan(-1);
-      expect(facts).toBeLessThan(build);
-      // the gateway's own key is the only one dispatched
-      expect(body).toContain("userMcpToolKeyForActionType(actionType)");
+      expect(body).toMatch(/userMcpCallFor\(door, actionType[\s\S]*buildAgentWriteExecutor\(/);
+      expect(body).toContain("userMcpCallFacts(actionType, provenance.basis");
+      // the gateway's own key is the only one dispatched (the routing step, `actRoute`)
+      const steps = await read("packages/gateway/src/ipc/capture-act-steps.ts");
+      expect(steps).toContain("userMcpToolKeyForActionType(actionType)");
     });
   });
 });

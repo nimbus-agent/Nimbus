@@ -2303,7 +2303,7 @@ Reverse-lookup table for inline comments migrated from source files during the 2
 | `packages/gateway/src/ipc/data-rpc.ts:23` | I4 | data.delete routes through ToolExecutor; hitlStatus set by gate only |
 | `packages/gateway/src/ipc/reindex-rpc.test.ts:56` | I5 | connector.reindex listed in FORBIDDEN_OVER_LAN |
 | `packages/gateway/src/ipc/reindex-rpc.ts:8` | I5 | connector.reindex is FORBIDDEN_OVER_LAN (I5) |
-| `packages/gateway/src/ipc/server/inline-handlers.ts:624` | I4 | consent.respond handler (`rpcConsentRespond`, dispatched from `server.ts`) is the sole production hitlStatus supplier |
+| `packages/gateway/src/ipc/server/inline-handlers.ts:439` | I4 | consent.respond handler (`rpcConsentRespond`, dispatched from `server.ts`) is the sole production hitlStatus supplier |
 | `packages/gateway/src/ipc/server/vault-dispatch.ts:22` | I4 | vault dispatch does not set hitlStatus; routes through executor |
 | `packages/gateway/src/ipc/server/vault-dispatch.ts:101` | I4 | vault dispatch confirmed non-HITL; hitlStatus: not_required |
 | `packages/gateway/src/security-invariants/i10-constant-time-compare.test.ts` (`describe("I10 …")`) | I10 | Test asserts constantTimeStringEqual canonical source is util/timing-safe-compare.ts |
@@ -2354,7 +2354,7 @@ Reverse-lookup table for inline comments migrated from source files during the 2
 | `packages/gateway/src/index/tool-call-log-v29-sql.ts:9` | I11 | audit.toolCalls is CLI-only (FORBIDDEN_OVER_LAN per I5, absent from Tauri allowlist per I7) |
 | `packages/gateway/src/automation/workflow-runner.ts:300` | I2 | workflow.run routes write steps through the ToolExecutor gate (`executeWriteStep`, via the executor `buildWorkflowWriteExecutor` builds) |
 | `packages/gateway/src/ipc/consent.ts:145` | I2 | workflow consent prompts are asked by the ConsentCoordinator (`ConsentCoordinatorImpl`), not by the workflow RPC handler; the runner's HITL step preview (`workflow-runner.ts:579`) is informational only |
-| `packages/gateway/src/ipc/server/inline-handlers.ts:393` | I2 | workflow.resume (there is no `workflow.rerun` method) continues a blocked run on the owner's attended write executor, so the same HITL gate applies as on the initial run |
+| `packages/gateway/src/ipc/server/inline-handlers.ts:286` | I2 | workflow.resume (there is no `workflow.rerun` method) continues a blocked run on the owner's attended write executor, so the same HITL gate applies as on the initial run |
 | `packages/gateway/src/ipc/automation-rpc/watcher.ts:70` | I2 | watcher.create does not trigger HITL; watchers are read-only observers |
 | `packages/gateway/src/ipc/automation-rpc/watcher.ts:105` | I2 | watcher.delete does not trigger HITL (watcher is gateway-local, not a cloud mutation) |
 | `packages/gateway/src/ipc/deployment-rpc.ts:5` | I13 | deployment-rpc handler is NOT in Tauri ALLOWED_METHODS (only reachable via HTTP write surface) |

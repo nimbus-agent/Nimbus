@@ -14,10 +14,8 @@ import {
   agentDoorPolicyAllows,
 } from "../../connectors/connector-writes/agent-door.ts";
 import {
-  checkAgentToolDefinition,
   type DoorSuspension,
   sha12,
-  suspensionFromRow,
 } from "../../connectors/connector-writes/agent-door-definition.ts";
 import {
   type DoorApproval,
@@ -48,6 +46,7 @@ import { APPROVER_BY_KIND } from "../../mcp-sink/capture-client-policy.ts";
 import type { EnforcedPolicy } from "../../policy/policy-gate.ts";
 import { ConnectorRpcError } from "../connector-rpc-shared.ts";
 import type { ClientKind } from "../server/client-kind.ts";
+import { classifyApprovals } from "./agent-writes-classify.ts";
 
 /** What the agent-door handlers need; `ModelWritesDeps` carries all of it (structurally). */
 export interface AgentWritesDeps {
@@ -426,29 +425,7 @@ async function statusOfService(
         .then(() => lister?.(service))
         .catch(() => undefined)
     : undefined;
-  const suspended: AgentSuspendedTool[] = [];
-  const notListed: string[] = [];
-  let unchanged = 0;
-  for (const a of approvals) {
-    if (a.suspendedAt !== null) {
-      suspended.push(suspensionFromRow(a));
-      continue;
-    }
-    if (listed === undefined) {
-      unchanged++;
-      continue;
-    }
-    // The ONE mark-and-audit helper (`agent-door-definition.ts`), shared with the submit, approval
-    // and veto paths: a first mismatch is marked sticky with one audit row.
-    const check = checkAgentToolDefinition(deps, a, listed);
-    if (check.kind === "changed" || check.kind === "unreadable") {
-      if (check.suspension === undefined) unchanged++;
-      else suspended.push(check.suspension);
-      continue;
-    }
-    if (check.kind === "missing") notListed.push(a.toolId);
-    unchanged++;
-  }
+  const { suspended, notListed, unchanged } = classifyApprovals(deps, approvals, listed);
   return {
     service,
     ...(userMcp ? { userMcp: true as const } : {}),

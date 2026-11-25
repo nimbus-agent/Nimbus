@@ -176,20 +176,8 @@ export async function handleUserMcpAgentWritesEnable(
   // 1. The caller: a connection that declared `cli` or `ui`, and a gate to ask.
   const executor = requireAgentEnableCaller(deps);
   // 2. The arguments.
-  const service = rec?.["service"];
-  if (!isUserMcpServiceParam(service)) {
-    throw new ConnectorRpcError(
-      -32602,
-      "ERR_CONNECTOR_WRITES_UNKNOWN_SERVICE: that is not a user MCP server id",
-    );
-  }
-  if (rec?.["wave"] !== undefined) {
-    refuseAgentWrites(
-      "ERR_CONNECTOR_WRITES_AGENT_USER_MCP_WAVE",
-      "a user MCP server has no waves; do not pass --wave",
-      -32602,
-    );
-  }
+  const service = requireUserMcpServiceParam(rec);
+  refuseWaveParam(rec);
   refuseScopeParams(rec);
   const names = parseApproveNames(rec?.["approve"]);
   // 3. The server is registered (and which registration the owner is about to be shown).
@@ -213,43 +201,111 @@ export async function handleUserMcpAgentWritesEnable(
     );
   }
   const existing = new Map(listDoorApprovals(deps.db, "agent", service).map((a) => [a.toolId, a]));
-  const line = (tool: string): UserMcpToolLine | undefined => {
-    const entry = listed[mcpClientToolKey(service, tool)];
-    const sha = definitionSha256(tool, entry);
-    if (sha === undefined) return undefined;
-    return {
-      toolId: tool,
-      state: stateOf(existing.get(tool), sha),
-      sha12: sha12(sha),
-      description: cutDescription(listedDescription(entry), PROMPT_DESCRIPTION_MAX),
-    };
-  };
-  // Without --approve: say what the server lists, with the hash prefixes, and ask nothing (OR-AD-23).
-  if (names === undefined) {
-    const tools: NonNullable<UserMcpAgentEnableReply["tools"]> = [];
-    const notApprovable: string[] = [];
-    const allNames = listedToolNames(service, listed);
-    const omitted = Math.max(0, allNames.length - USER_MCP_LIST_TOOLS_MAX);
-    for (const tool of allNames.slice(0, USER_MCP_LIST_TOOLS_MAX)) {
-      const l = userMcpToolSegmentOk(`x.${tool}`) ? line(tool) : undefined;
-      if (l === undefined) notApprovable.push(tool);
-      else tools.push({ toolId: l.toolId, sha12: l.sha12, state: l.state });
-    }
-    return {
-      service,
-      door: "agent",
-      listOnly: true,
-      approved: 0,
-      writes: [],
-      tools,
-      ...(notApprovable.length === 0 ? {} : { notApprovable }),
-      ...(omitted === 0 ? {} : { omitted }),
-    };
-  }
+  if (names === undefined) return listOnlyReplyOf(service, listed, existing);
   // 6. Each named tool is in the listing and hashes.
+  const lines = namedToolLines(service, listed, existing, names);
+  // 7. The owner's gate: the exact tools, hashes and reach they are about to approve.
+  const payload = enablePayloadOf(deps, service, registration, lines);
+  await requireOwnerApproval(executor, payload, deps);
+  // 8. ONE transaction, only for the registration that was shown and only while policy allows.
+  const entries: DoorApprovalEntry[] = lines.map((l) => ({
+    toolId: l.toolId,
+    definitionSha256: fullHash(listed, service, l.toolId),
+  }));
+  commitApprovals(deps, service, registration.created_at, entries);
+  return {
+    service,
+    door: "agent",
+    listOnly: false,
+    approved: entries.length,
+    writes: lines.map((l) => ({ toolId: l.toolId, sha12: l.sha12 })),
+  };
+}
+
+/** Step 2, the service: a user MCP server id and nothing else. */
+function requireUserMcpServiceParam(rec: Record<string, unknown> | undefined): string {
+  const service = rec?.["service"];
+  if (!isUserMcpServiceParam(service)) {
+    throw new ConnectorRpcError(
+      -32602,
+      "ERR_CONNECTOR_WRITES_UNKNOWN_SERVICE: that is not a user MCP server id",
+    );
+  }
+  return service;
+}
+
+/** Step 2, the wave: a user MCP server has none. */
+function refuseWaveParam(rec: Record<string, unknown> | undefined): void {
+  if (rec?.["wave"] !== undefined) {
+    refuseAgentWrites(
+      "ERR_CONNECTOR_WRITES_AGENT_USER_MCP_WAVE",
+      "a user MCP server has no waves; do not pass --wave",
+      -32602,
+    );
+  }
+}
+
+type ListedDefinitions = Readonly<Record<string, unknown>>;
+
+/** One tool of the listing as the owner is shown it, or `undefined` when it cannot be hashed. */
+function toolLineOf(
+  service: string,
+  listed: ListedDefinitions,
+  existing: ReadonlyMap<string, DoorApproval>,
+  tool: string,
+): UserMcpToolLine | undefined {
+  const entry = listed[mcpClientToolKey(service, tool)];
+  const sha = definitionSha256(tool, entry);
+  if (sha === undefined) return undefined;
+  return {
+    toolId: tool,
+    state: stateOf(existing.get(tool), sha),
+    sha12: sha12(sha),
+    description: cutDescription(listedDescription(entry), PROMPT_DESCRIPTION_MAX),
+  };
+}
+
+/** Without --approve: say what the server lists, with the hash prefixes, and ask nothing (OR-AD-23). */
+function listOnlyReplyOf(
+  service: string,
+  listed: ListedDefinitions,
+  existing: ReadonlyMap<string, DoorApproval>,
+): UserMcpAgentEnableReply {
+  const tools: NonNullable<UserMcpAgentEnableReply["tools"]> = [];
+  const notApprovable: string[] = [];
+  const allNames = listedToolNames(service, listed);
+  const omitted = Math.max(0, allNames.length - USER_MCP_LIST_TOOLS_MAX);
+  for (const tool of allNames.slice(0, USER_MCP_LIST_TOOLS_MAX)) {
+    const l = userMcpToolSegmentOk(`x.${tool}`)
+      ? toolLineOf(service, listed, existing, tool)
+      : undefined;
+    if (l === undefined) notApprovable.push(tool);
+    else tools.push({ toolId: l.toolId, sha12: l.sha12, state: l.state });
+  }
+  return {
+    service,
+    door: "agent",
+    listOnly: true,
+    approved: 0,
+    writes: [],
+    tools,
+    ...(notApprovable.length === 0 ? {} : { notApprovable }),
+    ...(omitted === 0 ? {} : { omitted }),
+  };
+}
+
+/** Step 6: each named tool is in the listing and hashes. */
+function namedToolLines(
+  service: string,
+  listed: ListedDefinitions,
+  existing: ReadonlyMap<string, DoorApproval>,
+  names: readonly string[],
+): UserMcpToolLine[] {
   const lines: UserMcpToolLine[] = [];
   for (const tool of names) {
-    const l = Object.hasOwn(listed, mcpClientToolKey(service, tool)) ? line(tool) : undefined;
+    const l = Object.hasOwn(listed, mcpClientToolKey(service, tool))
+      ? toolLineOf(service, listed, existing, tool)
+      : undefined;
     if (l === undefined) {
       refuseAgentWrites(
         "ERR_CONNECTOR_WRITES_AGENT_NO_MATCH",
@@ -258,8 +314,18 @@ export async function handleUserMcpAgentWritesEnable(
     }
     lines.push(l);
   }
-  // 7. The owner's gate: the exact tools, hashes and reach they are about to approve.
-  const payload: Record<string, unknown> = {
+  return lines;
+}
+
+/** Step 7's payload: the exact tools, hashes and reach the owner is about to approve. */
+function enablePayloadOf(
+  deps: UserMcpAgentWritesDeps,
+  service: string,
+  registration: NonNullable<ReturnType<typeof getUserMcpConnector>>,
+  lines: readonly UserMcpToolLine[],
+): Record<string, unknown> {
+  const writePaths = jsonStrings(registration.write_paths_json);
+  return {
     door: "agent",
     userMcp: true,
     service,
@@ -271,27 +337,27 @@ export async function handleUserMcpAgentWritesEnable(
     tools: lines,
     // I15 (AD5b): only for a server that holds a write directory, so every other enable payload
     // (and its prompt, audit row and ledger row) is what it was.
-    ...(jsonStrings(registration.write_paths_json).length === 0
-      ? {}
-      : {
-          writePaths: jsonStrings(registration.write_paths_json),
-          writePlatform: process.platform,
-        }),
+    ...(writePaths.length === 0 ? {} : { writePaths, writePlatform: process.platform }),
   };
-  await requireOwnerApproval(executor, payload, deps);
-  // 8. ONE transaction. The owner may have removed or re-registered the server while the prompt was
-  //    open, or org policy may have changed: approvals are written only for the registration they
-  //    were shown and only while policy still allows them.
-  const entries: DoorApprovalEntry[] = lines.map((l) => ({
-    toolId: l.toolId,
-    definitionSha256: fullHash(listed, service, l.toolId),
-  }));
+}
+
+/**
+ * Step 8. The owner may have removed or re-registered the server while the prompt was open, or org
+ * policy may have changed: approvals are written only for the registration they were shown and
+ * only while policy still allows them. ONE transaction.
+ */
+function commitApprovals(
+  deps: UserMcpAgentWritesDeps,
+  service: string,
+  shownRegisteredAt: number,
+  entries: readonly DoorApprovalEntry[],
+): void {
   const now = deps.now();
   deps.db.transaction(() => {
     // Policy may have changed during the listing or the owner's prompt: read it again, now.
     requireUserMcpAgentPolicy(deps);
     const current = getUserMcpConnector(deps.db, service);
-    if (current?.created_at !== registration.created_at) {
+    if (current?.created_at !== shownRegisteredAt) {
       refuseAgentWrites(
         "ERR_CONNECTOR_WRITES_AGENT_CHANGED",
         "the server was removed or registered again while you were deciding; nothing was enabled",
@@ -299,13 +365,6 @@ export async function handleUserMcpAgentWritesEnable(
     }
     upsertDoorApprovals(deps.db, "agent", service, entries, now);
   })();
-  return {
-    service,
-    door: "agent",
-    listOnly: false,
-    approved: entries.length,
-    writes: lines.map((l) => ({ toolId: l.toolId, sha12: l.sha12 })),
-  };
 }
 
 /** The full hash of a tool already shown to the owner (it hashed at step 6, so it hashes now). */
