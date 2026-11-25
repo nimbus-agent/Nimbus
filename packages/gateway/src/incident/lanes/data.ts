@@ -30,7 +30,8 @@ const DEFAULT_SCHEMA_LOOKBACK_HOURS = 24;
 
 /** Escape a token for a LIKE pattern (`!` is the ESCAPE character; tokens are already lower-cased). */
 function likeOf(token: string): string {
-  return `%${token.replace(/[!%_]/g, (ch) => `!${ch}`)}%`;
+  const escaped = token.replace(/[!%_]/g, "!$&");
+  return `%${escaped}%`;
 }
 
 /** `(lower(col) LIKE ? ESCAPE '!' OR ...)` over the tokens: a SQL pre-filter, the whole-token check stays in JS. */

@@ -148,7 +148,7 @@ describe("dag-run helpers", () => {
     expect(r.list).toHaveLength(DAG_RUN_MAX_FAILED_TASKS);
     expect(r.total).toBe(30);
     expect(failedTaskNames(["", "  ", "x\nforged"]).list).toEqual(["x forged"]);
-    expect(clampName("a".repeat(500)).length).toBe(121);
+    expect(clampName("a".repeat(500))).toHaveLength(121);
   });
 
   test("runDurationMs refuses an end before the start", () => {

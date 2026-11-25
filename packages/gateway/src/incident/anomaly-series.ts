@@ -43,6 +43,49 @@ function metricOfTrigger(service: string): IndexMetric {
   return service === "sentry" ? "errors" : "alerts";
 }
 
+/** Every (series, hour) of the window at zero, so an hour with no event is a real zero. */
+function zeroCounts(
+  configs: ReadonlyMap<string, ServiceConfig>,
+  fromMs: number,
+  toMs: number,
+): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const serviceId of configs.keys()) {
+    for (const metric of INDEX_METRICS) {
+      for (let b = fromMs; b < toMs; b += BUCKET_MS)
+        counts.set(`${indexSeriesId(metric, serviceId)}\u0000${String(b)}`, 0);
+    }
+  }
+  return counts;
+}
+
+type Bump = (metric: IndexMetric, serviceId: string, atMs: number) => void;
+type Resolve = ReturnType<typeof buildServiceIdentityResolver>;
+
+function countTriggers(triggers: readonly Row[], resolve: Resolve, bump: Bump): void {
+  for (const r of triggers) {
+    const meta = parseMeta(r.metadata);
+    if (meta === null) continue;
+    const facts = triggerFacts({ service: r.service as TriggerService, metadata: r.metadata });
+    if (facts.openedAtMs === null) continue;
+    const metric = metricOfTrigger(r.service);
+    const res = resolve({ service: r.service, type: r.type, metadata: meta });
+    if (res.kind === "bound") bump(metric, res.serviceId, facts.openedAtMs);
+  }
+}
+
+function countFailedRuns(runs: readonly Row[], resolve: Resolve, bump: Bump): void {
+  for (const r of runs) {
+    const meta = parseMeta(r.metadata);
+    if (meta === null) continue;
+    // lane-census: scope=ci_run
+    const conclusion = meta["conclusion"];
+    if (conclusion !== "failure") continue;
+    const res = resolve({ service: r.service, type: "ci_run", metadata: meta });
+    if (res.kind === "bound") bump("ci_failed", res.serviceId, r.modified_at);
+  }
+}
+
 export function countIndexBuckets(
   db: Database,
   configs: ReadonlyMap<string, ServiceConfig>,
@@ -67,13 +110,7 @@ export function countIndexBuckets(
     .all(fromMs, toMs, cap + 1) as Row[];
   if (triggers.length > cap || runs.length > cap) return { kind: "capped" };
 
-  const counts = new Map<string, number>();
-  for (const serviceId of configs.keys()) {
-    for (const metric of INDEX_METRICS) {
-      for (let b = fromMs; b < toMs; b += BUCKET_MS)
-        counts.set(`${indexSeriesId(metric, serviceId)}\u0000${String(b)}`, 0);
-    }
-  }
+  const counts = zeroCounts(configs, fromMs, toMs);
   const resolve = buildServiceIdentityResolver(configs);
   const bump = (metric: IndexMetric, serviceId: string, atMs: number): void => {
     if (atMs < fromMs || atMs >= toMs) return;
@@ -82,24 +119,8 @@ export function countIndexBuckets(
     // The resolver binds only configured services, and the range check above keeps the hour inside the map.
     counts.set(key, (counts.get(key) as number) + 1);
   };
-  for (const r of triggers) {
-    const meta = parseMeta(r.metadata);
-    if (meta === null) continue;
-    const facts = triggerFacts({ service: r.service as TriggerService, metadata: r.metadata });
-    if (facts.openedAtMs === null) continue;
-    const metric = metricOfTrigger(r.service);
-    const res = resolve({ service: r.service, type: r.type, metadata: meta });
-    if (res.kind === "bound") bump(metric, res.serviceId, facts.openedAtMs);
-  }
-  for (const r of runs) {
-    const meta = parseMeta(r.metadata);
-    if (meta === null) continue;
-    // lane-census: scope=ci_run
-    const conclusion = meta["conclusion"];
-    if (conclusion !== "failure") continue;
-    const res = resolve({ service: r.service, type: "ci_run", metadata: meta });
-    if (res.kind === "bound") bump("ci_failed", res.serviceId, r.modified_at);
-  }
+  countTriggers(triggers, resolve, bump);
+  countFailedRuns(runs, resolve, bump);
   const buckets: BaselineBucket[] = [];
   for (const [key, value] of counts) {
     const [seriesId, b] = key.split("\u0000") as [string, string];

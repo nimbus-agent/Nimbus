@@ -70,6 +70,39 @@ export type RunsResult = {
   readonly gaps: GapNote[];
 };
 
+/** The run items of `mine` (one source's matched jobs) that failed or ran in the window. */
+function readRunsOf(
+  db: Database,
+  src: (typeof RUN_SOURCES)[number],
+  mine: readonly DataItemView[],
+  openedAtMs: number | null,
+  window: { readonly from: number; readonly to: number },
+  scanCap: number,
+): RunRow[] {
+  const { from, to } = window;
+  const marks = mine.map(() => "?").join(",");
+  // The failed arm needs the start only when a window exists; with no open time only failures qualify.
+  const windowArm = openedAtMs === null ? "" : " OR (s <= ? AND (e IS NULL OR e >= ?))";
+  const failedArm = openedAtMs === null ? "outcome = 'failed'" : "(outcome = 'failed' AND s <= ?)";
+  const args: (string | number)[] = [src.service, src.type, ...mine.map((j) => j.id)];
+  if (openedAtMs !== null) args.push(to, to, from);
+  // lane-census: scope=dag_run,job_run,flow_run service=airflow,dagster,prefect
+  return db
+    .query(
+      `SELECT id, service, type, url, metadata, parent FROM (
+         SELECT id, service, type, url, metadata,
+                CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.parent_item_id') END AS parent,
+                CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.outcome') END AS outcome,
+                CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.start_ms') END AS s,
+                CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.end_ms') END AS e
+           FROM item WHERE service = ? AND type = ?)
+        WHERE parent IN (${marks}) AND (${failedArm}${windowArm})
+        ORDER BY s DESC, id ASC
+        LIMIT ${String(scanCap)}`,
+    )
+    .all(...args) as RunRow[];
+}
+
 /**
  * Runs of `jobs` (the lane's matched orchestration items) that failed or ran in the window, and a named gap
  * for each run source that has matched jobs but no run item at all in the index (never silence).
@@ -101,28 +134,7 @@ export function runsOfJobs(
       continue;
     }
     const titles = new Map(mine.map((j) => [j.id, j.title]));
-    const marks = mine.map(() => "?").join(",");
-    // The failed arm needs the start only when a window exists; with no open time only failures qualify.
-    const windowArm = openedAtMs === null ? "" : " OR (s <= ? AND (e IS NULL OR e >= ?))";
-    const failedArm =
-      openedAtMs === null ? "outcome = 'failed'" : "(outcome = 'failed' AND s <= ?)";
-    const args: (string | number)[] = [src.service, src.type, ...mine.map((j) => j.id)];
-    if (openedAtMs !== null) args.push(to, to, from);
-    // lane-census: scope=dag_run,job_run,flow_run service=airflow,dagster,prefect
-    const rows = db
-      .query(
-        `SELECT id, service, type, url, metadata, parent FROM (
-           SELECT id, service, type, url, metadata,
-                  CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.parent_item_id') END AS parent,
-                  CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.outcome') END AS outcome,
-                  CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.start_ms') END AS s,
-                  CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.end_ms') END AS e
-             FROM item WHERE service = ? AND type = ?)
-          WHERE parent IN (${marks}) AND (${failedArm}${windowArm})
-          ORDER BY s DESC, id ASC
-          LIMIT ${String(scanCap)}`,
-      )
-      .all(...args) as RunRow[];
+    const rows = readRunsOf(db, src, mine, openedAtMs, { from, to }, scanCap);
     if (rows.length >= scanCap) truncated = true;
     for (const r of rows) {
       out.push(viewOf(r, titles.get(r.parent) ?? r.parent));

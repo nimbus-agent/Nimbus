@@ -76,25 +76,40 @@ function reachOnce(dep: DependsOn, from: string, to: string): Reach {
   const parent = new Map<string, string | null>([[from, null]]);
   let frontier: string[] = [from];
   while (frontier.length > 0) {
-    const next: string[] = [];
-    for (const at of frontier) {
-      for (const target of dep.get(at) ?? []) {
-        if (!dep.has(target) || parent.has(target)) continue;
-        if (parent.size >= REACH_VISIT_CAP) return { path: null, capped: true };
-        parent.set(target, at);
-        if (target === to) {
-          const path: string[] = [];
-          for (let cur: string | null = target; cur !== null; cur = parent.get(cur) ?? null) {
-            path.unshift(cur);
-          }
-          return { path, capped: false };
-        }
-        next.push(target);
-      }
-    }
-    frontier = next;
+    const level = expandLevel(dep, frontier, parent, to);
+    if (!Array.isArray(level)) return level;
+    frontier = level;
   }
   return { path: null, capped: false };
+}
+
+/** One BFS level: the next frontier, or the search's result once the target or the visit cap is reached. */
+function expandLevel(
+  dep: DependsOn,
+  frontier: readonly string[],
+  parent: Map<string, string | null>,
+  to: string,
+): string[] | Reach {
+  const next: string[] = [];
+  for (const at of frontier) {
+    for (const target of dep.get(at) ?? []) {
+      if (!dep.has(target) || parent.has(target)) continue;
+      if (parent.size >= REACH_VISIT_CAP) return { path: null, capped: true };
+      parent.set(target, at);
+      if (target === to) return { path: pathTo(parent, target), capped: false };
+      next.push(target);
+    }
+  }
+  return next;
+}
+
+/** The path from the search's start to `target`, read back through the parent links. */
+function pathTo(parent: ReadonlyMap<string, string | null>, target: string): string[] {
+  const path: string[] = [];
+  for (let cur: string | null = target; cur !== null; cur = parent.get(cur) ?? null) {
+    path.unshift(cur);
+  }
+  return path;
 }
 
 /** Memoised reachability over one cluster's services; remembers whether any search was capped. */

@@ -77,6 +77,17 @@ export type ItemHistoryRetentionHandle = {
   readonly idle: () => Promise<void>;
 };
 
+/** The test seams' batch sizing, only the fields that were given. */
+function batchSizing(opts: StartItemHistoryRetentionOptions): {
+  batchSize?: number;
+  maxBatches?: number;
+} {
+  return {
+    ...(opts.batchSize === undefined ? {} : { batchSize: opts.batchSize }),
+    ...(opts.maxBatches === undefined ? {} : { maxBatches: opts.maxBatches }),
+  };
+}
+
 function defaultYield(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
@@ -97,6 +108,7 @@ export function startItemHistoryRetention(
   const clock = opts.nowMs ?? Date.now;
   const yieldToEventLoop = opts.yieldToEventLoop ?? defaultYield;
   const setTimer = opts.setTimer ?? defaultSetTimer;
+  const sizing = batchSizing(opts);
   let inFlight: Promise<void> | undefined;
   let stopped = false;
   const tick = (): void => {
@@ -111,8 +123,7 @@ export function startItemHistoryRetention(
             retentionDays: opts.retentionDays(),
             nowMs: clock(),
             yieldToEventLoop,
-            ...(opts.batchSize === undefined ? {} : { batchSize: opts.batchSize }),
-            ...(opts.maxBatches === undefined ? {} : { maxBatches: opts.maxBatches }),
+            ...sizing,
           });
           more = run.more;
           if (more) await yieldToEventLoop();
@@ -124,8 +135,7 @@ export function startItemHistoryRetention(
               retentionDays: opts.dbtTestRetentionDays(),
               nowMs: clock(),
               yieldToEventLoop,
-              ...(opts.batchSize === undefined ? {} : { batchSize: opts.batchSize }),
-              ...(opts.maxBatches === undefined ? {} : { maxBatches: opts.maxBatches }),
+              ...sizing,
             });
             dbtMore = run.more;
           }

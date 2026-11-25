@@ -385,11 +385,7 @@ function alertActions(input: DeriveInput, drafts: ProposalDraft[]): void {
   const t = input.record.trigger;
   if (t.status !== "open") return;
   const tools =
-    t.service === "pagerduty"
-      ? input.catalog.alerts.pagerduty
-      : t.service === "jira"
-        ? input.catalog.alerts.jira
-        : undefined;
+    t.service === "pagerduty" || t.service === "jira" ? input.catalog.alerts[t.service] : undefined;
   if (tools === undefined || t.providerId === "") return;
   const target = { [tools.field]: t.providerId };
   drafts.push(

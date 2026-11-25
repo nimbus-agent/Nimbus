@@ -7,7 +7,7 @@ import { CREATED_KEY } from "../index/item-history.ts";
 import { loadServiceHistoryStarts } from "../index/item-history-at.ts";
 import type { ServiceConfig } from "../metrics/dora-config.ts";
 import { buildServiceIdentityResolver } from "../metrics/service-identity.ts";
-import { canonicalJson } from "../util/canonical-json.ts";
+import { byCodeUnit, canonicalJson } from "../util/canonical-json.ts";
 import { erasureGeneration } from "./erasure-generation.ts";
 import {
   type BindingBlock,
@@ -199,7 +199,7 @@ export function citedServicesOf(record: IncidentRecordV1): string[] {
     for (const p of record.data.prs) out.add(p.service);
     if ((record.data.totals.dbtTests ?? 0) > 0) out.add("dbt");
   }
-  return [...out].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  return [...out].sort(byCodeUnit);
 }
 
 function freshnessOf(
@@ -222,10 +222,11 @@ function freshnessOf(
     if (connectedChat.length === 0) ids.add("slack");
   }
   if (record.trigger.service === "pagerduty") ids.add("pagerduty");
-  const rows = serviceFreshness(
-    db,
-    [...ids].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
-  ).map((f) => ({ service: f.id, connected: f.connected, lastSyncMs: f.lastSyncMs }));
+  const rows = serviceFreshness(db, [...ids].sort(byCodeUnit)).map((f) => ({
+    service: f.id,
+    connected: f.connected,
+    lastSyncMs: f.lastSyncMs,
+  }));
   return {
     rows,
     chatToMs: record.chat.skipped === null ? nowMs : null,

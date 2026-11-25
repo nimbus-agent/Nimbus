@@ -255,7 +255,7 @@ describe("trigger", () => {
     const h = harness(d, { now: () => now });
     await h.engine.trigger("pagerduty");
     await h.engine.trigger("pagerduty"); // a pass takes at most PASS_CAP new items
-    expect(listRecords(d, { limit: 100 }).length).toBe(PASS_CAP + 1);
+    expect(listRecords(d, { limit: 100 })).toHaveLength(PASS_CAP + 1);
     // the failing ones are the OLDEST by checked_at, so a plain LIMIT would return only them
     d.run(
       "UPDATE incident_record SET checked_at_ms = 1 WHERE trigger_item_id LIKE 'pagerduty:BAD%'",

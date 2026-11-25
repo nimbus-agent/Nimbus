@@ -73,17 +73,26 @@ function resolvedFromHistory(
   return { ms: last.source_at_ms ?? last.observed_at_ms, basis: "history" };
 }
 
+/** When the incident opened: the source's time, else when Nimbus first saw it, else unknown. */
+function openedOf(t: IncidentRecordV1["trigger"]) {
+  if (t.opened.ms !== null) {
+    return {
+      ms: t.opened.ms,
+      basis: t.opened.basis === "provider" ? ("provider" as const) : ("observed" as const),
+    };
+  }
+  if (t.firstObservedMs !== null) return { ms: t.firstObservedMs, basis: "observed" as const };
+  return { ms: null, basis: "none" as const };
+}
+
+function verdictOf(kind: string): PostmortemAction["verdict"] {
+  if (kind === "action_denied") return "denied";
+  return kind === "action_undone" ? "undone" : "approved";
+}
+
 function impactOf(db: Database, record: IncidentRecordV1): PostmortemImpact {
   const t = record.trigger;
-  const opened =
-    t.opened.ms !== null
-      ? {
-          ms: t.opened.ms,
-          basis: t.opened.basis === "provider" ? ("provider" as const) : ("observed" as const),
-        }
-      : t.firstObservedMs !== null
-        ? { ms: t.firstObservedMs, basis: "observed" as const }
-        : { ms: null, basis: "none" as const };
+  const opened = openedOf(t);
   let resolved: PostmortemImpact["resolvedMs"] = null;
   let resolvedBasis: PostmortemImpact["resolvedBasis"] = "none";
   if (t.closed.ms !== null) {
@@ -116,8 +125,7 @@ function actionsOf(
         auditId: s.gate.auditId,
         timestamp: s.gate.timestamp,
         actionType: s.gate.actionType,
-        verdict:
-          kind === "action_denied" ? "denied" : kind === "action_undone" ? "undone" : "approved",
+        verdict: verdictOf(kind),
         answerSource: s.gate.answerSource,
         subSteps: s.subSteps.length,
         linkVersion: s.gate.link.version,

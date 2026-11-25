@@ -815,7 +815,7 @@ describe.skipIf(!sandboxAvailable)("a scaffolded user MCP over a real gateway", 
     expect(owner.prompts).toHaveLength(1);
     expect(owner.prompts[0]).toContain("Requested by: an outside agent (unverified)");
     expect(owner.prompts[0]).toContain('"text": "via-approvals"');
-    expect(prompts.length).toBe(before);
+    expect(prompts).toHaveLength(before);
 
     const audit = await client.call<Array<{ actionType: string; actionJson: string }>>(
       "audit.list",
@@ -1174,7 +1174,7 @@ describe.skipIf(!sandboxAvailable)("a scaffolded user MCP over a real gateway", 
       "ERR_USER_MCP_WRITE_GRANT_CLIENT",
     );
     // Refused before any prompt.
-    expect(prompts.length).toBe(before);
+    expect(prompts).toHaveLength(before);
   }, 60_000);
 
   test("AD5b: an approval that reports no source is a decline, and nothing is registered", async () => {

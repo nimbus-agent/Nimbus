@@ -69,6 +69,81 @@ function names(keys: readonly string[]): string {
 const REDSHIFT_BOUND =
   "Schema history is kept only for Snowflake and BigQuery tables; Redshift has no connector, so its tables never have one.";
 
+function compareChanges(a: DataSchemaChangeView, b: DataSchemaChangeView): number {
+  if (a.atMs !== b.atMs) return b.atMs - a.atMs;
+  if (a.model !== b.model) return codeUnitCompare(a.model, b.model);
+  return codeUnitCompare(a.column, b.column);
+}
+
+/** The lane's gaps: tables with no history, with an incomplete column list, with history cut, past the cap. */
+function schemaGaps(t: {
+  readonly noHistory: readonly string[];
+  readonly incomplete: readonly string[];
+  readonly cut: readonly string[];
+  readonly examined: number;
+  readonly found: number;
+}): GapNote[] {
+  const gaps: GapNote[] = [];
+  if (t.noHistory.length > 0) {
+    gaps.push(
+      gap(
+        "missing_entity_type",
+        `No schema history is recorded for ${String(t.noHistory.length)} of ${String(t.examined)} tables (${names(t.noHistory)}): a warehouse sync has not yet seen them with a complete column list, so their schema changes could not be checked. ${REDSHIFT_BOUND}`,
+      ),
+    );
+  }
+  if (t.incomplete.length > 0) {
+    gaps.push(
+      gap(
+        "missing_entity_type",
+        `For ${String(t.incomplete.length)} tables (${names(t.incomplete)}) a sync could not list every column in the window, so what changed between those observations is unknown and no column is reported dropped.`,
+      ),
+    );
+  }
+  if (t.cut.length > 0) {
+    gaps.push(
+      gap(
+        "missing_entity_type",
+        `${String(t.cut.length)} tables (${names(t.cut)}) have more recorded schema observations than were read, so the oldest changes in the window may be absent.`,
+      ),
+    );
+  }
+  if (t.found > t.examined) {
+    gaps.push(
+      gap(
+        "missing_entity_type",
+        `${String(t.found)} monitored and upstream tables were found; only the first ${String(SCHEMA_KEY_CAP)} were checked for schema changes.`,
+      ),
+    );
+  }
+  return gaps;
+}
+
+/** Each examined table's schema changes in the window, and which tables could not be fully read. */
+function readChanges(
+  db: Database,
+  examined: readonly { readonly key: string; readonly via: "monitored" | "upstream" }[],
+  window: { readonly fromMs: number; readonly toMs: number },
+): {
+  changes: DataSchemaChangeView[];
+  noHistory: string[];
+  incomplete: string[];
+  cut: string[];
+} {
+  const changes: DataSchemaChangeView[] = [];
+  const noHistory: string[] = [];
+  const incomplete: string[] = [];
+  const cut: string[] = [];
+  for (const { key, via } of examined) {
+    const r = readSchemaHistory(db, key, window);
+    if (r.noHistory) noHistory.push(key);
+    if (r.incompleteAtMs.length > 0) incomplete.push(key);
+    if (r.cut) cut.push(key);
+    for (const c of r.changes) changes.push(viewOf(key, via, c.atMs, c.change));
+  }
+  return { changes, noHistory, incomplete, cut };
+}
+
 export function schemaLane(
   db: Database,
   input: {
@@ -105,58 +180,16 @@ export function schemaLane(
   for (const l of input.lineage) add(l.to, "upstream");
   const examined = keys.slice(0, SCHEMA_KEY_CAP);
 
-  const changes: DataSchemaChangeView[] = [];
-  const noHistory: string[] = [];
-  const incomplete: string[] = [];
-  const cut: string[] = [];
-  for (const { key, via } of examined) {
-    const r = readSchemaHistory(db, key, { fromMs, toMs });
-    if (r.noHistory) noHistory.push(key);
-    if (r.incompleteAtMs.length > 0) incomplete.push(key);
-    if (r.cut) cut.push(key);
-    for (const c of r.changes) changes.push(viewOf(key, via, c.atMs, c.change));
-  }
-  changes.sort((a, b) =>
-    a.atMs === b.atMs
-      ? a.model === b.model
-        ? codeUnitCompare(a.column, b.column)
-        : codeUnitCompare(a.model, b.model)
-      : b.atMs - a.atMs,
-  );
+  const { changes, noHistory, incomplete, cut } = readChanges(db, examined, { fromMs, toMs });
+  changes.sort(compareChanges);
 
-  const gaps: GapNote[] = [];
-  if (noHistory.length > 0) {
-    gaps.push(
-      gap(
-        "missing_entity_type",
-        `No schema history is recorded for ${String(noHistory.length)} of ${String(examined.length)} tables (${names(noHistory)}): a warehouse sync has not yet seen them with a complete column list, so their schema changes could not be checked. ${REDSHIFT_BOUND}`,
-      ),
-    );
-  }
-  if (incomplete.length > 0) {
-    gaps.push(
-      gap(
-        "missing_entity_type",
-        `For ${String(incomplete.length)} tables (${names(incomplete)}) a sync could not list every column in the window, so what changed between those observations is unknown and no column is reported dropped.`,
-      ),
-    );
-  }
-  if (cut.length > 0) {
-    gaps.push(
-      gap(
-        "missing_entity_type",
-        `${String(cut.length)} tables (${names(cut)}) have more recorded schema observations than were read, so the oldest changes in the window may be absent.`,
-      ),
-    );
-  }
-  if (keys.length > examined.length) {
-    gaps.push(
-      gap(
-        "missing_entity_type",
-        `${String(keys.length)} monitored and upstream tables were found; only the first ${String(SCHEMA_KEY_CAP)} were checked for schema changes.`,
-      ),
-    );
-  }
+  const gaps = schemaGaps({
+    noHistory,
+    incomplete,
+    cut,
+    examined: examined.length,
+    found: keys.length,
+  });
   return {
     lane: {
       changes: changes.slice(0, SCHEMA_CHANGE_CAP),

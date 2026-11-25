@@ -279,7 +279,7 @@ describe("buildAtClause - the SQL is bound end to end", () => {
       expect(sql).not.toContain("github:pr");
       expect(params).toContain(123_456_789);
       expect(params).toContain("github:pr");
-      expect((sql.match(/\?/g) ?? []).length).toBe(params.length);
+      expect(sql.match(/\?/g) ?? []).toHaveLength(params.length);
     } finally {
       db.close();
     }

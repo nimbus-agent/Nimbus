@@ -555,7 +555,7 @@ export function createRemediation(deps: RemediationDeps) {
     }
     const rec = requireRecord(p.ref);
     const stored = getProposal(db, p.proposalId);
-    if (stored === null || stored.record_id !== rec.recordId) {
+    if (stored?.record_id !== rec.recordId) {
       throw new RemediationError(
         "ERR_PROPOSAL_NOT_FOUND",
         "no proposal of this incident has that id",
@@ -584,11 +584,7 @@ export function createRemediation(deps: RemediationDeps) {
     }
     // Derive only (no store write): the proposal must still be offered, identical, for the record as it is now.
     const draft = deriveFor(rec).drafts.find((d) => d.id === stored.id);
-    if (
-      draft === undefined ||
-      stored.tool_id !== draft.toolId ||
-      stored.input_json !== JSON.stringify(draft.input)
-    ) {
+    if (stored.tool_id !== draft?.toolId || stored.input_json !== JSON.stringify(draft.input)) {
       throw new RemediationError(
         "ERR_PROPOSAL_STALE",
         "the incident record has changed and no longer offers this proposal; list the proposals again",

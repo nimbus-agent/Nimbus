@@ -281,12 +281,11 @@ export function qualifyingLabels(
   config: TriggerConfig,
 ): readonly string[] {
   if (service === "bigeye") return config.bigeyeSlaStatuses.map(plainLabel);
-  const base =
-    config.severities.length > 0
-      ? config.severities
-      : service === "pagerduty"
-        ? [...DEFAULT_LABELS.pagerduty, ...config.pagerdutyP1Aliases]
-        : DEFAULT_LABELS[service];
+  const defaults =
+    service === "pagerduty"
+      ? [...DEFAULT_LABELS.pagerduty, ...config.pagerdutyP1Aliases]
+      : DEFAULT_LABELS[service];
+  const base = config.severities.length > 0 ? config.severities : defaults;
   const normalise = service === "montecarlo" ? monteCarloLabel : plainLabel;
   return [...new Set(base.map(normalise))];
 }
