@@ -57,10 +57,10 @@ describe("vantageTagDimensions", () => {
     });
   });
 
-  test("an empty value, and a requested tag the row does not list, are both untagged", () => {
+  test("an empty value, and a requested tag the row does not list, are both untagged (null)", () => {
     expect(vantageTagDimensions(UNTAGGED_ROW, ["tag:team", "tag:env"]).dims).toEqual({
-      "tag:team": VANTAGE_UNTAGGED,
-      "tag:env": VANTAGE_UNTAGGED,
+      "tag:team": null,
+      "tag:env": null,
     });
   });
 
@@ -79,20 +79,36 @@ describe("vantageTagDimensions", () => {
     });
   });
 
-  test("an entry no requested key claims (a saved report's grouping) splits at its first colon", () => {
-    const row = { tags: ["env:prod", "nocolon", ":novalue"] };
-    expect(vantageTagDimensions(row, []).dims).toEqual({ "tag:env": "prod" });
+  test("overlapping keys: in the requested order each entry is its position's", () => {
+    // `a` really is "b:deep" and `a:b` is untagged; only the position tells them apart.
+    const row = { tags: ["a:b:deep", "a:b:"] };
+    expect(vantageTagDimensions(row, ["tag:a", "tag:a:b"]).dims).toEqual({
+      "tag:a": "b:deep",
+      "tag:a:b": null,
+    });
+  });
+
+  test("overlapping keys out of order: an entry goes to the longest requested key it carries", () => {
+    const row = { tags: ["a:b:deep", "a:base"] };
+    expect(vantageTagDimensions(row, ["tag:a", "tag:a:b"]).dims).toEqual({
+      "tag:a": "base",
+      "tag:a:b": "deep",
+    });
   });
 
   test("without tags, the deprecated `tag` string is the first requested key's value", () => {
     expect(vantageTagDimensions({ tag: "example-org" }, ["tag:owner", "tag:repo"]).dims).toEqual({
       "tag:owner": "example-org",
-      "tag:repo": VANTAGE_UNTAGGED,
+      "tag:repo": null,
     });
+    expect(vantageTagDimensions({}, ["tag:owner"]).dims).toEqual({ "tag:owner": null });
   });
 
-  test("no tag grouping and no tags array consumes nothing", () => {
-    expect(vantageTagDimensions({ tag: "x" }, ["service"])).toEqual({ dims: {}, consumed: false });
+  test("with no tag: key in group_by nothing is consumed, even when the row has tags", () => {
+    expect(vantageTagDimensions({ tag: "x", tags: ["env:prod"] }, ["service"])).toEqual({
+      dims: {},
+      consumed: false,
+    });
   });
 });
 
@@ -116,8 +132,7 @@ describe("mapVantageCostRow with tag groupings", () => {
     });
     expect(p?.dimensionKind).toBe("tag");
     expect(p?.dimensionKey).toBe("repo");
-    // `provider` was not requested; unrequested string fields follow in name order.
-    expect(p?.groupings).toEqual(["tag:repo", "service", "provider", "tag:owner"]);
+    expect(p?.dimensionValue).toBe("repo-a / Actions / github");
   });
 
   test("untagged spend is kept as its own series, never dropped or merged", () => {
@@ -127,6 +142,41 @@ describe("mapVantageCostRow with tag groupings", () => {
     });
     expect(p?.dimensionValue).toBe(`github / Actions / ${VANTAGE_UNTAGGED}`);
     expect(p?.amount).toBe(4);
+  });
+
+  test("a literal tag value equal to the untagged marker is a different series", () => {
+    const at = (team: string) =>
+      mapVantageCostRow(
+        { accrued_at: "2026-11-23", amount: "1", tags: [`team:${team}`] },
+        { scopeId: "default", groupBy: ["tag:team"] },
+      );
+    expect(at("")?.dimensionValue).toBe(VANTAGE_UNTAGGED);
+    expect(at(VANTAGE_UNTAGGED)?.dimensionValue).toBe("%5F_untagged__");
+    expect(at(VANTAGE_UNTAGGED)?.seriesHash).not.toBe(at("")?.seriesHash);
+  });
+
+  test("a tag key ending in _cost or _amount is a dimension, not a metric", () => {
+    const at = (key: string, v: string) =>
+      mapVantageCostRow(
+        { accrued_at: "2026-11-23", amount: "1", tags: [`${key}:${v}`] },
+        { scopeId: "default", groupBy: [`tag:${key}`] },
+      );
+    expect(at("team_cost", "core")?.dimensionValue).toBe("core");
+    expect(at("team_cost", "data")?.seriesHash).not.toBe(at("team_cost", "core")?.seriesHash);
+    expect(at("unit_amount", "x")?.groupings).toEqual(["tag:unit_amount"]);
+  });
+
+  test("with no tag: key in group_by a saved report's `tag` keeps its FO2 series identity", () => {
+    const row = {
+      accrued_at: "2026-11-23",
+      amount: "1",
+      provider: "github",
+      tag: "org",
+      tags: ["owner:org"],
+    };
+    const p = mapVantageCostRow(row, { scopeId: "rprt_placeholder", groupBy: [] });
+    expect(p?.groupings).toEqual(["provider", "tag"]);
+    expect(p?.dimensionValue).toBe("github / org");
   });
 
   test("a slash in a tag value is escaped like any other value", () => {

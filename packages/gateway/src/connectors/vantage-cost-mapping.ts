@@ -10,7 +10,11 @@ import {
 } from "../finops/cost-item-contract.ts";
 import type { MappedRow } from "./mapped-row.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
-import { vantageTagDimensions } from "./vantage-cost-tags.ts";
+import {
+  VANTAGE_UNTAGGED,
+  type VantageTagDims,
+  vantageTagDimensions,
+} from "./vantage-cost-tags.ts";
 
 const SERVICE = "vantage";
 const TITLE_MAX = 200;
@@ -91,10 +95,26 @@ function compareNames(a: string, b: string): number {
   return a > b ? 1 : 0;
 }
 
-function dimensionNames(row: Record<string, unknown>, groupBy: readonly string[]): string[] {
+/**
+ * A requested tag's value as it appears in the series: a missing tag is {@link VANTAGE_UNTAGGED}
+ * unescaped, and a literal value equal to it is written `%5F_untagged__` (a real `%` is always
+ * `%25`), so tagged and untagged spend never share a series.
+ */
+function tagValue(v: string | null): string {
+  if (v === null) return VANTAGE_UNTAGGED;
+  return v === VANTAGE_UNTAGGED ? `%5F${VANTAGE_UNTAGGED.slice(1)}` : escapeValue(v);
+}
+
+function dimensionNames(
+  row: Record<string, unknown>,
+  groupBy: readonly string[],
+  tagDims: VantageTagDims,
+): string[] {
   const present = (name: string): boolean => {
+    if (Object.hasOwn(tagDims, name)) return true;
     const v = row[name];
-    return typeof v === "string" && v !== "" && !isMetricField(name);
+    // A `tag:` field is a dimension whatever its key ends in (`tag:team_cost` is not a metric).
+    return typeof v === "string" && v !== "" && (name.startsWith("tag:") || !isMetricField(name));
   };
   const ordered = groupBy.filter((name, i) => present(name) && groupBy.indexOf(name) === i);
   const rest = Object.keys(row)
@@ -127,22 +147,31 @@ export function mapVantageCostRow(raw: unknown, ctx: VantageCostMapContext): Cos
   const rawCurrency = stringField(row, "currency");
   const currency =
     rawCurrency !== undefined && /^[A-Za-z]{3}$/.test(rawCurrency) ? rawCurrency : null;
-  // Each `tag:<key>` grouping becomes a field of its own, read from `tags` (vantage-cost-tags.ts);
-  // the raw `tag` / `tags` then stop being candidates, so `tag` is never a second dimension.
+  // Each `tag:<key>` that `vantage.group_by` names becomes a field of its own, read from `tags`
+  // (vantage-cost-tags.ts); the raw `tag` / `tags` then stop being candidates, so `tag` is never a
+  // second dimension. With no such key nothing changes (FO2's series identities stand).
   const { dims: tagDims, consumed } = vantageTagDimensions(row, ctx.groupBy);
   const fields: Record<string, unknown> = Object.fromEntries(
     Object.entries({ ...row, ...tagDims }).filter(
       ([name]) => !consumed || (name !== "tag" && name !== "tags"),
     ),
   );
-  const names = dimensionNames(fields, ctx.groupBy);
+  const names = dimensionNames(fields, ctx.groupBy, tagDims);
   const first = names[0];
   const { kind, key } =
     first === undefined ? { kind: "other" as const, key: null } : kindAndKey(first);
   const value =
     first === undefined
       ? "total"
-      : boundedValue(names.map((n) => escapeValue(String(fields[n]))).join(" / "));
+      : boundedValue(
+          names
+            .map((n) =>
+              Object.hasOwn(tagDims, n)
+                ? tagValue(tagDims[n] ?? null)
+                : escapeValue(String(fields[n])),
+            )
+            .join(" / "),
+        );
   const provider = stringField(row, "provider");
   const service = stringField(row, "service");
   return {
