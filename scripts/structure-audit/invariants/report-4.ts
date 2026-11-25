@@ -9,6 +9,7 @@ import {
   checkBrokeredFetchLiteralConfinement,
   checkGeneratedManifestConfinement,
 } from "./migration-capture-toolgen.ts";
+import { checkSchemaHistoryConfinement } from "./schema-history.ts";
 import {
   checkFlatUpsertGraphEntityCoOwnedTypes,
   checkListenerRegistryConfinement,
@@ -98,6 +99,15 @@ export function reportRulesPart4(files: readonly FileEntry[], mode: Mode): numbe
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D52 long-term episodic memory left its confinement (rule ${e.rule}) - its tables only in memory/episodic-store.ts, a turn recorded only from the ask turn's own input and reply, the memory built and its model attached only at boot, no remote-embedder route or network primitive in its modules, and the owner-turn gate kept in engine/run-ask/episodic.ts; I61 regression: ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkSchemaHistoryConfinement(files);
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D24 schema_history written or erased outside its store (rule schema-history-confined) - only index/schema-history.ts writes it, only the upsert transaction records an observation, and a diff is computed at read time (index/schema-diff.ts): ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;

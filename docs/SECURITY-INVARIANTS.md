@@ -1265,6 +1265,21 @@ the rule passing over nothing. Stated bounds: a text scan, so a dynamically comp
 evades it (as D33(b)); `iterateGlob` skips `-sql.ts` files, so the real scan never visits the DDL
 file (it stays in the allow-list for the synthetic fixtures); no invariant is added or retired.
 
+**Warehouse schema diff extension, rule `schema-history-confined`** (`checkSchemaHistoryConfinement`). The
+column-set history `schema_history` (V108) behind the Data Incident Brief's schema changes is written only
+by `index/schema-history.ts` (and its DDL file `index/schema-history-v108-sql.ts`): a write verb on the
+table (the same verbs, quoting and line-break forms as `work-snapshot-confined`) anywhere else is a
+violation. Its three mutators are named only where they belong: `recordSchemaObservation` by the store and
+`index/item-write-tracking.ts` (the upsert's own transaction, so an observation is recorded only from an
+item the sync wrote), `deleteSchemaHistoryForService` by the store, `index/item-store.ts` and
+`commands/data-delete.ts` (the two owner erasures), and `pruneSchemaHistory` by the store and
+`index/schema-history-retention.ts`. Reads are unrestricted (`index/schema-diff.ts` reads for the incident
+lane). The completeness rule is the point: an observation whose column list the sync could not prove is
+stored with no columns and is never diffed, so a column the sync failed to see is never reported dropped.
+The store is in `RULE_ANCHORS`. Stated bounds: a text scan, so a dynamically composed table name evades it
+(as D33(b)); `iterateGlob` skips `-sql.ts` files, so the real scan never visits the DDL file; no invariant
+is added or retired.
+
 **Phase 10 MB4 extension, rule `chat-read-marker-confined`** (`checkChatReadMarkerConfinement`). The
 Slack read-marker table `chat_read_marker` (V92) is filled by a syncable only through the
 `setChatReadMarkers` capability. A write verb on the table (the same verbs, quoting and line-break

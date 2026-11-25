@@ -35,6 +35,7 @@ export const RULE_ANCHORS: readonly string[] = [
   "packages/gateway/src/incident-update/update-send.ts", // D46(e) -- the owner's incident update post, a linked owner action (IC9b)
   "packages/gateway/src/finops/cost-series.ts", // D48 — FinOps cost code is inert
   "packages/gateway/src/automation/workflow-import.ts", // D50 - the only way a workflow enters from outside
+  "packages/gateway/src/index/schema-history.ts", // D24 (schema-history-confined) - the only writer of the schema history
   "packages/gateway/src/memory/episodic-store.ts", // D52 - the only reader and writer of the episodic memory tables
   "packages/gateway/src/toolgen/toolgen-model-door.ts", // D51 - the model's only door to a saved generated tool
   "packages/gateway/src/ipc/lan-session.ts", // D47 — the only record sealer of the LAN wire (Noise); no v1 path exists

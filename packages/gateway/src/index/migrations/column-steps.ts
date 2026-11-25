@@ -1,8 +1,10 @@
 import type { Database } from "bun:sqlite";
 
 import { dbExec, dbRun } from "../../db/write.ts";
+import { CAPTURE_LABEL_SOURCE_V99_SQL } from "../capture-label-source-v99-sql.ts";
 import { EXTENSION_PROVENANCE_V105_SQL } from "../extension-provenance-v105-sql.ts";
 import { INCIDENT_EXECUTED_AT_V106_SQL } from "../incident-executed-at-v106-sql.ts";
+import { USER_MCP_WRITE_V98_SQL } from "../user-mcp-write-v98-sql.ts";
 
 /**
  * Migration steps that add a column, kept out of `runner.ts` (which may not grow). Each is guarded by a
@@ -59,5 +61,30 @@ export function migrateIndexedV105ToV106(db: Database, now: number): void {
       "incident proposal executed-at time (nimbus incident undo, no id)",
       now,
     );
+  })();
+}
+
+/**
+ * V98 - `user_mcp_connector.write_paths_json` (Phase 28 AD5b, I15). Guarded by a column probe, as V95 is:
+ * SQLite has no `ADD COLUMN IF NOT EXISTS`, and a step must be re-runnable.
+ */
+export function migrateIndexedV97ToV98(db: Database, now: number): void {
+  db.transaction(() => {
+    if (!hasColumn(db, "user_mcp_connector", "write_paths_json")) {
+      dbExec(db, USER_MCP_WRITE_V98_SQL.trim());
+    }
+    dbExec(db, "PRAGMA user_version = 98");
+    recordMigration(db, 98, "user MCP write directories (Phase 28 AD5b)", now);
+  })();
+}
+
+/** V99 - `capture.label_source` (Phase 28 AD7a, D-AD-13). Guarded by a column probe, as V98 is. */
+export function migrateIndexedV98ToV99(db: Database, now: number): void {
+  db.transaction(() => {
+    if (!hasColumn(db, "capture", "label_source")) {
+      dbExec(db, CAPTURE_LABEL_SOURCE_V99_SQL.trim());
+    }
+    dbExec(db, "PRAGMA user_version = 99");
+    recordMigration(db, 99, "capture label source (Phase 28 AD7a)", now);
   })();
 }

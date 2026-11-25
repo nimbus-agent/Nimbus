@@ -140,7 +140,9 @@ describe("lane 6, data", () => {
     expect(r.lane.lineage).toEqual([]);
     expect(r.lane.orchestration).toEqual([]);
     expect(r.lane.prs).toEqual([]);
-    expect(r.gaps).toHaveLength(2);
+    // the two always-present gaps, plus the named schema-history gap for a table no sync has seen
+    expect(r.gaps).toHaveLength(3);
+    expect(r.gaps[2]?.detail).toContain("No schema history is recorded");
     const none = dataLane(d, { metadata: null, openedAtMs: null });
     expect(none.lane.models).toEqual([]);
     expect(none.gaps).toHaveLength(3);

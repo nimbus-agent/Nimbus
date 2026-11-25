@@ -315,6 +315,8 @@ export async function createSchedulerWithMesh(
       incident: loadNimbusIncidentFromConfigDir(paths.configDir),
       pagerdutyP1Aliases: loadNimbusPagerdutyFromConfigDir(paths.configDir).severityP1Aliases,
     }),
+    readDataSchemaLookbackHours: () =>
+      loadNimbusIncidentFromConfigDir(paths.configDir).dataSchemaLookbackHours,
     // Not spelled like the IPC options line: the I41 wiring pin counts that exact text once.
     demo: Boolean(paths.demo),
     logger: syncLogger,

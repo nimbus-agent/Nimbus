@@ -19,8 +19,8 @@ describe("mapBigqueryTableToItem", () => {
         numBytes: "987654",
         schema: {
           fields: [
-            { name: "event_id", type: "STRING" },
-            { name: "ts", type: "TIMESTAMP" },
+            { name: "event_id", type: "STRING", nullable: true },
+            { name: "ts", type: "TIMESTAMP", nullable: true },
           ],
         },
       },
@@ -42,8 +42,8 @@ describe("mapBigqueryTableToItem", () => {
     expect(meta.numRows).toBe(12345);
     expect(meta.numBytes).toBe(987654);
     expect(meta.schemaFields).toEqual([
-      { name: "event_id", type: "STRING" },
-      { name: "ts", type: "TIMESTAMP" },
+      { name: "event_id", type: "STRING", nullable: true },
+      { name: "ts", type: "TIMESTAMP", nullable: true },
     ]);
   });
 
@@ -103,7 +103,7 @@ describe("extractSchemaFields", () => {
   test("flattens nested RECORD fields with dotted paths", () => {
     const fields = extractSchemaFields({
       fields: [
-        { name: "id", type: "STRING" },
+        { name: "id", type: "STRING", nullable: true },
         {
           name: "user",
           type: "RECORD",
@@ -115,10 +115,10 @@ describe("extractSchemaFields", () => {
       ],
     });
     expect(fields).toEqual([
-      { name: "id", type: "STRING" },
-      { name: "user", type: "RECORD" },
-      { name: "user.name", type: "STRING" },
-      { name: "user.age", type: "INTEGER" },
+      { name: "id", type: "STRING", nullable: true },
+      { name: "user", type: "RECORD", nullable: true },
+      { name: "user.name", type: "STRING", nullable: true },
+      { name: "user.age", type: "INTEGER", nullable: true },
     ]);
   });
 
@@ -131,7 +131,7 @@ describe("extractSchemaFields", () => {
   test("skips fields without a name", () => {
     expect(
       extractSchemaFields({ fields: [{ type: "STRING" }, { name: "ok", type: "INT64" }] }),
-    ).toEqual([{ name: "ok", type: "INT64" }]);
+    ).toEqual([{ name: "ok", type: "INT64", nullable: true }]);
   });
 });
 
@@ -156,8 +156,8 @@ describe("mapBigqueryTableToItem — value shapes and clamping", () => {
       fields: ["not a field", null, 7, { name: "a", type: "STRING" }, { name: "b" }],
     });
     expect(fields).toEqual([
-      { name: "a", type: "STRING" },
-      { name: "b", type: "" },
+      { name: "a", type: "STRING", nullable: true },
+      { name: "b", type: "", nullable: true },
     ]);
   });
 
@@ -180,5 +180,41 @@ describe("mapBigqueryTableToItem — value shapes and clamping", () => {
     });
     expect(withSchema.bodyPreview).toBe("id:INT64");
     expect(mapped({ description: "" }).bodyPreview).toBe("ds.t");
+  });
+});
+
+describe("schema history inputs (the Data Incident Brief's schema diff)", () => {
+  const ref = { tableReference: { datasetId: "Sales", tableId: "Orders" } };
+  const ctx = { project: "My-Proj", syncedAt: 5 };
+
+  test("nullability comes from mode: absent and NULLABLE are nullable, REQUIRED is not, REPEATED is unknown", () => {
+    expect(
+      extractSchemaFields({
+        fields: [
+          { name: "id", type: "INTEGER", mode: "REQUIRED" },
+          { name: "note", type: "STRING", mode: "NULLABLE" },
+          { name: "tags", type: "STRING", mode: "REPEATED" },
+        ],
+      }).map((f) => f.nullable),
+    ).toEqual([false, true, null]);
+  });
+
+  test("a described table has a normalized model key and a complete schema", () => {
+    const item = mapBigqueryTableToItem(
+      { ...ref, schema: { fields: [{ name: "id", type: "INTEGER" }] } },
+      ctx,
+    );
+    expect(item?.metadata["dataModelKey"]).toBe("my-proj.sales.orders");
+    expect(item?.metadata["schemaComplete"]).toBe(true);
+  });
+
+  test("a table listed without its schema is NOT complete (not seen, never 'no columns')", () => {
+    const listed = mapBigqueryTableToItem({ ...ref, type: "TABLE" }, ctx);
+    expect(listed?.metadata["schemaComplete"]).toBe(false);
+    expect(listed?.metadata["schemaFields"]).toEqual([]);
+    expect(listed?.metadata["dataModelKey"]).toBe("my-proj.sales.orders");
+    expect(
+      mapBigqueryTableToItem({ ...ref, schema: { fields: [] } }, ctx)?.metadata["schemaComplete"],
+    ).toBe(false);
   });
 });

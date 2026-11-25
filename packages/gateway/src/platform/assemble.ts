@@ -606,11 +606,10 @@ export async function assemblePlatformServices(
   });
   sidecarStops.push(() => toolCallLogRetention.stop());
 
-  // Item history (IC1) and orchestration run rows: the daily index retention passes.
+  // Item and schema history (IC1, V108) and orchestration run rows: the daily index retention passes.
   startIndexRetentionSidecars({ db, paths, sidecarStops });
 
-  // Incident record retention (Phase 10 IC3): `[incident] retention_days`, re-read on every tick. A pruned
-  // record takes its pushed briefs with it, in one transaction per batch.
+  // Incident record retention (IC3): `[incident] retention_days`, re-read per tick; a pruned record takes its pushed briefs.
   const incidentRetention = startIncidentRetention(db, {
     retentionDays: () => loadNimbusIncidentFromConfigDir(paths.configDir).retentionDays,
     onError: (err) => syncLogger.warn({ err }, "incident record retention pass failed"),

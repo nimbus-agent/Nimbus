@@ -1052,7 +1052,7 @@
       "kind": "metadata-key",
       "value": "bodyFetch",
       "file": "packages/gateway/src/index/item-store.ts",
-      "line": 374
+      "line": 365
     },
     {
       "table": "graph_relation",
@@ -1325,28 +1325,28 @@
       "kind": "metadata-key",
       "value": "assignee_emails",
       "file": "packages/gateway/src/incident/assemble.ts",
-      "line": 99
+      "line": 101
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "assignedTo",
       "file": "packages/gateway/src/incident/assemble.ts",
-      "line": 104
+      "line": 106
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "pagerduty_service_id",
       "file": "packages/gateway/src/incident/assemble.ts",
-      "line": 324
+      "line": 333
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "pagerduty_service_id",
       "file": "packages/gateway/src/incident/assemble.ts",
-      "line": 325
+      "line": 334
     },
     {
       "table": "item",
@@ -1479,28 +1479,21 @@
       "kind": "type",
       "value": "derived_from",
       "file": "packages/gateway/src/incident/lanes/data.ts",
-      "line": 95
+      "line": 98
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "data_model",
       "file": "packages/gateway/src/incident/lanes/data.ts",
-      "line": 97
+      "line": 100
     },
     {
       "table": "item",
       "kind": "type",
       "value": "pr",
       "file": "packages/gateway/src/incident/lanes/data.ts",
-      "line": 179
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "merged_at",
-      "file": "packages/gateway/src/incident/lanes/data.ts",
-      "line": 177
+      "line": 182
     },
     {
       "table": "item",
@@ -1510,18 +1503,25 @@
       "line": 180
     },
     {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "merged_at",
+      "file": "packages/gateway/src/incident/lanes/data.ts",
+      "line": 183
+    },
+    {
       "table": "graph_entity",
       "kind": "type",
       "value": "data_model",
       "file": "packages/gateway/src/incident/lanes/data.ts",
-      "line": 241
+      "line": 246
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "monitoredDataModelKeys",
       "file": "packages/gateway/src/incident/lanes/data.ts",
-      "line": 79
+      "line": 82
     },
     {
       "table": "graph_entity",
@@ -3907,6 +3907,8 @@
         "tableId",
         "tableType",
         "schemaFields",
+        "schemaComplete",
+        "dataModelKey",
         "numRows",
         "numBytes",
         "creationTime",
@@ -3914,7 +3916,7 @@
         "description"
       ],
       "file": "packages/gateway/src/connectors/bigquery-table-mapping.ts",
-      "line": 147
+      "line": 164
     },
     {
       "service": "bitbucket",
@@ -5372,11 +5374,12 @@
       "metadataKeys": [
         "dataModelKey",
         "columns",
+        "columnsComplete",
         "rowCountEstimate",
         "lastAltered"
       ],
       "file": "packages/gateway/src/connectors/snowflake-data-model-mapping.ts",
-      "line": 35
+      "line": 44
     },
     {
       "service": "snyk",
@@ -6249,7 +6252,7 @@
       "kind": "metadata-key",
       "value": "bodyFetch",
       "file": "packages/gateway/src/index/item-store.ts",
-      "line": 374,
+      "line": 365,
       "matchState": "partial",
       "partialCoverage": [
         "google_drive"
@@ -6704,7 +6707,7 @@
     },
     {
       "file": "packages/gateway/src/index/item-store.ts",
-      "line": 394
+      "line": 385
     },
     {
       "file": "packages/gateway/src/index/local-index.ts",
@@ -6744,7 +6747,7 @@
     },
     {
       "file": "packages/gateway/src/incident/lanes/data.ts",
-      "line": 130
+      "line": 133
     },
     {
       "file": "packages/gateway/src/graph/graph-populator.ts",

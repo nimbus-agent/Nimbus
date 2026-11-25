@@ -1447,6 +1447,28 @@ CREATE TABLE IF NOT EXISTS incident_record_version (
 
 Why the shape: there is NO foreign key to `item` (an upstream deletion must not erase the record that says the incident existed, as for `item_history`); every list query orders `opened_at_ms DESC, id` and each index ends in `id`, so SQLite sorts NULL last with no temporary B-tree (the migration test asserts the plans); the retention predicate is written as two arms (`opened_at_ms IS NOT NULL AND opened_at_ms < ?` OR `opened_at_ms IS NULL AND assembled_at_ms < ?`), never a `COALESCE`, which defeats the index; the engine's refresh selection reads `incident_record_checked` once per status, since an `IN (...)` of two statuses needs a sort; version N's `record_json` is immutable once written, the version table keeps no Markdown (re-rendered by the same pure renderer), and the store deletes versions itself before the record because `PRAGMA foreign_keys` is set per connection and the cascade is only a backstop. A pushed brief is tied to a record by `pushed_brief.incident_id = incident_record.trigger_item_id` (the V64 primary key), so the push needs no schema change.
 
+## V108 — warehouse schema history (Phase 10, the Data Incident Brief's schema diff, 2026-11-25)
+
+Authoritative source: `packages/gateway/src/index/schema-history-v108-sql.ts`. Written only by `index/schema-history.ts` (static D24 rule `schema-history-confined`), inside `upsertIndexedItem`'s transaction for a Snowflake `data_model` or a BigQuery `table`; read by `index/schema-diff.ts`; deleted by `connector remove` and `nimbus data delete` and pruned by `[index] schema_history_retention_days` (the newest row of each table is kept). No foreign key, no trigger, no backfill; re-runnable. Chains after V107.
+
+```sql
+CREATE TABLE IF NOT EXISTS schema_history (
+  id INTEGER PRIMARY KEY,
+  service TEXT NOT NULL,
+  data_model_key TEXT NOT NULL CHECK (length(data_model_key) BETWEEN 1 AND 512),
+  observed_at_ms INTEGER NOT NULL,   -- the sync's own time
+  complete INTEGER NOT NULL CHECK (complete IN (0, 1)),
+  column_count INTEGER CHECK (column_count IS NULL OR column_count >= 0),
+  columns_json TEXT CHECK (columns_json IS NULL OR length(columns_json) <= 1048576),  -- [{name,type,nullable}] sorted by name; NULL when incomplete
+  CHECK ((complete = 1 AND columns_json IS NOT NULL AND column_count IS NOT NULL) OR (complete = 0 AND columns_json IS NULL))
+);
+CREATE INDEX IF NOT EXISTS schema_history_table ON schema_history (service, data_model_key, id);
+CREATE INDEX IF NOT EXISTS schema_history_key_time ON schema_history (data_model_key, observed_at_ms);
+CREATE INDEX IF NOT EXISTS schema_history_observed ON schema_history (observed_at_ms);
+```
+
+A row is written only when the observation CHANGES what the table's latest row says (a first observation is a baseline; an unchanged set and a repeated incomplete one write nothing). A diff is computed at read time between two adjacent COMPLETE rows.
+
 ## V107 — long-term episodic memory (Phase 10, owner ruling OR-S4-MEM, I61, 2026-11-23)
 
 Authoritative source: `packages/gateway/src/index/episodic-memory-v107-sql.ts`. Written and read ONLY by `memory/episodic-store.ts` (static D52(a)). No foreign key, no trigger, no backfill; re-runnable. Chains after V106.

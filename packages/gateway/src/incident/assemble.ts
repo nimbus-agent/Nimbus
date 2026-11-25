@@ -56,6 +56,8 @@ export type AssembleDeps = {
   readonly db: Database;
   /** The `[ci.service.*]` / `[metrics.dora.*]` configs, read fresh per assembly. */
   readonly loadServiceConfigs: () => ReadonlyMap<string, ServiceConfig>;
+  /** `[incident] data_schema_lookback_hours`; absent reads 24. */
+  readonly dataSchemaLookbackHours?: number | undefined;
 };
 
 export type AssembleOutcome =
@@ -270,6 +272,7 @@ function noOpenTimeGap(): GapNote {
 /** Lanes 2 to 5 and 7 plus history, then the record body (without the cap, the gaps or the freshness). */
 function buildBody(deps: AssembleDeps, ev: Evidence, nowMs: number, trigger: TriggerBlock) {
   const { db } = deps;
+  const schemaLookbackHours = deps.dataSchemaLookbackHours;
   const open = trigger.opened.ms;
   const cfg = ev.cfg;
   const gaps: GapNote[] = [...substrateGaps(), ...ev.bindingGaps];
@@ -317,8 +320,14 @@ function buildBody(deps: AssembleDeps, ev: Evidence, nowMs: number, trigger: Tri
         });
   const data =
     trigger.service === "montecarlo" || trigger.service === "bigeye"
-      ? dataLane(db, { metadata: ev.meta, openedAtMs: open })
-      : pagerdutyDataLane(db, { service: trigger.service, cfg, openedAtMs: open });
+      ? dataLane(db, { metadata: ev.meta, openedAtMs: open, nowMs, schemaLookbackHours })
+      : pagerdutyDataLane(db, {
+          service: trigger.service,
+          cfg,
+          openedAtMs: open,
+          nowMs,
+          schemaLookbackHours,
+        });
   // lane-census: scope=incident service=pagerduty
   const pdService =
     typeof ev.meta?.["pagerduty_service_id"] === "string"
