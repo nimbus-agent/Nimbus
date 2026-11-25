@@ -1,7 +1,5 @@
 import type { Database } from "bun:sqlite";
 
-import type { GapNote } from "@nimbus-dev/sdk";
-
 import type {
   PrereviewBrief,
   PrereviewCoChange,
@@ -13,6 +11,7 @@ import type {
   PrereviewTerm,
 } from "../agents/_lib/prreview-types.ts";
 import { resolveItemByUrl } from "../index/resolve-by-url.ts";
+import { prereviewGaps } from "./prreview-gaps.ts";
 import {
   byString,
   numOrNull,
@@ -312,17 +311,64 @@ function sizeOf(
   };
 }
 
-const ALWAYS_GAP: GapNote = {
-  category: "missing_relation_emit",
-  detail:
-    "These checks come from co-change in this repository's merged pull requests and from your own past reviews; the index holds no other reviewer's comments and no inline review comments.",
-};
-const OWNERS_GAP: GapNote = {
-  category: "missing_relation_emit",
-  detail:
-    "Owners of the touched paths are not shown: the index does not link a pull request's paths to local files.",
-  remediation: "run `nimbus owners <path>` in a local checkout",
-};
+/** Each touched area's co-change findings, the areas with too little history, and the PRs that touched any. */
+function judgeAreas(
+  areas: readonly string[],
+  files: readonly string[],
+  history: readonly HistoryPr[],
+  canJudgeAbsence: boolean,
+): { all: PrereviewCoChange[]; thin: number; cohortIds: Set<string> } {
+  const all: PrereviewCoChange[] = [];
+  let thin = 0;
+  const cohortIds = new Set<string>();
+  for (const area of areas) {
+    const found = coChangesForArea(area, files, history);
+    if (found === null) {
+      thin++;
+      continue;
+    }
+    if (canJudgeAbsence) all.push(...found);
+    for (const pr of history) {
+      if (pr.files.some((f) => isUnder(areaOf(f), area))) cohortIds.add(pr.ref.itemId);
+    }
+  }
+  return { all, thin, cohortIds };
+}
+
+/** Ranked findings, one per companion. */
+function rankedUnique(all: readonly PrereviewCoChange[]): PrereviewCoChange[] {
+  const seenCompanion = new Set<string>();
+  return [...all].sort(rankCoChanges).filter((c) => {
+    const k = `${c.companionKind}\u0000${c.companion}`;
+    if (seenCompanion.has(k)) return false;
+    seenCompanion.add(k);
+    return true;
+  });
+}
+
+/** The owner's own GitHub review notes on the cohort's pull requests (GitHub only). */
+function reviewLane(
+  db: Database,
+  repo: string,
+  cohort: readonly HistoryPr[],
+): { reviewNotes: PrereviewReviewNote[]; reviewTerms: PrereviewTerm[]; matched: number } {
+  const byNumber = new Map<number, PrereviewPrRef>();
+  for (const p of cohort) if (p.number !== null) byNumber.set(p.number, p.ref);
+  const notes = reviewsFor(db, repo, byNumber);
+  const perPr = new Map<string, number>();
+  const reviewNotes = notes
+    .filter((n) => {
+      const k = perPr.get(n.pr.itemId) ?? 0;
+      perPr.set(n.pr.itemId, k + 1);
+      return k < REVIEWS_PER_PR;
+    })
+    .slice(0, REVIEWS_SHOWN);
+  return {
+    reviewNotes,
+    reviewTerms: recurringTerms(notes.map((n) => n.body)),
+    matched: notes.length,
+  };
+}
 
 /** Builds the pre-review brief for `url`. Throws {@link PrereviewError} when the URL is not an indexed PR. */
 // lane-census: scope=pr service=github,gitlab,bitbucket
@@ -345,112 +391,35 @@ export function buildPrereviewBrief(db: Database, url: string, nowMs: number): P
     filesTruncated: coverage !== null && coverage.truncated !== 0,
     apiFileCount: coverage === null ? null : coverage.api_file_count,
   };
-  const gaps: GapNote[] = [ALWAYS_GAP];
   const { history, noCoverage, truncated } =
     repo === "" ? { history: [], noCoverage: 0, truncated: 0 } : loadHistory(db, row, repo, nowMs);
   const { areas, total } = areasOf(files);
-  const all: PrereviewCoChange[] = [];
-  let thin = 0;
-  const cohortIds = new Set<string>();
   // A truncated file list proves what the PR touches, never what it does not, so it gets no co-change finding.
   const canJudgeAbsence = coverage !== null && coverage.truncated === 0;
-  for (const area of areas) {
-    const found = coChangesForArea(area, files, history);
-    if (found === null) {
-      thin++;
-      continue;
-    }
-    if (canJudgeAbsence) all.push(...found);
-    for (const pr of history) {
-      if (pr.files.some((f) => isUnder(areaOf(f), area))) cohortIds.add(pr.ref.itemId);
-    }
-  }
-  const seenCompanion = new Set<string>();
-  const ranked = [...all].sort(rankCoChanges).filter((c) => {
-    const k = `${c.companionKind}\u0000${c.companion}`;
-    if (seenCompanion.has(k)) return false;
-    seenCompanion.add(k);
-    return true;
-  });
+  const { all, thin, cohortIds } = judgeAreas(areas, files, history, canJudgeAbsence);
+  const ranked = rankedUnique(all);
   const coChanges = ranked.slice(0, FINDINGS_MAX);
   const cohort = history.filter((p) => cohortIds.has(p.ref.itemId));
 
-  let reviewNotes: PrereviewReviewNote[] | null = null;
-  let reviewTerms: PrereviewTerm[] = [];
-  let matched = 0;
-  if (row.service === "github") {
-    const byNumber = new Map<number, PrereviewPrRef>();
-    for (const p of cohort) if (p.number !== null) byNumber.set(p.number, p.ref);
-    const notes = reviewsFor(db, repo, byNumber);
-    matched = notes.length;
-    const perPr = new Map<string, number>();
-    reviewNotes = notes
-      .filter((n) => {
-        const k = perPr.get(n.pr.itemId) ?? 0;
-        perPr.set(n.pr.itemId, k + 1);
-        return k < REVIEWS_PER_PR;
-      })
-      .slice(0, REVIEWS_SHOWN);
-    reviewTerms = recurringTerms(notes.map((n) => n.body));
-  } else {
-    gaps.push({
-      category: "missing_connector",
-      detail: `No review data is indexed for ${row.service}: only your own GitHub reviews are indexed, so the review lane and the size comparison are empty.`,
-    });
-  }
+  const reviews =
+    row.service === "github"
+      ? reviewLane(db, repo, cohort)
+      : { reviewNotes: null, reviewTerms: [], matched: 0 };
   const size = sizeOf(meta, cohort);
-  if (row.service === "bitbucket") {
-    gaps.push({
-      category: "missing_entity_type",
-      detail:
-        "Bitbucket records no merge time, so the history window uses each pull request's last update time instead.",
-    });
-  }
-
-  if (coverage === null) {
-    gaps.push({
-      category: "missing_entity_type",
-      detail:
-        "This pull request's changed files are not in the index, so no area-based check could run.",
-      remediation: `run \`nimbus connector sync ${row.service}\``,
-    });
-  } else if (coverage.truncated !== 0) {
-    gaps.push({
-      category: "missing_entity_type",
-      detail: `This pull request's file list is incomplete in the index (${String(files.length)} of ${String(coverage.api_file_count)} files stored), so no co-change check is shown: a missing file might be among the unstored ones.`,
-    });
-  }
-  if (noCoverage > 0 || truncated > 0) {
-    gaps.push({
-      category: "missing_entity_type",
-      detail: `${String(noCoverage)} merged pull request(s) with no indexed file list and ${String(truncated)} with an incomplete one were left out of the history.`,
-    });
-  }
-  if (thin > 0) {
-    gaps.push({
-      category: "empty_index",
-      detail: `${String(thin)} area(s) had fewer than ${String(MIN_COHORT)} comparable merged pull requests and were not judged.`,
-    });
-  }
-  if (total > areas.length) {
-    gaps.push({
-      category: "empty_index",
-      detail: `Only the ${String(areas.length)} largest of ${String(total)} touched areas were checked.`,
-    });
-  }
-  if (ranked.length > coChanges.length) {
-    gaps.push({
-      category: "empty_index",
-      detail: `${String(ranked.length - coChanges.length)} further co-change finding(s) are not shown.`,
-    });
-  }
-  if (row.service === "github" && size === null) {
-    gaps.push({
-      category: "missing_entity_type",
-      detail: `No size comparison: it needs this pull request's line counts and at least ${String(MIN_COHORT)} comparable merged pull requests with theirs.`,
-    });
-  }
-  gaps.push(OWNERS_GAP);
+  const gaps = prereviewGaps({
+    service: row.service,
+    coverage,
+    filesStored: files.length,
+    historyNoCoverage: noCoverage,
+    historyTruncated: truncated,
+    thin,
+    areasTotal: total,
+    areasChecked: areas.length,
+    findingsRanked: ranked.length,
+    findingsShown: coChanges.length,
+    hasSize: size !== null,
+    minCohort: MIN_COHORT,
+  });
 
   const counts: PrereviewCounts = {
     historyUsed: history.length,
@@ -460,7 +429,7 @@ export function buildPrereviewBrief(db: Database, url: string, nowMs: number): P
     areasCut: total - areas.length,
     areasThinHistory: thin,
     findingsCut: ranked.length - coChanges.length,
-    reviewsMatched: matched,
+    reviewsMatched: reviews.matched,
   };
   return {
     kind: "pr_prereview",
@@ -470,8 +439,8 @@ export function buildPrereviewBrief(db: Database, url: string, nowMs: number): P
     gaps,
     target,
     coChanges,
-    reviewNotes,
-    reviewTerms,
+    reviewNotes: reviews.reviewNotes,
+    reviewTerms: reviews.reviewTerms,
     size,
     counts,
   };

@@ -251,12 +251,25 @@ export function nextFireOf(spec: CronSpec, tz: string, afterMs: number): number 
   for (let offset = 0; offset < SEARCH_DAYS; offset++) {
     const day = addDays(start.y, start.mo, start.d, offset);
     if (!dayMatches(spec, day.y, day.mo, day.d)) continue;
-    for (const h of spec.hours) {
-      for (const mi of spec.minutes) {
-        if (offset === 0 && beforeStart(h, mi, start)) continue;
-        const t = instantOf({ ...day, h, mi }, tz);
-        if (t !== undefined && t > afterMs) return t;
-      }
+    const t = firstFireOnDay(spec, tz, day, offset === 0 ? start : undefined, afterMs);
+    if (t !== undefined) return t;
+  }
+  return undefined;
+}
+
+/** The first fire on one matching day after `afterMs`; `start` (the first searched day only) skips earlier times. */
+function firstFireOnDay(
+  spec: CronSpec,
+  tz: string,
+  day: ReturnType<typeof addDays>,
+  start: Wall | undefined,
+  afterMs: number,
+): number | undefined {
+  for (const h of spec.hours) {
+    for (const mi of spec.minutes) {
+      if (start !== undefined && beforeStart(h, mi, start)) continue;
+      const t = instantOf({ ...day, h, mi }, tz);
+      if (t !== undefined && t > afterMs) return t;
     }
   }
   return undefined;

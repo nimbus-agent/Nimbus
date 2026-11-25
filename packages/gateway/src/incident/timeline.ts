@@ -179,7 +179,7 @@ function changeEvents(r: IncidentRecordV1): TimelineEvent[] {
   }
   const ci = r.change.ci;
   if (ci !== null) {
-    const verdict = ci.conclusion === null ? "no conclusion recorded" : ci.conclusion;
+    const verdict = ci.conclusion ?? "no conclusion recorded";
     out.push(
       ev(
         ci.atMs,
@@ -232,17 +232,19 @@ function chatEvents(r: IncidentRecordV1): TimelineEvent[] {
 }
 
 function otherRecordEvents(r: IncidentRecordV1): TimelineEvent[] {
-  return r.concurrent.records.map((c) =>
-    ev(
+  return r.concurrent.records.map((c) => {
+    const severity = c.severity === null ? "" : ` ${c.severity}`;
+    const service = c.service === null ? "" : ` on ${c.service}`;
+    return ev(
       c.openedAtMs,
       "source",
       "record_opened",
       c.source,
       c.triggerItemId,
-      `Another record opened: ${c.source}${c.severity === null ? "" : ` ${c.severity}`}${c.service === null ? "" : ` on ${c.service}`} (${c.recordId})`,
+      `Another record opened: ${c.source}${severity}${service} (${c.recordId})`,
       c.rule,
-    ),
-  );
+    );
+  });
 }
 
 function historyEvents(
@@ -262,18 +264,22 @@ function historyEvents(
         "state_change",
         t.service,
         t.itemId,
-        `${h.key}: ${from === null ? "(none)" : from} -> ${to === null ? "(none)" : to}`,
+        `${h.key}: ${from ?? "(none)"} -> ${to ?? "(none)"}`,
       );
     });
+}
+
+function actionVerdict(kind: string): "denied" | "undone" | "approved" {
+  if (kind === "action_denied") return "denied";
+  return kind === "action_undone" ? "undone" : "approved";
 }
 
 function actionEvents(rows: readonly TimelineActionInput[]): TimelineEvent[] {
   return rows.map((a) => {
     const how = a.answerSource === undefined ? "" : `, answered by ${a.answerSource}`;
-    const reads =
-      a.subSteps === 0 ? "" : `, ${String(a.subSteps)} read${a.subSteps === 1 ? "" : "s"}`;
-    const verdict =
-      a.kind === "action_denied" ? "denied" : a.kind === "action_undone" ? "undone" : "approved";
+    const plural = a.subSteps === 1 ? "" : "s";
+    const reads = a.subSteps === 0 ? "" : `, ${String(a.subSteps)} read${plural}`;
+    const verdict = actionVerdict(a.kind);
     return ev(
       a.timestamp,
       "observed",

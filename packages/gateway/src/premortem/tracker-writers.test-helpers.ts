@@ -126,6 +126,11 @@ export type LinearFixtureProject = {
 
 export type LinearFixtureIssue = { identifier: string; projectId: string | null };
 
+/** The fixture's own value when it gave one (an explicit `null` included), else the default. */
+function givenOr<T>(given: T | undefined, fallback: T): T {
+  return given === undefined ? fallback : given;
+}
+
 function linearProjectNode(p: LinearFixtureProject): Record<string, unknown> {
   const type = p.statusType ?? "completed";
   return {
@@ -138,18 +143,8 @@ function linearProjectNode(p: LinearFixtureProject): Record<string, unknown> {
     createdAt: p.createdAt ?? "2026-01-01T00:00:00.000Z",
     updatedAt: p.updatedAt ?? "2026-03-01T00:00:00.000Z",
     startedAt: null,
-    completedAt:
-      p.completedAt === undefined
-        ? type === "completed"
-          ? "2026-02-01T00:00:00.000Z"
-          : null
-        : p.completedAt,
-    canceledAt:
-      p.canceledAt === undefined
-        ? type === "canceled"
-          ? "2026-02-01T00:00:00.000Z"
-          : null
-        : p.canceledAt,
+    completedAt: givenOr(p.completedAt, type === "completed" ? "2026-02-01T00:00:00.000Z" : null),
+    canceledAt: givenOr(p.canceledAt, type === "canceled" ? "2026-02-01T00:00:00.000Z" : null),
     archivedAt: null,
     targetDate: null,
     status: type === "" ? null : { type, name: type },

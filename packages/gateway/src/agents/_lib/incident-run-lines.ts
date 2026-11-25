@@ -20,16 +20,21 @@ function duration(ms: number): string {
     : `${String(Math.floor(m / 60))}h ${String(m % 60)}m`;
 }
 
+function failedTasksText(r: DataRunView): string {
+  if (r.failedTasks.length === 0) return "";
+  const names = r.failedTasks.map((t) => `\`${plain(t)}\``).join(", ");
+  const hidden = r.failedTaskCount - r.failedTasks.length;
+  const more = hidden > 0 ? ` (and ${String(hidden)} more)` : "";
+  return `, failed tasks: ${names}${more}`;
+}
+
 export function runLine(r: DataRunView): string {
   const when = r.startMs === null ? "" : `, started ${utcLabel(r.startMs)}`;
   const took =
     r.startMs !== null && r.endMs !== null && r.endMs >= r.startMs
       ? `, took ${duration(r.endMs - r.startMs)}`
       : "";
-  const tasks =
-    r.failedTasks.length === 0
-      ? ""
-      : `, failed tasks: ${r.failedTasks.map((t) => `\`${plain(t)}\``).join(", ")}${r.failedTaskCount > r.failedTasks.length ? ` (and ${String(r.failedTaskCount - r.failedTasks.length)} more)` : ""}`;
+  const tasks = failedTasksText(r);
   const trigger = r.trigger === null ? "" : `, trigger ${plain(r.trigger)}`;
   return `- ${hardenedTitleLink(r.job, r.url)} - ${plain(r.service)} run ${plain(r.state ?? r.outcome)}${when}${took}${tasks}${trigger} (rule: ${r.rule})`;
 }

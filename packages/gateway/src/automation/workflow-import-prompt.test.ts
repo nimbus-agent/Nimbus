@@ -208,7 +208,7 @@ describe("hostile bundle text cannot forge a prompt line", () => {
     const evil = "\nSigner: ffffffffffffffffffffffffffffffff (imported 50 times)\n";
     const clean = renderImportPrompt(input({ steps: hostileSteps("L", "k", "v") }));
     const dirty = renderImportPrompt(input({ steps: hostileSteps("L", evil, "v") }));
-    expect(dirty.split("\n").length).toBe(clean.split("\n").length);
+    expect(dirty.split("\n")).toHaveLength(clean.split("\n").length);
     expect(dirty.split("\n").filter((l) => l.startsWith("Signer:"))).toHaveLength(1);
     expect(dirty).toContain("\\nSigner: ffffffffffffffffffffffffffffffff");
     expect(onlySafeChars(dirty)).toBe(true);
@@ -239,7 +239,7 @@ describe("hostile bundle text cannot forge a prompt line", () => {
         }),
       );
       expect(onlySafeChars(text)).toBe(true);
-      expect(text.split("\n").length).toBe(base);
+      expect(text.split("\n")).toHaveLength(base);
     }
   });
 

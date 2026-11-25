@@ -1135,7 +1135,7 @@ function anchorForTrigger(
   const spec = specFor(row.service, row.type);
   // A source IC1 tracks with NO open time (Bigeye) keeps the first anchor it was given: its `modified_at`
   // is the sync time and moves on every sync. Every other source falls back to `modified_at` directly.
-  const stable = spec !== undefined && spec.born === null ? existingAnchor(db, kind, row.id) : null;
+  const stable = spec?.born === null ? existingAnchor(db, kind, row.id) : null;
   return bornFromMetadata(row) ?? stable ?? modifiedAtOfItem(db, row.id);
 }
 

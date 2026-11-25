@@ -194,7 +194,7 @@ export function createIncidentEngine(deps: IncidentEngineDeps): IncidentEngine {
     },
     assembleNow: assembleShared,
     idle: async () => {
-      await Promise.all([...running.values()]);
+      await Promise.all(running.values());
     },
   };
 }

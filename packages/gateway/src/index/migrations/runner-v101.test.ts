@@ -65,7 +65,7 @@ describe("V101 migration - signed workflow import provenance", () => {
       );
       expect(idx).toContain("workflow_import_workflow");
       expect(idx).toContain("workflow_import_name");
-      expect((db.query("PRAGMA foreign_key_list(workflow_import)").all() as unknown[]).length).toBe(
+      expect(db.query("PRAGMA foreign_key_list(workflow_import)").all() as unknown[]).toHaveLength(
         0,
       );
     } finally {

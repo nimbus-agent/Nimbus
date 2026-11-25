@@ -117,10 +117,11 @@ export function syncProposals(
     ).changes;
     const keep = drafts.map((d) => d.id);
     const marks = keep.map(() => "?").join(",");
+    const notKept = keep.length === 0 ? "" : ` AND id NOT IN (${marks})`;
     const superseded = dbRun(
       db,
       `UPDATE incident_proposal SET status = 'superseded', updated_at_ms = ?
-        WHERE record_id = ? AND status = 'proposed'${keep.length === 0 ? "" : ` AND id NOT IN (${marks})`}`,
+        WHERE record_id = ? AND status = 'proposed'${notKept}`,
       [nowMs, recordId, ...keep],
     ).changes;
     for (const d of drafts) {

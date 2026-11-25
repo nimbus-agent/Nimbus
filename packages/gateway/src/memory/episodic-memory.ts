@@ -88,7 +88,7 @@ export class EpisodicMemory implements EpisodicTurnPort {
     if (!answeringLocal && !cfg.recallRemote) return undefined;
     try {
       const vec = await this.deps.embedText(query);
-      if (vec === null || vec.length !== this.deps.dims) return undefined;
+      if (vec?.length !== this.deps.dims) return undefined;
       const rows = this.deps.store.recall(vec, RECALL_TOP_K, RECALL_MIN_SIMILARITY);
       if (rows.length === 0) return undefined;
       return formatRecallBlock(rows);

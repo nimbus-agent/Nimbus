@@ -75,10 +75,10 @@ function dbtLines(d: DataLane): string[] {
 function mergedLines(d: DataLane): string[] {
   if (d.prs.length === 0)
     return ["_No change merged in the 24 hours before the alert matched by name._"];
-  const rows = d.prs.map(
-    (p) =>
-      `- ${hardenedTitleLink(p.title, p.url)}${p.atMs === null ? "" : `, merged ${utcLabel(p.atMs)}`} (rule: ${p.rule})`,
-  );
+  const rows = d.prs.map((p) => {
+    const merged = p.atMs === null ? "" : `, merged ${utcLabel(p.atMs)}`;
+    return `- ${hardenedTitleLink(p.title, p.url)}${merged} (rule: ${p.rule})`;
+  });
   const more = d.totals.prs - d.prs.length;
   return more > 0 ? [...rows, `_and ${String(more)} more_`] : rows;
 }

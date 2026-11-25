@@ -140,63 +140,84 @@ function freshnessRows(db: Database): HandoffRecords["freshness"] {
   });
 }
 
-export function readHandoffRecords(db: Database, opts: HandoffRecordsOptions): HandoffRecords {
-  const total = (db.query("SELECT count(*) AS n FROM incident_record").get() as { n: number }).n;
-  const empty: RecordsCounted<never> = { items: [], total: 0 };
-  const gaps: { code: string; detail: string }[] = [];
-  const freshness = freshnessRows(db);
-  if (total === 0) {
-    gaps.push({
-      code: "no_records",
-      detail:
-        "No incident record has been assembled yet, so the record lists are empty because nothing can be read, not because nothing happened.",
-    });
+/** The record lists of one window, and what could not be placed in them. */
+type Placed = {
+  readonly opened: HandoffRecordRef[];
+  readonly resolved: HandoffRecordRef[];
+  readonly stillOpen: HandoffRecordRef[];
+  readonly smouldering: SmoulderingRef[];
+  noOpenTime: number;
+  closedUnknown: number;
+};
+
+/** Places one record (its open time known) in every list of the window it belongs to. */
+function placeRecord(
+  r: Row,
+  v: HandoffRecordRef,
+  openedAtMs: number,
+  retriggered: ReadonlySet<string>,
+  opts: HandoffRecordsOptions,
+  out: Placed,
+): void {
+  if (openedAtMs >= opts.fromMs && openedAtMs <= opts.toMs) out.opened.push(v);
+  if (r.status === "closed") {
+    if (v.closedAtMs === null) out.closedUnknown += 1;
+    else if (v.closedAtMs >= opts.fromMs && v.closedAtMs <= opts.toMs) out.resolved.push(v);
   }
+  const open =
+    openedAtMs <= opts.toMs &&
+    (r.status === "open" ||
+      (r.status === "closed" && v.closedAtMs !== null && v.closedAtMs > opts.toMs));
+  if (open) out.stillOpen.push(v);
+  if (retriggered.has(v.triggerItemId) && openedAtMs <= opts.toMs) {
+    out.smouldering.push({ ...v, reason: "retriggered" });
+  } else if (open && opts.toMs - openedAtMs > SMOULDERING_AFTER_MS) {
+    out.smouldering.push({ ...v, reason: "open_over_4h" });
+  }
+}
 
-  const retriggered = readRetriggered(db, opts);
-  const rows = readCandidates(db, opts).filter(
-    (r) => opts.serviceIds === null || (r.service !== null && opts.serviceIds.has(r.service)),
-  );
-  const opened: HandoffRecordRef[] = [];
-  const resolved: HandoffRecordRef[] = [];
-  const stillOpen: HandoffRecordRef[] = [];
-  const smouldering: SmoulderingRef[] = [];
-  let noOpenTime = 0;
-  let closedUnknown = 0;
-
+function placeRecords(
+  rows: readonly Row[],
+  retriggered: ReadonlySet<string>,
+  opts: HandoffRecordsOptions,
+): Placed {
+  const out: Placed = {
+    opened: [],
+    resolved: [],
+    stillOpen: [],
+    smouldering: [],
+    noOpenTime: 0,
+    closedUnknown: 0,
+  };
   for (const r of rows) {
     const v = ref(r);
-    if (v.openedAtMs === null) {
-      noOpenTime += 1;
+    const openedAtMs = v.openedAtMs;
+    if (openedAtMs === null) {
+      out.noOpenTime += 1;
       continue;
     }
-    if (v.openedAtMs >= opts.fromMs && v.openedAtMs <= opts.toMs) opened.push(v);
-    if (r.status === "closed") {
-      if (v.closedAtMs === null) closedUnknown += 1;
-      else if (v.closedAtMs >= opts.fromMs && v.closedAtMs <= opts.toMs) resolved.push(v);
-    }
-    const open =
-      v.openedAtMs <= opts.toMs &&
-      (r.status === "open" ||
-        (r.status === "closed" && v.closedAtMs !== null && v.closedAtMs > opts.toMs));
-    if (open) stillOpen.push(v);
-    if (retriggered.has(v.triggerItemId) && v.openedAtMs <= opts.toMs) {
-      smouldering.push({ ...v, reason: "retriggered" });
-    } else if (open && opts.toMs - v.openedAtMs > SMOULDERING_AFTER_MS) {
-      smouldering.push({ ...v, reason: "open_over_4h" });
-    }
+    placeRecord(r, v, openedAtMs, retriggered, opts, out);
   }
+  return out;
+}
 
-  if (total > 0 && noOpenTime > 0) {
+/** The gaps after the lists: unplaced records, the scope of records, a past window, what is not read. */
+function trailingGaps(
+  total: number,
+  placed: Placed,
+  opts: HandoffRecordsOptions,
+): { code: string; detail: string }[] {
+  const gaps: { code: string; detail: string }[] = [];
+  if (total > 0 && placed.noOpenTime > 0) {
     gaps.push({
       code: "no_open_time",
-      detail: `${String(noOpenTime)} record(s) carry no open time and are not placed in any list.`,
+      detail: `${String(placed.noOpenTime)} record(s) carry no open time and are not placed in any list.`,
     });
   }
-  if (closedUnknown > 0) {
+  if (placed.closedUnknown > 0) {
     gaps.push({
       code: "closed_time_unknown",
-      detail: `${String(closedUnknown)} closed record(s) carry no close time, so they are not listed as resolved in the window.`,
+      detail: `${String(placed.closedUnknown)} closed record(s) carry no close time, so they are not listed as resolved in the window.`,
     });
   }
   if (total > 0) {
@@ -218,13 +239,35 @@ export function readHandoffRecords(db: Database, opts: HandoffRecordsOptions): H
     detail:
       "This brief does not read remediation proposals, runbook steps or radar findings, so their silence is not evidence that none exist.",
   });
+  return gaps;
+}
+
+export function readHandoffRecords(db: Database, opts: HandoffRecordsOptions): HandoffRecords {
+  const total = (db.query("SELECT count(*) AS n FROM incident_record").get() as { n: number }).n;
+  const empty: RecordsCounted<never> = { items: [], total: 0 };
+  const gaps: { code: string; detail: string }[] = [];
+  const freshness = freshnessRows(db);
+  if (total === 0) {
+    gaps.push({
+      code: "no_records",
+      detail:
+        "No incident record has been assembled yet, so the record lists are empty because nothing can be read, not because nothing happened.",
+    });
+  }
+
+  const retriggered = readRetriggered(db, opts);
+  const rows = readCandidates(db, opts).filter(
+    (r) => opts.serviceIds === null || (r.service !== null && opts.serviceIds.has(r.service)),
+  );
+  const placed = placeRecords(rows, retriggered, opts);
+  gaps.push(...trailingGaps(total, placed, opts));
 
   return {
     status: total === 0 ? "no_records" : "ok",
-    opened: total === 0 ? empty : counted(opened),
-    resolved: total === 0 ? empty : counted(resolved),
-    stillOpen: total === 0 ? empty : counted(stillOpen),
-    smouldering: total === 0 ? empty : counted(smouldering),
+    opened: total === 0 ? empty : counted(placed.opened),
+    resolved: total === 0 ? empty : counted(placed.resolved),
+    stillOpen: total === 0 ? empty : counted(placed.stillOpen),
+    smouldering: total === 0 ? empty : counted(placed.smouldering),
     freshness,
     gaps,
   };

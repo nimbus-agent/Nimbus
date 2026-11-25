@@ -80,7 +80,7 @@ describe("EpisodicStore", () => {
     const hits = store.recall(bagEmbed("deploy rollback pipeline"), 3, 0.35);
     expect(hits.map((h) => h.summary)).toEqual(["deploy pipeline rollback"]);
     expect(hits[0]?.similarity).toBeGreaterThan(0.9);
-    expect(store.recall(bagEmbed("deploy"), 1, 0).length).toBe(1);
+    expect(store.recall(bagEmbed("deploy"), 1, 0)).toHaveLength(1);
     // A vector of another length is skipped, never compared.
     expect(store.recall(new Float32Array(8), 3, -1)).toEqual([]);
   });

@@ -115,7 +115,7 @@ export function mayBeUnminedLinearProjects(db: Database): number {
   const state = db
     .query(`SELECT watermark_ms, watermark_id, last_pass_at FROM premortem_pass_state WHERE id = 1`)
     .get() as { watermark_ms: number; watermark_id: string; last_pass_at: number | null } | null;
-  if (state === null || state.last_pass_at === null) {
+  if (state?.last_pass_at == null) {
     return 0;
   }
   const row = db

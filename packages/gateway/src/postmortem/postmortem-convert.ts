@@ -222,7 +222,8 @@ export function toConfluenceStorage(markdown: string): string {
   let list: string[] = [];
   const flushList = (): void => {
     if (list.length === 0) return;
-    out.push(`<ul>${list.map((l) => `<li>${l}</li>`).join("")}</ul>`);
+    const items = list.map((l) => `<li>${l}</li>`).join("");
+    out.push(`<ul>${items}</ul>`);
     list = [];
   };
   for (const b of parseBlocks(markdown)) {
@@ -249,6 +250,20 @@ type RichText = {
   annotations?: { bold?: true; italic?: true; code?: true };
 };
 
+/** One rich-text item of a span's piece: its link, and its annotations only when it has any. */
+function richTextItem(s: Span, piece: string): RichText {
+  const item: RichText = { type: "text", text: { content: piece } };
+  if (s.href !== undefined) item.text.link = { url: s.href };
+  if (s.bold === true || s.italic === true || s.code === true) {
+    item.annotations = {
+      ...(s.bold === true ? { bold: true as const } : {}),
+      ...(s.italic === true ? { italic: true as const } : {}),
+      ...(s.code === true ? { code: true as const } : {}),
+    };
+  }
+  return item;
+}
+
 function richText(spans: readonly Span[]): RichText[] {
   const out: RichText[] = [];
   for (const s of spans) {
@@ -257,16 +272,7 @@ function richText(spans: readonly Span[]): RichText[] {
     const points = Array.from(content);
     for (let at = 0; at < points.length; at += NOTION_TEXT_MAX) {
       const piece = points.slice(at, at + NOTION_TEXT_MAX).join("");
-      const item: RichText = { type: "text", text: { content: piece } };
-      if (s.href !== undefined) item.text.link = { url: s.href };
-      if (s.bold === true || s.italic === true || s.code === true) {
-        item.annotations = {
-          ...(s.bold === true ? { bold: true as const } : {}),
-          ...(s.italic === true ? { italic: true as const } : {}),
-          ...(s.code === true ? { code: true as const } : {}),
-        };
-      }
-      out.push(item);
+      out.push(richTextItem(s, piece));
     }
   }
   if (out.length > NOTION_RICH_TEXT_MAX_ITEMS) {

@@ -61,6 +61,29 @@ export function prOf(recordJson: string): PrRef | "malformed" | null {
   return { id, service };
 }
 
+/** Reads one PR's changed files (null when its file list was never fetched) and whether it was cut. */
+function loadPrFiles(
+  db: Database,
+  prId: string,
+  filesByPr: Map<string, readonly FileRow[] | null>,
+  truncatedByPr: Map<string, boolean>,
+): void {
+  const state = db.query("SELECT truncated FROM pr_files_state WHERE item_id = ?").get(prId) as {
+    truncated: number;
+  } | null;
+  truncatedByPr.set(prId, state?.truncated === 1);
+  filesByPr.set(
+    prId,
+    state === null
+      ? null
+      : (db
+          .query(
+            "SELECT repo_full, path FROM pr_changed_file WHERE item_id = ? AND status <> 'removed' ORDER BY path ASC LIMIT ?",
+          )
+          .all(prId, PR_FILE_CAP) as FileRow[]),
+  );
+}
+
 export function readEvidence(db: Database, nowMs: number, sinceDays: number): Evidence {
   const sinceMs = nowMs - sinceDays * DAY_MS;
   const records = db
@@ -89,24 +112,7 @@ export function readEvidence(db: Database, nowMs: number, sinceDays: number): Ev
       noPr += 1;
       continue;
     }
-    if (!filesByPr.has(pr.id)) {
-      const state = db
-        .query("SELECT truncated FROM pr_files_state WHERE item_id = ?")
-        .get(pr.id) as {
-        truncated: number;
-      } | null;
-      truncatedByPr.set(pr.id, state?.truncated === 1);
-      filesByPr.set(
-        pr.id,
-        state === null
-          ? null
-          : (db
-              .query(
-                "SELECT repo_full, path FROM pr_changed_file WHERE item_id = ? AND status <> 'removed' ORDER BY path ASC LIMIT ?",
-              )
-              .all(pr.id, PR_FILE_CAP) as FileRow[]),
-      );
-    }
+    if (!filesByPr.has(pr.id)) loadPrFiles(db, pr.id, filesByPr, truncatedByPr);
     const files = filesByPr.get(pr.id);
     if (files === null || files === undefined) {
       prFilesUnknown += 1;

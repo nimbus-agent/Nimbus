@@ -335,9 +335,8 @@ const incident = (
   status: "triggered" | "resolved",
   assigneeKey: string,
   pagerdutyServiceId: string,
-  resolvedByKey?: string,
-  /** A resolved incident carries the resolution time the real writer records (`resolved_at_ms`). */
-  resolvedAfterMs?: number,
+  /** Who resolved it, and after how long (a resolved incident's `resolved_at_ms`, as the real writer records). */
+  resolution?: { readonly byKey: string; readonly afterMs: number },
 ): DemoItem => ({
   service: "pagerduty",
   type: "incident",
@@ -353,9 +352,9 @@ const incident = (
     opened_at_ms: at(offsetMs),
     pagerduty_service_id: pagerdutyServiceId,
     assignee_emails: [emailOf(assigneeKey)],
-    ...(resolvedByKey === undefined ? {} : { resolved_by_email: emailOf(resolvedByKey) }),
-    ...(status === "resolved" && resolvedAfterMs !== undefined
-      ? { resolved_at_ms: at(offsetMs + resolvedAfterMs) }
+    ...(resolution === undefined ? {} : { resolved_by_email: emailOf(resolution.byKey) }),
+    ...(status === "resolved" && resolution !== undefined
+      ? { resolved_at_ms: at(offsetMs + resolution.afterMs) }
       : {}),
     unattributed_actors: [],
     meta_v: PAGERDUTY_INCIDENT_META_VERSION,
@@ -437,8 +436,7 @@ const STORY_INCIDENTS: readonly DemoItem[] = [
     "resolved",
     "lee",
     "PPAYDEMO",
-    "lee",
-    95 * MINUTE,
+    { byKey: "lee", afterMs: 95 * MINUTE },
   ),
 ];
 
@@ -623,8 +621,7 @@ function background(): {
             "resolved",
             "omar",
             svc.pagerdutyServiceId,
-            "omar",
-            50 * MINUTE,
+            { byKey: "omar", afterMs: 50 * MINUTE },
           ),
         );
       }

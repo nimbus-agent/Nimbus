@@ -5,6 +5,7 @@ import { codeUnitCompare } from "../util/code-unit-compare.ts";
 import { gatewayZone } from "../util/zoned-time.ts";
 import { CREATED_KEY, DELETED_KEY } from "./item-history.ts";
 import { earliestHistoryMs } from "./item-history-at.ts";
+import { fmtUtc, handoffGaps } from "./oncall-handoff-gaps.ts";
 import { queryOncallNow } from "./oncall-now-query.ts";
 import { ONCALL_SOURCE_SERVICE, type OncallSource } from "./oncall-shift-types.ts";
 import { listWorkSnapshot, type WorkSnapshotService } from "./work-snapshot-store.ts";
@@ -310,10 +311,6 @@ function toShift(s: {
   };
 }
 
-function fmtUtc(ms: number): string {
-  return `${new Date(ms).toISOString().slice(0, 16).replace("T", " ")} UTC`;
-}
-
 function resolveWindow(
   opts: OncallHandoffOptions,
   mine: readonly HandoffShift[],
@@ -324,11 +321,14 @@ function resolveWindow(
   if (sinceMs !== undefined || untilMs !== undefined) {
     const toMs = untilMs ?? now;
     const fromMs = sinceMs ?? toMs - HANDOFF_DEFAULT_WINDOW_MS;
+    const sinceReason =
+      untilMs === undefined
+        ? "You gave the window with --since; it ends now."
+        : "You gave the window with --since and --until.";
     const reason =
       sinceMs === undefined
         ? `You gave only --until, so the window is the ${String(HANDOFF_DEFAULT_WINDOW_MS / 3_600_000)} hours before it.`
-        : "You gave the window with --since" +
-          (untilMs === undefined ? "; it ends now." : " and --until.");
+        : sinceReason;
     return { fromMs, toMs, basis: "explicit", reason };
   }
   const starts = mine
@@ -427,113 +427,135 @@ function readHistory(db: Database, fromMs: number): HistoryRow[] {
     .all(fromMs) as HistoryRow[];
 }
 
+/** What `buildEvents` accumulates: the events, every history row by item, and which items it saw open or end. */
+type EventScan = {
+  readonly events: HandoffEvent[];
+  readonly byItem: Map<string, HistoryRow[]>;
+  readonly openedSeen: Set<string>;
+  readonly resolvedSeen: Set<string>;
+};
+
+/** An event with no state key (an open, a removal or a provider-time resolution). */
+function itemEvent(
+  tracked: ReadonlyMap<string, Tracked>,
+  itemId: string,
+  source: HandoffSource,
+  at: Pick<HandoffEvent, "kind" | "atMs" | "atBasis"> & Partial<Pick<HandoffEvent, "key" | "to">>,
+): HandoffEvent {
+  const t = tracked.get(itemId);
+  return {
+    source,
+    itemId,
+    title: t?.title ?? itemId,
+    url: t?.url ?? null,
+    kind: at.kind,
+    atMs: at.atMs,
+    atBasis: at.atBasis,
+    key: at.key ?? null,
+    from: null,
+    to: at.to ?? null,
+  };
+}
+
+/** One `item_history` row: kept by item for the watch-list, and an event when it falls in the window. */
+function historyRowEvent(
+  tracked: ReadonlyMap<string, Tracked>,
+  h: HistoryRow,
+  inWin: (ms: number) => boolean,
+  scan: EventScan,
+): void {
+  const t = tracked.get(h.item_id);
+  const source = sourceOf(h.service);
+  const list = scan.byItem.get(h.item_id) ?? [];
+  list.push(h);
+  scan.byItem.set(h.item_id, list);
+  const atMs = h.source_at_ms ?? h.observed_at_ms;
+  const atBasis = h.source_at_ms === null ? "observed" : "provider";
+  if (!inWin(atMs)) return;
+  if (h.key === CREATED_KEY) {
+    // A `__created` row for an item whose provider open time is known and outside the window is a
+    // backfill of an old item, not an open during the shift.
+    if ((t?.openedAtMs === null || t === undefined) && !scan.openedSeen.has(h.item_id)) {
+      scan.openedSeen.add(h.item_id);
+      scan.events.push(itemEvent(tracked, h.item_id, source, { kind: "opened", atMs, atBasis }));
+    }
+    return;
+  }
+  if (h.key === DELETED_KEY) {
+    scan.events.push(itemEvent(tracked, h.item_id, source, { kind: "removed", atMs, atBasis }));
+    return;
+  }
+  if (NOISE_KEYS.has(h.key)) return;
+  const ended =
+    h.key === "status" && h.new_value !== null && ENDED_VALUES.has(h.new_value.toLowerCase());
+  if (ended) scan.resolvedSeen.add(h.item_id);
+  scan.events.push({
+    source,
+    itemId: h.item_id,
+    title: t?.title ?? h.item_id,
+    url: t?.url ?? null,
+    kind: ended ? "resolved" : "state_changed",
+    atMs,
+    atBasis,
+    key: h.key,
+    from: h.old_value,
+    to: h.new_value,
+  });
+}
+
 function buildEvents(
   tracked: ReadonlyMap<string, Tracked>,
   history: readonly HistoryRow[],
   win: HandoffWindow,
   scope: Scope,
 ): { events: HandoffEvent[]; byItem: Map<string, HistoryRow[]> } {
-  const events: HandoffEvent[] = [];
-  const byItem = new Map<string, HistoryRow[]>();
   const inWin = (ms: number): boolean => ms >= win.fromMs && ms <= win.toMs;
-  const resolvedSeen = new Set<string>();
-  const openedSeen = new Set<string>();
-
-  const base = (itemId: string, source: HandoffSource) => {
-    const t = tracked.get(itemId);
-    return { source, itemId, title: t?.title ?? itemId, url: t?.url ?? null };
+  const scan: EventScan = {
+    events: [],
+    byItem: new Map(),
+    openedSeen: new Set(),
+    resolvedSeen: new Set(),
   };
+  const { events } = scan;
 
   // Opens read from the provider's own time first.
   for (const t of tracked.values()) {
     if (!inScope(t, scope) || t.openedAtMs === null || !inWin(t.openedAtMs)) continue;
-    openedSeen.add(t.itemId);
-    events.push({
-      ...base(t.itemId, t.source),
-      kind: "opened",
-      atMs: t.openedAtMs,
-      atBasis: "provider",
-      key: null,
-      from: null,
-      to: null,
-    });
+    scan.openedSeen.add(t.itemId);
+    events.push(
+      itemEvent(tracked, t.itemId, t.source, {
+        kind: "opened",
+        atMs: t.openedAtMs,
+        atBasis: "provider",
+      }),
+    );
   }
 
   for (const h of history) {
     const t = tracked.get(h.item_id);
     if (t !== undefined && !inScope(t, scope)) continue;
     if (t === undefined && scope.pdIds !== null) continue;
-    const source = sourceOf(h.service);
-    const list = byItem.get(h.item_id) ?? [];
-    list.push(h);
-    byItem.set(h.item_id, list);
-    const atMs = h.source_at_ms ?? h.observed_at_ms;
-    const atBasis = h.source_at_ms === null ? "observed" : "provider";
-    if (!inWin(atMs)) continue;
-    if (h.key === CREATED_KEY) {
-      // A `__created` row for an item whose provider open time is known and outside the window is a
-      // backfill of an old item, not an open during the shift.
-      if (t?.openedAtMs === null || t === undefined) {
-        if (!openedSeen.has(h.item_id)) {
-          openedSeen.add(h.item_id);
-          events.push({
-            ...base(h.item_id, source),
-            kind: "opened",
-            atMs,
-            atBasis,
-            key: null,
-            from: null,
-            to: null,
-          });
-        }
-      }
-      continue;
-    }
-    if (h.key === DELETED_KEY) {
-      events.push({
-        ...base(h.item_id, source),
-        kind: "removed",
-        atMs,
-        atBasis,
-        key: null,
-        from: null,
-        to: null,
-      });
-      continue;
-    }
-    if (NOISE_KEYS.has(h.key)) continue;
-    const ended =
-      h.key === "status" && h.new_value !== null && ENDED_VALUES.has(h.new_value.toLowerCase());
-    if (ended) resolvedSeen.add(h.item_id);
-    events.push({
-      ...base(h.item_id, source),
-      kind: ended ? "resolved" : "state_changed",
-      atMs,
-      atBasis,
-      key: h.key,
-      from: h.old_value,
-      to: h.new_value,
-    });
+    historyRowEvent(tracked, h, inWin, scan);
   }
 
   // An item that is ended now, whose provider end time is in the window and that has no history row
   // for it (history begins at the V94 upgrade): read the provider's own time.
   for (const t of tracked.values()) {
     if (!inScope(t, scope) || !t.ended || t.endedAtMs === null || !inWin(t.endedAtMs)) continue;
-    if (resolvedSeen.has(t.itemId)) continue;
-    events.push({
-      ...base(t.itemId, t.source),
-      kind: "resolved",
-      atMs: t.endedAtMs,
-      atBasis: "provider",
-      key: "status",
-      from: null,
-      to: t.status,
-    });
+    if (scan.resolvedSeen.has(t.itemId)) continue;
+    events.push(
+      itemEvent(tracked, t.itemId, t.source, {
+        kind: "resolved",
+        atMs: t.endedAtMs,
+        atBasis: "provider",
+        key: "status",
+        to: t.status,
+      }),
+    );
   }
 
   events.sort((a, b) => a.atMs - b.atMs || codeUnitCompare(a.itemId, b.itemId));
-  return { events, byItem };
+  return { events, byItem: scan.byItem };
 }
 
 function watchFlags(
@@ -695,19 +717,16 @@ function readDue(
       });
     }
   }
-  return {
-    due: out.sort((a, b) => a.dueMs - b.dueMs || codeUnitCompare(a.itemId, b.itemId)),
-    snapshotRows,
-  };
+  out.sort((a, b) => a.dueMs - b.dueMs || codeUnitCompare(a.itemId, b.itemId));
+  return { due: out, snapshotRows };
 }
 
 function lastSync(db: Database, connectorId: string): number | null {
   const row = db
     .query("SELECT last_sync_at FROM sync_state WHERE connector_id = ? LIMIT 1")
     .get(connectorId) as { last_sync_at: number | null } | null;
-  return row === null || row.last_sync_at === null || !Number.isFinite(row.last_sync_at)
-    ? null
-    : row.last_sync_at;
+  const at = row?.last_sync_at ?? null;
+  return at === null || !Number.isFinite(at) ? null : at;
 }
 
 function readShiftSection(
@@ -824,110 +843,23 @@ export function queryOncallHandoff(db: Database, opts: OncallHandoffOptions): On
     { source: "jira", lastSyncMs: lastSync(db, "jira") },
   ];
 
-  // ---- Gaps: every section that cannot be answered says so; none of these is "nothing happened". ----
-  if (tracked.length === 0) {
-    gaps.push({
-      code: "no_incident_data",
-      detail:
-        "No PagerDuty incidents and no Jira Service Management alerts are indexed, so the event, still-open and watch-list sections are empty because nothing can be read, not because nothing happened. Connect PagerDuty or Jira Service Management (`nimbus connector auth pagerduty` / `nimbus connector auth jira`) and let a sync run.",
-    });
-  }
-  if (historyStartsMs === null) {
-    gaps.push({
-      code: "no_history",
-      detail:
-        "No state-change history is recorded yet (it begins when the index was upgraded to schema V94), so acknowledgements, severity changes and reopenings cannot be listed. Opens and resolutions are read from the provider's own times where the row carries them.",
-    });
-  } else if (historyStartsMs > window.fromMs) {
-    gaps.push({
-      code: "history_begins_after_window_start",
-      detail: `State-change history begins at ${fmtUtc(historyStartsMs)}, after the window starts (${fmtUtc(window.fromMs)}); changes before it are not recorded.`,
-    });
-  }
-  gaps.push({
-    code: "observation_time",
-    detail:
-      "A state change without a provider time is placed at the moment the sync saw it, which can be later than when it happened (marked observed).",
-  });
-  gaps.push({
-    code: "sources_covered",
-    detail:
-      "Only PagerDuty incidents and Jira Service Management Operations alerts are read; other alerting systems (OpsGenie, Sentry, monitoring tools) are not part of this brief, so their silence is not evidence that nothing fired.",
-  });
-  if (!hasRows) {
-    gaps.push({
-      code: "no_shift_data",
-      detail: "No on-call shifts are indexed, so the brief cannot say who was or is on call.",
-    });
-  } else if (wholeShift.mine.length === 0) {
-    gaps.push({
-      code: "no_own_shift",
-      detail:
-        "No indexed shift is marked as yours (PagerDuty marks one only with a user-level token or the PagerDuty from-email setting), so the default window could not follow your shift.",
-    });
-  }
-  gaps.push({
-    code: "ended_shifts_not_indexed",
-    detail:
-      "The index holds current and upcoming shifts only. A shift that has already ended cannot be found, so run this before your shift ends or pass --since.",
-  });
-  if (wholeShift.mine.some((s) => s.source === "jsm" && s.startMs === null)) {
-    gaps.push({
-      code: "jsm_shift_untimed",
-      detail:
-        "Jira Service Management shifts carry no start or end time, so they cannot set the window.",
-    });
-  }
-  if (!anyDeployments) {
-    gaps.push({
-      code: "no_deployments_indexed",
-      detail:
-        "No deployments are indexed, so the deployment list and the deploy-versus-incident check are empty because nothing can be read, not because nothing shipped.",
-    });
-  } else if (configs.length === 0) {
-    gaps.push({
-      code: "no_service_bindings",
-      detail:
-        "No `[ci.service.<id>]` or `[metrics.dora.<id>]` bindings are configured, so deployments cannot be matched to incidents and the deploy-versus-incident check is empty for that reason.",
-    });
-  }
-  if (snapshotRows === 0) {
-    gaps.push({
-      code: "work_snapshot_empty",
-      detail:
-        "No snapshot of your assigned Jira, Linear or GitHub work exists (it is refreshed by those connectors' syncs), so the due-soon list is empty because nothing can be read, not because nothing is due.",
-    });
-  } else if (!atNow) {
-    gaps.push({
-      code: "work_snapshot_current",
-      detail:
-        "The due-soon list reads your work as it is now, not as it stood at the end of the window.",
-    });
-  }
-  if (unknownOpen > 0) {
-    gaps.push({
-      code: "end_state_unknown",
-      detail: `${String(unknownOpen)} resolved or closed item(s) carry no resolution time, so whether they were still open at the end of the window cannot be told; they are not listed as open.`,
-    });
-  }
-  if (!atNow && opts.service === undefined) {
-    gaps.push({
-      code: "window_ends_in_past",
-      detail:
-        "The window ends before now: items are placed by their own open and resolution times, and an item whose state changed after the window but carries no provider time may be misplaced.",
-    });
-  }
-  const hidden =
-    Math.max(0, events.length - HANDOFF_LIST_CAP) +
-    Math.max(0, stillOpen.length - HANDOFF_LIST_CAP) +
-    Math.max(0, deployments.length - HANDOFF_LIST_CAP);
-  if (hidden > 0) {
-    gaps.push({
-      code: "lists_capped",
-      detail: `Each list shows at most ${String(HANDOFF_LIST_CAP)} entries; ${String(hidden)} more exist. Totals count them.`,
-    });
-  }
-
+  gaps.push(
+    ...handoffGaps({
+      trackedCount: tracked.length,
+      historyStartsMs,
+      window,
+      hasShiftRows: hasRows,
+      mine: wholeShift.mine,
+      anyDeployments,
+      bindingCount: configs.length,
+      snapshotRows,
+      atNow,
+      unknownOpen,
+      serviceFiltered: opts.service !== undefined,
+      listLengths: [events.length, stillOpen.length, deployments.length],
+      listCap: HANDOFF_LIST_CAP,
+    }),
+  );
   return {
     status: "ok",
     asOfMs: opts.nowMs,

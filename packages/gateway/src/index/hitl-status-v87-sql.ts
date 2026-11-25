@@ -57,7 +57,7 @@ function assertNoOtherReferences(db: Database, table: string): void {
       WHERE sql IS NOT NULL AND ((type = 'view') OR (type = 'trigger' AND tbl_name <> ?))`,
     table,
   ) as SchemaObject[];
-  const mention = new RegExp(`\\b${table}\\b`);
+  const mention = new RegExp(String.raw`\b${table}\b`);
   const hit = rows.find((r) => mention.test(r.sql));
   if (hit !== undefined) {
     throw new Error(`V87: ${hit.type} ${hit.name} references ${table}; rebuild refused`);
@@ -69,7 +69,7 @@ function assertNoOtherReferences(db: Database, table: string): void {
  * `hitl_status` CHECK list. Both rewrites are anchored and must match exactly once.
  */
 export function v87TableSql(currentSql: string, table: string): string {
-  const create = new RegExp(`^CREATE TABLE\\s+"?${table}"?(?=\\s*\\()`);
+  const create = new RegExp(String.raw`^CREATE TABLE\s+"?${table}"?(?=\s*\()`);
   if (!create.test(currentSql)) {
     throw new Error(`V87: ${table} DDL does not start with CREATE TABLE ${table}`);
   }

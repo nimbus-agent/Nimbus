@@ -14,7 +14,7 @@ import { resolveIncidentRef } from "../incident/incident-id.ts";
 import { getById, versionJson, versionsOf } from "../incident/incident-store.ts";
 import { listProposals } from "../incident/proposal-store.ts";
 import type { LocalIndex } from "../index/local-index.ts";
-import { canonicalJson } from "../util/canonical-json.ts";
+import { byCodeUnit, canonicalJson } from "../util/canonical-json.ts";
 
 /**
  * `nimbus audit replay <incident-id>` (Phase 10 IC4, spec § 5.4): rebuild what happened for one incident record
@@ -205,7 +205,7 @@ function changedKeys(
   return [...keys]
     .filter((k) => !VOLATILE.has(k))
     .filter((k) => prev === null || canonicalJson(prev[k]) !== canonicalJson(next[k]))
-    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    .sort(byCodeUnit);
 }
 
 function parseObject(json: string): Record<string, unknown> {

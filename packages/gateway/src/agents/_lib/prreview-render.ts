@@ -33,7 +33,7 @@ export function codePath(path: string): string {
 }
 
 function areaLabel(area: string): string {
-  return area === "." ? "the repository root" : `${codePath(`${area}/`)}`;
+  return area === "." ? "the repository root" : codePath(`${area}/`);
 }
 
 function prLink(p: PrereviewPrRef): string {

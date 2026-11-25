@@ -150,6 +150,15 @@ export function isDisclosureOnlyHeading(heading: string): boolean {
  * which is why `renderGaps([])` returning `""` is checked rather than assumed.
  */
 export function reservedBlocksFor(brief: SynthInput): readonly ReservedBlock[] {
+  // In order: the kind's own blocks, then `## Gaps`, then the freshness block last.
+  return [
+    ...kindReservedBlocks(brief),
+    ...gapsReservedBlocks(brief),
+    ...freshnessReservedBlocks(brief),
+  ];
+}
+
+function kindReservedBlocks(brief: SynthInput): ReservedBlock[] {
   const blocks: ReservedBlock[] = [];
   if (brief.kind === "incident_postmortem") blocks.push(...postmortemReservedBlocks(brief));
   if (brief.kind === "incident_investigation") blocks.push(...investigationReservedBlocks(brief));
@@ -175,8 +184,16 @@ export function reservedBlocksFor(brief: SynthInput): readonly ReservedBlock[] {
     const terms = renderGlossaryTermsSection(brief.entries).trim();
     if (terms !== "") blocks.push({ heading: GLOSSARY_TERMS_HEADING, markdown: terms });
   }
+  return blocks;
+}
+
+function gapsReservedBlocks(brief: SynthInput): ReservedBlock[] {
   const gaps = renderGaps(brief.gaps).trim();
-  if (gaps !== "") blocks.push({ heading: GAPS_HEADING, markdown: gaps });
+  return gaps === "" ? [] : [{ heading: GAPS_HEADING, markdown: gaps }];
+}
+
+function freshnessReservedBlocks(brief: SynthInput): ReservedBlock[] {
+  const blocks: ReservedBlock[] = [];
   if (brief.kind === "incident_investigation") {
     blocks.push({
       heading: INVESTIGATION_FRESHNESS_HEADING,

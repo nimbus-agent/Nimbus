@@ -177,7 +177,7 @@ describe("incident brief render", () => {
     // the text may remain, but never as a live link target
     expect(md).not.toMatch(/(?<!\\)\]\(javascript:/);
     expect(md.includes(String.fromCodePoint(0x202e))).toBe(false);
-    expect(md.split("\n").filter((l) => l.startsWith("# ")).length).toBe(1);
+    expect(md.split("\n").filter((l) => l.startsWith("# "))).toHaveLength(1);
   });
 
   test("escape sequences, C1 controls and bidi characters in provider text never reach the Markdown", () => {

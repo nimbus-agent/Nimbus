@@ -17,7 +17,7 @@ export function driveHandlers(tier: CorpusTier): ReturnType<typeof http.get>[] {
       const token = url.searchParams.get("pageToken");
       let pageIdx = 0;
       if (token !== null) {
-        const m = token.match(/^tok-drive-[a-z]+-(\d+)$/);
+        const m = /^tok-drive-[a-z]+-(\d+)$/.exec(token);
         if (m !== null) {
           pageIdx = Math.floor(Number.parseInt(m[1] ?? "0", 10) / DRIVE_PAGE_SIZE);
         }
@@ -37,7 +37,7 @@ export function gmailHandlers(tier: CorpusTier): ReturnType<typeof http.get>[] {
       const token = url.searchParams.get("pageToken");
       let pageIdx = 0;
       if (token !== null) {
-        const m = token.match(/^tok-gmail-[a-z]+-(\d+)$/);
+        const m = /^tok-gmail-[a-z]+-(\d+)$/.exec(token);
         if (m !== null) {
           pageIdx = Math.floor(Number.parseInt(m[1] ?? "0", 10) / GMAIL_PAGE_SIZE);
         }

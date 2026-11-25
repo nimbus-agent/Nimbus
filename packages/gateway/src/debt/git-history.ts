@@ -163,32 +163,10 @@ export type ParsedLog = {
 export function parseLog(out: string, truncated: boolean): ParsedLog {
   const tokens = out.split("\0");
   if (truncated) tokens.pop();
-  const lastTouch = new Map<string, number>();
-  const commitTimes: number[] = [];
-  let current: number | null = null;
+  const scan: LogScan = { current: null, lastTouch: new Map(), commitTimes: [] };
   let i = 0;
-  while (i < tokens.length) {
-    const t = tokens[i] as string;
-    const header = t.codePointAt(0) === HEADER_MARK ? HEADER_BODY_RE.exec(t.slice(1)) : null;
-    if (header !== null) {
-      current = Number(header[1]) * 1000;
-      commitTimes.push(current);
-      i += 1;
-      if (header[2] !== undefined && META_RE.test(header[2])) {
-        const first = tokens[i];
-        if (first === undefined) break;
-        record(lastTouch, first, current);
-        i += 1;
-      }
-    } else if (META_RE.test(t)) {
-      const path = tokens[i + 1];
-      if (path === undefined) break;
-      record(lastTouch, path, current);
-      i += 2;
-    } else {
-      i += 1;
-    }
-  }
+  while (i >= 0 && i < tokens.length) i = consumeToken(tokens, i, scan);
+  const commitTimes = scan.commitTimes;
   // A loop, not Math.min(...): a spread of a long list can overflow the call stack.
   const counted = truncated ? commitTimes.length - 1 : commitTimes.length;
   let oldest: number | null = null;
@@ -197,10 +175,40 @@ export function parseLog(out: string, truncated: boolean): ParsedLog {
     if (oldest === null || at < oldest) oldest = at;
   }
   return {
-    lastTouchMs: lastTouch,
+    lastTouchMs: scan.lastTouch,
     oldestCommitMs: oldest,
     commits: commitTimes.length,
   };
+}
+
+/** The state of one `parseLog` pass: the commit being read, the paths seen and every commit time. */
+type LogScan = {
+  current: number | null;
+  readonly lastTouch: Map<string, number>;
+  readonly commitTimes: number[];
+};
+
+/**
+ * Consumes the token at `i`, and the one path token a meta token owns (never examined); returns the next
+ * index, or -1 when a meta token's path is missing (the pass stops there).
+ */
+function consumeToken(tokens: readonly string[], i: number, s: LogScan): number {
+  const t = tokens[i] as string;
+  const header = t.codePointAt(0) === HEADER_MARK ? HEADER_BODY_RE.exec(t.slice(1)) : null;
+  if (header !== null) {
+    s.current = Number(header[1]) * 1000;
+    s.commitTimes.push(s.current);
+    if (header[2] === undefined || !META_RE.test(header[2])) return i + 1;
+    const first = tokens[i + 1];
+    if (first === undefined) return -1;
+    record(s.lastTouch, first, s.current);
+    return i + 2;
+  }
+  if (!META_RE.test(t)) return i + 1;
+  const path = tokens[i + 1];
+  if (path === undefined) return -1;
+  record(s.lastTouch, path, s.current);
+  return i + 2;
 }
 
 /** The three bounded reads for one configured root. */

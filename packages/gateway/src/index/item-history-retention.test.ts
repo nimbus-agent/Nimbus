@@ -261,16 +261,16 @@ describe("startItemHistoryRetention", () => {
     db.close();
     const t = fakeTimer();
     const h = startItemHistoryRetention(db, { retentionDays: () => 7, setTimer: t.setTimer });
-    await h.idle();
-    h.stop();
+    await expect(h.idle()).resolves.toBeUndefined();
+    expect(() => h.stop()).not.toThrow();
   });
 
   test("the defaults (real clock, real timer) start and stop cleanly", async () => {
     const db = openMemoryIndexDatabase();
     try {
       const h = startItemHistoryRetention(db, { retentionDays: () => 180 });
-      await h.idle();
-      h.stop();
+      await expect(h.idle()).resolves.toBeUndefined();
+      expect(() => h.stop()).not.toThrow();
     } finally {
       db.close();
     }

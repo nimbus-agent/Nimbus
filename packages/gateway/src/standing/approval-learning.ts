@@ -107,8 +107,7 @@ function parseRow(row: AuditRow, run: LearningStepRun): ParsedRow {
   if (root === undefined || action === undefined) return { kind: "unreadable" };
   const prov = asRecord(action["provenance"]);
   const mine =
-    prov !== undefined &&
-    prov["kind"] === "owner_workflow" &&
+    prov?.["kind"] === "owner_workflow" &&
     prov["runId"] === run.runId &&
     prov["stepIndex"] === run.stepIndex &&
     prov["workflowId"] === run.workflowId &&

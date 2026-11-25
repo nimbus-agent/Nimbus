@@ -10,7 +10,12 @@ import {
   isAnomalous,
   scoreBucket,
 } from "./anomaly-baseline.ts";
-import { countIndexBuckets, INDEX_METRICS, indexSeriesId } from "./anomaly-series.ts";
+import {
+  countIndexBuckets,
+  INDEX_METRICS,
+  type IndexMetric,
+  indexSeriesId,
+} from "./anomaly-series.ts";
 import {
   clearFinding,
   FINDING_CLEARED_RETENTION_MS,
@@ -114,6 +119,67 @@ function defaultOnCall(
     queryOncallNow(db, { nowMs, term: serviceId, serviceConfigs: bindings }).youAreOnCall;
 }
 
+/** Counts the hours since the newest stored bucket (at most the baseline window) and stores them. */
+function refreshBuckets(
+  deps: PredictPassDeps,
+  configs: ReadonlyMap<string, ServiceConfig>,
+  end: number,
+): { bucketsWritten: number; gap: boolean } {
+  const newest = newestBucketMs(deps.db, "index:");
+  const start = Math.max(
+    newest === null ? end - BASELINE_WINDOW_MS : newest + BUCKET_MS,
+    end - BASELINE_WINDOW_MS,
+  );
+  if (start >= end) return { bucketsWritten: 0, gap: false };
+  const counted = countIndexBuckets(deps.db, configs, start, end);
+  if (counted.kind === "capped") return { bucketsWritten: 0, gap: true };
+  writeBaselineBuckets(deps.db, counted.buckets);
+  return { bucketsWritten: counted.buckets.length, gap: false };
+}
+
+type AnomalyTally = { opened: number; cleared: number; headsUp: number };
+
+/** Scores one series' newest settled hour: opens a finding when it is anomalous, else clears one. */
+function scoreSeries(
+  deps: PredictPassDeps,
+  cfg: NimbusIncidentPredictToml,
+  s: { readonly metric: IndexMetric; readonly serviceId: string; readonly seriesId: string },
+  at: { readonly scored: number; readonly now: number },
+  onCall: (serviceId: string, nowMs: number) => boolean,
+  tally: AnomalyTally,
+): void {
+  const { scored, now } = at;
+  const rows = readBaselineBuckets(deps.db, s.seriesId, scored - BASELINE_WINDOW_MS, scored);
+  const last = rows.at(-1);
+  if (last?.bucketStartMs !== scored) return;
+  const score = scoreBucket(
+    rows.slice(0, -1).map((r) => r.value),
+    last.value,
+  );
+  if (score === null || !isAnomalous(score, last.value, cfg.anomalyZ)) {
+    if (clearFinding(deps.db, "anomaly", s.seriesId, now)) tally.cleared += 1;
+    return;
+  }
+  const isNew = openFinding(deps.db, {
+    kind: "anomaly",
+    key: s.seriesId,
+    service: s.serviceId,
+    detail: {
+      metric: s.metric,
+      bucketStartMs: scored,
+      value: last.value,
+      mean: Math.round(score.mean * 100) / 100,
+      z: Math.round(score.z * 10) / 10,
+      baselineBuckets: score.baselineBuckets,
+    },
+    nowMs: now,
+  });
+  if (isNew) {
+    tally.opened += 1;
+    if (onCall(s.serviceId, now)) tally.headsUp += 1;
+  }
+}
+
 function runBaseline(
   deps: PredictPassDeps,
   cfg: NimbusIncidentPredictToml,
@@ -121,71 +187,26 @@ function runBaseline(
   now: number,
 ): { anomaly: PredictPassResult["anomaly"]; bucketsWritten: number; gap: boolean } {
   const end = bucketStart(now - SETTLE_MS);
-  const newest = newestBucketMs(deps.db, "index:");
-  const start = Math.max(
-    newest === null ? end - BASELINE_WINDOW_MS : newest + BUCKET_MS,
-    end - BASELINE_WINDOW_MS,
-  );
-  let bucketsWritten = 0;
-  let gap = false;
-  if (start < end) {
-    const counted = countIndexBuckets(deps.db, configs, start, end);
-    if (counted.kind === "capped") {
-      gap = true;
-    } else {
-      writeBaselineBuckets(deps.db, counted.buckets);
-      bucketsWritten = counted.buckets.length;
-    }
-  }
+  const { bucketsWritten, gap } = refreshBuckets(deps, configs, end);
   const scored = end - BUCKET_MS;
   const onCall = deps.isOwnerOnCallFor ?? defaultOnCall(deps.db, configs);
   const live = new Set<string>();
-  let opened = 0;
-  let cleared = 0;
-  let headsUp = 0;
+  const tally: AnomalyTally = { opened: 0, cleared: 0, headsUp: 0 };
   for (const serviceId of configs.keys()) {
     for (const metric of INDEX_METRICS) {
       const seriesId = indexSeriesId(metric, serviceId);
       live.add(seriesId);
-      const rows = readBaselineBuckets(deps.db, seriesId, scored - BASELINE_WINDOW_MS, scored);
-      const last = rows.at(-1);
-      if (last?.bucketStartMs !== scored) continue;
-      const score = scoreBucket(
-        rows.slice(0, -1).map((r) => r.value),
-        last.value,
-      );
-      if (score !== null && isAnomalous(score, last.value, cfg.anomalyZ)) {
-        const isNew = openFinding(deps.db, {
-          kind: "anomaly",
-          key: seriesId,
-          service: serviceId,
-          detail: {
-            metric,
-            bucketStartMs: scored,
-            value: last.value,
-            mean: Math.round(score.mean * 100) / 100,
-            z: Math.round(score.z * 10) / 10,
-            baselineBuckets: score.baselineBuckets,
-          },
-          nowMs: now,
-        });
-        if (isNew) {
-          opened += 1;
-          if (onCall(serviceId, now)) headsUp += 1;
-        }
-      } else if (clearFinding(deps.db, "anomaly", seriesId, now)) {
-        cleared += 1;
-      }
+      scoreSeries(deps, cfg, { metric, serviceId, seriesId }, { scored, now }, onCall, tally);
     }
   }
   // A service removed from nimbus.toml: its open index findings clear (sync findings are not this pass's).
   for (const key of openFindingKeys(deps.db, "anomaly")) {
     if (key.startsWith("index:") && !live.has(key) && clearFinding(deps.db, "anomaly", key, now)) {
-      cleared += 1;
+      tally.cleared += 1;
     }
   }
   pruneBaselineBuckets(deps.db, scored - BASELINE_WINDOW_MS);
-  return { anomaly: { opened, cleared, headsUp }, bucketsWritten, gap };
+  return { anomaly: { ...tally }, bucketsWritten, gap };
 }
 
 /** One pass. Throws only on a database error; the scheduler catches it. */

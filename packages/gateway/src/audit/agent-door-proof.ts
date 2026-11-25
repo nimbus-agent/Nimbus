@@ -258,9 +258,9 @@ const ALL_TIME: Window = { since: Number.MIN_SAFE_INTEGER, until: Number.MAX_SAF
  */
 function scanAudit(db: Database, w: Window, visit: (r: AuditRow) => boolean): void {
   const stmt = db.query<AuditPageRow, [number, number, number, number]>(
-    `SELECT id, action_type, hitl_status, action_json, timestamp FROM audit_log
+    String.raw`SELECT id, action_type, hitl_status, action_json, timestamp FROM audit_log
      WHERE id > ? AND timestamp >= ? AND timestamp <= ?
-       AND (action_type LIKE 'capture.%' OR action_json LIKE '%"captureId":"cap\\_%' ESCAPE '\\')
+       AND (action_type LIKE 'capture.%' OR action_json LIKE '%"captureId":"cap\_%' ESCAPE '\')
      ORDER BY id ASC LIMIT ?`,
   );
   let after = 0;
@@ -716,7 +716,8 @@ function countGroups(m: Model, w: Window): ProposerGroup[] {
     { label: string | null; source: "declared" | "kit"; c: Counters }
   >();
   const groupFor = (label: string | null, source: "declared" | "kit"): Counters => {
-    const key = `${source}\u0000${label === null ? "n" : `s${label}`}`;
+    const tag = label === null ? "n" : `s${label}`;
+    const key = `${source}\u0000${tag}`;
     let g = byKey.get(key);
     if (g === undefined) {
       g = { label, source, c: counters() };
@@ -738,32 +739,10 @@ function countGroups(m: Model, w: Window): ProposerGroup[] {
   }
   const groups: ProposerGroup[] = [];
   for (const g of byKey.values()) {
-    const c = g.c;
-    const touched =
-      c.proposed +
-      c.refusedAtSubmit +
-      c.approved +
-      c.declined +
-      c.executed +
-      c.failed +
-      c.expired +
-      c.waiting +
-      c.dispatches;
-    if (touched === 0) continue;
-    groups.push({
-      label: g.label === null ? null : escapeUnverifiedLine(g.label),
-      labelSource: g.source,
-      proposed: c.proposed,
-      refusedAtSubmit: c.refusedAtSubmit,
-      approved: c.approved,
-      declined: c.declined,
-      executed: c.executed,
-      failed: c.failed,
-      expired: c.expired,
-      waiting: c.waiting,
-      dispatches: c.dispatches,
-      connections: c.connections.size,
-    });
+    const { connections, ...counts } = g.c;
+    if (Object.values(counts).every((n) => n === 0)) continue;
+    const label = g.label === null ? null : escapeUnverifiedLine(g.label);
+    groups.push({ label, labelSource: g.source, ...counts, connections: connections.size });
   }
   return groups.sort(compareGroups);
 }
@@ -774,7 +753,8 @@ function compareGroups(a: ProposerGroup, b: ProposerGroup): number {
   if (a.label === null && b.label !== null) return -1;
   if (a.label !== null && b.label === null) return 1;
   if (la !== lb) return la < lb ? -1 : 1;
-  return a.labelSource < b.labelSource ? -1 : a.labelSource > b.labelSource ? 1 : 0;
+  if (a.labelSource === b.labelSource) return 0;
+  return a.labelSource < b.labelSource ? -1 : 1;
 }
 
 function countCaptureEvents(
@@ -783,6 +763,12 @@ function countCaptureEvents(
   writeType: string | undefined,
   c: Counters,
 ): void {
+  countSubmitAndAccepts(h, w, c);
+  countDecisions(h, w, c);
+  countExpiriesAndDispatches(h, w, writeType, c);
+}
+
+function countSubmitAndAccepts(h: History, w: Window, c: Counters): void {
   if (h.submit !== undefined && inWindow(w, h.submit.row.timestamp)) {
     const isAction = h.submit.life.kind === "action";
     if (isAction && h.submit.life.outcome === "proposed") {
@@ -797,6 +783,9 @@ function countCaptureEvents(
     if (inWindow(w, a.row.timestamp) && a.life.connection !== undefined)
       c.connections.add(a.life.connection);
   }
+}
+
+function countDecisions(h: History, w: Window, c: Counters): void {
   for (const g of h.gates) {
     if (!g.subStep && g.hitl === "approved" && inWindow(w, g.timestamp)) c.approved += 1;
   }
@@ -809,6 +798,14 @@ function countCaptureEvents(
     else if (o.life.outcome === "executed") c.executed += 1;
     else if (o.life.outcome === "failed") c.failed += 1;
   }
+}
+
+function countExpiriesAndDispatches(
+  h: History,
+  w: Window,
+  writeType: string | undefined,
+  c: Counters,
+): void {
   for (const e of h.expires) if (inWindow(w, e.timestamp)) c.expired += 1;
   for (const e of h.egress) {
     if (inWindow(w, e.timestamp) && e.resultStatus === "authorized" && e.method === writeType) {
@@ -903,7 +900,7 @@ function checkLifecycle(h: History, ctx: CheckCtx, found: Set<MismatchCode>): vo
 /** L3: the submit row, the accept row and every gate row carry one label, after the same redaction. */
 function checkLabels(h: History, found: Set<MismatchCode>): void {
   const seen = new Set<string | null>();
-  if (h.submit !== undefined && h.submit.life.clientLabel !== undefined) {
+  if (h.submit?.life.clientLabel !== undefined) {
     seen.add(redactLabel(h.submit.life.clientLabel));
   }
   for (const a of h.accepts) {

@@ -176,6 +176,19 @@ describe("createCostAnomalyNotice", () => {
     expect(odd.sent[0]?.body).not.toContain(" on ");
   });
 
+  test("past 2,000 announced anomalies the oldest half is forgotten, and they can be announced again", () => {
+    const many = Array.from({ length: 2100 }, (_, i) => anomaly(`vantage|s${String(i)}`, DAY));
+    const h = harness({ notifyMinIntervalMinutes: 5 }, () => many);
+    // At most 500 are pending per pass, so five passes announce all 2,100 and the fifth evicts.
+    for (let i = 0; i < 5; i++) {
+      expect(h.pass()).toBe("sent");
+      h.advance(10 * 60_000);
+    }
+    expect(h.sent[4]?.body).toContain("100 unusual cost jumps");
+    expect(h.pass()).toBe("sent");
+    expect(h.sent[5]?.body).toContain("500 unusual cost jumps");
+  });
+
   test("a throwing query or a rejecting notify is reported, never thrown", async () => {
     const failures: unknown[] = [];
     const base = {

@@ -46,11 +46,22 @@ export function section(title: string, lines: readonly string[]): string {
   return [`## ${title}`, "", ...lines].join("\n");
 }
 
+/** `" (as reported: <raw>)"` when the source's own spelling is worth showing, else "". */
+function asReported(raw: string | null): string {
+  return raw === null ? "" : ` (as reported: ${plain(raw)})`;
+}
+
+function severityText(t: TriggerBlock): string {
+  if (t.severity === null) return "not reported";
+  const raw = t.severityRaw === t.severity ? null : t.severityRaw;
+  return plain(t.severity) + asReported(raw);
+}
+
 export function summaryLines(t: TriggerBlock): string[] {
   const lines = [
     `- Source: ${t.service} (${t.type}), id \`${plain(t.providerId)}\``,
-    `- Severity: ${t.severity === null ? "not reported" : `${plain(t.severity)}${t.severityRaw !== null && t.severityRaw !== t.severity ? ` (as reported: ${plain(t.severityRaw)})` : ""}`}`,
-    `- Status: ${t.status}${t.statusRaw === null ? "" : ` (as reported: ${plain(t.statusRaw)})`}`,
+    `- Severity: ${severityText(t)}`,
+    `- Status: ${t.status}${asReported(t.statusRaw)}`,
     `- Opened: ${timeText(t.opened, "not recorded by the source")}`,
   ];
   if (t.status === "closed") {
@@ -71,38 +82,43 @@ export function serviceLines(r: IncidentRecordV1): string[] {
   return [`- Not bound to a configured service (${b.unboundReason ?? "unknown"}).`];
 }
 
-export function changeLines(c: ChangeLane): string[] {
-  if (c.skipped !== null)
-    return [`_Skipped: ${c.skipped === "unbound" ? "no bound service" : "no open time"}._`];
-  const lines: string[] = [];
+function skippedLine(skipped: string): string {
+  return `_Skipped: ${skipped === "unbound" ? "no bound service" : "no open time"}._`;
+}
+
+function deploymentLines(c: ChangeLane): string[] {
   const d = c.deployment;
-  if (d === null) {
-    lines.push("_No change candidate within the window._");
-  } else {
+  if (d === null) return ["_No change candidate within the window._"];
+  const lines = [
+    `- Change candidate, the last deployment before the alert: ${hardenedTitleLink(d.title, d.url)} - ${String(d.minutesBeforeOpen)} min before, ${plain(d.environment)}, ${plain(d.conclusion)}, commit \`${plain(d.sha.slice(0, 12))}\` (timing only, not a proven cause; rule: ${d.rule})`,
+  ];
+  if (c.graphCorrelated !== null) {
     lines.push(
-      `- Change candidate, the last deployment before the alert: ${hardenedTitleLink(d.title, d.url)} - ${String(d.minutesBeforeOpen)} min before, ${plain(d.environment)}, ${plain(d.conclusion)}, commit \`${plain(d.sha.slice(0, 12))}\` (timing only, not a proven cause; rule: ${d.rule})`,
-    );
-    if (c.graphCorrelated !== null) {
-      lines.push(
-        `- Graph correlation: ${c.graphCorrelated ? "the graph also links this deployment to the alert" : "no graph link between this deployment and the alert"}`,
-      );
-    }
-  }
-  if (c.pr !== null) {
-    const p = c.pr;
-    const stat =
-      p.additions === null && p.deletions === null
-        ? ""
-        : ` (+${String(p.additions ?? 0)} -${String(p.deletions ?? 0)}, ${String(p.changedFiles ?? 0)} files)`;
-    lines.push(
-      `- Pull request: ${hardenedTitleLink(p.title, p.url)}${p.mergedAtMs === null ? "" : `, merged ${utcLabel(p.mergedAtMs)}`}${stat} (rule: ${p.rule})`,
+      `- Graph correlation: ${c.graphCorrelated ? "the graph also links this deployment to the alert" : "no graph link between this deployment and the alert"}`,
     );
   }
-  if (c.ci !== null) {
-    lines.push(
-      `- CI run: ${hardenedTitleLink(c.ci.title, c.ci.url)}, ${c.ci.conclusion === null ? "no conclusion recorded" : plain(c.ci.conclusion)} (rule: ${c.ci.rule})`,
-    );
-  }
+  return lines;
+}
+
+function prLine(p: NonNullable<ChangeLane["pr"]>): string {
+  const stat =
+    p.additions === null && p.deletions === null
+      ? ""
+      : ` (+${String(p.additions ?? 0)} -${String(p.deletions ?? 0)}, ${String(p.changedFiles ?? 0)} files)`;
+  const merged = p.mergedAtMs === null ? "" : `, merged ${utcLabel(p.mergedAtMs)}`;
+  return `- Pull request: ${hardenedTitleLink(p.title, p.url)}${merged}${stat} (rule: ${p.rule})`;
+}
+
+function ciLine(ci: NonNullable<ChangeLane["ci"]>): string {
+  const conclusion = ci.conclusion === null ? "no conclusion recorded" : plain(ci.conclusion);
+  return `- CI run: ${hardenedTitleLink(ci.title, ci.url)}, ${conclusion} (rule: ${ci.rule})`;
+}
+
+export function changeLines(c: ChangeLane): string[] {
+  if (c.skipped !== null) return [skippedLine(c.skipped)];
+  const lines = deploymentLines(c);
+  if (c.pr !== null) lines.push(prLine(c.pr));
+  if (c.ci !== null) lines.push(ciLine(c.ci));
   return lines;
 }
 
@@ -112,8 +128,7 @@ function omittedForSize(total: number): string {
 }
 
 function chatLines(c: ChatLane): string[] {
-  if (c.skipped !== null)
-    return [`_Skipped: ${c.skipped === "unbound" ? "no bound service" : "no open time"}._`];
+  if (c.skipped !== null) return [skippedLine(c.skipped)];
   if (c.messages.length === 0) {
     return c.total > 0 ? [omittedForSize(c.total)] : ["_No matching message._"];
   }
@@ -125,23 +140,26 @@ function chatLines(c: ChatLane): string[] {
   return more > 0 ? [...rows, `_and ${String(more)} more_`] : rows;
 }
 
+function priorClosedText(i: PriorLane["incidents"][number]): string {
+  if (i.status !== "closed") return `, ${i.status}`;
+  if (i.closedAtMs === null) return ", closed, time not recorded";
+  return `, closed ${utcLabel(i.closedAtMs)} (${i.closedBasis})`;
+}
+
+function priorActedText(actions: number): string {
+  if (actions <= 0) return "";
+  const plural = actions === 1 ? "" : "s";
+  return `, ${String(actions)} Nimbus action${plural} run on it`;
+}
+
 export function priorLines(p: PriorLane): string[] {
-  if (p.skipped !== null)
-    return [`_Skipped: ${p.skipped === "unbound" ? "no bound service" : "no open time"}._`];
+  if (p.skipped !== null) return [skippedLine(p.skipped)];
   if (p.incidents.length === 0) {
     return p.total > 0 ? [omittedForSize(p.total)] : ["_No earlier incident on this service._"];
   }
   const rows = p.incidents.map((i) => {
-    const closed =
-      i.status === "closed"
-        ? i.closedAtMs === null
-          ? ", closed, time not recorded"
-          : `, closed ${utcLabel(i.closedAtMs)} (${i.closedBasis})`
-        : `, ${i.status}`;
-    const acted =
-      i.actions > 0
-        ? `, ${String(i.actions)} Nimbus action${i.actions === 1 ? "" : "s"} run on it`
-        : "";
+    const closed = priorClosedText(i);
+    const acted = priorActedText(i.actions);
     return `- ${hardenedTitleLink(i.title, i.url)} - ${plain(i.service)}, opened ${i.openedAtMs === null ? "at an unknown time" : utcLabel(i.openedAtMs)}${closed}${acted} (rule: ${i.rule})`;
   });
   const more = p.total - p.incidents.length;
@@ -182,10 +200,11 @@ export function concurrentLines(c: ConcurrentLane): string[] {
   if (c.records.length === 0) {
     return c.total > 0 ? [omittedForSize(c.total)] : ["_No other open record within 30 minutes._"];
   }
-  const rows = c.records.map(
-    (r) =>
-      `- \`${plain(r.recordId)}\` ${plain(r.source)}${r.severity === null ? "" : ` ${plain(r.severity)}`}, ${r.service === null ? "unbound" : plain(r.service)}, opened ${utcLabel(r.openedAtMs)} (rule: ${r.rule})`,
-  );
+  const rows = c.records.map((r) => {
+    const severity = r.severity === null ? "" : ` ${plain(r.severity)}`;
+    const service = r.service === null ? "unbound" : plain(r.service);
+    return `- ${codeSpan(r.recordId)} ${plain(r.source)}${severity}, ${service}, opened ${utcLabel(r.openedAtMs)} (rule: ${r.rule})`;
+  });
   const more = c.total - c.records.length;
   return more > 0 ? [...rows, `_and ${String(more)} more_`] : rows;
 }
@@ -197,13 +216,14 @@ export function dbtTestLine(t: DataTestView): string {
   return `- dbt test ${hardenedTitleLink(t.title, t.url)}: ${t.status}${failing}, ${where} \`${plain(t.model)}\`, ${utcLabel(t.atMs)} (rule: ${t.rule})`;
 }
 
+function codeSpan(s: string): string {
+  return `\`${plain(s)}\``;
+}
+
 function dataLines(d: DataLane): string[] {
   const lines: string[] = [];
-  lines.push(
-    d.models.length === 0
-      ? "_No monitored table._"
-      : `- Monitored: ${d.models.map((m) => `\`${plain(m)}\``).join(", ")}`,
-  );
+  const models = d.models.map(codeSpan).join(", ");
+  lines.push(d.models.length === 0 ? "_No monitored table._" : `- Monitored: ${models}`);
   for (const l of d.lineage)
     lines.push(`- Upstream of \`${plain(l.model)}\`: \`${plain(l.to)}\` (rule: ${l.rule})`);
   for (const o of d.orchestration)
@@ -211,10 +231,10 @@ function dataLines(d: DataLane): string[] {
       `- Job by name: ${hardenedTitleLink(o.title, o.url)} - ${plain(o.service)} (rule: ${o.rule})`,
     );
   for (const t of d.dbtTests ?? []) lines.push(dbtTestLine(t));
-  for (const p of d.prs)
-    lines.push(
-      `- Merged change: ${hardenedTitleLink(p.title, p.url)}${p.atMs === null ? "" : `, ${utcLabel(p.atMs)}`} (rule: ${p.rule})`,
-    );
+  for (const p of d.prs) {
+    const at = p.atMs === null ? "" : `, ${utcLabel(p.atMs)}`;
+    lines.push(`- Merged change: ${hardenedTitleLink(p.title, p.url)}${at} (rule: ${p.rule})`);
+  }
   if (d.schemaDiff !== undefined && d.schemaDiff.total > 0) {
     lines.push(...schemaChangeLines(d.schemaDiff, { plain, utc: utcLabel }));
   }
@@ -239,11 +259,14 @@ export function historyLines(h: HistoryLane): string[] {
 }
 
 /** The reserved `## Data freshness` block, built from the record's own freshness ("" when it has none). */
+function freshnessState(r: Freshness["rows"][number]): string {
+  if (!r.connected) return "not connected";
+  if (r.lastSyncMs === null) return "connected, never synced";
+  return `last synced ${utcLabel(r.lastSyncMs)}`;
+}
+
 export function renderIncidentFreshness(f: Freshness): string {
-  const lines: string[] = f.rows.map(
-    (r) =>
-      `- ${plain(r.service)}: ${r.connected ? (r.lastSyncMs === null ? "connected, never synced" : `last synced ${utcLabel(r.lastSyncMs)}`) : "not connected"}`,
-  );
+  const lines: string[] = f.rows.map((r) => `- ${plain(r.service)}: ${freshnessState(r)}`);
   if (f.onCallStale === true) lines.push("- on-call data: older than 60 minutes");
   if (f.chatToMs !== null) lines.push(`- chat searched up to ${utcLabel(f.chatToMs)}`);
   if (lines.length === 0) return "";
@@ -279,26 +302,37 @@ function cascadeReasonText(m: CascadeMember): string {
   switch (r.kind) {
     case "declared_dependency":
       return r.path === undefined
-        ? `${String(r.dependents)} other open record${r.dependents === 1 ? "" : "s"} in this window run on a service that depends on this one (declared depends_on)`
+        ? dependentsText(r.dependents)
         : `depends on the root through ${r.path.map(plain).join(" -> ")} (declared depends_on)`;
     case "shared_deployment":
       return "cites the same deployment as the root";
     case "time_only":
-      return m.role === "root"
-        ? "ranked by open time (no declared dependency decides it)"
-        : r.minutesAfterRoot < 0
-          ? `no declared path to the root; opened ${String(-r.minutesAfterRoot)} min before it`
-          : `no declared path to the root; opened ${String(r.minutesAfterRoot)} min after it`;
+      return timeOnlyText(m.role, r.minutesAfterRoot);
   }
 }
 
+function dependentsText(dependents: number): string {
+  const plural = dependents === 1 ? "" : "s";
+  return `${String(dependents)} other open record${plural} in this window run on a service that depends on this one (declared depends_on)`;
+}
+
+function timeOnlyText(role: CascadeMember["role"], minutesAfterRoot: number): string {
+  if (role === "root") return "ranked by open time (no declared dependency decides it)";
+  if (minutesAfterRoot < 0)
+    return `no declared path to the root; opened ${String(-minutesAfterRoot)} min before it`;
+  return `no declared path to the root; opened ${String(minutesAfterRoot)} min after it`;
+}
+
+function cascadeMemberLabel(m: CascadeMember, i: CascadeInfo | undefined): string {
+  if (i === undefined) return `record ${codeSpan(m.recordId)}`;
+  const service = i.service === null ? "" : `, ${plain(i.service)}`;
+  return `${hardenedPlain(i.title, PLAIN_MAX)} (${plain(i.source)}${service}, opened ${utcLabel(i.openedAtMs)})`;
+}
+
 function cascadeMemberLine(m: CascadeMember, info: ReadonlyMap<string, CascadeInfo>): string {
-  const i = info.get(m.recordId);
-  const label =
-    i === undefined
-      ? `record \`${plain(m.recordId)}\``
-      : `${hardenedPlain(i.title, PLAIN_MAX)} (${plain(i.source)}${i.service === null ? "" : `, ${plain(i.service)}`}, opened ${utcLabel(i.openedAtMs)})`;
-  return `- ${m.role === "root" ? "Root candidate" : "Downstream"}: ${label}: ${cascadeReasonText(m)}`;
+  const label = cascadeMemberLabel(m, info.get(m.recordId));
+  const role = m.role === "root" ? "Root candidate" : "Downstream";
+  return `- ${role}: ${label}: ${cascadeReasonText(m)}`;
 }
 
 /**

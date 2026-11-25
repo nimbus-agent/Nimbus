@@ -888,7 +888,7 @@ describe("the dry run (Phase 17): the before-state reads only, never the write",
     }>;
     expect(rows.map((r) => r.action_type)).toEqual(["argocd.before.read"]);
     expect(rows[0]?.action_json).toContain(`"incident":{"id":"${h.recordId}"`);
-    expect(h.egress.length).toBe(1);
+    expect(h.egress).toHaveLength(1);
   });
 
   test("the listing says what --dry-run can do for each proposal", () => {

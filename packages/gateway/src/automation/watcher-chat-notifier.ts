@@ -454,7 +454,7 @@ class WatcherChatNotifierImpl implements WatcherChatNotifier {
 
   async whenIdle(): Promise<void> {
     while (this.active.size > 0) {
-      await Promise.all([...this.active]);
+      await Promise.all(this.active);
     }
   }
 }

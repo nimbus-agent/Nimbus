@@ -178,7 +178,7 @@ export function readLinkedActions(db: Database, recordId: string): LinkedActions
   const rows: LinkedActionRow[] = [];
   for (const r of read.slice(0, LINK_SCAN_CAP)) {
     const parsed = parseLinkPrefix(r.action_json);
-    if (parsed === undefined || parsed.id !== recordId) continue;
+    if (parsed?.id !== recordId) continue;
     const rowTruncated = r.action_json.endsWith(TRUNCATED_MARK);
     const tail = tailFields(r.action_json, rowTruncated);
     rows.push({

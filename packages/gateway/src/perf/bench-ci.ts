@@ -42,7 +42,7 @@ function parseArgs(args: string[]): ParsedArgs {
 function parseHistoryFile(path: string): HistoryLine {
   const raw = readFileSync(path, "utf8");
   const lines = raw.split("\n").filter((s) => s.trim() !== "");
-  const last = lines[lines.length - 1];
+  const last = lines.at(-1);
   if (last === undefined) throw new Error(`history file is empty: ${path}`);
   return JSON.parse(last) as HistoryLine;
 }

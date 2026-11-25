@@ -141,14 +141,22 @@ function timePair(
   return ms === null ? { ms: null, basis: "none" } : { ms, basis: basisWhenPresent };
 }
 
-function pagerdutyFacts(meta: Meta): TriggerFacts {
+/** Where an alert source keeps its status, severity and close time (PagerDuty and JSM differ only in these). */
+type AlertShape = {
+  readonly closedWords: readonly string[];
+  readonly missingStatus: TriggerStatus;
+  readonly severityKey: string;
+  readonly closedAtKey: string;
+};
+
+function alertFacts(meta: Meta, shape: AlertShape): TriggerFacts {
   const statusRaw = str(meta, "status");
-  const status = statusOf(statusRaw, CLOSED_WORDS.pagerduty, "open");
-  const severityRaw = str(meta, "severity");
+  const status = statusOf(statusRaw, shape.closedWords, shape.missingStatus);
+  const severityRaw = str(meta, shape.severityKey);
   const opened = timePair(finiteMs(meta, "opened_at_ms"), "provider");
   const closed =
     status === "closed"
-      ? timePair(finiteMs(meta, "resolved_at_ms"), "provider")
+      ? timePair(finiteMs(meta, shape.closedAtKey), "provider")
       : timePair(null, "none");
   return {
     ...EMPTY_FACTS,
@@ -164,27 +172,22 @@ function pagerdutyFacts(meta: Meta): TriggerFacts {
   };
 }
 
+function pagerdutyFacts(meta: Meta): TriggerFacts {
+  return alertFacts(meta, {
+    closedWords: CLOSED_WORDS.pagerduty,
+    missingStatus: "open",
+    severityKey: "severity",
+    closedAtKey: "resolved_at_ms",
+  });
+}
+
 function jsmFacts(meta: Meta): TriggerFacts {
-  const statusRaw = str(meta, "status");
-  const status = statusOf(statusRaw, CLOSED_WORDS.jira, "unknown");
-  const severityRaw = str(meta, "priority");
-  const opened = timePair(finiteMs(meta, "opened_at_ms"), "provider");
-  const closed =
-    status === "closed"
-      ? timePair(finiteMs(meta, "closed_at_ms"), "provider")
-      : timePair(null, "none");
-  return {
-    ...EMPTY_FACTS,
-    metadataValid: true,
-    status,
-    statusRaw,
-    severityRaw,
-    severity: severityRaw === null ? null : plainLabel(severityRaw),
-    openedAtMs: opened.ms,
-    openedAtBasis: opened.basis,
-    closedAtMs: closed.ms,
-    closedAtBasis: closed.basis,
-  };
+  return alertFacts(meta, {
+    closedWords: CLOSED_WORDS.jira,
+    missingStatus: "unknown",
+    severityKey: "priority",
+    closedAtKey: "closed_at_ms",
+  });
 }
 
 function sentryFacts(meta: Meta): TriggerFacts {
@@ -281,12 +284,11 @@ export function qualifyingLabels(
   config: TriggerConfig,
 ): readonly string[] {
   if (service === "bigeye") return config.bigeyeSlaStatuses.map(plainLabel);
-  const base =
-    config.severities.length > 0
-      ? config.severities
-      : service === "pagerduty"
-        ? [...DEFAULT_LABELS.pagerduty, ...config.pagerdutyP1Aliases]
-        : DEFAULT_LABELS[service];
+  const defaults =
+    service === "pagerduty"
+      ? [...DEFAULT_LABELS.pagerduty, ...config.pagerdutyP1Aliases]
+      : DEFAULT_LABELS[service];
+  const base = config.severities.length > 0 ? config.severities : defaults;
   const normalise = service === "montecarlo" ? monteCarloLabel : plainLabel;
   return [...new Set(base.map(normalise))];
 }

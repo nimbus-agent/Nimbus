@@ -20,6 +20,12 @@ function section(title: string, lines: readonly string[]): string {
   return [`## ${title}`, "", ...lines].join("\n");
 }
 
+function bindingText(b: Investigation["binding"]): string {
+  if (b.service === null) return "not bound to a configured service";
+  const via = b.via === null ? "an unknown rule" : plain(b.via);
+  return `${plain(b.service)} (bound by ${via})`;
+}
+
 export function summary(inv: Investigation): string {
   const t = inv.trigger;
   const lines = [
@@ -27,13 +33,14 @@ export function summary(inv: Investigation): string {
     `- Trigger: ${hardenedTitleLink(t.title, t.url)} (${plain(t.service)} ${plain(t.type)})`,
     `- Status: ${plain(t.status)}, severity ${t.severity === null ? "not reported" : plain(t.severity)}`,
     `- Opened: ${when(t.openedAtMs, "not recorded by the source")}`,
-    `- Service: ${inv.binding.service === null ? "not bound to a configured service" : `${plain(inv.binding.service)} (bound by ${inv.binding.via === null ? "an unknown rule" : plain(inv.binding.via)})`}`,
+    `- Service: ${bindingText(inv.binding)}`,
     `- Window read: ${utcLabel(inv.span.fromMs)} to ${utcLabel(inv.span.toMs)}`,
   ];
   return section("Summary", lines);
 }
 
-function sentryRow(r: SentryIssueRow): string {
+/** One Sentry issue line; the indexed and the live rows carry the same facts. */
+function sentryRow(r: SentryIssueRow | LiveIssueRow): string {
   const facts = [
     `project ${plain(r.project)}`,
     r.level === null ? null : `level ${plain(r.level)}`,
@@ -57,27 +64,16 @@ const LIVE_PROJECT_WORD: Readonly<Record<string, string>> = {
   skipped_cap: "not read (project cap)",
 };
 
-function liveRow(r: LiveIssueRow): string {
-  const facts = [
-    `project ${plain(r.project)}`,
-    r.level === null ? null : `level ${plain(r.level)}`,
-    r.status === null ? null : `status ${plain(r.status)}`,
-    r.count === null ? null : `${String(r.count)} events`,
-    r.userCount === null ? null : `${String(r.userCount)} users`,
-    r.firstSeenMs === null ? null : `first seen ${utcLabel(r.firstSeenMs)}`,
-    `last seen ${utcLabel(r.lastSeenMs)}`,
-    r.newSinceDeploy ? "first seen after the deployment started (timing only)" : null,
-  ].filter((x): x is string => x !== null);
-  return `- ${hardenedTitleLink(r.title, r.url)}: ${facts.join("; ")}`;
-}
-
 /** The `--live` block: what Sentry itself answered now, correlated to the record by project and window. */
 function liveSentry(inv: Investigation): string | null {
   const l = inv.live;
   if (l === undefined) return null;
+  const read = l.projects
+    .map((p) => `${plain(p.project)} ${LIVE_PROJECT_WORD[p.outcome] ?? "not read"}`)
+    .join(", ");
   const lines = [
-    `_Live read, not stored: ${l.projects.map((p) => `${plain(p.project)} ${LIVE_PROJECT_WORD[p.outcome] ?? "not read"}`).join(", ") || "no project was read"} (budget ${String(Math.round(l.budgetMs / 1000))} s)._`,
-    ...l.rows.map(liveRow),
+    `_Live read, not stored: ${read || "no project was read"} (budget ${String(Math.round(l.budgetMs / 1000))} s)._`,
+    ...l.rows.map(sentryRow),
   ];
   if (l.status !== "not_read" && l.rows.length === 0) {
     lines.push(
@@ -125,10 +121,10 @@ export function related(inv: Investigation): string {
   if (r.items.length === 0) {
     return section("Other open records of this service", ["_None._"]);
   }
-  const lines = r.items.map(
-    (x) =>
-      `- \`${plain(x.recordId)}\` ${plain(x.source)} ${x.severity === null ? "" : `${plain(x.severity)} `}opened ${when(x.openedAtMs, "at an unknown time")}: ${plain(x.title)}`,
-  );
+  const lines = r.items.map((x) => {
+    const severity = x.severity === null ? "" : `${plain(x.severity)} `;
+    return `- \`${plain(x.recordId)}\` ${plain(x.source)} ${severity}opened ${when(x.openedAtMs, "at an unknown time")}: ${plain(x.title)}`;
+  });
   if (r.total > r.items.length) lines.push(`_and ${String(r.total - r.items.length)} more_`);
   return section("Other open records of this service", lines);
 }
@@ -159,13 +155,18 @@ export function leads(list: readonly Lead[]): string {
   );
 }
 
+function syncState(f: Investigation["freshness"][number]): string {
+  if (!f.connected) return "not connected";
+  if (f.lastSyncMs === null) return "connected, never synced";
+  return `last synced ${utcLabel(f.lastSyncMs)}`;
+}
+
 export function freshnessLines(inv: Investigation): string[] {
-  const fresh = inv.freshness.map(
-    (f) =>
-      `- ${plain(f.service)}: ${f.connected ? (f.lastSyncMs === null ? "connected, never synced" : `last synced ${utcLabel(f.lastSyncMs)}`) : "not connected"}`,
+  const fresh = inv.freshness.map((f) => `- ${plain(f.service)}: ${syncState(f)}`);
+  fresh.push(
+    `- Record assembled ${utcLabel(inv.recordAssembledAtMs)}`,
+    `- Read at ${utcLabel(inv.asOfMs)}`,
   );
-  fresh.push(`- Record assembled ${utcLabel(inv.recordAssembledAtMs)}`);
-  fresh.push(`- Read at ${utcLabel(inv.asOfMs)}`);
   return fresh;
 }
 

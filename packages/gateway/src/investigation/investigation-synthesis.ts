@@ -1,4 +1,3 @@
-import { renderIncidentInvestigation } from "../agents/_lib/incident-investigation-render.ts";
 import type { IncidentInvestigationBrief } from "../agents/_lib/incident-types.ts";
 import { renderInvestigation } from "../agents/_lib/investigation-render.ts";
 import type { SynthesisRunner } from "../agents/_lib/synthesis-llm.ts";
@@ -64,4 +63,4 @@ export async function draftInvestigation(deps: {
 }
 
 /** The deterministic render the synthesized form falls back to (exported for the tests that pin both). */
-export const deterministicInvestigationBrief = renderIncidentInvestigation;
+export { renderIncidentInvestigation as deterministicInvestigationBrief } from "../agents/_lib/incident-investigation-render.ts";

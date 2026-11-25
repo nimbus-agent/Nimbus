@@ -46,5 +46,6 @@ export function notEmbeddingExcludedSql(alias: string, remote = false): string {
   const types = remote
     ? [...EMBEDDING_EXCLUDED_TYPES, ...LOCAL_ONLY_EMBEDDING_TYPES]
     : EMBEDDING_EXCLUDED_TYPES;
-  return `${alias}.type NOT IN (${types.map((t) => `'${t}'`).join(", ")})`;
+  const quoted = types.map((t) => `'${t}'`).join(", ");
+  return `${alias}.type NOT IN (${quoted})`;
 }
