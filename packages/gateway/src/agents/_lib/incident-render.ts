@@ -5,6 +5,7 @@ import type {
   ChatLane,
   ConcurrentLane,
   DataLane,
+  DataTestView,
   Freshness,
   HistoryLane,
   IncidentRecordV1,
@@ -189,6 +190,13 @@ export function concurrentLines(c: ConcurrentLane): string[] {
   return more > 0 ? [...rows, `_and ${String(more)} more_`] : rows;
 }
 
+/** One dbt test line: status and counts and the model, never SQL or rows. */
+export function dbtTestLine(t: DataTestView): string {
+  const failing = t.failures === null ? "" : `, ${String(t.failures)} failing`;
+  const where = t.via === "monitored" ? "on" : "on an upstream model,";
+  return `- dbt test ${hardenedTitleLink(t.title, t.url)}: ${t.status}${failing}, ${where} \`${plain(t.model)}\`, ${utcLabel(t.atMs)} (rule: ${t.rule})`;
+}
+
 function dataLines(d: DataLane): string[] {
   const lines: string[] = [];
   lines.push(
@@ -202,6 +210,7 @@ function dataLines(d: DataLane): string[] {
     lines.push(
       `- Job by name: ${hardenedTitleLink(o.title, o.url)} - ${plain(o.service)} (rule: ${o.rule})`,
     );
+  for (const t of d.dbtTests ?? []) lines.push(dbtTestLine(t));
   for (const p of d.prs)
     lines.push(
       `- Merged change: ${hardenedTitleLink(p.title, p.url)}${p.atMs === null ? "" : `, ${utcLabel(p.atMs)}`} (rule: ${p.rule})`,
@@ -214,7 +223,8 @@ function dataLines(d: DataLane): string[] {
     t.lineage -
     d.lineage.length +
     (t.orchestration - d.orchestration.length) +
-    (t.prs - d.prs.length);
+    (t.prs - d.prs.length) +
+    ((t.dbtTests ?? 0) - (d.dbtTests ?? []).length);
   if (hidden > 0) lines.push(`_and ${String(hidden)} more_`);
   return lines;
 }

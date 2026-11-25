@@ -17,12 +17,16 @@ import { isTableHeader, parseIntDec, splitKeyValue, stripComment } from "./toml-
  *   (`schema_history`, the Data Incident Brief's schema diff) are kept. The newest observation of each table is
  *   always kept, because the next diff is taken against it.
  *
+ * - `dbt_test_retention_days` (default 30, `7..365`): how long dbt Cloud test results (`dbt`
+ *   `data_quality_test` rows, by the run's finish time) are kept; pruned by the same daily tick.
+ *
  * A value out of range or malformed is a section fallback to the default, recorded through
  * `sectionFallbackSink` so `nimbus config explain` names it; it is never clamped.
  */
 export type NimbusIndexToml = {
   readonly historyRetentionDays: number;
   readonly schemaHistoryRetentionDays: number;
+  readonly dbtTestRetentionDays: number;
 };
 
 export const INDEX_HISTORY_RETENTION_MIN = 7;
@@ -31,7 +35,22 @@ export const INDEX_HISTORY_RETENTION_MAX = 3650;
 export const DEFAULT_INDEX_CONFIG: NimbusIndexToml = Object.freeze({
   historyRetentionDays: 180,
   schemaHistoryRetentionDays: 365,
+  dbtTestRetentionDays: 30,
 });
+
+export const INDEX_DBT_RETENTION_MIN = 7;
+export const INDEX_DBT_RETENTION_MAX = 365;
+
+function dbtRetentionOrDefault(raw: string, onFallback: SectionFallbackSink | undefined): number {
+  const n = parseIntDec(raw);
+  if (n !== undefined && n >= INDEX_DBT_RETENTION_MIN && n <= INDEX_DBT_RETENTION_MAX) {
+    return n;
+  }
+  onFallback?.(
+    `[index].dbt_test_retention_days must be an integer ${String(INDEX_DBT_RETENTION_MIN)}..${String(INDEX_DBT_RETENTION_MAX)} (got: ${raw}); using ${String(DEFAULT_INDEX_CONFIG.dbtTestRetentionDays)}`,
+  );
+  return DEFAULT_INDEX_CONFIG.dbtTestRetentionDays;
+}
 
 function retentionOrDefault(
   key: string,
@@ -57,6 +76,7 @@ export function parseNimbusTomlIndex(
   let inIndex = false;
   let historyRetentionDays = DEFAULT_INDEX_CONFIG.historyRetentionDays;
   let schemaHistoryRetentionDays = DEFAULT_INDEX_CONFIG.schemaHistoryRetentionDays;
+  let dbtTestRetentionDays = DEFAULT_INDEX_CONFIG.dbtTestRetentionDays;
   for (const line of source.split(/\r?\n/)) {
     const trimmed = stripComment(line).trim();
     if (trimmed === "") continue;
@@ -80,9 +100,11 @@ export function parseNimbusTomlIndex(
         DEFAULT_INDEX_CONFIG.schemaHistoryRetentionDays,
         onFallback,
       );
+    } else if (kv?.key === "dbt_test_retention_days") {
+      dbtTestRetentionDays = dbtRetentionOrDefault(kv.valRaw, onFallback);
     }
   }
-  return Object.freeze({ historyRetentionDays, schemaHistoryRetentionDays });
+  return Object.freeze({ historyRetentionDays, schemaHistoryRetentionDays, dbtTestRetentionDays });
 }
 
 /** `[index]` over the layered snapshot (packs, base, active profile). */

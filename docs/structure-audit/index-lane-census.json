@@ -6,8 +6,8 @@
   ],
   "sqlLiteralScopeNote": "A raw scan of packages/gateway/src/**/*.ts (minus *.test.ts) with extractSqlLiterals finds 483 SQL-shaped literals. This artifact's file set additionally excludes *-sql.ts files (an existing, repo-wide iterateSourceFiles() convention, not specific to this gate), which drops exactly 4 literals in 4 files: index/entity-metadata-v54-sql.ts, index/fleet-subjects-v63-sql.ts, index/glossary-manual-v46-sql.ts, index/unified-item-v3-sql.ts. Three are schema DDL (their only SQL-shaped text is an internal FTS-sync SELECT inside a CREATE TRIGGER body); the fourth is a one-time graph_entity migration UPDATE, already out of scope by table. None is a live read predicate reachable at runtime, so this fully explains the 483-vs-479 gap with zero effect on reads/writes/unmatchedItemReads below.",
   "counts": {
-    "reads": 536,
-    "writes": 141,
+    "reads": 539,
+    "writes": 142,
     "unmatchedItemReads": 69,
     "totalAbsence": 24,
     "partialCoverage": 45,
@@ -1036,6 +1036,13 @@
     {
       "table": "item",
       "kind": "type",
+      "value": "data_quality_test",
+      "file": "packages/gateway/src/index/dbt-test-retention.ts",
+      "line": 35
+    },
+    {
+      "table": "item",
+      "kind": "type",
       "value": "lambda_function",
       "file": "packages/gateway/src/index/drift-hints.ts",
       "line": 39
@@ -1339,14 +1346,14 @@
       "kind": "metadata-key",
       "value": "pagerduty_service_id",
       "file": "packages/gateway/src/incident/assemble.ts",
-      "line": 333
+      "line": 334
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "pagerduty_service_id",
       "file": "packages/gateway/src/incident/assemble.ts",
-      "line": 334
+      "line": 335
     },
     {
       "table": "item",
@@ -1448,6 +1455,20 @@
     },
     {
       "table": "item",
+      "kind": "type",
+      "value": "data_quality_test",
+      "file": "packages/gateway/src/incident/lanes/data-dbt.ts",
+      "line": 73
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "monitoredDataModelKeys",
+      "file": "packages/gateway/src/incident/lanes/data-dbt.ts",
+      "line": 72
+    },
+    {
+      "table": "item",
       "kind": "metadata-key",
       "value": "parent_item_id",
       "file": "packages/gateway/src/incident/lanes/data-runs.ts",
@@ -1479,19 +1500,26 @@
       "kind": "type",
       "value": "derived_from",
       "file": "packages/gateway/src/incident/lanes/data.ts",
-      "line": 98
+      "line": 100
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "data_model",
       "file": "packages/gateway/src/incident/lanes/data.ts",
-      "line": 100
+      "line": 102
     },
     {
       "table": "item",
       "kind": "type",
       "value": "pr",
+      "file": "packages/gateway/src/incident/lanes/data.ts",
+      "line": 184
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "merged_at",
       "file": "packages/gateway/src/incident/lanes/data.ts",
       "line": 182
     },
@@ -1500,28 +1528,21 @@
       "kind": "metadata-key",
       "value": "merged_at",
       "file": "packages/gateway/src/incident/lanes/data.ts",
-      "line": 180
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "merged_at",
-      "file": "packages/gateway/src/incident/lanes/data.ts",
-      "line": 183
+      "line": 185
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "data_model",
       "file": "packages/gateway/src/incident/lanes/data.ts",
-      "line": 246
+      "line": 248
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "monitoredDataModelKeys",
       "file": "packages/gateway/src/incident/lanes/data.ts",
-      "line": 82
+      "line": 84
     },
     {
       "table": "graph_entity",
@@ -4147,6 +4168,25 @@
       "line": 103
     },
     {
+      "service": "dbt",
+      "itemType": "data_quality_test",
+      "metadataKeys": [
+        "monitoredDataModelKeys",
+        "test_unique_id",
+        "test_name",
+        "status",
+        "failures",
+        "execution_time_s",
+        "run_id",
+        "job_id",
+        "project_id",
+        "account_id",
+        "finished_at"
+      ],
+      "file": "packages/gateway/src/connectors/dbt-test-mapping.ts",
+      "line": 153
+    },
+    {
       "service": "dependencytrack",
       "itemType": "project",
       "metadataKeys": [
@@ -6747,7 +6787,7 @@
     },
     {
       "file": "packages/gateway/src/incident/lanes/data.ts",
-      "line": 133
+      "line": 135
     },
     {
       "file": "packages/gateway/src/graph/graph-populator.ts",

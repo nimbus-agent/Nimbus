@@ -16,6 +16,7 @@ describe("renderIncidentData", () => {
       "## Built from",
       "## Jobs by name",
       "## Runs of those jobs",
+      "## dbt tests",
       "## Merged before the alert",
       "## Schema changes",
       "## Service",
@@ -238,5 +239,36 @@ describe("incident_data in the I31 machinery", () => {
     const out = await synthesize(brief);
     expect(out.markdown).toContain(renderIncidentData(brief).trimEnd());
     expect(out.provenance.attempted).toBe(false);
+  });
+});
+
+describe("the dbt tests section", () => {
+  test("a size cut that removed every listed test still says how many there were", () => {
+    const base = buildDataLane();
+    const md = renderIncidentData(
+      buildDataBriefFixture({
+        data: { ...base, dbtTests: [], totals: { ...base.totals, dbtTests: 3 } },
+      }),
+    );
+    expect(md).toContain("_and 3 more_");
+    expect(md).not.toContain("No failing or warning dbt test");
+  });
+
+  test("a record stored before dbt tests existed says they were not collected, never none found", () => {
+    const { dbtTests: _drop, ...old } = buildDataLane();
+    const { dbtTests: _t, ...totals } = old.totals;
+    const md = renderIncidentData(buildDataBriefFixture({ data: { ...old, totals } }));
+    expect(md).toContain("_dbt test results were not collected for this record._");
+    expect(md).not.toContain("No failing or warning dbt test");
+  });
+
+  test("a recorded zero total reads as none found", () => {
+    const base = buildDataLane();
+    const md = renderIncidentData(
+      buildDataBriefFixture({
+        data: { ...base, dbtTests: [], totals: { ...base.totals, dbtTests: 0 } },
+      }),
+    );
+    expect(md).toContain("_No failing or warning dbt test found for these models._");
   });
 });

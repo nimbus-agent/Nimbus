@@ -70,7 +70,6 @@ describeWithFetchRestore("dbt-sync", () => {
   // ── Happy path: account_id configured (bypasses /accounts/ fetch) ─────────
   // Covers: loadCreds success, resolveAccounts creds.accountId !== null branch,
   // syncAccountJobs, upsertMapped, syncPassCursorSuccess.
-  // Also covers trimTrailingSlash false branch (apiBase has no trailing slash).
   test("indexes jobs when account_id is configured (no /accounts/ fetch)", async () => {
     const db = createMemoryIndexDb();
 
@@ -79,7 +78,8 @@ describeWithFetchRestore("dbt-sync", () => {
       _init?: SyncTestFetchParams[1],
     ): Promise<Response> => {
       const u = urlFromFetchInput(input);
-      // Only jobs endpoint should be called
+      if (u.includes("/runs/")) return new Response(JSON.stringify({ data: [] }), { status: 200 });
+      // Only the jobs endpoint (and the runs listing of the test pass) should be called
       expect(u).toContain("/api/v2/accounts/42/jobs/");
       return new Response(makeJobsResponse([makeJob(1001, "My Job")]), { status: 200 });
     }) as typeof fetch;
@@ -103,7 +103,6 @@ describeWithFetchRestore("dbt-sync", () => {
   });
 
   // ── Happy path: api_base with trailing slash (trimTrailingSlash true branch) ──
-  // Also covers loadCreds' baseRaw !== "" branch.
   test("trims trailing slash from custom api_base", async () => {
     const db = createMemoryIndexDb();
 
@@ -112,6 +111,7 @@ describeWithFetchRestore("dbt-sync", () => {
       _init?: SyncTestFetchParams[1],
     ): Promise<Response> => {
       const u = urlFromFetchInput(input);
+      if (u.includes("/runs/")) return new Response(JSON.stringify({ data: [] }), { status: 200 });
       // Must NOT have double slash before /api/v2
       expect(u).not.toContain("//api/v2");
       expect(u).toContain("https://custom.dbt.example/api/v2/accounts/7/jobs/");
@@ -143,6 +143,7 @@ describeWithFetchRestore("dbt-sync", () => {
       _init?: SyncTestFetchParams[1],
     ): Promise<Response> => {
       const u = urlFromFetchInput(input);
+      if (u.includes("/runs/")) return new Response(JSON.stringify({ data: [] }), { status: 200 });
       expect(u).toContain("https://nodeslash.dbt.example/api/v2/accounts/8/jobs/");
       return new Response(makeJobsResponse([makeJob(3001, "No Slash Job")]), { status: 200 });
     }) as typeof fetch;
@@ -165,7 +166,6 @@ describeWithFetchRestore("dbt-sync", () => {
 
   // ── Happy path: no account_id → fetches /accounts/ first ─────────────────
   // Covers: resolveAccounts with accountId null, extractAccountIds, extractData { data: [...] }.
-  // Also covers line 63 (Array.isArray(data) = true) and line 50 (baseRaw === "").
   test("fetches accounts list when account_id is absent, then jobs", async () => {
     const db = createMemoryIndexDb();
     let callCount = 0;
@@ -175,6 +175,7 @@ describeWithFetchRestore("dbt-sync", () => {
       _init?: SyncTestFetchParams[1],
     ): Promise<Response> => {
       const u = urlFromFetchInput(input);
+      if (u.includes("/runs/")) return new Response(JSON.stringify({ data: [] }), { status: 200 });
       callCount += 1;
       if (callCount === 1) {
         expect(u).toContain("/api/v2/accounts/");
@@ -205,7 +206,6 @@ describeWithFetchRestore("dbt-sync", () => {
   });
 
   // ── extractData: parsed is a plain array (line 66 Array.isArray(parsed) true) ──
-  // Covers the branch where the API returns a bare JSON array instead of {data:[...]}.
   test("handles bare array response for accounts list", async () => {
     const db = createMemoryIndexDb();
     let callCount = 0;
@@ -215,6 +215,7 @@ describeWithFetchRestore("dbt-sync", () => {
       _init?: SyncTestFetchParams[1],
     ): Promise<Response> => {
       const u = urlFromFetchInput(input);
+      if (u.includes("/runs/")) return new Response(JSON.stringify({ data: [] }), { status: 200 });
       callCount += 1;
       if (callCount === 1) {
         // Bare array of accounts — extractData will take the Array.isArray(parsed) branch
@@ -272,7 +273,6 @@ describeWithFetchRestore("dbt-sync", () => {
   });
 
   // ── extractAccountIds: non-record element → continue (line 73) ───────────
-  // Covers the `asRecord(a) === undefined → continue` branch.
   test("skips non-object elements in accounts array when extracting account ids", async () => {
     const db = createMemoryIndexDb();
     let callCount = 0;

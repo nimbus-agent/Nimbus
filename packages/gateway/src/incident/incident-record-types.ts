@@ -203,6 +203,21 @@ export type DataLineageView = {
   readonly rule: "data:derived_from";
 };
 
+/** A failing, erroring or warning dbt Cloud test on a monitored model or one hop of its lineage (status and counts only). */
+export type DataTestView = {
+  readonly id: string;
+  readonly title: string;
+  readonly url: string | null;
+  readonly status: "fail" | "error" | "warn";
+  readonly failures: number | null;
+  readonly runId: number | null;
+  readonly atMs: number;
+  /** The model the test is on: a monitored one, or one `derived_from` hop upstream of it. */
+  readonly model: string;
+  readonly via: "monitored" | "lineage";
+  readonly rule: "data:dbt_test";
+};
+
 /** One column-level change of a monitored table or its one-hop upstream (the schema history, V108). */
 export type DataSchemaChangeView = {
   readonly model: string;
@@ -231,12 +246,15 @@ export type DataLane = {
   readonly lineage: readonly DataLineageView[];
   readonly orchestration: readonly DataItemView[];
   readonly prs: readonly DataItemView[];
+  /** Absent in a record stored before dbt test results were read. */
+  readonly dbtTests?: readonly DataTestView[];
   /** Runs of the matched jobs that failed or ran in the incident window, newest first. Absent in a record stored before DAG runs were indexed. */
   readonly runs?: readonly DataRunView[];
   readonly totals: {
     readonly lineage: number;
     readonly orchestration: number;
     readonly prs: number;
+    readonly dbtTests?: number;
     readonly runs?: number;
   };
   /** Absent in a record assembled before the schema history existed. */

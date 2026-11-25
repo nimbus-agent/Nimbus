@@ -40,6 +40,10 @@ export function gap(category: GapCategory, detail: string, remediation?: string)
   return remediation === undefined ? { category, detail } : { category, detail, remediation };
 }
 
+function dbtCount(data: { readonly dbtTests?: readonly unknown[] }): number {
+  return data.dbtTests?.length ?? 0;
+}
+
 export type CapStep = {
   readonly lane: "chat" | "concurrent" | "prior" | "history" | "data";
   readonly before: number;
@@ -129,35 +133,39 @@ export function capRecordSize(
   );
   const data = work.data;
   if (data !== null) {
-    shrink(
-      "data",
-      () =>
-        data.orchestration.length +
-        data.prs.length +
-        data.lineage.length +
-        (data.schemaDiff?.changes.length ?? 0) +
-        (data.runs?.length ?? 0),
-      (n) => {
-        const changes = data.schemaDiff?.changes ?? [];
-        const [lin, orch, prs, sch, runs] = allocate(n, [
-          data.lineage.length,
-          data.orchestration.length,
-          data.prs.length,
-          changes.length,
-          data.runs?.length ?? 0,
-        ]);
-        work.data = {
-          ...data,
-          lineage: data.lineage.slice(0, lin),
-          orchestration: data.orchestration.slice(0, orch),
-          prs: data.prs.slice(0, prs),
-          ...(data.schemaDiff === undefined
-            ? {}
-            : { schemaDiff: { ...data.schemaDiff, changes: changes.slice(0, sch) } }),
-          ...(data.runs === undefined ? {} : { runs: data.runs.slice(0, runs) }),
-        };
-      },
-    );
+    const dataLength = (): number => {
+      const d = work.data ?? data;
+      return (
+        d.orchestration.length +
+        d.prs.length +
+        d.lineage.length +
+        dbtCount(d) +
+        (d.schemaDiff?.changes.length ?? 0) +
+        (d.runs?.length ?? 0)
+      );
+    };
+    shrink("data", dataLength, (n) => {
+      const changes = data.schemaDiff?.changes ?? [];
+      const [lin, orch, prs, dbt, sch, runs] = allocate(n, [
+        data.lineage.length,
+        data.orchestration.length,
+        data.prs.length,
+        dbtCount(data),
+        changes.length,
+        data.runs?.length ?? 0,
+      ]);
+      work.data = {
+        ...data,
+        lineage: data.lineage.slice(0, lin),
+        orchestration: data.orchestration.slice(0, orch),
+        prs: data.prs.slice(0, prs),
+        ...(data.dbtTests === undefined ? {} : { dbtTests: data.dbtTests.slice(0, dbt) }),
+        ...(data.schemaDiff === undefined
+          ? {}
+          : { schemaDiff: { ...data.schemaDiff, changes: changes.slice(0, sch) } }),
+        ...(data.runs === undefined ? {} : { runs: data.runs.slice(0, runs) }),
+      };
+    });
   }
   return { record: work, cuts };
 }

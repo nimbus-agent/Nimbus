@@ -3,6 +3,7 @@ import { matchesDataModelGlob } from "../../metrics/data-model-glob.ts";
 import type { ServiceConfig } from "../../metrics/dora-config.ts";
 import type { DataItemView, DataLane, DataLineageView, GapNote } from "../incident-record-types.ts";
 import { CHAT_WINDOW_BEFORE_MS, codeUnitCompare, DATA_LIST_CAP, gap, oneLine } from "./caps.ts";
+import { dbtGap, dbtTests } from "./data-dbt.ts";
 import { runsOfJobs } from "./data-runs.ts";
 import { schemaLane } from "./data-schema.ts";
 
@@ -12,9 +13,10 @@ import { schemaLane } from "./data-schema.ts";
  * DAGs, Dagster jobs, Prefect deployments) whose TITLE holds the model's last identifier segment as a whole
  * token (a name match, not lineage: those items carry no model reference), pull requests merged in the 24 h
  * before the trigger whose title or branch holds the same token, the warehouse schema changes of the
- * monitored and upstream tables (`data-schema.ts`), and the runs of the Airflow, Dagster and Prefect items so
- * matched (failed, or running inside the incident window; `data-runs.ts`). The run-level lane the spec names
- * (dbt test results) is not indexed, and is always listed as a gap.
+ * monitored and upstream tables (`data-schema.ts`), the runs of the Airflow, Dagster and Prefect items so
+ * matched (failed, or running inside the incident window; `data-runs.ts`), and the failing, erroring or warning
+ * dbt tests on the monitored models and one hop of their lineage in the incident window (`data-dbt.ts`, a
+ * model-KEY match). Run logs are never indexed, and are always listed as a gap.
  */
 
 export type DataResult = { readonly lane: DataLane; readonly gaps: readonly GapNote[] };
@@ -211,7 +213,7 @@ export function dataSubstrateGaps(): GapNote[] {
   return [
     gap(
       "missing_entity_type",
-      "dbt test results are not indexed, so what a failing test did is absent here. Orchestrator run logs are never indexed: a run shows its state, timing and failed task names only.",
+      "Orchestrator run logs are never indexed: a run shows its state, timing and failed task names only.",
     ),
     gap(
       "missing_relation_emit",
@@ -278,6 +280,8 @@ export function dataLane(
     input.openedAtMs === null ? { items: [] } : mergedPrs(db, tokens, input.openedAtMs, truncated);
   const runs = runsOfJobs(db, orch, input.openedAtMs, SCAN_ROW_CAP);
   if (runs.truncated) truncated.value = true;
+  const tests =
+    input.openedAtMs === null ? [] : dbtTests(db, models, lin, input.openedAtMs, truncated);
   const schema = schemaLane(db, {
     models,
     lineage: lin,
@@ -285,7 +289,7 @@ export function dataLane(
     nowMs: input.nowMs ?? null,
     lookbackHours: input.schemaLookbackHours ?? DEFAULT_SCHEMA_LOOKBACK_HOURS,
   });
-  const gaps = [...dataSubstrateGaps(), ...runs.gaps, ...schema.gaps];
+  const gaps = [...dataSubstrateGaps(), ...runs.gaps, ...schema.gaps, dbtGap(db)];
   if (allModels.length > MODEL_KEY_CAP) {
     gaps.push(
       gap(
@@ -317,11 +321,13 @@ export function dataLane(
       orchestration: orch.slice(0, DATA_LIST_CAP),
       prs: prs.items.slice(0, DATA_LIST_CAP),
       runs: runs.runs.slice(0, DATA_LIST_CAP),
+      dbtTests: tests.slice(0, DATA_LIST_CAP),
       totals: {
         lineage: lin.length,
         orchestration: orch.length,
         prs: prs.items.length,
         runs: runs.total,
+        dbtTests: tests.length,
       },
       ...(schema.lane === null ? {} : { schemaDiff: schema.lane }),
     },
