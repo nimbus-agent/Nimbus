@@ -171,3 +171,43 @@ describe("runWorkflowExecution — non-Error and out-of-step failures", () => {
     expect(completedAuditDetails(db)["errorMsg"]).toBe("499");
   });
 });
+
+describe("runWorkflowExecution — a declared query that throws", () => {
+  test("the query step is recorded as an error and the run halts there", async () => {
+    const query = {
+      kind: "query",
+      label: "q",
+      query: {
+        service: "gmail",
+        type: "email",
+        where: [],
+        select: "id",
+        distinct: false,
+        limit: 5,
+      },
+    };
+    const db = dbWithWorkflow("query-throws", [query, { run: "never reached" }]);
+    let runnerCalls = 0;
+    const r = await runWorkflowExecution(
+      params(db, "query-throws", {
+        queryRunner: () => {
+          throw new Error("index unavailable");
+        },
+        conversationalRunner: async () => {
+          runnerCalls += 1;
+          return { reply: "never" };
+        },
+      }),
+    );
+    expect(r.status).toBe("error");
+    expect(r.stepResults).toEqual([{ label: "q", status: "error", error: "index unavailable" }]);
+    expect(runnerCalls).toBe(0);
+    const step = db
+      .query(
+        "SELECT status, result_json FROM workflow_run_step WHERE run_id = ? AND step_index = 0",
+      )
+      .get(r.runId) as { status: string; result_json: string } | null;
+    expect(step?.status).toBe("error");
+    expect(JSON.parse(step?.result_json ?? "{}")).toEqual({ error: "index unavailable" });
+  });
+});

@@ -76,10 +76,10 @@ function readRunsOf(
   src: (typeof RUN_SOURCES)[number],
   mine: readonly DataItemView[],
   openedAtMs: number | null,
-  window: { readonly from: number; readonly to: number },
+  bounds: { readonly from: number; readonly to: number },
   scanCap: number,
 ): RunRow[] {
-  const { from, to } = window;
+  const { from, to } = bounds;
   const marks = mine.map(() => "?").join(",");
   // The failed arm needs the start only when a window exists; with no open time only failures qualify.
   const windowArm = openedAtMs === null ? "" : " OR (s <= ? AND (e IS NULL OR e >= ?))";

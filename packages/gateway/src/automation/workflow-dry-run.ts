@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import { connectorWriteRowByToolId } from "../connectors/connector-write-registry.ts";
 import type { WorkflowTrigger } from "../engine/types.ts";
 import { type DeclaredQueryResult, runDeclaredQuery } from "./declared-query.ts";
-import { evaluateGuard, guardText, observationText, type QueryCount } from "./workflow-guard.ts";
+import { guardText, type QueryCount } from "./workflow-guard.ts";
 import { previewHitlActionsForStepText } from "./workflow-hitl-preview.ts";
 import type { DeclaredQuery, RunWorkflowStep, WorkflowStep } from "./workflow-steps.ts";
 
@@ -38,36 +38,18 @@ export function stepLabelOf(step: WorkflowStep, stepIndex: number): string {
 /** What the dry run learned about one query a guard names: its count, or why it could not be read. */
 export type DryObservation = { readonly count: QueryCount } | { readonly error: string };
 
-const DRY_AS_OF = "as of now; a real run re-reads the index";
-const NOT_EVALUATED = "not evaluated: only the owner's CLI or desktop connection evaluates guards";
-
-/** What a guard would do against the dry run's observations, as one owner-readable line. */
-function dryEvaluation(
+/** What a guard would do on the dry run's observations (the runner's `dryEvaluation`: D44(g) keeps it there). */
+export type DryEvaluate = (
   when: NonNullable<RunWorkflowStep["when"]>,
   observed: ReadonlyMap<string, DryObservation> | undefined,
-): string {
-  if (observed === undefined) return NOT_EVALUATED;
-  const queries = new Map<string, QueryCount>();
-  for (const g of when) {
-    const o = observed.get(g.count);
-    if (o === undefined) return `cannot tell: query "${g.count}" was not read`;
-    if ("error" in o) return `cannot tell: ${o.error}`;
-    queries.set(g.count, o.count);
-  }
-  const ev = evaluateGuard(when, queries);
-  const counts = ev.observed.map((o) => observationText(o)).join(", ");
-  if (ev.holds) return `would run (selects ${counts}; ${DRY_AS_OF})`;
-  const cappedFailure = ev.observed.some((o) => o.capped && !o.holds);
-  return cappedFailure
-    ? `would not run (selects ${counts}; a query hit its limit, so a comparison other than gt, gte or ne 0 cannot be established; ${DRY_AS_OF})`
-    : `would not run (selects ${counts}; ${DRY_AS_OF})`;
-}
+) => string;
 
 /** One step's dry-run entry: a prompt as before; a query or write shown as the declared form. */
 export function previewStep(
   s: WorkflowStep,
   i: number,
   observed: ReadonlyMap<string, DryObservation> | undefined,
+  evaluate: DryEvaluate,
 ): WorkflowStepResult {
   const label = stepLabelOf(s, i);
   if (s.kind === "query") {
@@ -92,7 +74,7 @@ export function previewStep(
   }
   if (s.when !== undefined) {
     entry.guard = guardText(s.when);
-    entry.evaluation = dryEvaluation(s.when, observed);
+    entry.evaluation = evaluate(s.when, observed);
   }
   return entry;
 }

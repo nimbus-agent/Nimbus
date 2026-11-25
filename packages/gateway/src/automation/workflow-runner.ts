@@ -13,6 +13,7 @@ import { readIndexedUserVersion } from "../index/migrations/runner.ts";
 import { type LearningConfig, learnFromStepRun } from "../standing/approval-learning.ts";
 import { type DeclaredQueryResult, runDeclaredQuery } from "./declared-query.ts";
 import {
+  type DryObservation,
   observeGuardQueries,
   previewStep,
   stepLabelOf,
@@ -523,6 +524,31 @@ function skippedOnResume(p: RunWorkflowExecutionParams, step: WorkflowStep, i: n
   return p.resume !== undefined && i < p.resume.blockedStep && step.kind !== "query";
 }
 
+const DRY_AS_OF = "as of now; a real run re-reads the index";
+const NOT_EVALUATED = "not evaluated: only the owner's CLI or desktop connection evaluates guards";
+
+/** What a guard would do against the dry run's observations, as one owner-readable line. */
+function dryEvaluation(
+  when: NonNullable<RunWorkflowStep["when"]>,
+  observed: ReadonlyMap<string, DryObservation> | undefined,
+): string {
+  if (observed === undefined) return NOT_EVALUATED;
+  const queries = new Map<string, QueryCount>();
+  for (const g of when) {
+    const o = observed.get(g.count);
+    if (o === undefined) return `cannot tell: query "${g.count}" was not read`;
+    if ("error" in o) return `cannot tell: ${o.error}`;
+    queries.set(g.count, o.count);
+  }
+  const ev = evaluateGuard(when, queries);
+  const counts = ev.observed.map((o) => observationText(o)).join(", ");
+  if (ev.holds) return `would run (selects ${counts}; ${DRY_AS_OF})`;
+  const cappedFailure = ev.observed.some((o) => o.capped && !o.holds);
+  return cappedFailure
+    ? `would not run (selects ${counts}; a query hit its limit, so a comparison other than gt, gte or ne 0 cannot be established; ${DRY_AS_OF})`
+    : `would not run (selects ${counts}; ${DRY_AS_OF})`;
+}
+
 function executeDryRun(
   p: RunWorkflowExecutionParams,
   wf: { id: string; name: string },
@@ -546,7 +572,7 @@ function executeDryRun(
     runId,
     status: "preview",
     dryRun: true,
-    stepResults: steps.map((s, i) => previewStep(s, i, observed)),
+    stepResults: steps.map((s, i) => previewStep(s, i, observed, dryEvaluation)),
   };
 }
 

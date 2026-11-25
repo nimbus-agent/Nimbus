@@ -123,7 +123,7 @@ function schemaGaps(t: {
 function readChanges(
   db: Database,
   examined: readonly { readonly key: string; readonly via: "monitored" | "upstream" }[],
-  window: { readonly fromMs: number; readonly toMs: number },
+  bounds: { readonly fromMs: number; readonly toMs: number },
 ): {
   changes: DataSchemaChangeView[];
   noHistory: string[];
@@ -135,7 +135,7 @@ function readChanges(
   const incomplete: string[] = [];
   const cut: string[] = [];
   for (const { key, via } of examined) {
-    const r = readSchemaHistory(db, key, window);
+    const r = readSchemaHistory(db, key, bounds);
     if (r.noHistory) noHistory.push(key);
     if (r.incompleteAtMs.length > 0) incomplete.push(key);
     if (r.cut) cut.push(key);
