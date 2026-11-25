@@ -32,7 +32,9 @@ export const MAX_ARTIFACT_BYTES = 32 * 1024 * 1024;
 
 type FetchFn = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
-const tooLarge = (): Response => new Response(null, { status: 413 });
+/** 413 for an oversized successful body; an unsuccessful response keeps its own status (a 503 or 429 stays retryable). */
+const tooLarge = (res: Response): Response =>
+  new Response(null, { status: res.ok ? 413 : res.status });
 
 /**
  * `globalThis.fetch` read at call time, refusing a body over the artifact cap: by its announced
@@ -44,7 +46,7 @@ const cappedFetch: FetchFn = async (input, init) => {
   const announced = Number(res.headers.get("content-length"));
   if (Number.isFinite(announced) && announced > MAX_ARTIFACT_BYTES) {
     await res.body?.cancel();
-    return tooLarge();
+    return tooLarge(res);
   }
   if (res.body === null) return res;
   const reader = res.body.getReader();
@@ -56,7 +58,7 @@ const cappedFetch: FetchFn = async (input, init) => {
     size += value.byteLength;
     if (size > MAX_ARTIFACT_BYTES) {
       await reader.cancel();
-      return tooLarge();
+      return tooLarge(res);
     }
     chunks.push(value);
   }

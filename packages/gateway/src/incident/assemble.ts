@@ -183,7 +183,7 @@ function substrateGaps(): GapNote[] {
   ];
 }
 
-function citedServicesOf(record: IncidentRecordV1): string[] {
+export function citedServicesOf(record: IncidentRecordV1): string[] {
   const out = new Set<string>([record.trigger.service]);
   const c = record.change;
   if (c.deployment !== null) out.add(c.deployment.provider);
@@ -197,7 +197,7 @@ function citedServicesOf(record: IncidentRecordV1): string[] {
   if (record.data !== null) {
     for (const o of record.data.orchestration) out.add(o.service);
     for (const p of record.data.prs) out.add(p.service);
-    if ((record.data.dbtTests ?? []).length > 0) out.add("dbt");
+    if ((record.data.totals.dbtTests ?? 0) > 0) out.add("dbt");
   }
   return [...out].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 }

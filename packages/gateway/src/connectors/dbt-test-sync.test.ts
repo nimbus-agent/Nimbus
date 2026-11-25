@@ -9,7 +9,7 @@ import {
   urlFromFetchInput,
 } from "./connector-sync-test-helpers.ts";
 import { createDbtSyncable } from "./dbt-sync.ts";
-import { MAX_RUNS_PER_PASS } from "./dbt-test-sync.ts";
+import { MAX_RESULTS_PER_RUN, MAX_RUNS_PER_PASS } from "./dbt-test-sync.ts";
 import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 
 const NOW = Date.now();
@@ -268,6 +268,54 @@ describeWithFetchRestore("dbt test results", () => {
     await syncable().sync(syncTestContext(db, vault(), "dbt"), null);
     expect(testRows(db)).toHaveLength(0);
     expect(sent).toBeLessThan(40); // the read stopped at the cap, not at the end of the body
+  });
+
+  test("an oversized unsuccessful response keeps its status, so a 503 is retried", async () => {
+    const db = createMemoryIndexDb();
+    globalThis.fetch = route((u) => {
+      if (u.includes("run_results.json")) {
+        return new Response("x", {
+          status: 503,
+          headers: { "content-length": String(64 * 1024 * 1024) },
+        });
+      }
+      if (u.includes("/runs/?")) return json({ data: [run(8, 5)] });
+      return undefined;
+    });
+    const r = await syncable().sync(syncTestContext(db, vault(), "dbt"), null);
+    expect(testRows(db)).toHaveLength(0);
+    expect(testsCursor(r.cursor)["42"]).toBeLessThan(finishedMs(run(8, 5)));
+  });
+
+  test("a run with more failing tests than the cap indexes the cap and warns with the run id", async () => {
+    const db = createMemoryIndexDb();
+    const many = {
+      results: Array.from({ length: MAX_RESULTS_PER_RUN + 3 }, (_, i) => ({
+        unique_id: `test.shop.t${String(i)}.h`,
+        status: "fail",
+        failures: 1,
+      })),
+    };
+    globalThis.fetch = route((u) => {
+      if (u.includes("run_results.json")) return json(many);
+      if (u.includes("manifest.json")) return json({}, 404);
+      if (u.includes("/runs/?")) return json({ data: [run(9, 5)] });
+      return undefined;
+    });
+    const warned: Record<string, unknown>[] = [];
+    const ctx = syncTestContext(db, vault(), "dbt");
+    const logged: SyncContext = {
+      ...ctx,
+      logger: {
+        ...ctx.logger,
+        warn: (o: unknown) => {
+          warned.push(o as Record<string, unknown>);
+        },
+      } as unknown as SyncContext["logger"],
+    };
+    await syncable().sync(logged, null);
+    expect(testRows(db)).toHaveLength(MAX_RESULTS_PER_RUN);
+    expect(warned.some((w) => w["runId"] === 9 && w["omitted"] === 3)).toBe(true);
   });
 
   test("a tie at the cursor on one page does not stop the listing before the next page", async () => {

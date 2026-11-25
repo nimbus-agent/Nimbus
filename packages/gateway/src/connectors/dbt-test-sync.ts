@@ -130,9 +130,16 @@ async function indexRun(
     return { kind: "done", upserted: 0, bytes };
   }
   const entries = asRecord(results.parsed)?.["results"];
-  const flagged = (Array.isArray(entries) ? entries : [])
-    .filter((e) => mapDbtTestResultToItem(e, base(creds, accountId, run, new Map(), now)) !== null)
-    .slice(0, MAX_RESULTS_PER_RUN);
+  const eligible = (Array.isArray(entries) ? entries : []).filter(
+    (e) => mapDbtTestResultToItem(e, base(creds, accountId, run, new Map(), now)) !== null,
+  );
+  const flagged = eligible.slice(0, MAX_RESULTS_PER_RUN);
+  if (eligible.length > flagged.length) {
+    ctx.logger.warn(
+      { serviceId: "dbt", accountId, runId: run.runId, omitted: eligible.length - flagged.length },
+      "dbt run has more failing tests than the per-run cap; the rest are not indexed",
+    );
+  }
   if (flagged.length === 0) {
     return { kind: "done", upserted: 0, bytes };
   }
