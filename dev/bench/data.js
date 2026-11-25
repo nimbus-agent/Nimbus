@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795650136488,
+  "lastUpdate": 1795650658479,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "02011dfa35ceaee8231863de7d43ffb405beb0ef",
-          "message": "fix(connectors): make connector auth refuse vault-key services with the exact vault set commands (#1537)\n\nCloses #1531.\n\n## What was broken\n\n50 connectors that take a token, API key or local setting (Stripe,\nVercel, Snowflake, Elasticsearch, `localdb`, …) have no `connector auth`\nhandler. `nimbus connector auth <svc>` fell through to the OAuth path.\nThat path threw an internal error, `oauthProfileForService: stripe uses\na secret API key (connector.auth stripe)`, which told the user to run\nthe command that had just failed. `--token` was silently dropped for\nthese services, and `connector auth <svc> --help` pointed at `nimbus\nconnector help`, which never mentions them.\n\n## The fix (a refusal, not a new store-the-keys path)\n\n`handleConnectorAuth` now refuses **before** the OAuth path for a\nservice with no auth flow, with a `-32602` that says how it\nauthenticates and what to run instead:\n\n```text\nelasticsearch has no `nimbus connector auth` flow — it uses an Elasticsearch API key + cluster URL. Store its settings in the Vault instead (each write asks for your approval; set the ones your setup uses):\n  nimbus vault set elasticsearch.url <value>\n  nimbus vault set elasticsearch.api_key <value>\n```\n\nThe seven services that sync with another service's credential name that\nservice instead: `github_actions` → `github`; `bigquery`,\n`cloud_logging`, `vertex_ai` → `gcp`; `athena`, `cloudwatch`,\n`sagemaker` → `aws`.\n\n**Why not store the keys through `connector auth`:** `vault set` asks\nfor approval on every write, while `connector.auth` writes without a\nprompt and is reachable from the desktop renderer. A generic arm would\nhave added an ungated Vault-write path for 50 more services.\n`CONNECTOR_VAULT_SECRET_KEYS` also cannot say which keys are required,\nso that arm would accept a half-configured connector without complaint.\n(Decision confirmed with the maintainer before implementation.)\n\nAlso in this PR:\n- `OAUTH_UNSUPPORTED_DETAILS` entries are now pure descriptions. None\nnames a command, because which command applies is decided in the IPC\nlayer, not the catalog.\n- `connector auth <svc> --help` and `nimbus connector help` point at\n`vault set`. The CLI cannot list a service's keys itself (IPC-only), so\nit names the command that does.\n- `docs/cli-reference.md`: the 34 examples that showed `nimbus connector\nauth <svc>` for these services are gone. In their place is a table of\nall 50 services and their Vault keys, generated from the manifest, which\ndefers to the refusal's text if the two ever disagree.\n\n## Tests\n\n- `stripe`, `vercel`, `elasticsearch`, `localdb`, `great_expectations`\n(the services the issue reproduced) each get a `-32602` naming every\nmanifest key. Nothing is written to the Vault, and the browser opener is\nnever called.\n- `bigquery` / `github_actions` / `athena` name `gcp` / `github` /\n`aws`.\n- Across the whole catalog, no refusal names `connector auth <itself>`,\nand every Vault-key refusal lists every key.\n- Services with a flow get no refusal: `github`, `jira`, `aws` (PAT\nhandler) and `google_drive`, `notion`, `slack` (OAuth).\n- The internal OAuth error no longer says `connector.auth`.\n- The CLI `--help` for `stripe` names `nimbus connector auth stripe` and\n`nimbus vault set`.\n\nWith HEAD's catalog and handler (plus no-op stubs for the new exports),\nthree of the new gateway tests fail. The other two are catalog-wide\nguards and pass trivially there. Locally, `preflight:fast`,\n`typecheck:tests`, `packages/gateway/src/{ipc,connectors}` (5,213 pass)\nand the CLI connector tests (138 pass) are green.\n\n## Not changed\n\n- The four upstream READMEs in `nimbus-mcp-servers` that show `nimbus\nconnector auth <svc>` (`elasticsearch`, `dataprofile`, `localdb`,\n`storybook`). That is a separate repo.\n- The Phase 11 acceptance criterion in `docs/roadmap.md` that names\n`nimbus connector auth fastmail`. It is product intent, so rewording it\nis left to the roadmap owner.\n- Good-first-issue bodies that tell contributors to document `nimbus\nconnector auth <x>` for these services should now say `nimbus vault\nset`.\n\nNo invariant, no migration, no egress class.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n- **New Features**\n- Improved `nimbus connector auth <service>` guidance for token- and\nAPI-key-based services, including exact Vault commands.\n- Added clearer instructions for reusing credentials across related\nservices.\n  - Standardized guidance for services that do not support OAuth.\n\n- **Bug Fixes**\n- Unsupported authentication attempts now return actionable `-32602`\nerrors instead of entering unavailable flows.\n\n- **Documentation**\n- Updated CLI help and reference documentation with Vault credential\nmappings and connector-specific authentication guidance.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-18T09:08:20Z",
-          "tree_id": "7b6c3710107a3469ff55c2938796007b0cb8a1eb",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/02011dfa35ceaee8231863de7d43ffb405beb0ef"
-        },
-        "date": 1789723244186,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 328.811392800001,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 329.12634759999565,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 183.88055050000003,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a62a8572116ce233a0a62c44fe9c0ca722451f36",
+          "message": "refactor(gateway): clear the S3776 findings in the engine and gateway modules (#2162)\n\nClears nine open `typescript:S3776` findings by splitting each function\nby phase into named steps called in order at the call site. No behaviour\nchange.\n\n- `engine/before-state.ts` `read` (19): five numbered phases\n(`locateReader`, `readStance`, `planReads`, the one-cap race,\n`finishRead`); the pure guard and selection helpers moved to\n`engine/before-state-guard.ts`.\n- `engine/run-ask.ts` `answerConversationally` (23): agent input built\nby `conversationalAgentParams`, outcome recorded by\n`noteConversationalOutcome` (`engine/run-ask/conversational.ts`).\n- `engine/agent.ts` `searchLocalIndex` (16): argument parsing in\n`engine/agent-search-args.ts`.\n- `connectors/connector-writes/model-write-refusals.ts` `stripTags`\n(19): two linear scanners in `tag-strip.ts`, checked against the regexes\nthey stand for.\n- `extensions/trust/trust-store.ts` `recordTrustStatements` (18):\nrefuse, cap, then `storeAdmitted`; the file does not grow (D37 confines\nthe table to it).\n- `egress/egress-verify.ts` `verifyEgressChain` (20): pre-scan, start\nhash and per-page verification (`egress/egress-chain-walk.ts`); both\nchain checks stay together, in order, per row.\n- `platform/assemble.ts` (16): toolgen credential bind and revoke loops\nmoved to `platform/assemble/toolgen-credential-wiring.ts`.\n- `debt/debt-scan.ts` `judgeRootFiles` (16): symbol recording extracted.\n- `connectors/jsm-alerts.ts` `readPages` (17): `markFailed` and\n`keepPage`.\n\nPins updated, same meaning: `i61` (episodic recall reaches the agent\nthrough `conversationalAgentParams`, `episodicRecall: c.memoryBlock`).\nThe `i58` pin is unchanged.\n\nFile-size baseline lowered for every capped file touched.\n\nPre-existing, unrelated: the I15 marker-folder behavioural test fails on\nWindows on a clean tree too.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Refactor**\n* Restructured internal handling for conversational responses,\nbefore-state reads, credential operations, trust records, and egress\nverification. Existing behavior is preserved.\n* **Tests**\n* Added coverage for search input handling, tag-stripping results,\ncredential operations, and conversational context wiring.\n* **User-facing changes**\n* No new user-visible features or behavior changes are described in this\nupdate.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Sonnet 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-25T23:42:33Z",
+          "tree_id": "cc73e25aa273af5bc6dc8dfec4f81db3bb513d70",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/a62a8572116ce233a0a62c44fe9c0ca722451f36"
+        },
+        "date": 1795650653810,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 188.09860869999903,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 186.2027612500013,
             "unit": "ms"
           }
         ]
