@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795643070658,
+  "lastUpdate": 1795643516112,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "0037b9a54d227c46df8b48153bf6b4c3a002ce81",
-          "message": "chore: release main (#1532)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.25.0</summary>\n\n##\n[7.25.0](https://github.com/nimbus-agent/Nimbus/compare/v7.24.0...v7.25.0)\n(2026-09-17)\n\n\n### Features\n\n* **search:** disclose keyword-only and mid-backfill results; typed\nembedding query timeout\n([#1535](https://github.com/nimbus-agent/Nimbus/issues/1535))\n([c6c7e27](https://github.com/nimbus-agent/Nimbus/commit/c6c7e27b75901cbfa19f7b03b4514d6fb63d831c))\n\n\n### Bug Fixes\n\n* **media:** show real sizes in the allow-remote consent preview\n([#1534](https://github.com/nimbus-agent/Nimbus/issues/1534))\n([c6f927e](https://github.com/nimbus-agent/Nimbus/commit/c6f927ec0d5f88dc6d54d4f81482765236a324be))\n* **sandbox:** stop the Windows helper leaking an ACE per run; tool run\nfollow-ups ([#1524](https://github.com/nimbus-agent/Nimbus/issues/1524))\n([52fb7cf](https://github.com/nimbus-agent/Nimbus/commit/52fb7cfea808893955c6267caf08a5cb18aae943))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-09-17T17:09:35Z",
-          "tree_id": "1ce26bc558b5132ec381d41e9512525c69f2a4c6",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/0037b9a54d227c46df8b48153bf6b4c3a002ce81"
-        },
-        "date": 1789665745071,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 346.36890139999815,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 342.6785682499987,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 264.48621035001304,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9769dcd7af1054742b115e283b77e1d230222545",
+          "message": "refactor: clear SonarCloud findings outside packages/cli and packages/gateway (#2155)\n\nClears the open SonarCloud issues in everything outside `packages/cli/`\nand `packages/gateway/` (32 issues, 0 hotspots), adds tests for the\nleast-covered files in that scope, and removes the one in-scope\nduplicated block. No behaviour change.\n\n## Fixed in code (14)\n- **S3358 nested ternary (6)**: `packages/ui/src/pages/Incidents.tsx`\n(3) and `Infrastructure.tsx` (2) move the loading/error/empty/list chain\ninto a small body component with early returns;\n`registry-action/src/sign.ts` (1) builds the bundle reference with two\nflat ternaries.\n- **S3776 cognitive complexity (1)**: `Incidents` is 16 → under 15 by\nthe same extraction.\n- **S6479 index as key (2)**: `IncidentTimeline` and the Infrastructure\ndrift lines now key by content, with an occurrence suffix for repeats\n(`packages/ui/src/lib/content-keys.ts`, `withContentKeys`). The two\n`biome-ignore noArrayIndexKey` comments are gone.\n- **S6582 optional chain (2)**: `IncidentProposals`, `IncidentTimeline`\n(`x?.recordId !== recordId`, same truth table).\n- **S1874 deprecated `FormEvent` (2)**: `RegistryBrowse` uses\n`SubmitEvent`.\n- **S9382 await in loop (1)**: `host-probe.ts`'s bounded worker pool\ntakes the next host by recursion instead of a `while` loop (same\nconcurrency, same counts).\n\n## Marked false positive through the review workflow (18)\n- **S1313 hardcoded IP (18)**, `registry-action/src/host-probe.ts`:\nthese literals are the special-purpose prefixes (RFC 1918, 6598, 4193,\nand so on) on the probe's **deny list**. Any host that resolves into\nthem is refused and never contacted. Each issue has a comment with that\nreason. No exclusion was added.\n\n## Duplication\n- `registry-format`: `liveness-file.ts`, `trust-feed.ts` and\n`index-format.ts` all repeated the same steps: size cap, strict UTF-8\ndecode, BOM drop, then `JSON.parse`. That now lives in one place,\n`src/json-file.ts` `decodeJsonFile`, and the error codes and messages\nare unchanged.\n- Left: `packages/ui/src/lib/escape-invisible.ts` is duplicated with\ngateway and cli copies. The UI cannot import gateway or cli source\n(IPC-only rule), and the other copies are outside this scope.\n\n## Tests added\n- `packages/ui/test/lib/content-keys.test.ts`\n- `packages/registry-format/src/json-file.test.ts`\n- `packages/github-actions/registry-action/src/trust-state.test.ts`:\ncovers the marker-not-JSON, non-regular-file and oversize-skip branches,\nwhich had no coverage.\n- `packages/ui/test/store/dashboard.test.ts`: covers `setMetrics`,\n`setMetricsError` and `setAudit`, which no test exercised.\n\nOther changes: the action `dist/index.js` was rebuilt with the recorded\nBun 1.4.5 (`audit:action-dist` OK), and the file-size baseline was\nlowered for `sign.ts` (541 → 538).\n\n## Verification\n- `bun run preflight:fast`: PASSED\n- UI `vitest run` (all 50 files): 506 passed; `tsc --noEmit` clean\n- registry-format `bun test src`: 872 pass, 0 fail\n- registry-action: sign, sign-scores, main, provenance, host-probe,\nliveness and trust-state tests all pass; `tsc -p tsconfig.json` and\n`tsconfig.tests.json` clean\n- gateway `extensions/registry` (consumes registry-format): 369 tests, 0\nfail\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-25T21:35:35Z",
+          "tree_id": "e314e2d0654270ac6b633af3d29ec9941248924c",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/9769dcd7af1054742b115e283b77e1d230222545"
+        },
+        "date": 1795643512868,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 174.03617394999839,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 174.36503984999655,
             "unit": "ms"
           }
         ]
