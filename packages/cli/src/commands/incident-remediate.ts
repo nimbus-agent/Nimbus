@@ -36,33 +36,42 @@ function isConsentShortcut(a: string): boolean {
 const ID_OK = (s: string | undefined): s is string =>
   s !== undefined && s !== "" && !s.startsWith("--") && s.length <= 256;
 
-function parseRemediate(rest: readonly string[]): RemediationArgs | undefined {
-  let json = false;
-  let id: string | undefined;
-  let pick: string | undefined;
-  let dryRun = false;
+type RemediateScan = { switches: Set<string>; id?: string; pick?: string };
+
+const REMEDIATE_SWITCHES: ReadonlySet<string> = new Set(["--dry-run", "--json"]);
+
+/** `--pick <n|prp_id>`: a list position or a proposal id. */
+const isPick = (v: string | undefined): v is string =>
+  ID_OK(v) && /^(\d{1,3}|prp_[0-9a-f]{16})$/.test(v);
+
+/** Reads the flags and the one id; undefined for a repeat, a bad `--pick` or a stray argument. */
+function scanRemediate(rest: readonly string[]): RemediateScan | undefined {
+  const s: RemediateScan = { switches: new Set() };
   for (let i = 0; i < rest.length; i += 1) {
     const a = rest[i] as string;
-    if (a === "--dry-run") {
-      if (dryRun) return undefined;
-      dryRun = true;
-    } else if (a === "--json") {
-      if (json) return undefined;
-      json = true;
+    if (REMEDIATE_SWITCHES.has(a)) {
+      if (s.switches.has(a)) return undefined;
+      s.switches.add(a);
     } else if (a === "--pick") {
       const v = rest[i + 1];
-      if (pick !== undefined || !ID_OK(v) || !/^(\d{1,3}|prp_[0-9a-f]{16})$/.test(v)) {
-        return undefined;
-      }
-      pick = v;
+      if (s.pick !== undefined || !isPick(v)) return undefined;
+      s.pick = v;
       i += 1;
-    } else if (id === undefined && ID_OK(a)) {
-      id = a;
+    } else if (s.id === undefined && ID_OK(a)) {
+      s.id = a;
     } else {
       return undefined;
     }
   }
-  if (id === undefined) return undefined;
+  return s;
+}
+
+function parseRemediate(rest: readonly string[]): RemediationArgs | undefined {
+  const s = scanRemediate(rest);
+  if (s?.id === undefined) return undefined;
+  const { id, pick } = s;
+  const json = s.switches.has("--json");
+  const dryRun = s.switches.has("--dry-run");
   // A dry run names one proposal and asks nothing, so it needs --pick and may print JSON.
   if (dryRun) return pick === undefined ? undefined : { verb: "remediate", json, id, pick, dryRun };
   // A run holds the terminal for the prompt, so it has no --json form.
@@ -173,9 +182,19 @@ function confidenceText(p: ProposalLike): string[] {
       ? "nothing met"
       : met.map((t) => `${clean(t.name)} ${String(t.weight)}`).join(" + ");
   const missing = c.terms.filter((t) => !t.met).map((t) => clean(t.name));
-  return [
-    `confidence ${String(c.total)} of 100 = ${sum}${missing.length === 0 ? "" : ` (not met: ${missing.join(", ")})`}`,
-  ];
+  const notMet = missing.length === 0 ? "" : ` (not met: ${missing.join(", ")})`;
+  return [`confidence ${String(c.total)} of 100 = ${sum}${notMet}`];
+}
+
+function blastLine(b: NonNullable<NonNullable<ProposalLike["evidence"]>["blast"]>): string {
+  const more = b.dependentsTruncated ? ", and more" : "";
+  const deps =
+    b.dependents.length === 0
+      ? "no dependent service declared"
+      : `${b.dependents.map(clean).join(", ")}${more} depend on it`;
+  const service = b.service === null ? "unbound" : clean(b.service);
+  const environment = b.environment === null ? "unknown" : clean(b.environment);
+  return `blast radius: service ${service}, environment ${environment}; ${deps}; the target's current state is shown when you approve`;
 }
 
 function evidenceLines(p: ProposalLike): string[] {
@@ -184,18 +203,10 @@ function evidenceLines(p: ProposalLike): string[] {
   const out: string[] = [];
   if (e.rule !== undefined) {
     const items = (e.items ?? []).map(clean).join(", ");
-    out.push(`evidence: ${clean(e.rule)}${items === "" ? "" : ` (${items})`}`);
+    const itemText = items === "" ? "" : ` (${items})`;
+    out.push(`evidence: ${clean(e.rule)}${itemText}`);
   }
-  if (e.blast !== undefined) {
-    const b = e.blast;
-    const deps =
-      b.dependents.length === 0
-        ? "no dependent service declared"
-        : `${b.dependents.map(clean).join(", ")}${b.dependentsTruncated ? ", and more" : ""} depend on it`;
-    out.push(
-      `blast radius: service ${b.service === null ? "unbound" : clean(b.service)}, environment ${b.environment === null ? "unknown" : clean(b.environment)}; ${deps}; the target's current state is shown when you approve`,
-    );
-  }
+  if (e.blast !== undefined) out.push(blastLine(e.blast));
   if (e.dryRun !== undefined) out.push(`dry run: ${clean(e.dryRun)}${dryRunKindText(p.dryRun)}`);
   return out;
 }
@@ -366,9 +377,8 @@ async function runRemediate(
 /** How a run's outcome reads, for `incident remediate --pick` and `oncall pushed --remediate` alike. */
 export function reportRemediateOutcome(out: RemediateReply, sink: Sink): number {
   if (out.status === "executed") {
-    sink.out(
-      `Done. Action ${clean(out.actionId)}.${out.undoable ? ` Undo with: nimbus incident undo ${clean(out.actionId)}` : ""}\n`,
-    );
+    const undo = out.undoable ? ` Undo with: nimbus incident undo ${clean(out.actionId)}` : "";
+    sink.out(`Done. Action ${clean(out.actionId)}.${undo}\n`);
     // The gateway ran it but could not record it (its proposal row changed meanwhile): say so, still exit 0.
     if (out.reason !== undefined) sink.err(`Note: ${clean(out.reason)}\n`);
     return 0;
@@ -410,11 +420,10 @@ async function runAdvisory(
     a.action === "status"
       ? await c.call<{ advisory: boolean }>("incident.advisory", {})
       : await c.call<{ advisory: boolean }>("incident.advisorySet", { on: a.action === "on" });
-  sink.out(
-    a.json
-      ? `${JSON.stringify(r)}\n`
-      : `Advisory mode is ${r.advisory ? "ON: proposals are shown, nothing is run (remediate and undo are refused)" : "off"}.\n`,
-  );
+  const mode = r.advisory
+    ? "ON: proposals are shown, nothing is run (remediate and undo are refused)"
+    : "off";
+  sink.out(a.json ? `${JSON.stringify(r)}\n` : `Advisory mode is ${mode}.\n`);
   return 0;
 }
 

@@ -85,8 +85,8 @@ export interface TrustCmdDeps {
 const DEFAULT_DEPS: TrustCmdDeps = {
   withGateway: (fn) => withGatewayIpc(fn),
   maintain: (args) => runTrustMaintain(args),
-  stdout: (s) => void process.stdout.write(s),
-  stderr: (s) => void process.stderr.write(s),
+  stdout: (s) => process.stdout.write(s),
+  stderr: (s) => process.stderr.write(s),
   exit: (code) => process.exit(code),
 };
 

@@ -80,40 +80,53 @@ export function parseDest(raw: string): UpdateDest | undefined {
 export function parseUpdateArgs(argv: readonly string[]): UpdateArgs | undefined {
   const f = scanFlags(argv, VALUE_FLAGS, BOOL_FLAGS);
   if (f === undefined) return undefined;
-  if (f.bools.has("--queued")) {
-    if (f.id !== undefined || f.values.size > 0 || f.bools.has("--force")) return undefined;
-    if (f.bools.has("--synthesize")) return undefined;
-    return { mode: "queue", json: f.bools.has("--json") };
-  }
+  if (f.bools.has("--queued")) return parseQueueArgs(f);
+  const common = parseCommon(f);
+  if (common === undefined) return undefined;
+  const sendRaw = f.values.get("--send");
+  if (sendRaw === undefined) return parseDraftArgs(f, common);
+  return parseSendArgs(f, common, sendRaw);
+}
+
+type Scanned = NonNullable<ReturnType<typeof scanFlags>>;
+
+/** `--queued` lists the queue: no id, no value flag, no `--force` and no `--synthesize`. */
+function parseQueueArgs(f: Scanned): UpdateArgs | undefined {
+  if (f.id !== undefined || f.values.size > 0 || f.bools.has("--force")) return undefined;
+  if (f.bools.has("--synthesize")) return undefined;
+  return { mode: "queue", json: f.bools.has("--json") };
+}
+
+/** The id, `--audience` and `--version` that a draft and a send share. */
+function parseCommon(f: Scanned): Common | undefined {
   if (f.id === undefined) return undefined;
   const audienceRaw = f.values.get("--audience");
   if (audienceRaw !== undefined && audienceRaw !== "stakeholders" && audienceRaw !== "engineers") {
     return undefined;
   }
   const versionRaw = f.values.get("--version");
-  let version: number | undefined;
-  if (versionRaw !== undefined) {
-    if (!/^[1-9]\d{0,8}$/.test(versionRaw)) return undefined;
-    version = Number(versionRaw);
-  }
-  const common: Common = {
+  if (versionRaw !== undefined && !/^[1-9]\d{0,8}$/.test(versionRaw)) return undefined;
+  return {
     id: f.id,
     ...(audienceRaw === undefined ? {} : { audience: audienceRaw }),
-    ...(version === undefined ? {} : { version }),
+    ...(versionRaw === undefined ? {} : { version: Number(versionRaw) }),
   };
-  const sendRaw = f.values.get("--send");
-  if (sendRaw === undefined) {
-    if (f.values.has("--from")) return undefined;
-    const out = f.values.get("--out");
-    return {
-      ...common,
-      mode: "draft",
-      json: f.bools.has("--json"),
-      force: f.bools.has("--force"),
-      ...(f.bools.has("--synthesize") ? { synthesize: true } : {}),
-      ...(out === undefined ? {} : { out }),
-    };
-  }
+}
+
+function parseDraftArgs(f: Scanned, common: Common): UpdateArgs | undefined {
+  if (f.values.has("--from")) return undefined;
+  const out = f.values.get("--out");
+  return {
+    ...common,
+    mode: "draft",
+    json: f.bools.has("--json"),
+    force: f.bools.has("--force"),
+    ...(f.bools.has("--synthesize") ? { synthesize: true } : {}),
+    ...(out === undefined ? {} : { out }),
+  };
+}
+
+function parseSendArgs(f: Scanned, common: Common, sendRaw: string): UpdateArgs | undefined {
   if (f.values.has("--out") || f.bools.size > 0) return undefined; // includes --synthesize
   const dest = parseDest(sendRaw);
   if (dest === undefined) return undefined;
@@ -311,6 +324,19 @@ export async function runUpdateWith(
   }
 }
 
+/** A send waits on the owner's answer (a person only), and a synthesis waits on a model. */
+function updateGatewayOptions(
+  a: UpdateArgs,
+): { consent?: { kind: "human" }; requestTimeoutMs: number } | undefined {
+  if (a.mode === "send") {
+    return { consent: { kind: "human" }, requestTimeoutMs: INTERACTIVE_RPC_TIMEOUT_MS };
+  }
+  if (a.mode === "draft" && a.synthesize === true) {
+    return { requestTimeoutMs: INTERACTIVE_RPC_TIMEOUT_MS };
+  }
+  return undefined;
+}
+
 export async function runUpdateCommand(args: string[]): Promise<void> {
   const a = parseUpdateArgs(args);
   if (a === undefined) {
@@ -331,11 +357,7 @@ export async function runUpdateCommand(args: string[]): Promise<void> {
     getCliPlatformPaths(),
     // A send blocks on the executor's prompt, which only a person answers (as `nimbus incident remediate`).
     // A send waits on the owner's answer, and a synthesis waits on a model.
-    a.mode === "send"
-      ? { consent: { kind: "human" }, requestTimeoutMs: INTERACTIVE_RPC_TIMEOUT_MS }
-      : a.mode === "draft" && a.synthesize === true
-        ? { requestTimeoutMs: INTERACTIVE_RPC_TIMEOUT_MS }
-        : undefined,
+    updateGatewayOptions(a),
   );
   if (code !== 0) throw new CliExit(code);
 }

@@ -42,8 +42,8 @@ export async function locateGateway(
 const DEFAULT_GATEWAY_DEPS: RegistryGatewayDeps = {
   locate: () => locateGateway(getCliPlatformPaths(), readGatewayState),
   createClient: createIpcClient,
-  stdout: (s) => void process.stdout.write(s),
-  stderr: (s) => void process.stderr.write(s),
+  stdout: (s) => process.stdout.write(s),
+  stderr: (s) => process.stderr.write(s),
 };
 
 /**
@@ -94,7 +94,7 @@ const DEFAULT_DEPS: RegistryCmdDeps = {
   maintain: (args) => runRegistryMaintain(args),
   client: runRegistryClientOverGateway,
   isTty: () => process.stdin.isTTY === true && process.stdout.isTTY === true,
-  writeErr: (s) => void process.stderr.write(s),
+  writeErr: (s) => process.stderr.write(s),
   exit: (code) => process.exit(code),
 };
 

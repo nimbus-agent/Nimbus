@@ -120,33 +120,47 @@ function day(ms: number): string {
   return new Date(ms).toISOString().slice(0, 10);
 }
 
-export function formatDebt(r: DebtReplyLike): string {
-  const lines: string[] = [];
-  if (r.status === "ok") {
-    lines.push(
-      `Code symbols in files that ${String(r.minIncidents)}+ incidents of the last ${String(r.windowDays)} days pointed at and that nobody committed to for ${String(r.untouchedDays)} days:`,
-    );
-    for (const s of r.symbols) {
-      const touch = s.lastTouchMs === null ? "before the history read" : day(s.lastTouchMs);
-      lines.push(
-        `  ${cleanDebtText(s.name)}  ${cleanDebtText(s.file)}  (${String(s.incidentCount)} incidents, last commit ${touch})`,
-      );
-      lines.push(`    root: ${cleanDebtText(s.root)}`);
-      for (const i of s.incidents) {
-        lines.push(`    ${cleanDebtText(i.id)}  ${day(i.openedAtMs)}  ${cleanDebtText(i.title)}`);
-      }
-    }
-    if (r.omitted > 0) lines.push(`  ... and ${String(r.omitted)} more (raise --limit).`);
-  } else if (r.status === "none") {
-    lines.push("No symbol qualifies.");
-  } else if (r.status === "no_incidents") {
-    lines.push("No incident record was opened in the window, so nothing can point at a file.");
-  } else {
-    lines.push("No git-aware filesystem root is configured, so there is no history to read.");
+type DebtSymbolLike = DebtReplyLike["symbols"][number];
+
+function symbolLines(s: DebtSymbolLike): string[] {
+  const touch = s.lastTouchMs === null ? "before the history read" : day(s.lastTouchMs);
+  return [
+    `  ${cleanDebtText(s.name)}  ${cleanDebtText(s.file)}  (${String(s.incidentCount)} incidents, last commit ${touch})`,
+    `    root: ${cleanDebtText(s.root)}`,
+    ...s.incidents.map(
+      (i) => `    ${cleanDebtText(i.id)}  ${day(i.openedAtMs)}  ${cleanDebtText(i.title)}`,
+    ),
+  ];
+}
+
+/** The body for a status other than `ok`: why no symbol is listed. */
+const EMPTY_DEBT_TEXT: Readonly<Record<string, string>> = {
+  none: "No symbol qualifies.",
+  no_incidents: "No incident record was opened in the window, so nothing can point at a file.",
+};
+const NO_ROOT_TEXT = "No git-aware filesystem root is configured, so there is no history to read.";
+
+function debtBodyLines(r: DebtReplyLike): string[] {
+  if (r.status !== "ok") {
+    return [
+      Object.hasOwn(EMPTY_DEBT_TEXT, r.status)
+        ? (EMPTY_DEBT_TEXT[r.status] as string)
+        : NO_ROOT_TEXT,
+    ];
   }
-  lines.push(
+  const lines = [
+    `Code symbols in files that ${String(r.minIncidents)}+ incidents of the last ${String(r.windowDays)} days pointed at and that nobody committed to for ${String(r.untouchedDays)} days:`,
+    ...r.symbols.flatMap(symbolLines),
+  ];
+  if (r.omitted > 0) lines.push(`  ... and ${String(r.omitted)} more (raise --limit).`);
+  return lines;
+}
+
+export function formatDebt(r: DebtReplyLike): string {
+  const lines = [
+    ...debtBodyLines(r),
     `Scanned ${String(r.counts.incidentsScanned)} incident(s), ${String(r.counts.rootsScanned)} root(s), ${String(r.counts.filesJudged)} file(s).`,
-  );
+  ];
   if (r.gaps.length > 0) {
     lines.push("", "Gaps:");
     for (const g of r.gaps) {

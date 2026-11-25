@@ -220,12 +220,12 @@ function printRecord(
     ? "\nAssembled on demand just now (it was below the automatic severity rule or not yet assembled).\n"
     : "\n";
   // IC4: the LIVE cascade, after the stored Markdown (the stored record never holds it).
-  const cascade =
-    got.cascade?.status === "ok"
-      ? `\n${cleanMarkdown(got.cascade.markdown).trimEnd()}\n`
-      : got.cascade?.status === "unavailable"
-        ? "\nThe other open records could not be ranked this time.\n"
-        : "";
+  let cascade = "";
+  if (got.cascade?.status === "ok") {
+    cascade = `\n${cleanMarkdown(got.cascade.markdown).trimEnd()}\n`;
+  } else if (got.cascade?.status === "unavailable") {
+    cascade = "\nThe other open records could not be ranked this time.\n";
+  }
   sink.out(
     `${cleanMarkdown(got.markdown).trimEnd()}\n${cascade}${note}${recordFooter(got.summary, nowMs)}\n`,
   );
@@ -306,11 +306,10 @@ export async function runIncidentCommand(args: string[]): Promise<void> {
   const asksOwner = (a.verb === "remediate" && a.pick !== undefined) || a.verb === "undo";
   // A synthesis waits on a model, and a live read on the backend: the long budget for each, as a run waits on the owner.
   const asksModel = a.verb === "investigate" && (a.synthesize === true || a.live === true);
+  const longWait = asksModel ? { requestTimeoutMs: BATCH_RPC_TIMEOUT_MS } : undefined;
   const gatewayOptions = asksOwner
     ? { consent: { kind: "human" as const }, requestTimeoutMs: BATCH_RPC_TIMEOUT_MS }
-    : asksModel
-      ? { requestTimeoutMs: BATCH_RPC_TIMEOUT_MS }
-      : undefined;
+    : longWait;
   const code = await withGatewayIpc(
     (c) =>
       runIncidentWith(

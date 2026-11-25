@@ -2,6 +2,7 @@ import type { IPCClient } from "../ipc-client/index.ts";
 import { CliExit } from "../lib/cli-exit.ts";
 import { declareCliClientKind } from "../lib/declare-client-kind.ts";
 import { INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
+import { reportCallFailure } from "../lib/status-call.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 import { stripControl } from "./captures-format.ts";
@@ -218,39 +219,45 @@ export async function runRunbookWith(
   }
   try {
     await declareCliClientKind(c);
-    if (a.runbook !== undefined && a.step !== undefined) {
-      const out = await c.call<RunReplyLike>("incident.runbookRun", {
-        id: a.id,
-        runbook: a.runbook,
-        step: a.step,
-      });
-      return reportRun(out, sink);
-    }
-    if (a.runbook !== undefined && a.done !== undefined) {
-      const done = await c.call("incident.runbookDone", {
-        id: a.id,
-        runbook: a.runbook,
-        step: a.done,
-      });
-      sink.out(
-        a.json
-          ? `${JSON.stringify(done)}\n`
-          : `Marked step ${String(a.done)} of ${clean(a.runbook)} done.\n`,
-      );
-      return 0;
-    }
-    const r = await c.call<RunbooksReplyLike>("incident.runbooks", {
-      id: a.id,
-      ...(a.runbook === undefined ? {} : { runbook: a.runbook }),
-    });
-    sink.out(a.json ? `${JSON.stringify(r)}\n` : `${formatRunbooks(r)}\n`);
-    return 0;
+    return await runbookCall(c, a, sink);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    if (a.json) sink.out(`${JSON.stringify({ error: msg })}\n`);
-    else sink.err(`${clean(msg)}\n`);
-    return 1;
+    return reportCallFailure(e, a.json, sink, clean);
   }
+}
+
+/** One of the three calls: run a step, mark a step done, or list the matching runbooks. */
+async function runbookCall(
+  c: Pick<IPCClient, "call">,
+  a: RunbookArgs,
+  sink: Sink,
+): Promise<number> {
+  if (a.runbook !== undefined && a.step !== undefined) {
+    const out = await c.call<RunReplyLike>("incident.runbookRun", {
+      id: a.id,
+      runbook: a.runbook,
+      step: a.step,
+    });
+    return reportRun(out, sink);
+  }
+  if (a.runbook !== undefined && a.done !== undefined) {
+    const done = await c.call("incident.runbookDone", {
+      id: a.id,
+      runbook: a.runbook,
+      step: a.done,
+    });
+    sink.out(
+      a.json
+        ? `${JSON.stringify(done)}\n`
+        : `Marked step ${String(a.done)} of ${clean(a.runbook)} done.\n`,
+    );
+    return 0;
+  }
+  const r = await c.call<RunbooksReplyLike>("incident.runbooks", {
+    id: a.id,
+    ...(a.runbook === undefined ? {} : { runbook: a.runbook }),
+  });
+  sink.out(a.json ? `${JSON.stringify(r)}\n` : `${formatRunbooks(r)}\n`);
+  return 0;
 }
 
 export async function runRunbookCommand(args: string[]): Promise<void> {
