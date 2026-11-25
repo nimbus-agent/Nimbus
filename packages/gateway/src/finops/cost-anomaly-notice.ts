@@ -54,6 +54,37 @@ function serviceOfKey(seriesKey: string): string {
  * notice per `notifyMinIntervalMinutes`. An anomaly held back by the rate limit is kept (bounded) until a notice
  * is accepted, so it is announced by the first pass after the interval even if the newest day has moved on. Returns what happened, for tests and logs.
  */
+/**
+ * Adds the fresh anomalies of `result` to `pending`. A withheld anomaly stays pending even after the newest
+ * complete day moves on, so it is announced by the first pass after the interval (bounded: the oldest are
+ * dropped past PENDING_CAP).
+ */
+function addPending(
+  result: CostAnomalyResult,
+  seen: ReadonlySet<string>,
+  pending: Map<string, string>,
+): void {
+  for (const a of result.anomalies) {
+    const k = `${a.seriesKey}#${String(a.dayMs)}`;
+    if (!seen.has(k) && !pending.has(k)) pending.set(k, serviceOfKey(a.seriesKey));
+  }
+  while (pending.size > PENDING_CAP) {
+    const oldest = pending.keys().next().value;
+    if (oldest === undefined) break;
+    pending.delete(oldest);
+  }
+}
+
+/** Records announced keys; past SEEN_CAP the oldest half is forgotten. */
+function markSeen(seen: Set<string>, keys: readonly string[]): void {
+  for (const k of keys) seen.add(k);
+  if (seen.size <= SEEN_CAP) return;
+  for (const k of seen) {
+    seen.delete(k);
+    if (seen.size <= SEEN_CAP / 2) break;
+  }
+}
+
 export function createCostAnomalyNotice(
   deps: CostAnomalyNoticeDeps,
 ): () => "off" | "none" | "limited" | "sent" {
@@ -71,17 +102,7 @@ export function createCostAnomalyNotice(
         days: 1,
         thresholds: { ratio: cfg.anomalyRatio, minAmount: cfg.anomalyMinAmount },
       });
-      for (const a of result.anomalies) {
-        const k = `${a.seriesKey}#${String(a.dayMs)}`;
-        if (!seen.has(k) && !pending.has(k)) pending.set(k, serviceOfKey(a.seriesKey));
-      }
-      // A withheld anomaly stays pending even after the newest complete day moves on, so it is announced by the
-      // first pass after the interval (bounded: the oldest are dropped past PENDING_CAP).
-      while (pending.size > PENDING_CAP) {
-        const oldest = pending.keys().next().value;
-        if (oldest === undefined) break;
-        pending.delete(oldest);
-      }
+      addPending(result, seen, pending);
       if (pending.size === 0) return "none";
       if (lastAt !== undefined && at - lastAt < cfg.notifyMinIntervalMinutes * 60_000) {
         return "limited";
@@ -91,13 +112,7 @@ export function createCostAnomalyNotice(
       const keys = [...announced.keys()];
       pending.clear();
       lastAt = at;
-      for (const k of keys) seen.add(k);
-      if (seen.size > SEEN_CAP) {
-        for (const k of seen) {
-          seen.delete(k);
-          if (seen.size <= SEEN_CAP / 2) break;
-        }
-      }
+      markSeen(seen, keys);
       // result.anomalies is capped; the true count of fresh ones is at least this.
       const { title, body } = costAnomalyNoticeText(announced.size, [
         ...new Set(announced.values()),

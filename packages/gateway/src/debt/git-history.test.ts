@@ -179,7 +179,7 @@ describe("runGit: how the child is spawned", () => {
     );
     expect(r.truncated).toBe(true);
     expect(calls[0]?.killed).toBe(true);
-    expect(r.out.length).toBe(GIT_OUTPUT_CAP_BYTES);
+    expect(r.out).toHaveLength(GIT_OUTPUT_CAP_BYTES);
   });
 
   test("a spawn failure never throws", async () => {
