@@ -19,6 +19,7 @@ import { MAX_EVAL_CASES } from "./caps.ts";
 import { privateKeyFromSeed } from "./ed25519-seed.ts";
 import { RegistryError } from "./errors.ts";
 import { type EvalBaseline, parseEvalBaseline } from "./eval-baseline.ts";
+import { decodeJsonFile } from "./json-file.ts";
 
 export const LIVENESS_FILE = "liveness.json";
 export const MAX_LIVENESS_BYTES = 4 * 1024 * 1024;
@@ -60,25 +61,7 @@ function invalid(detail: string): RegistryError {
 }
 
 export function parseLivenessFile(bytes: Uint8Array): LivenessFile {
-  if (bytes.byteLength > MAX_LIVENESS_BYTES) {
-    throw new RegistryError(
-      "ERR_REGISTRY_TOO_LARGE",
-      `liveness.json exceeds ${String(MAX_LIVENESS_BYTES)} bytes`,
-    );
-  }
-  let text: string;
-  try {
-    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
-  } catch {
-    throw invalid("liveness.json is not valid UTF-8");
-  }
-  if (text.startsWith("﻿")) text = text.slice(1);
-  let raw: unknown;
-  try {
-    raw = JSON.parse(text);
-  } catch {
-    throw invalid("liveness.json is not valid JSON");
-  }
+  const raw = decodeJsonFile(bytes, "liveness.json", MAX_LIVENESS_BYTES, invalid);
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     throw invalid("liveness.json must be an object");
   }

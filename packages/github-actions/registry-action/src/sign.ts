@@ -253,12 +253,9 @@ async function takeCandidate(
   const bundleBytes =
     proven?.bundle === undefined ? undefined : new TextEncoder().encode(proven.bundle);
   const bundlePath = provenanceBundlePath(v.id, v.version);
-  const provenance =
-    proven === undefined
-      ? undefined
-      : bundleBytes === undefined
-        ? proven.provenance
-        : { ...proven.provenance, bundle: bundlePath, bundleSha256: sha256Hex(bundleBytes) };
+  const bundleRef =
+    bundleBytes === undefined ? {} : { bundle: bundlePath, bundleSha256: sha256Hex(bundleBytes) };
+  const provenance = proven === undefined ? undefined : { ...proven.provenance, ...bundleRef };
   addVersion(b.extensions, v, b.publishedAt, {
     ...(provenance !== undefined && { provenance }),
     ...(q.quality !== undefined && { quality: q.quality }),

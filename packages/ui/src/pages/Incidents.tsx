@@ -7,9 +7,60 @@ import { IncidentFindings } from "../components/incidents/IncidentFindings";
 import { IncidentList } from "../components/incidents/IncidentList";
 import { safeText } from "../components/incidents/safe";
 import { useIpcQuery } from "../hooks/useIpcQuery";
+import type { IncidentListResult } from "../ipc/types";
 
 const NO_DATA =
   "No incident source is connected yet. Connect PagerDuty, Jira Service Management, Sentry, Monte Carlo or Bigeye, then sync.";
+
+interface IncidentsBodyProps {
+  readonly error: string | null;
+  readonly list: IncidentListResult | null;
+  readonly selectedId: string | null;
+  readonly onSelect: (id: string) => void;
+}
+
+function IncidentsBody({ error, list, selectedId, onSelect }: IncidentsBodyProps): ReactNode {
+  if (list === null) {
+    if (error !== null) {
+      return (
+        <p role="alert" className="text-sm">
+          {`Could not load incidents: ${safeText(error)}. From a terminal: nimbus incident list`}
+        </p>
+      );
+    }
+    return <p className="text-sm text-[var(--color-fg-muted)]">Loading...</p>;
+  }
+  if (list.status === "no_data") return <p className="text-sm">{NO_DATA}</p>;
+  if (list.records.length === 0) return <p className="text-sm">No incident records.</p>;
+  const groupCount = (list.groups ?? []).length;
+  return (
+    <div className="grid grid-cols-[minmax(220px,1fr)_2fr] gap-4">
+      <div className="space-y-2">
+        {list.groups === null && (
+          <p className="text-xs">The cascade could not be read right now.</p>
+        )}
+        {groupCount > 0 && (
+          <p className="text-xs text-[var(--color-fg-muted)]">
+            {`${String(groupCount)} cascade group(s) among the open records.`}
+          </p>
+        )}
+        <IncidentList
+          records={list.records}
+          selectedId={selectedId}
+          onSelect={onSelect}
+          nowMs={Date.now()}
+        />
+      </div>
+      {selectedId === null ? (
+        <p className="text-sm text-[var(--color-fg-muted)]">
+          Select an incident to see its record and timeline.
+        </p>
+      ) : (
+        <IncidentDetail key={selectedId} id={selectedId} />
+      )}
+    </div>
+  );
+}
 
 /**
  * Read-only (Phase 10 IC10a, IC10b): `incident.list`, `incident.get`, `incident.timeline`,
@@ -44,43 +95,7 @@ export function Incidents(): ReactNode {
           {"Open only"}
         </label>
         <IncidentFindings />
-        {error !== null && list === null ? (
-          <p role="alert" className="text-sm">
-            {`Could not load incidents: ${safeText(error)}. From a terminal: nimbus incident list`}
-          </p>
-        ) : list === null ? (
-          <p className="text-sm text-[var(--color-fg-muted)]">Loading...</p>
-        ) : list.status === "no_data" ? (
-          <p className="text-sm">{NO_DATA}</p>
-        ) : list.records.length === 0 ? (
-          <p className="text-sm">No incident records.</p>
-        ) : (
-          <div className="grid grid-cols-[minmax(220px,1fr)_2fr] gap-4">
-            <div className="space-y-2">
-              {list.groups === null && (
-                <p className="text-xs">The cascade could not be read right now.</p>
-              )}
-              {(list.groups ?? []).length > 0 && (
-                <p className="text-xs text-[var(--color-fg-muted)]">
-                  {`${String((list.groups ?? []).length)} cascade group(s) among the open records.`}
-                </p>
-              )}
-              <IncidentList
-                records={list.records}
-                selectedId={selectedId}
-                onSelect={onSelect}
-                nowMs={Date.now()}
-              />
-            </div>
-            {selectedId === null ? (
-              <p className="text-sm text-[var(--color-fg-muted)]">
-                Select an incident to see its record and timeline.
-              </p>
-            ) : (
-              <IncidentDetail key={selectedId} id={selectedId} />
-            )}
-          </div>
-        )}
+        <IncidentsBody error={error} list={list} selectedId={selectedId} onSelect={onSelect} />
       </div>
     </>
   );

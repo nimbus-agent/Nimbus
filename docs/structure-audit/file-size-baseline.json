@@ -480,7 +480,7 @@
     "packages/github-actions/registry-action/src/score.test.ts": 1340,
     "packages/github-actions/registry-action/src/score.ts": 640,
     "packages/github-actions/registry-action/src/sign.test.ts": 669,
-    "packages/github-actions/registry-action/src/sign.ts": 541,
+    "packages/github-actions/registry-action/src/sign.ts": 538,
     "packages/registry-format/src/eval-suite.test.ts": 658,
     "packages/registry-format/src/eval-suite.ts": 506,
     "packages/registry-format/src/index-format.test.ts": 617,

@@ -130,7 +130,7 @@ export function IncidentProposals({ recordId }: { readonly recordId: string }): 
       </p>
     );
   }
-  if (res === null || res.recordId !== recordId) {
+  if (res?.recordId !== recordId) {
     return <p className="text-sm text-[var(--color-fg-muted)]">Loading proposals...</p>;
   }
   return (
