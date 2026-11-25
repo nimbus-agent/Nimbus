@@ -259,6 +259,30 @@ export const REVERSIBILITY_TABLE: Readonly<Record<string, ReversibilityEntry>> =
   k8s_pod_delete: irreversible(`a deleted pod ${NO_UNDO}`),
 });
 
+/** The problems of one REVERSIBLE entry: its row needs a before reader, its inverse a row, its keys a capture. */
+function reversibleEntryProblems(
+  toolId: string,
+  decl: Extract<ReversibilityDecl, { readonly class: "reversible" }>,
+  entry: ReversibilityEntry,
+  row: ConnectorWriteRow,
+  byId: ReadonlyMap<string, ConnectorWriteRow>,
+): string[] {
+  const problems: string[] = [];
+  if (row.before === undefined) {
+    problems.push(`${toolId}: reversible but the row has no before reader`);
+  }
+  if (!byId.has(decl.inverse))
+    problems.push(`${toolId}: inverse row ${decl.inverse} does not exist`);
+  if (entry.captures === undefined) problems.push(`${toolId}: reversible but no captures`);
+  const keys = entry.captures?.keys ?? [];
+  for (const k of decl.fromBefore) {
+    if (!keys.includes(k)) {
+      problems.push(`${toolId}: fromBefore names ${k}, which no capture supplies`);
+    }
+  }
+  return problems;
+}
+
 /** The problems with the table against `rows`: an empty list means every entry is consistent. */
 export function checkReversibilityTable(
   rows: readonly ConnectorWriteRow[],
@@ -277,17 +301,7 @@ export function checkReversibilityTable(
       if (entry.captures !== undefined) problems.push(`${toolId}: captures on an irreversible row`);
       continue;
     }
-    if (row.before === undefined) {
-      problems.push(`${toolId}: reversible but the row has no before reader`);
-    }
-    if (!byId.has(d.inverse)) problems.push(`${toolId}: inverse row ${d.inverse} does not exist`);
-    if (entry.captures === undefined) problems.push(`${toolId}: reversible but no captures`);
-    const keys = entry.captures?.keys ?? [];
-    for (const k of d.fromBefore) {
-      if (!keys.includes(k)) {
-        problems.push(`${toolId}: fromBefore names ${k}, which no capture supplies`);
-      }
-    }
+    problems.push(...reversibleEntryProblems(toolId, d, entry, row, byId));
   }
   return problems;
 }

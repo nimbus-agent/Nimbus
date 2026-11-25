@@ -124,9 +124,51 @@ function canonicalOr(p: string, deps: WriteDirDeps): string {
   }
 }
 
+/** Placement, inside home: a direct child of home, or anything under a hidden folder (or macOS `Library`). */
+function homePlacementRefusal(
+  canonical: string,
+  home: string,
+  deps: WriteDirDeps,
+): WriteDirRefusal | undefined {
+  const { platform } = deps;
+  if (home === "" || !isSameOrInside(platform, canonical, home)) return undefined;
+  const api = pathApiFor(platform);
+  const rel = api.relative(home, canonical);
+  const segments = rel.split(api.sep).filter((s) => s !== "");
+  const first = segments[0] ?? "";
+  if (segments.length === 1) return WRITE_DIR_REFUSALS.homeChild;
+  if (first.startsWith(".")) return WRITE_DIR_REFUSALS.hiddenHome;
+  if (platform === "darwin" && first.toLowerCase() === "library") {
+    return WRITE_DIR_REFUSALS.hiddenHome;
+  }
+  return undefined;
+}
+
+/** Placement: overlapping an application-data folder. */
+function appDataRefusal(canonical: string, deps: WriteDirDeps): WriteDirRefusal | undefined {
+  for (const dir of deps.appDataDirs) {
+    if (dir !== "" && pathsOverlap(deps.platform, canonical, canonicalOr(dir, deps))) {
+      return WRITE_DIR_REFUSALS.hiddenHome;
+    }
+  }
+  return undefined;
+}
+
+/** Placement: overlapping an absolute `PATH` entry. */
+function onPathRefusal(canonical: string, deps: WriteDirDeps): WriteDirRefusal | undefined {
+  const api = pathApiFor(deps.platform);
+  for (const entry of deps.pathEntries) {
+    if (entry === "" || !api.isAbsolute(entry)) continue;
+    if (pathsOverlap(deps.platform, canonical, canonicalOr(entry, deps))) {
+      return WRITE_DIR_REFUSALS.onPath;
+    }
+  }
+  return undefined;
+}
+
+/** Placement, in order: a root, home or temp itself; then home's own folders and app data; then `PATH`. */
 function placementRefusal(canonical: string, deps: WriteDirDeps): WriteDirRefusal | undefined {
   const { platform } = deps;
-  const api = pathApiFor(platform);
   if (isRootOf(canonical, platform)) return WRITE_DIR_REFUSALS.root;
   const home = canonicalOr(deps.homeDir, deps);
   const tmp = canonicalOr(deps.tmpDir, deps);
@@ -136,30 +178,11 @@ function placementRefusal(canonical: string, deps: WriteDirDeps): WriteDirRefusa
   // The temp folder is the one place inside a hidden or application-data folder that is allowed
   // (on Windows it is `%LOCALAPPDATA%\Temp`): scratch space, where nothing of the owner's lives.
   const inTmp = tmp !== "" && isSameOrInside(platform, canonical, tmp);
-  if (home !== "" && isSameOrInside(platform, canonical, home) && !inTmp) {
-    const rel = api.relative(home, canonical);
-    const segments = rel.split(api.sep).filter((s) => s !== "");
-    const first = segments[0] ?? "";
-    if (segments.length === 1) return WRITE_DIR_REFUSALS.homeChild;
-    if (first.startsWith(".")) return WRITE_DIR_REFUSALS.hiddenHome;
-    if (platform === "darwin" && first.toLowerCase() === "library") {
-      return WRITE_DIR_REFUSALS.hiddenHome;
-    }
-  }
   if (!inTmp) {
-    for (const dir of deps.appDataDirs) {
-      if (dir !== "" && pathsOverlap(platform, canonical, canonicalOr(dir, deps))) {
-        return WRITE_DIR_REFUSALS.hiddenHome;
-      }
-    }
+    const hidden = homePlacementRefusal(canonical, home, deps) ?? appDataRefusal(canonical, deps);
+    if (hidden !== undefined) return hidden;
   }
-  for (const entry of deps.pathEntries) {
-    if (entry === "" || !api.isAbsolute(entry)) continue;
-    if (pathsOverlap(platform, canonical, canonicalOr(entry, deps))) {
-      return WRITE_DIR_REFUSALS.onPath;
-    }
-  }
-  return undefined;
+  return onPathRefusal(canonical, deps);
 }
 
 function overlapRefusal(canonical: string, deps: WriteDirDeps): WriteDirRefusal | undefined {

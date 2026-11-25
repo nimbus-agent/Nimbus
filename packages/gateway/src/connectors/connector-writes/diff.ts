@@ -305,22 +305,24 @@ function fileStateLabel(state: DiffFileState): string {
   return "modified";
 }
 
+/** One file's part of the shown diff: its header and, unless unchanged, its `---`/`+++` lines and hunks. */
+function pushFileDiffLines(out: string[], file: DiffFile): void {
+  const mode = file.mode === undefined ? "" : `, mode ${file.mode}`;
+  out.push(`=== ${file.path} (${fileStateLabel(file.state)}${mode})`);
+  if (file.state === "unchanged") return;
+  out.push(file.state === "new" ? "--- /dev/null" : `--- a/${file.path}`, `+++ b/${file.path}`);
+  for (const h of file.hunks) {
+    out.push(
+      `@@ -${String(h.oldStart)},${String(h.oldLines)} +${String(h.newStart)},${String(h.newLines)} @@`,
+    );
+    for (const l of h.lines) out.push(l.op === "\\" ? String.raw`\ ${l.text}` : `${l.op}${l.text}`);
+  }
+}
+
 /** The text of the diff exactly as it is shown, one entry per line (no footer). */
 export function diffTextLines(diff: PreviewDiff): string[] {
   const out: string[] = [];
-  for (const file of diff.files) {
-    const mode = file.mode === undefined ? "" : `, mode ${file.mode}`;
-    out.push(`=== ${file.path} (${fileStateLabel(file.state)}${mode})`);
-    if (file.state === "unchanged") continue;
-    out.push(file.state === "new" ? "--- /dev/null" : `--- a/${file.path}`, `+++ b/${file.path}`);
-    for (const h of file.hunks) {
-      out.push(
-        `@@ -${String(h.oldStart)},${String(h.oldLines)} +${String(h.newStart)},${String(h.newLines)} @@`,
-      );
-      for (const l of h.lines)
-        out.push(l.op === "\\" ? String.raw`\ ${l.text}` : `${l.op}${l.text}`);
-    }
-  }
+  for (const file of diff.files) pushFileDiffLines(out, file);
   return out;
 }
 

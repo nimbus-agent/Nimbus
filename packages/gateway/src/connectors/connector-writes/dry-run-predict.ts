@@ -73,6 +73,55 @@ function ec2Prediction(toolId: keyof typeof EC2, state: string | undefined): Dry
   return uncertain(`the instance is ${state}; the outcome depends on the provider`);
 }
 
+type Captured = Readonly<Record<string, string>>;
+type Input = Readonly<Record<string, unknown>>;
+
+function flagsmithPrediction(captured: Captured, inp: Input): DryRunPrediction {
+  const p = boolPrediction("enabled", captured["enabled"], inp["enabled"]);
+  return inp["value"] === undefined
+    ? p
+    : {
+        verdict: p.verdict === "none" ? "none" : "uncertain",
+        text: `${p.text}; the feature value is also set and is not compared`,
+      };
+}
+
+function ecsServicePrediction(captured: Captured, inp: Input): DryRunPrediction {
+  const before = captured["taskDefinition"];
+  const after = scalarText(inp["taskDefinition"]);
+  if (before === undefined) return none("the current task definition was not read");
+  if (after === undefined) return uncertain("the proposal names no task definition");
+  return before === after
+    ? { verdict: "no_change", text: `the service already runs ${after}: no change` }
+    : { verdict: "would_change", text: `task definition: ${before} -> ${after}` };
+}
+
+function argocdRollbackPrediction(captured: Captured, inp: Input): DryRunPrediction {
+  const current = captured["currentHistoryId"];
+  const target = scalarText(inp["id"]);
+  if (current === undefined) return none("the current deployment history was not read");
+  if (target === undefined) return uncertain("the proposal names no history id");
+  if (captured["autoSync"] === "on") {
+    return uncertain("auto-sync is on: Argo CD refuses a rollback while it is on");
+  }
+  const kept = captured["historyIds"]?.split(",");
+  if (kept === undefined || captured["autoSync"] !== "off") {
+    return uncertain("the application's sync policy or retained history was not read");
+  }
+  if (!kept.includes(target)) {
+    return uncertain(`history ${target} is no longer in the application's retained history`);
+  }
+  return current === target
+    ? {
+        verdict: "no_change",
+        text: `the application is already at history ${target}: no change`,
+      }
+    : {
+        verdict: "would_change",
+        text: `the application moves from history ${current} back to the revision of history ${target}`,
+      };
+}
+
 /**
  * The predicted outcome of `toolId` with `input`, from the before reader's `captured` values. `captured` undefined
  * means the read captured nothing (a failed read, or a row without captures). Deterministic: the same arguments
@@ -94,52 +143,15 @@ export function predictOutcome(
   switch (toolId) {
     case "launchdarkly_flag_toggle":
       return boolPrediction("on", captured["on"], inp["on"]);
-    case "flagsmith_feature_state_set": {
-      const p = boolPrediction("enabled", captured["enabled"], inp["enabled"]);
-      return inp["value"] === undefined
-        ? p
-        : {
-            verdict: p.verdict === "none" ? "none" : "uncertain",
-            text: `${p.text}; the feature value is also set and is not compared`,
-          };
-    }
+    case "flagsmith_feature_state_set":
+      return flagsmithPrediction(captured, inp);
     case "aws_ec2_instance_stop":
     case "aws_ec2_instance_start":
       return ec2Prediction(toolId, captured["state"]);
-    case "aws_ecs_service_update": {
-      const before = captured["taskDefinition"];
-      const after = scalarText(inp["taskDefinition"]);
-      if (before === undefined) return none("the current task definition was not read");
-      if (after === undefined) return uncertain("the proposal names no task definition");
-      return before === after
-        ? { verdict: "no_change", text: `the service already runs ${after}: no change` }
-        : { verdict: "would_change", text: `task definition: ${before} -> ${after}` };
-    }
-    default: {
+    case "aws_ecs_service_update":
+      return ecsServicePrediction(captured, inp);
+    default:
       // argocd_app_rollback
-      const current = captured["currentHistoryId"];
-      const target = scalarText(inp["id"]);
-      if (current === undefined) return none("the current deployment history was not read");
-      if (target === undefined) return uncertain("the proposal names no history id");
-      if (captured["autoSync"] === "on") {
-        return uncertain("auto-sync is on: Argo CD refuses a rollback while it is on");
-      }
-      const kept = captured["historyIds"]?.split(",");
-      if (kept === undefined || captured["autoSync"] !== "off") {
-        return uncertain("the application's sync policy or retained history was not read");
-      }
-      if (!kept.includes(target)) {
-        return uncertain(`history ${target} is no longer in the application's retained history`);
-      }
-      return current === target
-        ? {
-            verdict: "no_change",
-            text: `the application is already at history ${target}: no change`,
-          }
-        : {
-            verdict: "would_change",
-            text: `the application moves from history ${current} back to the revision of history ${target}`,
-          };
-    }
+      return argocdRollbackPrediction(captured, inp);
   }
 }

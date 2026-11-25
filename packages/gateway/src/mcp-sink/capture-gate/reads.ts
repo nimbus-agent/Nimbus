@@ -114,7 +114,7 @@ export function captureStateFor(
   const row = deps.store.get(id);
   // Agent door AD2 (D-AD-11): a row another connection submitted answers exactly like an absent id,
   // so the answer is no oracle for another agent's ids.
-  if (row?.sessionId !== caller.clientId) {
+  if (row === undefined || row.sessionId !== caller.clientId) {
     throw new CaptureError("ERR_CAPTURE_NOT_FOUND", `no capture ${id}`);
   }
   return {

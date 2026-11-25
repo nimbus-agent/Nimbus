@@ -41,7 +41,8 @@ function cssWithoutComments(css: string): string | undefined {
   let i = 0;
   while (i < css.length) {
     const ch = css.charAt(i);
-    if (ch === "\\" && i + 1 < css.length) {
+    // An escape keeps the character after it (a trailing `\` keeps itself, and the loop ends).
+    if (ch === "\\") {
       out += css.slice(i, i + 2);
       i += 2;
       continue;
