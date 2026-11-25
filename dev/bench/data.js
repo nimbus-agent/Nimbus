@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795591450221,
+  "lastUpdate": 1795639798694,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "c6f927ec0d5f88dc6d54d4f81482765236a324be",
-          "message": "fix(media): show real sizes in the allow-remote consent preview (#1534)\n\n## What was wrong\n\n`nimbus media allow-remote` shows an enumerated consent preview before\nsending images to a remote vision model. The 2026-09-06 acceptance run\nfiled that the preview prints `size unknown` for a Google Drive\nartifact, and attributed it to Drive serialising `size` as a string.\n\nThe cause is wider. `index.queryItems` sets an item's top-level\n`sizeBytes` **only** from a `size_bytes` metadata key, and no media\nconnector writes that key:\n\n| Source | Metadata key written |\n| --- | --- |\n| `filesystem` | `sizeBytes` |\n| `google_drive` | `size`, a string |\n| `onedrive` | `size`, a number |\n\nAll three reached the wire with the size inside `rawMeta`, which the CLI\npreview never reads, so **every** media source previewed as `size\nunknown`. The acceptance run saw it on Drive only because Drive was the\nonly source it previewed. The CLI tests could not catch it: their\nfixtures put `sizeBytes` at the top level, a shape the gateway never\nsent for a media row.\n\nThe media pass itself was unaffected: `media-discovery.ts` reads raw\nmetadata through `mediaSourceBytes`, so byte budgets were correct. Only\nthe consent surface was wrong.\n\n## The fix\n\nThe `index.queryItems` handler in `ipc/diagnostics-rpc.ts` now fills\n`sizeBytes` from `mediaSourceBytes(service, rawMeta)` when it is absent,\non the plain path and both negation-predicate paths. The preview and the\npass's byte budget now read one table rather than two copies.\n\n- A hydrated `size_bytes` still wins.\n- Google Photos records no byte count and still reads `size unknown`; a\nsize is never estimated.\n- No CLI change: it already reads top-level `sizeBytes`.\n- `ipc/` already imports `multimodal/`, so no new `index` to\n`multimodal` dependency.\n\n**Wire impact, additive only:** `nimbus query --json` also gains\n`sizeBytes` on filesystem media, Drive and OneDrive rows. Nothing\nremoved or renamed, so not breaking.\n\nNo migration, no invariant, no egress class.\n\n## Tests\n\n- `derives sizeBytes for media sources from the key each connector\nwrites`: one row per source, each metadata literal copied from its\nconnector's write site, against the real migrated schema. **Red on\n`main`**: filesystem received `undefined`.\n- `a hydrated size_bytes wins over the media-source derivation`:\nred-proven by removing the precedence guard, which returned 99 instead\nof 42.\n- `bun run preflight:fast` passed; `diagnostics-rpc`,\n`media-source-registry` and `media-grants-cmd` suites: 152 pass.\n\n## Docs\n\nThe defect was recorded as filed-not-fixed in three places —\n`docs/roadmap.md` twice and the 2026-09-06 `CHANGELOG.md` entry — and\neach now says it is fixed and that the cause was wider than first\nwritten. New dated `CHANGELOG.md` entry.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **Bug Fixes**\n- Media search results now display file sizes for filesystem, Google\nDrive, and OneDrive items.\n- Remote-consent previews now show available media sizes instead of\n“size unknown.”\n- Existing size information is preserved, while Google Photos continues\nto show an unknown size when no byte count is available.\n\n- **Documentation**\n- Updated the changelog and roadmap to reflect the corrected media-size\ndisplay behavior.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-17T19:00:50+03:00",
-          "tree_id": "93cd2a136b3fffe6867c6d140da4f5c46835366d",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/c6f927ec0d5f88dc6d54d4f81482765236a324be"
-        },
-        "date": 1789661666379,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 315.9748494499963,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 316.2780237000017,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 181.59213280000077,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a63873825485e2a406b76f8472806826dd99fcbd",
+          "message": "docs: slim CLAUDE.md and GEMINI.md from 209 KB to 23 KB (#2154)\n\nCLAUDE.md (and its GEMINI.md mirror) was 209 KB, 137 KB of it a single\nstatus line that had become a second changelog. Every agent session\nloads it.\n\nWhat changed:\n- **Status** is now a short summary (spine slots, what S4 has shipped,\n`Invariants I1–I61; schema V108`, the 'narrower than its name' warning)\nthat points to `docs/CHANGELOG.md` and `docs/roadmap.md`, which already\nhold every slice, owner ruling and stated bound. It also tells future\nedits not to grow it into a changelog again.\n- **Security invariants** become a one-line-per-row table (rule + main\nsite) deferring to `docs/SECURITY-INVARIANTS.md`.\n- **CI gating / Development Workflow** keep every rule (ten required\nchecks, failing steps hide later ones, PR/push parity incl.\n`--parallel`, no merge before green, PR title is the commit, `!` means a\nuser must act, immutable tags, file size and split privacy, Sonar\ngate-complexity guidance), without the incident narratives.\n- Latest-release line is unchanged and stays on its own line for\nrelease-please.\n\nVerified: `audit:doc-refs` (all 2047 refs resolve),\n`audit:status-drift`, `audit:release-please`, and the full `bun run\npreflight:fast` pass.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-25T20:42:47Z",
+          "tree_id": "afa236402e8d79f1dbf2c44055c1310ac2bbec9c",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/a63873825485e2a406b76f8472806826dd99fcbd"
+        },
+        "date": 1795639795348,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 181.3896086499999,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 177.39495349999487,
             "unit": "ms"
           }
         ]
