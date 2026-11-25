@@ -175,6 +175,74 @@ export interface LocalIndexedContext {
   };
 }
 
+/** What the build has gathered so far, by id, with the pass that first found each item. */
+type Gathered = {
+  readonly byId: Map<string, Omit<LocalContextItem, "rank">>;
+  readonly passById: Map<string, ContributingPass>;
+  /** The scores survive ONLY here: `formatContextItem` drops them, and `byId` never gets them back (spec §2.4). */
+  readonly rankedById: Map<string, RankedIndexItem>;
+};
+
+function addRankedResults(
+  g: Gathered,
+  localIndex: LocalIndex,
+  items: RankedIndexItem[],
+  pass: ContributingPass,
+): void {
+  for (const item of items) {
+    if (!g.byId.has(item.indexPrimaryKey)) {
+      g.byId.set(item.indexPrimaryKey, formatContextItem(localIndex, item));
+      g.passById.set(item.indexPrimaryKey, pass);
+      g.rankedById.set(item.indexPrimaryKey, item);
+    }
+  }
+}
+
+function addContextItems(
+  g: Gathered,
+  items: Array<Omit<LocalContextItem, "rank">>,
+  pass: ContributingPass,
+): void {
+  for (const item of items) {
+    if (!g.byId.has(item.sourceId)) {
+      g.byId.set(item.sourceId, item);
+      g.passById.set(item.sourceId, pass);
+      // Deliberately NOT added to rankedById: these rows were never scored (spec §2.4).
+    }
+  }
+}
+
+/**
+ * The AND join is strict enough that three reasonable words routinely describe a document
+ * containing only two — "what should I do for the smoke test issue?" misses an item titled
+ * "add a smoke test" on `issue`, which is its TYPE and appears in neither its title nor
+ * its body. Retry with the single most distinctive term: the same question with the
+ * strictest part relaxed, not a different one. Returns the term that found something.
+ */
+function runFallbackTerms(
+  g: Gathered,
+  localIndex: LocalIndex,
+  searchTerms: string,
+  at: { readonly atMs?: number },
+  noteFacts: (name: string, limit: number) => void,
+): string | undefined {
+  for (const term of fallbackSearchTerms(searchTerms)) {
+    noteFacts(term, LOCAL_CONTEXT_TOTAL_PROBE_LIMIT);
+    // The PROBE limit, not the context limit: `capPerService` below can only balance the pool
+    // it is handed, and fetching eight rows from a service holding 11,979 of them returns
+    // eight rows from that service. Widening here is what gives the cap something to choose
+    // between; the slice back to eight still happens after it.
+    addRankedResults(
+      g,
+      localIndex,
+      localIndex.searchRanked({ name: term, limit: LOCAL_CONTEXT_TOTAL_PROBE_LIMIT, ...at }),
+      { kind: "fallback-term", term },
+    );
+    if (g.byId.size > 0) return term;
+  }
+  return undefined;
+}
+
 /**
  * `searched` (point-in-time turns): receives the facts of EVERY keyword search the build ran (primary, quoted,
  * fallback), pushed as each ran, so they survive a build that returns no context and a context whose items came
@@ -191,32 +259,8 @@ export async function buildLocalIndexedContext(
     return undefined;
   }
   try {
-    const byId = new Map<string, Omit<LocalContextItem, "rank">>();
-    const passById = new Map<string, ContributingPass>();
-    // The scores survive ONLY here — `formatContextItem` drops them, and `byId` never gets
-    // them back (spec §2.4).
-    const rankedById = new Map<string, RankedIndexItem>();
-    const addRankedResults = (items: RankedIndexItem[], pass: ContributingPass): void => {
-      for (const item of items) {
-        if (!byId.has(item.indexPrimaryKey)) {
-          byId.set(item.indexPrimaryKey, formatContextItem(localIndex, item));
-          passById.set(item.indexPrimaryKey, pass);
-          rankedById.set(item.indexPrimaryKey, item);
-        }
-      }
-    };
-    const addContextItems = (
-      items: Array<Omit<LocalContextItem, "rank">>,
-      pass: ContributingPass,
-    ): void => {
-      for (const item of items) {
-        if (!byId.has(item.sourceId)) {
-          byId.set(item.sourceId, item);
-          passById.set(item.sourceId, pass);
-          // Deliberately NOT added to rankedById: these rows were never scored (spec §2.4).
-        }
-      }
-    };
+    const g: Gathered = { byId: new Map(), passById: new Map(), rankedById: new Map() };
+    const { byId, passById, rankedById } = g;
     // The SENTENCE is not a search term (F1). `ftsTitleMatchQuery` AND-joins every whitespace
     // token and keeps punctuation, so "what does egressRowToItem do?" contains `"do?"` — a
     // prefix term nothing matches — and the whole conjunction is unsatisfiable even though the
@@ -243,10 +287,14 @@ export async function buildLocalIndexedContext(
       const facts = localIndex.pointInTimeFacts({ name, limit, atMs });
       if (facts !== undefined) searched.push(facts);
     };
-    addRankedResults(primary.slice(0, resolveLocalContextItemLimit()), { kind: "primary-hybrid" });
+    addRankedResults(g, localIndex, primary.slice(0, resolveLocalContextItemLimit()), {
+      kind: "primary-hybrid",
+    });
     for (const quotedQuery of extractQuotedSearchQueries(query)) {
       noteFacts(quotedQuery, resolveLocalContextItemLimit());
       addRankedResults(
+        g,
+        localIndex,
         localIndex.searchRanked({
           name: quotedQuery,
           limit: resolveLocalContextItemLimit(),
@@ -257,37 +305,13 @@ export async function buildLocalIndexedContext(
     }
     // The repo-slug pass reads the CURRENT issue and PR list with raw SQL: skipped on a point-in-time turn.
     for (const repoSlug of atMs === undefined ? extractGithubRepoSlugs(query) : []) {
-      addContextItems(githubIssueContextItemsForRepo(localIndex, repoSlug), {
+      addContextItems(g, githubIssueContextItemsForRepo(localIndex, repoSlug), {
         kind: "repo-slug",
         slug: repoSlug,
       });
     }
-    let fallbackTermFired: string | undefined;
-    if (byId.size === 0) {
-      // The AND join is strict enough that three reasonable words routinely describe a document
-      // containing only two — "what should I do for the smoke test issue?" misses an item titled
-      // "add a smoke test" on `issue`, which is its TYPE and appears in neither its title nor
-      // its body. Retry with the single most distinctive term: the same question with the
-      // strictest part relaxed, not a different one.
-      for (const term of fallbackSearchTerms(searchTerms)) {
-        noteFacts(term, LOCAL_CONTEXT_TOTAL_PROBE_LIMIT);
-        // The PROBE limit, not the context limit: `capPerService` below can only balance the pool
-        // it is handed, and fetching eight rows from a service holding 11,979 of them returns
-        // eight rows from that service. Widening here is what gives the cap something to choose
-        // between; the slice back to eight still happens after it.
-        addRankedResults(
-          localIndex.searchRanked({ name: term, limit: LOCAL_CONTEXT_TOTAL_PROBE_LIMIT, ...at }),
-          {
-            kind: "fallback-term",
-            term,
-          },
-        );
-        if (byId.size > 0) {
-          fallbackTermFired = term;
-          break;
-        }
-      }
-    }
+    const fallbackTermFired =
+      byId.size === 0 ? runFallbackTerms(g, localIndex, searchTerms, at, noteFacts) : undefined;
     // The no-name fallback is GONE (F1, fix 2). `searchRanked` with no `name` sets
     // `useFts = false` and returns arbitrary recent items, which were then handed to the model
     // under an authoritative "Indexed Nimbus context:" header inside a `<tool_output>` envelope.

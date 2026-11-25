@@ -8,7 +8,11 @@ import { defaultLocalAuthHostDeps } from "../connectors/local-auth/local-auth-ho
 import type { ResolvedUserMcpRegistration } from "../connectors/user-mcp-registration.ts";
 import type { ToolExecutor } from "../engine/executor.ts";
 import type { ContinuityEntry } from "../extensions/continuity/continuity-table.ts";
-import { describeNetworkReach, type ReachRunner } from "../extensions/extension-reach.ts";
+import {
+  describeNetworkReach,
+  type ReachRunner,
+  userMcpNetworkNote,
+} from "../extensions/extension-reach.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import type { EnforcedPolicy } from "../policy/policy-gate.ts";
 import { isConnectorConfigured } from "../sync/connector-configured.ts";
@@ -258,10 +262,8 @@ export async function dispatchConnectorRpc(options: {
           // AD5a: a registered user-MCP server's stripped definitions (may start that one server).
           listUserMcpDefinitions: (serviceId: string) =>
             connectorMesh.listUserMcpToolDefinitions(serviceId),
-          userMcpNetworkNote: (netHosts: readonly string[]) => {
-            const reach = describeNetworkReach(sandboxRunner, netHosts);
-            return reach.kind === "hosts" || reach.kind === "none" ? undefined : reach.text;
-          },
+          userMcpNetworkNote: (netHosts: readonly string[]) =>
+            userMcpNetworkNote(sandboxRunner, netHosts),
         }),
     // The enable prompt's host line is read from the sandbox's live posture (D2 review 4).
     ...(sandboxRunner === undefined ? {} : { sandboxRunner }),
