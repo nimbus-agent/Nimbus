@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795649252176,
+  "lastUpdate": 1795650136488,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "35b0aa86cf38bdb5fdf74dc3b506f4a8b7f8cf52",
-          "message": "fix(embedding): cancel timed-out query embedding work, not just abandon it (#1542)\n\nThe last stated residual of #1535, and the one CodeRabbit raised there\n(thread declined at the time as out of scope, tracked as a follow-up).\n\n## What was wrong\n\nThe query-embedding budget stopped the CALLER waiting and nothing else.\n`withEmbeddingQueryTimeout` received an already-started promise, so\nafter the timeout:\n\n- the **OpenAI** request ran to completion — billed, holding a\nconnection, its answer discarded;\n- the **worker** kept embedding text the main thread had given up on,\ndelaying whatever was queued behind it.\n\nPre-existing (the old 60 s timer did the same), but the 5 s budget makes\nit happen far more often.\n\n## The fix: a work factory with an AbortSignal\n\n`withEmbeddingQueryTimeout(work, opts)` now takes `(signal) =>\nPromise<T>` and aborts that signal on timeout. **Three runtimes, three\ndifferent honest answers:**\n\n| Runtime | What the signal does |\n| --- | --- |\n| OpenAI embedder | Passed to `fetch`. The request is really closed. |\n| Worker bridge | Posts a new `cancel_embed` message. The worker\n**skips** the request if its embed has not started, and **suppresses the\nreply** either way. |\n| Local ONNX (lazy / hybrid local half) | Ignored. It cannot be\ninterrupted once started, so a timed-out local query is abandoned\nexactly as before. |\n\n`Embedder.embed` grew an optional `EmbedOptions { signal }`.\n**`wrapLedgeredEmbedder` forwards it**, which matters more than it\nlooks: that wrapper decorates exactly the remote embedders, so dropping\n`opts` there would have left the ledger row written, the request\nrunning, and the only real cancellation silently disabled. There is a\ntest for that alone.\n\n## Two ordering rules, both found by tests rather than reasoning\n\n1. **Reject before abort.** My first version aborted first. An abort\nlistener that rejects synchronously then settles the race, and the\ncaller receives the work's own \"aborted\" error instead of\n`EmbeddingTimeoutError` — silently undoing #1535's guarantee that a\nstarved query is distinguishable from a dead one. The test caught it;\nthe helper now pins the race's outcome first.\n2. **The started promise needs a no-op `catch`.** Aborting MAKES the\nwork reject, after the race has settled, so that rejection would be\nunhandled — the cancellation crashing the process it was added to\nprotect. There is a test that listens for `unhandledrejection` and\nasserts none.\n\nThe worker's cancelled-id set is bounded (256, oldest evicted). Each\nentry is normally consumed by the request it names; the one case that\nleaks is a cancel whose request never arrives because the worker\nrestarted in between.\n\n## Tests\n\nSix new assertions, all failing against the unfixed source:\n- the signal is aborted on timeout, carries the typed error as its\n`reason`, and the caller still gets `EmbeddingTimeoutError`; a\nsuccessful call leaves the signal clean; no unhandled rejection after a\npost-timeout abort;\n- the OpenAI embedder forwards the signal to `fetch`, and passing\nnothing still sends no signal;\n- `wrapLedgeredEmbedder` forwards `opts`;\n- the bridge posts exactly one `cancel_embed` with the timed-out id;\n- worker core: cancel-before-start skips the embed entirely;\ncancel-during suppresses only the reply; a cancel for one id does not\nsuppress another's; a consumed id does not suppress a later request\nreusing it; a malformed `cancel_embed` is ignored.\n\nI dropped one test I had written: \"an already-aborted signal sends no\nrequest\" asserts `fetch`'s own semantics, and against a fake fetch it\nproves nothing about this code.\n\n`preflight:fast`, `typecheck`, `typecheck:tests` and\n`packages/gateway/src/{embedding,egress,index}` (1,094 pass) are green\nlocally.\n\n## What this does NOT claim\n\nA local embed is still only abandoned, never cancelled. Backfill batches\nare unchanged — this is the query path only. And the worker's cancel is\nbest-effort by nature: an inference already running keeps its CPU.\n\nNo schema, no invariant, no egress class; the ledger row is still\nappended before the request.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n- **New Features**\n- Embedding queries now cancel supported remote and worker-backed\noperations when they exceed the configured timeout.\n  - OpenAI embedding requests support cancellation signals.\n- Timed-out requests stop waiting immediately and suppress late\nresponses or errors.\n\n- **Bug Fixes**\n- Improved timeout handling prevents abandoned embedding work from\ncausing unhandled errors.\n- Local ONNX inference remains supported, though active inference cannot\nbe interrupted.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-18T08:35:57Z",
-          "tree_id": "b449f6267a232eae28cac476a36455cfe0101e99",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/35b0aa86cf38bdb5fdf74dc3b506f4a8b7f8cf52"
-        },
-        "date": 1789721046608,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 259.8830280499984,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 261.60956519999814,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 195.6142883000015,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4e1fcd59d9030cd273e3818ea83ee8b0d58bf89a",
+          "message": "refactor(cli): clear the S3776 findings in the incident, on-call and prove renderers (#2161)\n\nClears five typescript:S3776 findings in packages/cli/src/commands:\nincident-format.ts (parseInvestigateArgs 20, parseTimelineArgs 17),\noncall-handoff.ts (parseOncallHandoffArgs 16), prove-by-proposer.ts\n(parseProveByProposerArgs 18), oncall-now.ts (parseOncallNowArgs 18).\nEach argument loop now calls a named per-token step; behaviour and\noutput are unchanged and the existing tests pass unchanged. None is a\nsecurity gate.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Sonnet 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-25T23:34:57Z",
+          "tree_id": "ed633f5a8b425fc1a6714c117e1c8dc5f7b0a801",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/4e1fcd59d9030cd273e3818ea83ee8b0d58bf89a"
+        },
+        "date": 1795650133043,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 182.30244469999906,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 183.88055050000003,
             "unit": "ms"
           }
         ]
