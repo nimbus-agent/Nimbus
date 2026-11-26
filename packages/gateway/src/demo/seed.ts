@@ -153,13 +153,15 @@ function writeDemoConfig(
     `path = "${workspacePosix}"\n` +
     "git_aware = true\n" +
     serviceBlocks +
+    DEMO_COST_TOML +
+    // `[oncall.push]` stays the LAST table: an owner (and the push integration tests) adds
+    // `chatops_namespace` by appending a line, which TOML puts in the last table opened.
     // The page `demo.firePage` fires is briefed by the on-call push path. `[user] me_person_id`
     // above is Sam, the paging incident's assignee; `enabled_at` is stamped by the first
     // reconcile: the pre-restart demo gateway's live reader picks the file up within ~5 s, and
     // the boot reconcile at the restart keeps that earlier stamp, so it precedes the page.
     "\n[oncall.push]\n" +
-    "enabled = true\n" +
-    DEMO_COST_TOML;
+    "enabled = true\n";
   writeFileSync(join(configDir, "nimbus.toml"), toml);
 }
 

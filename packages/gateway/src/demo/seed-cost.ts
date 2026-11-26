@@ -11,7 +11,7 @@ import { type ImportReport, importFocusPath } from "../finops/cost-import.ts";
  *
  * Three products (`checkout`, `search`, `internal-tools`), envs `prod`, `dev` and `ci`, USD only, one untagged
  * line a day (it lands in `unassigned`, so the share is visible), and a spike on checkout's `payment-service`
- * compute over the last two days (the day of the story deploy). The rules below are appended to the demo
+ * compute over the last two days (the day of the story deploy). The rules below are written into the demo
  * `nimbus.toml` by the seed.
  */
 export const DEMO_COST_TOML =
