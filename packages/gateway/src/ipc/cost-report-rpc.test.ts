@@ -6,6 +6,7 @@ import { join } from "node:path";
 
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import type { ChatopsPolicy } from "../policy/types.ts";
 import { CostRpcError, dispatchCostRpc } from "./cost-rpc.ts";
 import type { ClientKind } from "./server/client-kind.ts";
 
@@ -81,6 +82,8 @@ let db: Database;
 let dir: string;
 let realFetch: typeof fetch;
 let fetchCalls = 0;
+const NO_CHATOPS: ChatopsPolicy = { channels: new Map(), ownership: new Map() };
+let chatops: (() => ChatopsPolicy | undefined) | undefined = () => NO_CHATOPS;
 
 function writeConfig(text: string): void {
   writeFileSync(join(dir, "nimbus.toml"), RULES + text);
@@ -95,6 +98,7 @@ beforeEach(async () => {
   writeFileSync(join(dir, "a.csv"), csv());
   writeConfig(report(SLACK + OUTLOOK));
   await call("cost.import", { path: join(dir, "a.csv") }, "cli");
+  chatops = () => NO_CHATOPS;
   realFetch = globalThis.fetch;
   fetchCalls = 0;
   globalThis.fetch = (async () => {
@@ -114,6 +118,7 @@ async function call(method: string, params: unknown, kind?: ClientKind): Promise
     configDir: dir,
     now: () => NOW,
     ...(kind === undefined ? {} : { caller: { kind } }),
+    ...(chatops === undefined ? {} : { chatops }),
   });
   if (out.kind !== "hit") throw new Error("miss");
   return out.value;
@@ -242,6 +247,29 @@ describe("cost.reportRender", () => {
     ]);
     expect(r.channels[0]?.doorRefusal).toContain("notifies a whole channel");
     expect(r.channels[1]?.doorRefusal).toContain("loads remote content");
+  });
+
+  test("the send door's destination check: a ChatOps channel, or no readable ChatOps policy", async () => {
+    chatops = () => ({
+      channels: new Map([
+        ["C0123ABC", { namespace: "project:pay", unmapped: "refuse" as const, notify: [] }],
+      ]),
+      ownership: new Map(),
+    });
+    let r = (await call("cost.reportRender", { name: "checkout-weekly" }, "cli")) as Rendered;
+    expect(r.channels.map((c) => [c.kind, c.doorRefusal])).toEqual([
+      ["slack", "the destination is a ChatOps channel, which only answers ChatOps commands"],
+      ["outlook", null],
+    ]);
+    chatops = undefined;
+    r = (await call("cost.reportRender", { name: "checkout-weekly" }, "cli")) as Rendered;
+    expect(r.channels[0]?.doorRefusal).toContain("ChatOps policy could not be read");
+    expect(r.channels[1]?.doorRefusal).toBeNull();
+    chatops = () => {
+      throw new Error("policy store unavailable");
+    };
+    r = (await call("cost.reportRender", { name: "checkout-weekly" }, "cli")) as Rendered;
+    expect(r.channels[0]?.doorRefusal).toContain("ChatOps policy could not be read");
   });
 
   test("a template error is reported for that channel only", async () => {

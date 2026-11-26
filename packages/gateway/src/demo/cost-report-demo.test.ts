@@ -61,7 +61,13 @@ describe("demo: nimbus cost report checkout-weekly", () => {
     const list = await dispatchCostRpc(
       "cost.reportList",
       {},
-      { db, configDir, now: () => nowMs, caller: { kind: "cli" } },
+      {
+        db,
+        configDir,
+        now: () => nowMs,
+        caller: { kind: "cli" },
+        chatops: () => ({ channels: new Map(), ownership: new Map() }),
+      },
     );
     if (list.kind !== "hit") throw new Error("cost.reportList was not routed");
     expect((list.value as { reports: { name: string }[] }).reports.map((r) => r.name)).toEqual([
@@ -71,7 +77,13 @@ describe("demo: nimbus cost report checkout-weekly", () => {
     const out = await dispatchCostRpc(
       "cost.reportRender",
       { name: "checkout-weekly" },
-      { db, configDir, now: () => nowMs, caller: { kind: "cli" } },
+      {
+        db,
+        configDir,
+        now: () => nowMs,
+        caller: { kind: "cli" },
+        chatops: () => ({ channels: new Map(), ownership: new Map() }),
+      },
     );
     if (out.kind !== "hit") throw new Error("cost.reportRender was not routed");
     const r = out.value as Rendered;

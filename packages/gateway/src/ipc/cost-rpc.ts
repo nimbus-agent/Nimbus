@@ -12,6 +12,7 @@ import type { CostRulesCheck } from "../finops/cost-rules-check.ts";
 import type { CostViewResult } from "../finops/cost-views.ts";
 import { isWasteKind, WASTE_KINDS } from "../finops/cost-waste.ts";
 import { type CostWasteResult, queryCostWaste } from "../finops/cost-waste-query.ts";
+import type { ChatopsPolicy } from "../policy/types.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 import { CostImportRpcError, handleCostImport, handleCostImportRemove } from "./cost-import-rpc.ts";
 import {
@@ -54,6 +55,8 @@ export interface CostRpcCtx {
   readonly now?: () => number;
   readonly caller?: { readonly kind: ClientKind };
   readonly demo?: boolean;
+  /** The enforced ChatOps policy (the send door's destination check); absent or a throw reads as unreadable. */
+  readonly chatops?: () => ChatopsPolicy | undefined;
 }
 
 /** Run an import handler, carrying its error as a `CostRpcError` with the same code. */

@@ -4,6 +4,7 @@ import type {
   CostReportDef,
   CostReportDestination,
 } from "../config/cost-report-toml.ts";
+import { costReportDoorRefusal } from "../connectors/connector-writes/cost-report-rows.ts";
 import { broadcastMentionIn } from "../connectors/connector-writes/model-write-refusals.ts";
 import { remoteContentIn } from "../connectors/connector-writes/remote-content.ts";
 import { buildCostReport, type CostReportModel } from "../finops/cost-report-model.ts";
@@ -17,6 +18,7 @@ import {
 } from "../finops/cost-template.ts";
 import { CostTemplateFileError, readCostTemplateFile } from "../finops/cost-template-file.ts";
 import { gatherCostViewInput } from "../finops/cost-view-input.ts";
+import type { ChatopsPolicy } from "../policy/types.ts";
 import {
   type CostViewsRpcCtx,
   CostViewsRpcError,
@@ -87,6 +89,15 @@ function templateText(ch: CostReportChannelDef, configDir: string | undefined): 
   return readCostTemplateFile(configDir, ch.template.file);
 }
 
+/** The enforced ChatOps policy, or undefined when it cannot be read (the door then refuses chat posts). */
+function readChatops(ctx: CostViewsRpcCtx): ChatopsPolicy | undefined {
+  try {
+    return ctx.chatops?.();
+  } catch {
+    return undefined;
+  }
+}
+
 const NOT_TRUNCATED = { breakdown: 0, topMovers: 0 } as const;
 
 /** One channel: template → door check of the literal → body → subject → door check of the body. */
@@ -94,6 +105,7 @@ function renderChannel(
   ch: CostReportChannelDef,
   model: CostReportModel,
   configDir: string | undefined,
+  chatops: ChatopsPolicy | undefined,
 ): CostReportChannelRender {
   const base = { kind: ch.kind, format: ch.format, to: ch.to };
   try {
@@ -117,15 +129,13 @@ function renderChannel(
     });
     const subject =
       ch.subject === null ? null : renderCostSubject(parseCostTemplate(ch.subject), model);
-    const found = doorFinding(ch, out.text);
-    return {
-      ...base,
-      subject,
-      body: out.text,
-      truncated: out.truncated,
-      error: null,
-      doorRefusal: found === null ? null : `the rendered body ${found}`,
-    };
+    // The send door's FULL destination check on the post as it would be made (ChatOps channel, broadcast
+    // mention, remote content), through the row table's own module (static D20 keeps tool ids there).
+    const doorRefusal = costReportDoorRefusal(
+      { kind: ch.kind, to: ch.to, format: ch.format, body: out.text, subject },
+      chatops,
+    );
+    return { ...base, subject, body: out.text, truncated: out.truncated, error: null, doorRefusal };
   } catch (e) {
     if (!(e instanceof CostTemplateError) && !(e instanceof CostTemplateFileError)) throw e;
     return {
@@ -225,5 +235,9 @@ export function handleCostReportRender(raw: unknown, ctx: CostViewsRpcCtx): Cost
     lastDays: both.lastDays,
     empty: both.empty,
   });
-  return { model, channels: channels.map((ch) => renderChannel(ch, model, ctx.configDir)) };
+  const chatops = readChatops(ctx);
+  return {
+    model,
+    channels: channels.map((ch) => renderChannel(ch, model, ctx.configDir, chatops)),
+  };
 }
