@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795672358643,
+  "lastUpdate": 1795678164154,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "b238a1386312746994a8a3ab4e668464c5dd1e5d",
-          "message": "feat(cli): nimbus demo — a seeded synthetic org and a three-brief tour (#1547)\n\n## Summary\n\n`nimbus demo` is a one-command, seeded sandbox. It recreates the demo\nroot, starts a demo gateway, seeds a synthetic \"Acme\" org, and prints a\nthree-brief tour: on-call triage, why a line changed, and who owns the\ncode. Afterwards every command works against the demo with `--demo`, and\nnothing touches the user's real config, index, vault or network. This is\nPR 2 of 2. PR 1, #1545, shipped the isolated demo root and invariant\nI41.\n\n- **Corpus and seeder**:\n- `gateway/src/demo/corpus/acme.ts` is one connected storyline. Every\ntimestamp is an offset from the seed's `nowMs`, and every email, URL and\ndomain ends in `.example`.\n- `gateway/src/demo/seed.ts` writes it through the production write APIs\nonly, per I14. It writes the `demo-seed.json` marker last and refuses a\nnon-empty index with `ERR_DEMO_ALREADY_SEEDED`.\n- **`demo.seed` IPC**: claimed only by a demo-rooted gateway, forbidden\nover LAN, and absent from the Tauri allowlist.\n- **An inert demo gateway**:\n- The sync scheduler is built with a new `syncDisabled` option, never\nstarted, and gets no syncables registered. An unstarted scheduler still\nsyncs through `forceSync` and each job's `.finally → tick()`, so not\ncalling `start()` is not enough.\n- The updater startup check, the telemetry flush, the embedding runtime\nand extension auto-update are gated by `bootPolicyFor(paths)`, because\nthey run at boot, before the seeder can write a config that would switch\nthem off.\n- A refusal gate at the top of `dispatchMethod` returns\n`ERR_DEMO_FORBIDDEN`. It allow-lists the three `connector.*` reads and\nrefuses every other `connector.*` method, plus `vault.set`,\n`vault.delete`, `data.import` and `extension.install`.\n  - `index.reembed` refuses with `ERR_EMBEDDINGS_DISABLED`.\n- **CLI**:\n  - `nimbus demo`, with `--no-tour`, `stop` and `reset`.\n  - A stderr-only banner with seeded, stale and unseeded states.\n- Demo-aware follow-up hints across ~30 commands, so a pasted hint never\ndrops `--demo` or names a refused command.\n- `nimbus --demo init` and `nimbus --demo doctor --fix-keyring` refuse.\n  - `doctor` reports the in-memory vault.\n- A stop that waits for exit, so recreating the root does not hit EBUSY\non Windows. It never signals a pid whose gateway socket is dead.\n- **I41 clauses 5–6**: `demo.seed` is demo-only, and a demo gateway is\ninert. The wiring, `docs/SECURITY-INVARIANTS.md` and the enforcement\ntests landed in one commit.\n\nFixes for every install that this work surfaced:\n- `ask` with indexed data but no eligible model used to exit with a raw\n`No LLM provider available for task: agent_step`. It now prints the\nstandard no-LLM guidance, or the air-gap message when `enforce_air_gap`\nis on. The cause was that `llm/router.ts` threw a plain `Error`; it now\nthrows a typed `NoLlmProviderError`.\n- `NIMBUS_UPDATER_URL` and `NIMBUS_UPDATER_DISABLE` were ignored\nwhenever no `nimbus.toml` existed, which includes every first boot.\n\nRelates to #1545\n\n## Type of Change\n\n- [x] Bug fix — the two above\n- [x] New feature\n- [x] Test improvement\n- [x] Documentation\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes — Biome, with `--error-on-warnings`\n- [x] All existing tests pass — see Testing for local-environment reds\n- [x] New behaviour is covered by tests\n- [x] No `any` types introduced\n- [x] No credentials, tokens, or secret values in logs, IPC, config, or\nfixtures — the demo uses an in-memory vault\n- [x] Platform-specific code stays behind `PlatformServices`; every demo\nbranch keys on `paths.demo`, never on the `NIMBUS_DEMO` env var\n- [x] The HITL consent gate is untouched\n- [ ] `docs/README.md` gained one \"try it\" line; no screenshot attached\n\n## Coverage\n\n- [x] The coverage floor was verified on Linux in Docker,\n`oven/bun:1.3`: `coverage-floor: ok`. Before the added tests, only\n`cli/commands/demo.ts` and `gateway/demo/seed.ts` failed on Linux. The\nplatform-file failures seen on Windows were artifacts of that platform.\n\n## Testing\n\n- **`packages/gateway/test/e2e/demo-tour.e2e.test.ts`** drives the real\nCLI entry, which spawns the real gateway, on temp OS roots. Before\nbooting it checks that the child's `homedir()` is the temp home. It\ncovers:\n  - the tour headers and the story facts in each brief;\n  - the banner appearing on stderr only;\n  - `connector auth` refused with `ERR_DEMO_FORBIDDEN`;\n  - `NIMBUS_HTTP_PORT` never bound;\n  - every command in the tour's \"Try:\" list exiting 0;\n  - `nimbus demo` run twice back to back;\n  - `demo stop` leaving no process from the run alive;\n  - every file written landing inside the demo root.\n- A local recorder stands in for the telemetry and updater endpoints and\nmust receive **zero** requests. Red-proofed by flipping each boot gate.\n- The I41 block in `security-invariants.test.ts` has 237 passing tests.\nThe new pins are red-proofed, including the `syncDisabled` spread and\ncall-count pins for the updater and telemetry wiring.\n- `bun run preflight:fast` is green. The full `bun run preflight` was\ngreen except for known local-environment reds: the `win32.test.ts`\n\"helper absent\" pair right after a fresh helper build, OAuth \"missing\nenv\" tests on a machine that exports `NIMBUS_OAUTH_*`, and `runTui`\nunder `NO_COLOR`. It was run on Windows. The e2e also ran under WSL\nLinux Bun for the stop-and-wait tests.\n\n## Notes for Reviewers\n\n- **`nimbus --demo ask` needs a model, and the demo configures none.**\nOn the seeded demo it exits 1 with a demo variant of the no-LLM\nguidance, which now comes from the gateway, so the REPL, TUI and `prove`\nget it too. The tour and every agent brief need no model.\n- **The on-call brief's CI lane is honestly empty.**\n`annotateDeployment` stores no CI-run link, so the brief says so rather\nthan inventing one.\n- **Not done, deliberately:**\n- `teamvault.put` is not refused in the demo; the vault is the in-memory\n`EphemeralVault`, per I41 clause 3.\n- Per-profile data roots, a volume generator, the Killer Demo\nremediation flow, `nimbus wow` and a desktop demo mode are all out of\nscope; `docs/roadmap.md` lists them.\n- **Pre-existing, not touched here:**\n- The no-LLM guidance's \"Hosted\" line still says to set\n`ANTHROPIC_API_KEY`/`OPENAI_API_KEY` in the gateway's environment, but\nthat fallback was removed in v5.0.0.\n- The docs say `NIMBUS_UPDATER_DISABLE=true`, but the code accepts only\n`1`.\n- The spec and plan were stripped before merge. They can be recovered\nfrom `fd92e462` under `docs/superpowers/`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **New Features**\n* Added `nimbus demo` for creating an isolated synthetic Acme workspace.\n* Added demo lifecycle commands for touring, stopping, resetting, and\nreseeding data.\n* Added demo-specific guidance, seed-status banners, safe command\nrewriting, and in-memory vault messaging.\n\n* **Bug Fixes**\n  * Improved stale and unresponsive gateway detection and cleanup.\n* Prevented unsupported initialization, connector changes,\nsynchronization, embeddings, telemetry, updater, and extension-update\nactivity in demo mode.\n  * Added validation to prevent partial or invalid demo data writes.\n\n* **Documentation**\n* Expanded setup, CLI reference, architecture, security, roadmap, and\nchangelog documentation.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-19T14:33:39+03:00",
-          "tree_id": "cf78aca633054f444ebbe423c390283b3e672962",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/b238a1386312746994a8a3ab4e668464c5dd1e5d"
-        },
-        "date": 1789818490191,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 327.2463754999993,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 322.16020490000085,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 178.96466904999798,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "92e965c4f62d769b1a9d3a92abf6f56013040e39",
+          "message": "docs(agent-kits): acceptance A6 met; close Phase 28 (#2165)\n\nA second Codex run closes acceptance A6, and with it the roadmap's last\nopen Phase 28 row (Agent kits).\n\n**The run (2026-11-26, Windows 11, v11.14.0, Codex 0.172.0 on the\nowner's OpenAI account, `gpt-6-luna`):** Codex sent `propose_action`,\nthe proposal reached `nimbus approvals` labelled `codex (--agent)`, the\nowner approved it at the terminal, and the echo server logged `echo\nreceived: kit check`. `nimbus audit --door agent` shows `mcp_a6echo.echo\napproved` for that capture. Both kits now pass every check.\n\n**Changes (docs only):**\n- The Codex row on the docs site's Agent kits page is filled in, and the\nparagraph above the matrix says which model each column came from.\n- `docs/roadmap.md`: the Agent kits row is ticked, and Phase 28 is\nmarked closed in its sequencing note, the phase table and the \"Now\"\nline.\n- `CLAUDE.md`, `GEMINI.md` and `docs/README.md` state that the kits were\nverified.\n- `docs/CHANGELOG.md` has a new entry.\n\n**Stated bounds:**\n- The run kept the one added prompt line that names the action type.\n- In this run the model followed the kit's `AGENTS.md` text and never\ntried `gh pr merge 1`, so the blocked check rests on the earlier run,\nwhere the rule refused it.\n- Cursor and VS Code were not run.\n\n`bun run preflight:fast` passes.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Documentation**\n* Recorded Phase 28’s closure on November 26, 2026, and marked the Agent\nkits milestone complete.\n* Updated the verification notes to report successful real-agent checks\nfor Claude Code and Codex, including a Codex proposal reaching the queue\nand being approved.\n* Clarified that Cursor and VS Code remain untested, and noted\nlimitations in the Codex and blocked-command checks.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-26T07:20:44Z",
+          "tree_id": "029b94ee0f44260dff95ef56826420a3971fc4e3",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/92e965c4f62d769b1a9d3a92abf6f56013040e39"
+        },
+        "date": 1795678159998,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 176.20015030000178,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 177.8240278500003,
             "unit": "ms"
           }
         ]
