@@ -22,7 +22,30 @@ export const DEMO_COST_TOML =
   "\n" +
   "[[cost.rule]]\n" +
   'match = { tag = { product = "*" } }\n' +
-  'set = { product = "{tag.product}", env = "{tag.env}" }\n';
+  'set = { product = "{tag.product}", env = "{tag.env}" }\n' +
+  "\n" +
+  "# Demo cost report (Phase 7): rendered by `nimbus --demo cost report checkout-weekly`; nothing is sent.\n" +
+  "[[cost.report]]\n" +
+  'name = "checkout-weekly"\n' +
+  'scope = { product = "checkout" }\n' +
+  'period = "week"\n' +
+  'schedule = "0 8 * * 1"\n' +
+  'tz = "UTC"\n' +
+  "\n" +
+  "[[cost.report.channel]]\n" +
+  'report = "checkout-weekly"\n' +
+  'kind = "slack"\n' +
+  'to = "C0DEMOCOST"\n' +
+  'format = "markdown"\n' +
+  'template = "*Checkout*, week of {week_start}: {total} ({change}, {change_pct}).\\nTop movers:\\n{top_movers}\\nUnassigned: {unassigned} ({unassigned_pct})\\n`{command}`"\n' +
+  "\n" +
+  "[[cost.report.channel]]\n" +
+  'report = "checkout-weekly"\n' +
+  'kind = "outlook"\n' +
+  'to = "finance@acme.example"\n' +
+  'format = "html"\n' +
+  'subject = "Checkout cost, week of {week_start}"\n' +
+  'template = "<p>Checkout cost for the week of {week_start}: <b>{total}</b> ({change}).</p>{breakdown}<p>{freshness}</p>"\n';
 
 export const DEMO_COST_DAYS = 30;
 const DAY_MS = 86_400_000;

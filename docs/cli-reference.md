@@ -1357,6 +1357,32 @@ nimbus cost rules check --period month
 
 **Exit codes.** `why`: 0 for a comparison; 1 for no cost data imported, an unknown target or an error. `rules check`: 0 for a check; 1 for a refused `[cost]` config, no cost data or an error. The IPC methods are `cost.why` and `cost.rulesCheck`; they serve only a connection that declared the `cli` or `ui` kind, are LAN-forbidden (the whole `cost` namespace) and are not on the desktop allowlist.
 
+### `nimbus cost report`
+
+Renders a configured cost report for each of its channels exactly as it would be posted, so you can check the text, the escaping and the size before anything is scheduled. **Nothing is sent**: scheduled delivery through a saved workflow and a standing rule is a later change. Read from the local index and your template files only: no network call, no model, no egress row.
+
+```bash
+nimbus cost report                              # list the [[cost.report]] definitions
+nimbus cost report checkout-weekly              # the report, then each channel's body, destination and subject
+nimbus cost report checkout-weekly --channel slack   # that one body, raw (for piping)
+nimbus cost report checkout-weekly --csv        # the breakdown: currency,part,provider,env,amount
+nimbus cost report checkout-weekly --json
+```
+
+**Periods** (in the report's `tz`, default the gateway zone): `week` is the previous full Monday to Sunday week, `month` the previous calendar month, `<N>d` the N days ending yesterday. Each is compared with the period before it of the same kind (the week before, the month before by the calendar, the N days before). Cost lines carry UTC charge days, so the zone decides which dates are in the period; a day is not re-split by hour. Provisional days (the last three of a source) are labelled, never left out.
+
+**Scope.** `scope` names any of `product`, `env`, `service` (the outputs of your `[[cost.rule]]` rules) and `provider`; a line counts when every given key matches. Each currency is reported on its own and never added to another; the cost no rule assigned is stated beside the total (`{unassigned}`), not inside it.
+
+**Templates.** A channel has an inline `template` (one TOML line; write a line break as `\n`) or a `template_file`, read only from `<config dir>/cost-templates/`: a plain file name (no path, no `..`, not hidden), not a link, inside that folder after resolving links, at most 64 KiB, UTF-8. The placeholders are a closed set: `{report_name}`, `{period_start}`, `{period_end}`, `{week_start}` (empty for a non-week report), `{total}`, `{currency}`, `{change}`, `{change_pct}` (`new` when the previous period was 0), `{top_movers}` (at most 3 per currency), `{breakdown}`, `{unassigned}`, `{unassigned_pct}`, `{freshness}`, `{command}`. With several currencies every per-currency placeholder lists them one by one, separated by a semicolon. `{{` and `}}` are literal braces. An unknown placeholder or an unbalanced brace refuses that channel, naming it. A subject is one plain line of at most 255 characters and cannot use `{top_movers}`, `{breakdown}` or `{freshness}`.
+
+**What a value can do.** Your template's own text is yours. Every substituted value (a service name or a tag value from a vendor export, for example) has its control and invisible characters removed and is capped at 128 characters. For Slack, Teams and any html body, `< > & @` become `‹ › ⅋ (at)`, and in chat `* _ ~` and the backtick become look-alikes, so a value can never mention a channel, open a tag, form an entity, load content or change formatting; in html `" '` are escaped and `= ( )` become `꞊ ❨ ❩`. These stand-ins are chosen so the send door's own detectors, which decode entities and fold look-alikes before they scan, do not read them back. Plain mail text is only stripped. CSV cells are formula-guarded.
+
+**Door checks.** The template's text and every rendered body are run through the same broadcast-mention and remote-content detectors the send door uses (Slack and Teams mentions; remote content in Teams and Outlook html). A finding is shown as `the send door would refuse it` and exits 1.
+
+**Size caps.** A body is at most 12 000 characters for Slack and Teams and 100 000 for a Gmail or Outlook draft. A longer body first shortens `{breakdown}` and then `{top_movers}`, each ending in `… and N more`; a body that still does not fit is refused, never cut.
+
+**Exit codes.** 0 when every channel rendered with no refusal (and for the list); 1 for no cost data, an unknown report, a refused `[cost]` config, any channel error or door refusal, or an error. The IPC methods are `cost.reportList` and `cost.reportRender`; they serve only a connection that declared the `cli` or `ui` kind, are LAN-forbidden (the whole `cost` namespace) and are not on the desktop allowlist.
+
 ### `nimbus briefing`
 
 Your morning briefing, built from the local index. It makes **no provider call** and **uses no model**: the text is rendered deterministically, and nothing leaves the machine except a local notification.
@@ -3488,6 +3514,8 @@ Limits for the FinOps cost data the Vantage, OpenCost and Kubecost syncs index (
 | `[cost] internal_envs` | `["ci", "dev", "test", "staging"]` | The envs `nimbus cost internal` shows (1 to 32 names). |
 | `[cost] authoritative` | `{}` | Per provider, the source the cost views use, for example `{ aws = "vantage" }`; without it, raw lines win over Vantage rows for a provider. |
 | `[cost.focus] dir` | unset | An absolute path. A minute after boot and then once a day the gateway imports its new or changed `*.csv` FOCUS exports (never on a demo gateway; a link is not followed). |
+| `[[cost.report]]` | none | A cost report (`nimbus cost report`): `name` (lowercase letters, digits and `-`), `scope = { product, env, service, provider }` (at least one), `period` (`week`, `month` or `<N>d`, 1 to 400), optional `schedule` (a cron line as for workflows, numeric days: `0 8 * * 1` is Monday 08:00) and `tz` (an IANA zone). At most 50. As for every array block, the highest layer with reports supplies all of them. |
+| `[[cost.report.channel]]` | none | One channel of a report, its own array (so a role pack's reports can take your channels): `report` (a report name), `kind` (`slack`, `teams`, `gmail`, `outlook`; one of each per report), `to` (Slack channel id; Teams `{ team, channel }`; 1 to 50 email addresses, or one as a string), `format` (Slack `text`/`markdown`; Teams `text`/`markdown`/`html`; Gmail `text`; Outlook `text`/`html`), optional `breakdown = "csv"`, exactly one of `template` and `template_file` (in `cost-templates/`), and for Gmail and Outlook a required one-line `subject`. At most 200. A bad report or channel refuses the whole cost config. |
 | `[[cost.rule]]` | none | Ordered allocation rules, first match wins: `match = { … }` with any of `source`, `provider`, `sub_account` (id or name), `service`, `region`, `resource` (id or name), `repo`, `workflow` (globs with `*` and `?`, case-insensitive) and `tag = { key = "glob" }`; `set = { product, env, service }`, each a literal or a literal with one placeholder `{tag.<key>}`, `{repo}` or `{sub_account}`. Each key on one line. As for every array block, the highest layer with rules supplies all of them, so a role pack's rules apply until you write your own. An unknown key or placeholder refuses the whole cost config (the views say so) rather than dropping a rule. |
 
 The data comes from `vantage.api_token` (set with `nimbus vault set vantage.api_token`; every 6 hours the sync reads 45 days on the first run, then from three days before the last success). `vantage.group_by` is a comma-separated grouping (default `provider,service,account_id`); a `tag:<key>` entry (for example `provider,service,tag:team`) makes each tag value its own series, with cost that lacks the tag as `__untagged__` (verified against one live account's reply). Name the tag keys here: a saved report's own tag groupings are read as a single `tag` value. `vantage.cost_report_token` is optional: without it the connector (0.17.3 and later) asks for all costs with the filter `()`. `nimbus connector auth vantage` prints the keys.
