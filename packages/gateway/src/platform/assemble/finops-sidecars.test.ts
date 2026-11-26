@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { costAllocationItem, mapVantageCostRow } from "../../connectors/vantage-cost-mapping.ts";
@@ -41,9 +41,40 @@ function stopCount(toml: string, demo: boolean): number {
 }
 
 describe("startFinopsSidecars", () => {
-  test("retention always starts; the notice timer starts on a non-demo gateway only (I41)", () => {
-    expect(stopCount("[finops]\nnotify = true\n", false)).toBe(2);
+  test("retention always starts; the notice timer and the cost folder watch start on a non-demo gateway only (I41)", () => {
+    expect(stopCount("[finops]\nnotify = true\n", false)).toBe(3);
     expect(stopCount("[finops]\nnotify = true\n", true)).toBe(1);
+  });
+
+  test("the watched FOCUS folder is imported by the first pass (Phase 7)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-finops-sidecar-"));
+    const exports = join(dir, "exports");
+    const db = new Database(":memory:");
+    const stops: Array<() => void> = [];
+    try {
+      runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+      mkdirSync(exports);
+      writeFileSync(
+        join(exports, "a.csv"),
+        "BilledCost,BillingCurrency,ChargePeriodStart,ProviderName,ServiceName\n4,USD,2026-11-01T00:00:00Z,AWS,S3\n",
+      );
+      writeFileSync(join(dir, "nimbus.toml"), `[cost.focus]\ndir = ${JSON.stringify(exports)}\n`);
+      startFinopsSidecars({
+        db,
+        paths: { configDir: dir } as PlatformPaths,
+        notifications,
+        logger,
+        sidecarStops: stops,
+        intervalMs: 3_600_000,
+        folderFirstDelayMs: 0,
+      });
+      await new Promise((r) => setTimeout(r, 20));
+      expect(db.query("SELECT TOTAL(billed_cost) AS s FROM cost_line").get()).toEqual({ s: 4 });
+    } finally {
+      for (const s of stops) s();
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
