@@ -137,7 +137,8 @@ const newAcc = (): Acc => ({
   outside: 0,
 });
 
-function freshness(input: CostViewInput): CostFreshness[] {
+/** Each source's newest day and, when it falls in the provisional days, where they start. */
+export function costFreshness(input: CostViewInput): CostFreshness[] {
   const provisionalFrom = dayText(
     dayMs(dayText(input.nowMs)) - (COST_PROVISIONAL_DAYS - 1) * DAY_MS,
   );
@@ -234,7 +235,7 @@ function build(
     view,
     range: input.range,
     byCurrency,
-    freshness: freshness(input),
+    freshness: costFreshness(input),
     empty: input.empty,
     excludedSources: [...input.excludedSources],
     notes: [...input.notes],

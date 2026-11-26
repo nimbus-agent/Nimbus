@@ -129,6 +129,10 @@ PRIVACY & AUDIT
                               Import FOCUS CSV cost exports (AWS, Azure, Google Cloud) into the local index
   nimbus cost products|internal [--period <N>d|week|month] [--json|--csv]
                               Cost per product, or CI and dev/test cost, from your [[cost.rule]] rules
+  nimbus cost why <product|service> [--period <N>d|week|month] [--json]
+                              Why a cost changed: the spike day, what moved, the deploys, PRs and owners
+  nimbus cost rules check [--period <N>d|week|month] [--json]
+                              What each [[cost.rule]] matched and the largest unassigned groups
   nimbus data export|import|delete   Encrypted bundle export/import; per-service deletion
   nimbus vault set|get|delete|list   Secrets (OS keyring only — never config, never logs)
   nimbus telemetry show | disable

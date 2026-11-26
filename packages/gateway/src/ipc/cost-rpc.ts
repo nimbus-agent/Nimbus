@@ -8,6 +8,7 @@ import {
 } from "../finops/cost-anomaly-query.ts";
 import type { ImportReport } from "../finops/cost-import.ts";
 import { isCostServiceId } from "../finops/cost-item-contract.ts";
+import type { CostRulesCheck } from "../finops/cost-rules-check.ts";
 import type { CostViewResult } from "../finops/cost-views.ts";
 import { isWasteKind, WASTE_KINDS } from "../finops/cost-waste.ts";
 import { type CostWasteResult, queryCostWaste } from "../finops/cost-waste-query.ts";
@@ -19,6 +20,12 @@ import {
   handleCostInternal,
   handleCostProducts,
 } from "./cost-views-rpc.ts";
+import {
+  type CostWhyEmpty,
+  type CostWhyResult,
+  handleCostRulesCheck,
+  handleCostWhy,
+} from "./cost-why-rpc.ts";
 import type { ClientKind } from "./server/client-kind.ts";
 
 export class CostRpcError extends Error {
@@ -163,6 +170,9 @@ export async function dispatchCostRpc(
     | { importId: string; removed: number }
     | CostViewResult
     | ClusterViewResult
+    | CostWhyResult
+    | CostWhyEmpty
+    | CostRulesCheck
   >(method, params, ctx, {
     "cost.anomalies": handleAnomalies,
     "cost.waste": handleWaste,
@@ -170,5 +180,7 @@ export async function dispatchCostRpc(
     "cost.importRemove": viaImport(handleCostImportRemove),
     "cost.products": viaImport(handleCostProducts),
     "cost.internal": viaImport(handleCostInternal),
+    "cost.why": viaImport(handleCostWhy),
+    "cost.rulesCheck": viaImport(handleCostRulesCheck),
   });
 }

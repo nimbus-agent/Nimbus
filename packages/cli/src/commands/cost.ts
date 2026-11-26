@@ -5,8 +5,10 @@ import { stripControlChars } from "../lib/strip-control-chars.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 import { parseCostImportArgs, runCostImportWith } from "./cost-import-cli.ts";
+import { parseCostRulesCheckArgs, runCostRulesCheckWith } from "./cost-rules-check-cli.ts";
 import { parseCostViewsArgs, runCostViewsWith } from "./cost-views-cli.ts";
 import { parseCostWasteArgs, runCostWasteWith } from "./cost-waste.ts";
+import { parseCostWhyArgs, runCostWhyWith } from "./cost-why-cli.ts";
 
 /**
  * `nimbus cost anomalies [--service <id>] [--days <n>] [--json]` - the cost anomaly detector over the
@@ -31,7 +33,9 @@ export const COST_USAGE =
   "       nimbus cost import <file|dir> [--provider aws|azure|gcp] [--dry-run] [--json]\n" +
   "       nimbus cost import --remove <importId> [--json]\n" +
   "       nimbus cost products [--period <N>d|week|month] [--allocation cluster] [--json|--csv]\n" +
-  "       nimbus cost internal [--period <N>d|week|month] [--json|--csv]";
+  "       nimbus cost internal [--period <N>d|week|month] [--json|--csv]\n" +
+  "       nimbus cost why <product|service> [--period <N>d|week|month] [--json]\n" +
+  "       nimbus cost rules check [--period <N>d|week|month] [--json]";
 
 export interface CostAnomaliesArgs {
   readonly json: boolean;
@@ -258,6 +262,14 @@ function subcommandRunner(args: readonly string[], sink: CostSink): CostRun | un
   if (args[0] === "import") {
     const i = parseCostImportArgs(args.slice(1));
     return i === undefined ? undefined : (c) => runCostImportWith(c, i, sink);
+  }
+  if (args[0] === "why") {
+    const y = parseCostWhyArgs(args.slice(1));
+    return y === undefined ? undefined : (c) => runCostWhyWith(c, y, sink);
+  }
+  if (args[0] === "rules") {
+    const r = parseCostRulesCheckArgs(args.slice(1));
+    return r === undefined ? undefined : (c) => runCostRulesCheckWith(c, r, sink);
   }
   if (args[0] === "waste") {
     const w = parseCostWasteArgs(args.slice(1));

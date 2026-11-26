@@ -50,7 +50,7 @@ export interface ClusterViewResult {
 
 const OWNER_KINDS: ReadonlySet<ClientKind> = new Set<ClientKind>(["cli", "ui"]);
 
-function requireOwner(ctx: CostViewsRpcCtx, method: string): void {
+export function requireOwner(ctx: CostViewsRpcCtx, method: string): void {
   if (ctx.caller === undefined || !OWNER_KINDS.has(ctx.caller.kind)) {
     throw new CostViewsRpcError(
       -32000,
@@ -59,7 +59,11 @@ function requireOwner(ctx: CostViewsRpcCtx, method: string): void {
   }
 }
 
-function params(raw: unknown, method: string, allowed: readonly string[]): Record<string, unknown> {
+export function params(
+  raw: unknown,
+  method: string,
+  allowed: readonly string[],
+): Record<string, unknown> {
   if (raw === undefined) return {};
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     throw new CostViewsRpcError(-32602, `${method} requires an object payload`);
@@ -72,7 +76,7 @@ function params(raw: unknown, method: string, allowed: readonly string[]): Recor
   return p;
 }
 
-function windowOf(p: Record<string, unknown>, method: string, nowMs: number): CostWindow {
+export function windowOf(p: Record<string, unknown>, method: string, nowMs: number): CostWindow {
   const period = p["period"] ?? "30d";
   const w = typeof period === "string" ? periodWindow(period, nowMs) : undefined;
   if (w === undefined) {
@@ -81,7 +85,7 @@ function windowOf(p: Record<string, unknown>, method: string, nowMs: number): Co
   return w;
 }
 
-function config(ctx: CostViewsRpcCtx): NimbusCostConfig {
+export function config(ctx: CostViewsRpcCtx): NimbusCostConfig {
   return ctx.configDir === undefined
     ? DEFAULT_COST_CONFIG
     : loadNimbusCostFromConfigDir(ctx.configDir);
