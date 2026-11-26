@@ -113,3 +113,55 @@ describe("costReportDoorRefusal", () => {
     ).toBeNull();
   });
 });
+
+describe("costReportDoorRefusal: the input each kind would receive", () => {
+  test("Outlook text, a draft with no subject, and a single address as a string", () => {
+    // An Outlook `text` body is posted as text: an <img> there is not html, so nothing is refused.
+    expect(
+      costReportDoorRefusal(
+        {
+          kind: "outlook",
+          to: ["a@b.co"],
+          format: "text",
+          body: '<img src="https://x/a.png">',
+          subject: "S",
+        },
+        NO_CHATOPS,
+      ),
+    ).toBeNull();
+    // The same body as Outlook html loads remote content.
+    expect(
+      costReportDoorRefusal(
+        {
+          kind: "outlook",
+          to: "a@b.co",
+          format: "html",
+          body: '<img src="https://x/a.png">',
+          subject: null,
+        },
+        NO_CHATOPS,
+      ),
+    ).toContain("loads remote content");
+    expect(
+      costReportDoorRefusal(
+        { kind: "gmail", to: "a@b.co", format: "text", body: "x", subject: null },
+        NO_CHATOPS,
+      ),
+    ).toBeNull();
+  });
+
+  test("a Teams html broadcast mention is refused in report wording", () => {
+    expect(
+      costReportDoorRefusal(
+        {
+          kind: "teams",
+          to: { team: "t", channel: "c" },
+          format: "html",
+          body: "<at>everyone</at>",
+          subject: null,
+        },
+        NO_CHATOPS,
+      ),
+    ).toBe("the body notifies a whole channel, group or team (a broadcast mention)");
+  });
+});

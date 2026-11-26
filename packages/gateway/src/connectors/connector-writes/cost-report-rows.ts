@@ -50,8 +50,9 @@ const WORDING: ReadonlyMap<string, string> = new Map([
   ],
 ]);
 
+/** A draft's recipients as one line; a mail channel's `to` is an address or a list of them. */
 const addresses = (to: CostReportPost["to"]): string =>
-  Array.isArray(to) ? to.join(", ") : typeof to === "string" ? to : "";
+  typeof to === "string" ? to : (to as readonly string[]).join(", ");
 
 function inputFor(p: CostReportPost): Record<string, unknown> {
   const contentType = p.format === "html" ? "html" : "text";
