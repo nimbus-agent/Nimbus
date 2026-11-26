@@ -71,16 +71,16 @@ export interface AdaptedAllocations {
   readonly lines: CostLine[];
   /** Days on which a second Vantage report configuration was set aside (never summed). */
   readonly supersededDays: number;
-  /** The newest day with a Vantage row, any window. */
+  /** The newest day with a Vantage row, any range. */
   readonly lastDay: string | null;
 }
 
 /** The Vantage rows of `[fromDay, toDay]` as cost lines (one configuration per day). */
 export function adaptCostAllocationItems(
   db: Database,
-  window: { readonly fromDay: string; readonly toDay: string },
+  range: { readonly fromDay: string; readonly toDay: string },
 ): AdaptedAllocations {
-  const rows = readRows(db, [VANTAGE_SOURCE], window.fromDay, window.toDay).filter(
+  const rows = readRows(db, [VANTAGE_SOURCE], range.fromDay, range.toDay).filter(
     (r) => r.day !== null && typeof r.amount === "number" && Number.isFinite(r.amount),
   );
   const newestConfig = new Map<number, { config: string; synced: number }>();
@@ -148,10 +148,10 @@ export interface ClusterAllocationRow {
   readonly amount: number;
 }
 
-/** Kubecost / OpenCost allocations in the window, summed per (service, dimension, name, currency). */
+/** Kubecost / OpenCost allocations in the range, summed per (service, dimension, name, currency). */
 export function readClusterAllocations(
   db: Database,
-  window: { readonly fromDay: string; readonly toDay: string },
+  range: { readonly fromDay: string; readonly toDay: string },
 ): ClusterAllocationRow[] {
   const sums = new Map<string, ClusterAllocationRow>();
   const services = db
@@ -160,7 +160,7 @@ export function readClusterAllocations(
     )
     .all(...CLUSTER_COST_SERVICES) as { service: string }[];
   for (const { service } of services) {
-    for (const r of readRows(db, [service], window.fromDay, window.toDay)) {
+    for (const r of readRows(db, [service], range.fromDay, range.toDay)) {
       if (typeof r.amount !== "number" || !Number.isFinite(r.amount)) continue;
       const currency = r.currency ?? "unknown";
       const dimension = r.kind ?? "other";

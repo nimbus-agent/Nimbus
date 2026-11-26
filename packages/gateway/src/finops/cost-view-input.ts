@@ -5,7 +5,7 @@
 //
 // Overlap rule (spec, Resolved 6): when `[cost] authoritative` names a source for a provider, only that source's
 // lines are used for it. Otherwise, when raw lines (a FOCUS import or a direct source) exist for a provider in the
-// window, its Vantage rows are excluded. Every exclusion is listed, so the output says which source it set aside.
+// range, its Vantage rows are excluded. Every exclusion is listed, so the output says which source it set aside.
 import type { Database } from "bun:sqlite";
 
 import { adaptCostAllocationItems, VANTAGE_SOURCE } from "./cost-allocation-adapter.ts";
@@ -23,11 +23,11 @@ export interface CostViewConfig {
 export function gatherCostViewInput(
   db: Database,
   cfg: CostViewConfig,
-  window: CostWindow,
+  range: CostWindow,
   nowMs: number,
 ): CostViewInput {
-  const raw = readCostLines(db, { fromDay: window.fromDay, toDay: window.toDay });
-  const adapted = adaptCostAllocationItems(db, window);
+  const raw = readCostLines(db, { fromDay: range.fromDay, toDay: range.toDay });
+  const adapted = adaptCostAllocationItems(db, range);
   const all: CostLine[] = [...raw, ...adapted.lines];
   const sourcesByProvider = new Map<string, Set<string>>();
   for (const l of all) {
@@ -78,7 +78,7 @@ export function gatherCostViewInput(
   return {
     lines,
     rules: cfg.rules,
-    window,
+    range,
     nowMs,
     empty: lastDays.length === 0,
     lastDays,

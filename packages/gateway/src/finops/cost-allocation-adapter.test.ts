@@ -102,7 +102,7 @@ describe("adaptCostAllocationItems", () => {
     ).toEqual([]);
   });
 
-  test("the window bounds are inclusive UTC days", () => {
+  test("the range bounds are inclusive UTC days", () => {
     seed({ day: 1, amount: 1 });
     seed({ day: 3, amount: 1 });
     expect(

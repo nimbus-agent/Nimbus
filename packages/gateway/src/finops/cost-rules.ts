@@ -75,21 +75,21 @@ export function globMatches(glob: string, value: string): boolean {
   return re.test(value);
 }
 
-const any = (glob: string, ...values: (string | null)[]): boolean =>
+const matchesAny = (glob: string, ...values: (string | null)[]): boolean =>
   values.some((v) => v !== null && globMatches(glob, v));
 
 /** One matcher per match field. */
 export const COST_MATCHERS: Readonly<
   Record<CostMatchKey, (line: CostLine, glob: string) => boolean>
 > = {
-  source: (l, g) => any(g, l.source),
-  provider: (l, g) => any(g, l.provider),
-  sub_account: (l, g) => any(g, l.subAccountId, l.subAccountName),
-  service: (l, g) => any(g, l.serviceName),
-  region: (l, g) => any(g, l.regionId),
-  resource: (l, g) => any(g, l.resourceId, l.resourceName),
-  repo: (l, g) => any(g, l.repo),
-  workflow: (l, g) => any(g, l.workflow),
+  source: (l, g) => matchesAny(g, l.source),
+  provider: (l, g) => matchesAny(g, l.provider),
+  sub_account: (l, g) => matchesAny(g, l.subAccountId, l.subAccountName),
+  service: (l, g) => matchesAny(g, l.serviceName),
+  region: (l, g) => matchesAny(g, l.regionId),
+  resource: (l, g) => matchesAny(g, l.resourceId, l.resourceName),
+  repo: (l, g) => matchesAny(g, l.repo),
+  workflow: (l, g) => matchesAny(g, l.workflow),
 };
 
 function ruleMatches(line: CostLine, rule: CostRule): boolean {

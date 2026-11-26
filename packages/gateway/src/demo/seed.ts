@@ -38,6 +38,7 @@ import type {
   DemoPerson,
 } from "./corpus/types.ts";
 import { MINUTE } from "./corpus/types.ts";
+import { DEMO_COST_TOML, seedDemoCost } from "./seed-cost.ts";
 
 /**
  * The demo seeder.
@@ -157,7 +158,8 @@ function writeDemoConfig(
     // reconcile: the pre-restart demo gateway's live reader picks the file up within ~5 s, and
     // the boot reconcile at the restart keeps that earlier stamp, so it precedes the page.
     "\n[oncall.push]\n" +
-    "enabled = true\n";
+    "enabled = true\n" +
+    DEMO_COST_TOML;
   writeFileSync(join(configDir, "nimbus.toml"), toml);
 }
 
@@ -389,6 +391,7 @@ export async function seedDemoCorpus(
   writeItems(db, corpus.people, corpus.messages, at, opts.nowMs);
 
   const blameLines = writeBlame(db, repoRoot, blame);
+  seedDemoCost(db, demoRoot, opts.nowMs);
 
   dbRun(
     db,

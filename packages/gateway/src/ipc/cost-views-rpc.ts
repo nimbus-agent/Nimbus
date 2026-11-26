@@ -44,7 +44,7 @@ export interface CostViewsRpcCtx {
 
 export interface ClusterViewResult {
   readonly view: "cluster";
-  readonly window: CostWindow;
+  readonly range: CostWindow;
   readonly rows: ClusterAllocationRow[];
 }
 
@@ -94,21 +94,21 @@ export function handleCostProducts(
   requireOwner(ctx, "cost.products");
   const p = params(raw, "cost.products", ["period", "allocation"]);
   const nowMs = (ctx.now ?? Date.now)();
-  const window = windowOf(p, "cost.products", nowMs);
+  const range = windowOf(p, "cost.products", nowMs);
   const allocation = p["allocation"];
   if (allocation !== undefined && allocation !== "cluster") {
     throw new CostViewsRpcError(-32602, "cost.products: allocation must be cluster");
   }
   if (allocation === "cluster")
-    return { view: "cluster", window, rows: readClusterAllocations(ctx.db, window) };
-  return productView(gatherCostViewInput(ctx.db, config(ctx), window, nowMs));
+    return { view: "cluster", range, rows: readClusterAllocations(ctx.db, range) };
+  return productView(gatherCostViewInput(ctx.db, config(ctx), range, nowMs));
 }
 
 export function handleCostInternal(raw: unknown, ctx: CostViewsRpcCtx): CostViewResult {
   requireOwner(ctx, "cost.internal");
   const p = params(raw, "cost.internal", ["period"]);
   const nowMs = (ctx.now ?? Date.now)();
-  const window = windowOf(p, "cost.internal", nowMs);
+  const range = windowOf(p, "cost.internal", nowMs);
   const cfg = config(ctx);
-  return internalView(gatherCostViewInput(ctx.db, cfg, window, nowMs), cfg.internalEnvs);
+  return internalView(gatherCostViewInput(ctx.db, cfg, range, nowMs), cfg.internalEnvs);
 }

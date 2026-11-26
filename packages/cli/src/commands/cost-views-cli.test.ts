@@ -50,7 +50,7 @@ const BLOCK = (over: Record<string, unknown> = {}) => ({
 });
 const VIEW = (over: Record<string, unknown> = {}) => ({
   view: "products",
-  window: { fromDay: "2026-10-28", toDay: "2026-11-26", label: "last 30 days" },
+  range: { fromDay: "2026-10-28", toDay: "2026-11-26", label: "last 30 days" },
   byCurrency: { USD: BLOCK() },
   freshness: [{ source: "focus", lastDay: "2026-11-25", provisionalFrom: "2026-11-24" }],
   empty: false,
@@ -181,7 +181,7 @@ describe("runCostViewsWith", () => {
   test("cluster view and json", async () => {
     const cluster = {
       view: "cluster",
-      window: { fromDay: "a", toDay: "b", label: "x" },
+      range: { fromDay: "a", toDay: "b", label: "x" },
       rows: [
         { service: "kubecost", dimension: "namespace", name: "web", currency: "USD", amount: 10 },
       ],

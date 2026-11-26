@@ -2,7 +2,7 @@
 // cost lines and the owner's rules.
 //
 // Confined by static rule D48 (no network, no connector, no model). Pure: lines and rules in, a view out.
-// Every amount is grouped by currency and NEVER summed across currencies: a window with two currencies has two
+// Every amount is grouped by currency and NEVER summed across currencies: a range with two currencies has two
 // subtotals and no grand total. Every view states the unassigned share and the source freshness, and "no cost
 // data imported" (`empty`) is a different answer from a period whose cost is 0.
 import { DAY_MS } from "./cost-item-contract.ts";
@@ -25,7 +25,7 @@ export const dayText = (ms: number): string => new Date(ms).toISOString().slice(
 const dayMs = (day: string): number => Date.parse(`${day}T00:00:00Z`);
 
 /**
- * The window a `--period` names, ending today (UTC): `<N>d` is the last N days including today, `week` is this
+ * The range a `--period` names, ending today (UTC): `<N>d` is the last N days including today, `week` is this
  * Monday to today, `month` is the first of this month to today. Undefined for anything else.
  */
 export function periodWindow(period: string, nowMs: number): CostWindow | undefined {
@@ -66,7 +66,7 @@ export interface CostViewRow {
 }
 
 export interface CostCurrencyBlock {
-  /** Assigned + unassigned (+ `outside` for `internal`): every line of this currency in the window. */
+  /** Assigned + unassigned (+ `outside` for `internal`): every line of this currency in the range. */
   readonly total: number;
   readonly rows: CostViewRow[];
   readonly unassigned: number;
@@ -88,7 +88,7 @@ export interface CostFreshness {
 
 export interface CostViewResult {
   readonly view: "products" | "internal";
-  readonly window: CostWindow;
+  readonly range: CostWindow;
   readonly byCurrency: Record<string, CostCurrencyBlock>;
   readonly freshness: CostFreshness[];
   /** True only when no cost line and no adapted row exists at all: "no cost data imported". */
@@ -107,12 +107,12 @@ export interface CostViewResult {
 export interface CostViewInput {
   readonly lines: readonly CostLine[];
   readonly rules: readonly CostRule[];
-  readonly window: CostWindow;
+  readonly range: CostWindow;
   readonly nowMs: number;
   readonly empty: boolean;
-  /** The newest day per source, any window. */
+  /** The newest day per source, any range. */
   readonly lastDays: readonly { readonly source: string; readonly lastDay: string }[];
-  /** Currencies seen in the store, shown with 0 when the window holds none. */
+  /** Currencies seen in the store, shown with 0 when the range holds none. */
   readonly knownCurrencies: readonly string[];
   readonly excludedSources: CostViewResult["excludedSources"];
   readonly notes: readonly string[];
@@ -177,7 +177,7 @@ function build(
 ): CostViewResult {
   const accs = new Map<string, Acc>();
   const inWindow = input.lines.filter(
-    (l) => l.chargeDay >= input.window.fromDay && l.chargeDay <= input.window.toDay,
+    (l) => l.chargeDay >= input.range.fromDay && l.chargeDay <= input.range.toDay,
   );
   for (const l of inWindow) {
     const acc = accs.get(l.currency) ?? newAcc();
@@ -220,7 +220,7 @@ function build(
   for (const c of [...accs.keys()].sort()) byCurrency[c] = finish(accs.get(c) as Acc);
   return {
     view,
-    window: input.window,
+    range: input.range,
     byCurrency,
     freshness: freshness(input),
     empty: input.empty,

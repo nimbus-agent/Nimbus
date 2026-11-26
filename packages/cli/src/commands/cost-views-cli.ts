@@ -75,7 +75,7 @@ type Block = {
 };
 type ViewResult = {
   view: "products" | "internal";
-  window: { fromDay: string; toDay: string; label: string };
+  range: { fromDay: string; toDay: string; label: string };
   byCurrency: Record<string, Block>;
   freshness: { source: string; lastDay: string | null; provisionalFrom: string | null }[];
   empty: boolean;
@@ -86,7 +86,7 @@ type ViewResult = {
 };
 type ClusterResult = {
   view: "cluster";
-  window: { fromDay: string; toDay: string; label: string };
+  range: { fromDay: string; toDay: string; label: string };
   rows: { service: string; dimension: string; name: string; currency: string; amount: number }[];
 };
 
@@ -161,7 +161,7 @@ function renderText(r: ViewResult, sink: CostViewsSink): number {
     r.view === "products"
       ? "Cost by product"
       : `Internal cost (${(r.internalEnvs ?? []).map(clean).join(", ")})`;
-  sink.out(`${what}, ${r.window.fromDay} to ${r.window.toDay} (${r.window.label})\n`);
+  sink.out(`${what}, ${r.range.fromDay} to ${r.range.toDay} (${r.range.label})\n`);
   const currencies = Object.keys(r.byCurrency);
   if (currencies.length > 1)
     sink.out("Several currencies: each has its own total; they are never added together.\n");
@@ -210,7 +210,7 @@ function renderCluster(
     return 1;
   }
   sink.out(
-    `Cluster allocation (Kubecost/OpenCost, not part of cloud totals), ${r.window.fromDay} to ${r.window.toDay}\n`,
+    `Cluster allocation (Kubecost/OpenCost, not part of cloud totals), ${r.range.fromDay} to ${r.range.toDay}\n`,
   );
   for (const x of r.rows) {
     sink.out(

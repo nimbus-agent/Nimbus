@@ -82,8 +82,8 @@ function store(lines: CostLine[]): void {
   }
 }
 
-const window30 = periodWindow("30d", NOW) ?? { fromDay: "", toDay: "", label: "" };
-const products = (cfg = CFG) => productView(gatherCostViewInput(db, cfg, window30, NOW));
+const range30 = periodWindow("30d", NOW) ?? { fromDay: "", toDay: "", label: "" };
+const products = (cfg = CFG) => productView(gatherCostViewInput(db, cfg, range30, NOW));
 
 describe("periodWindow", () => {
   test("Nd, week (Monday-based) and month end today (UTC)", () => {
@@ -230,7 +230,7 @@ describe("internalView", () => {
       line({ tags: { product: "checkout", env: "prod" }, billedCost: 50, resourceId: "p" }),
       line({ tags: {}, billedCost: 1, resourceId: "u" }),
     ]);
-    const v = internalView(gatherCostViewInput(db, CFG, window30, NOW), [
+    const v = internalView(gatherCostViewInput(db, CFG, range30, NOW), [
       "ci",
       "dev",
       "test",
