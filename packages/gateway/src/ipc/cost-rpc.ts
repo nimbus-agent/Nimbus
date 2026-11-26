@@ -15,6 +15,12 @@ import { type CostWasteResult, queryCostWaste } from "../finops/cost-waste-query
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 import { CostImportRpcError, handleCostImport, handleCostImportRemove } from "./cost-import-rpc.ts";
 import {
+  type CostReportListEntry,
+  type CostReportRenderResult,
+  handleCostReportList,
+  handleCostReportRender,
+} from "./cost-report-rpc.ts";
+import {
   type ClusterViewResult,
   CostViewsRpcError,
   handleCostInternal,
@@ -173,6 +179,8 @@ export async function dispatchCostRpc(
     | CostWhyResult
     | CostWhyEmpty
     | CostRulesCheck
+    | { reports: CostReportListEntry[]; configError: string | null }
+    | CostReportRenderResult
   >(method, params, ctx, {
     "cost.anomalies": handleAnomalies,
     "cost.waste": handleWaste,
@@ -182,5 +190,7 @@ export async function dispatchCostRpc(
     "cost.internal": viaImport(handleCostInternal),
     "cost.why": viaImport(handleCostWhy),
     "cost.rulesCheck": viaImport(handleCostRulesCheck),
+    "cost.reportList": viaImport(handleCostReportList),
+    "cost.reportRender": viaImport(handleCostReportRender),
   });
 }
