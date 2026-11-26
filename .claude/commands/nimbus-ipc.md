@@ -560,12 +560,20 @@ file is the authority for its method set.
 | `toolgen.*` | `create`, `approvalRespond`, `save`, `saveApprovalRespond`, `list`, `invoke`, `revoke`, `credentialSet` | `ipc/toolgen-rpc.ts` | runtime tool generation (I39/I40) |
 | `ask.*` | `explainLast` | `ipc/diagnostics-rpc.ts` | `nimbus explain last`; also needs its entry in `tryDispatchDiagnosticsRpc`'s outer match |
 | `oncall.*` | `now`, `handoff`, `pushedList`, `pushedGet`, `pushedRetry` | `ipc/oncall-now-rpc.ts` (`now`: who is on call from the indexed shifts, own dispatcher, no push runtime needed, served in a demo gateway), `handoff`: the shift handoff brief from the local index, `ipc/oncall-handoff-rpc.ts`, read-only, no HITL, on the Tauri allowlist), `ipc/oncall-push-rpc.ts` | the on-call pushed brief, default-off `[oncall.push]`; `now`, `pushedList` and `pushedGet` ARE on the Tauri `ALLOWED_METHODS` (desktop On-call page), `pushedRetry` is CLI-only |
+| `standing.*` | `list`, `show`, `fires`, `pause`, `revoke`, `suggestions`, `dismissSuggestion` (renderer-readable), `create`, `resume`, `rule.create`, `rule.resume`, `suggestion.dismiss` | `ipc/standing-rpc.ts` | standing approvals (I55, Phase 10 SA3/SA5); creating or resuming a rule is the local owner's `cli` approval, human answers only |
+| `approvals.*` | `list`, `get`, `approve`, `decline` | `ipc/approvals-rpc.ts` | the owner's queue of outside-agent proposals (Phase 28 AD2); `cli`/`ui` connections only, not on the Tauri allowlist |
+| `capture.*` / `captures.*` | `capture.submit`, `status`, `state`, `mine`, `describe`; `captures.list`, `get`, `accept`, `reject`, `revoke`, `purge` | `ipc/capture-rpc.ts` | the MCP capture sink and agent door (I28/I58); see `nimbus-mcp-sink` |
+| `memory.*` | `list`, `forget` | `ipc/memory-rpc.ts` | long-term episodic memory (I61) |
+| `cost.*` | `anomalies`, `waste` | `ipc/cost-rpc.ts` | FinOps cost reads from the local index; CLI only |
+| `statuspage.*` | `model` | `ipc/statuspage-rpc.ts` | `nimbus statuspage draft` data; CLI only |
+| `scheduling.*` | `ask`, `respond` | `ipc/scheduling-rpc.ts` | federated free/busy scheduling (I17 (b)); `respond` is the local owner approving a peer's request |
+| `trust.*` | `status`, `refresh` | `ipc/trust-rpc.ts` | the Nimbus trust feed snapshot |
 | `demo.*` | `seed`, `firePage` | `ipc/demo-rpc.ts` | claimed only by a demo-rooted gateway (I41) |
 | `notifications.*` | `status`, `test` | `ipc/notifications-rpc.ts` | OS toasts (pre-S3 E). `status` awaits the backend probe; `test` sends one fixed-text toast through the real service (rate limit + `title_only` apply) and returns `{ delivered: true, status }` or `{ delivered: false, reason, status }` — an undelivered toast is a result, never a JSON-RPC error. `nimbus notifications`, `nimbus doctor` |
 
 **`gateway.event`** is the single notification envelope behind `nimbus tail`: `{ kind, ts, payload }`,
 where `kind` is one of `watcher.fired`, `sync.completed`, `extension.stateChanged`, `hitl.requested`,
-`hitl.resolved` and `oncall.briefPushed` (`GatewayEventKind` in `ipc/gateway-events.ts`).
+`hitl.resolved`, `oncall.briefPushed`, `briefing.ready`, `incident.assembled`, `incident.finding` and `incident.updateDrafted` (`GatewayEventKind` in `ipc/gateway-events.ts`).
 `connector.healthChanged` keeps its own method name because the Tauri bridge matches on names. The
 two HITL kinds carry `{ requestId, actionType }` only, never the rendered prompt.
 

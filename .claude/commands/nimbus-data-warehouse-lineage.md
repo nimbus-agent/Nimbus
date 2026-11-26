@@ -32,7 +32,7 @@ Read `nimbus-connector-authoring` first for the generic connector contract; this
 | `bigeye` | `data_quality_test` | `monitoredDataModelKeys[]`, `slaStatus`, `anomaly` | `bigeye.base_url`, `bigeye.api_key` |
 
 These MCP servers are **live** (real APIs), not stubs. Per-connector files:
-`connectors/<name>/src/server.ts` in [nimbus-agent/nimbus-mcp-servers](https://github.com/nimbus-agent/nimbus-mcp-servers) (MCP surface), `packages/gateway/src/connectors/<name>-sync.ts` (sync handler), `packages/gateway/src/connectors/<name>-{data-model,dashboard,dq}-mapping.ts` (item mapper).
+`connectors/<name>/src/server.ts` in [nimbus-agent/nimbus-mcp-servers](https://github.com/nimbus-agent/nimbus-mcp-servers) (MCP surface), `packages/gateway/src/connectors/<name>-sync.ts` (sync handler), `packages/gateway/src/connectors/<name>-{data-model,dashboard,dq,content}-mapping.ts` (item mapper; Monte Carlo is `monte-carlo-*`, Looker is `looker-content-mapping.ts`).
 
 ## The metadata-only ("no-row-data") contract
 
@@ -71,6 +71,13 @@ A new warehouse/BI connector must land all of these in one PR (a `bun test` pass
 6. `packages/gateway/src/graph/graph-populator.ts` — only if you introduce a **new** item type / edge type; the three existing types already dispatch.
 
 New item type → also a V-migration if it needs new graph relation types (see `nimbus-db-migrations`); reusing `data_model` / `dashboard` / `data_quality_test` needs no schema change.
+
+## Later additions (Phase 10, S4)
+
+- **dbt Cloud tests** are a second producer of `data_quality_test` items (`connectors/dbt-test-{mapping,sync}.ts`: failing, erroring and warning tests only, keyed `account:run:test`, `monitoredDataModelKeys` from the run's manifest, so the same `monitors` edges apply); pruned after `[index] dbt_test_retention_days`.
+- **DAG runs** (`airflow:dag_run`, `dagster:job_run`, `prefect:flow_run`; `connectors/{airflow,dagster,prefect}-runs.ts`) are metadata-only run items the incident data lane reads; never embedded.
+- **Schema history (V108, `index/schema-history*.ts`)**: Snowflake `data_model` and BigQuery `table` column sets are recorded when they change (`recordSchemaObservation`, called from `index/item-write-tracking.ts` on the item upsert; static D24 `schema-history-confined`). An incomplete column list is a named gap, never a dropped column. The incident data lane (`incident/lanes/data-schema.ts`) reads it.
+- Data-quality and model items feed `incident_record`'s data lane and the `incident_data` brief (I57 (a)); keep these connectors read-only and index-only for that reason.
 
 ## Roadmap note
 

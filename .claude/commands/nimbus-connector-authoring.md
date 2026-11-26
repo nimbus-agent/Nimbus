@@ -120,6 +120,10 @@ No generator produces a first-party connector today. Write it by hand from nimbu
 
 Then add the sync handler and register in the connector registry at `packages/gateway/src/connectors/registry.ts`.
 
+## Write tools on the gateway side
+
+A connector write tool is never reachable by itself: the gateway classifies every connector write in ONE row table, `packages/gateway/src/connectors/connector-writes/` (`index.ts` `CONNECTOR_WRITE_ROWS`, with the generated `manifest.generated.ts`; `connector-write-registry.ts` consumes it). A write tool with no row is refused, every row prompts the owner (I26, I2), is ledgered before dispatch (I29) and is refused over federation. Whether the model or an outside MCP agent is ever offered it is a separate, owner-opt-in decision (I53, I58, `nimbus connector writes enable`), so adding a write tool to a connector does not offer it to any model. Read the `nimbus-mcp-sink` skill and `docs/SECURITY-INVARIANTS.md` I26/I53/I54 before adding a row; an installed connector update that changes a tool's listed definition suspends an agent-approved tool until the owner approves it again.
+
 ## Authoring Checklist
 
 - [ ] Package created under `connectors/<name>/` in the connectors repo, by hand from its guide to adding a connector (see § Scaffold).

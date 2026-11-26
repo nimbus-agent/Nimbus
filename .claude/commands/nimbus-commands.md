@@ -700,3 +700,19 @@ When all three checks pass, include the package's published age and maintainer i
 `nimbus agent uninstall <kit> [--scope user|project] [--dry-run] [--yes]` (`agent-kits/removal.ts`) and
 `nimbus agent status [--json]`. Tests run on an in-memory machine
 (`packages/cli/src/agent-kits/fake-env.test-helpers.ts`); never point a kit test at a real home directory.
+
+`nimbus agent hook claude-code` is the pure `PreToolUse` hook the Claude Code kit installs (no gateway, fails open).
+
+## S4 CLI surface (Phase 10, 17, 28; full syntax in `docs/cli-reference.md`)
+
+```bash
+nimbus approvals [show <id> | <id>]       # outside-agent proposals queue; approve one in a single owner step (AD2)
+nimbus captures list|accept|reject|...    # the MCP capture sink (I28)
+nimbus approve add|list|dismiss ...       # standing approval rules for one workflow write step (I55)
+nimbus workflow save|run|resume|unschedule|export|import ...; nimbus schedule list   # deterministic + scheduled workflows
+nimbus incident list|show|timeline|investigate|remediate|undo|postmortem|update|runbook|findings|debt ...
+nimbus audit replay <id>; nimbus audit --door <agent|model|workflow|other>; nimbus prove --by-proposer
+nimbus briefing [now|list|status]; nimbus memory list|forget; nimbus pre-review <pr-url>
+nimbus iac drift|accept-drift; nimbus cost anomalies|waste; nimbus statuspage draft; nimbus oncall now|handoff|pushed
+nimbus team schedule <peer> --from --to --duration; nimbus connector writes enable|disable|status ...
+```

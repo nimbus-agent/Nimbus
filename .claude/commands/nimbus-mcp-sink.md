@@ -8,7 +8,11 @@ description: >
   INERT proposals that count only after the owner's `acceptCapture()` (`'agent'` provenance, an
   I31-anchored disclosure); `propose_action` queues a connector action that runs only through
   `mcp-sink/capture-act.ts` `acceptAction()` and then the executor's own HITL prompt, dispatched to
-  the ONE tool the write row names (`agentDoorRow` in `connectors/connector-writes/agent-door.ts`; the old routing table `connectors/proposable-actions.ts` was deleted in AD3b). Use when
+  the ONE tool the write row names (`agentDoorRow` in `connectors/connector-writes/agent-door.ts`; the old routing table `connectors/proposable-actions.ts` was deleted in AD3b).
+  The agent door (Phase 28, complete 2026-11-26; invariant `I58`, static `D49`, V97/V99) enforces the owner's by-name approval
+  list with definition hashes (`nimbus connector writes enable <service> --door agent`), runs on the model door's executor
+  (`buildAgentWriteExecutor`), and is approved through `nimbus approvals`; `describe_actions`, proof by proposer, user MCP servers
+  through the door (`I42`), the `--agent` kit label, and the agent kits (`nimbus agent install|status|uninstall`) are covered. Use when
   touching `packages/gateway/src/mcp-sink/`, `packages/gateway/src/ipc/capture-rpc.ts` or `packages/gateway/src/ipc/approvals-rpc.ts`, the MCP
   write tools (`capture_note`, `propose_decision`, `propose_term`, `propose_link`,
   `propose_action`, `describe_actions`, `capture_status`), `nimbus captures list|show|accept|reject|revoke|purge`, `nimbus approvals` (the owner's queue and one-step approval of an action proposal), the
@@ -139,9 +143,9 @@ overdue rows and marks rows left `executing` by a dead process `failed` /
 `ERR_ACTION_INTERRUPTED`. `expireDueActionsAudited` also runs on list/get/state/status, writing a
 `capture.action.expire` audit row — so opening the desktop Captures page can expire an action.
 
-**Tool selection is always gateway-derived.** `buildActDeps` dispatches
-`proposableWriteTool(type) ?? userMcpToolKeyForActionType(type)` as the payload `mcpToolId`; no
-routing row means `Tool not found`, never dispatch-by-type. An agent-supplied `mcpToolId` (beside
+**Tool selection is always gateway-derived.** `buildActDeps` (with
+`ipc/capture-act-steps.ts`) dispatches `agentDoorRow(type)?.toolId ?? userMcpToolKeyForActionType(type)` as the
+payload `mcpToolId`; no row means `Tool not found`, never dispatch-by-type. An agent-supplied `mcpToolId` (beside
 `actionType` or inside `input`) is REFUSED at submit by `validateActionPayload`.
 
 ### Proposability — the agent door's verdict (AD3b)
@@ -150,9 +154,9 @@ There is no classification table any more (`connectors/proposable-actions.ts` wa
 first-party type is proposable by an outside agent when `agentDoorRow(actionType)` finds a write row
 and `agentOffered` holds: the owner enabled the service to the row's wave and approved the tool for
 agents by name, the listed definition hashes to the stored value, policy allows `mcp_action` and
-`connector_write_model_access`, and the row is offered to the model (never one of the 16 never-offered
-rows: the seven mail sends, the Bitbucket merge, the owner-only iac rows, the four `az`/`gcloud`-read
-cloud rows, the pod delete) and not the Slack DM row. Anything else is `denied` with a fixed `agent_*`
+`connector_write_model_access`, and the row is offered to the model (never a row in `MODEL_NEVER_OFFERED_TOOL_IDS`
+(`connectors/connector-writes/model-offerable.ts`): the seven mail sends, the Bitbucket merge, the owner-only iac rows, the
+four `az`/`gcloud`-read cloud rows, the pod delete) and not the Slack DM row. Anything else is `denied` with a fixed `agent_*`
 class (`agent_not_enabled`, `agent_wave`, `agent_not_approved`, `agent_policy`, `agent_no_scope`,
 `agent_never_offered`, `agent_not_offerable`, `agent_unroutable`) or `unknown` (a HITL type no row
 routes to, such as `extension.run`, `standing.rule.create` or `email.draft.create`). A `mcp_*` type is
@@ -162,8 +166,8 @@ proposable only for a tool the owner approved for agents by name (`user_mcp_not_
 configured services, sorted, plus approved user-MCP tools; no legacy entry, no `mcp_<id>.*` pattern;
 `connectors/connector-writes/agent-door-runtime.ts`).
 
-Counts: derive from `CONNECTOR_WRITE_ROWS` and `MODEL_NEVER_OFFERED_TOOL_IDS` (as of AD3b: 125 rows on
-124 types, 16 never offered, so 109 model-offerable rows, 108 reachable by an agent).
+Counts: derive from `CONNECTOR_WRITE_ROWS` and `MODEL_NEVER_OFFERED_TOOL_IDS`; do not copy a number into prose. What an
+agent can reach is the write table filtered by that verdict, never a second list (see `nimbus-connector-writes`).
 
 **Mesh-only servers:** `obsidian.note.append` is proposable although `obsidian` is not a catalog
 connector. `resolveServerTool` attributes keys with `meshServerForToolKey` — the catalog rule
@@ -242,7 +246,8 @@ is clamped.
   kind is the connection's own claim. A restarted MCP server loses its ids. `Ctrl-C` at the prompt
   rejects the proposal for good.
 - A transport failure is recorded `failed` though the remote may have acted; `outcome_ref` is a heuristic.
-- The routing table is proven against the INSTALLED connectors package; a later tool rename surfaces as `failed`.
+- The write table is proven against the INSTALLED connectors package (`manifest.sync.test.ts`); a later tool rename surfaces as `failed`
+  or, for an approved tool, as a missing/changed listing (refused or suspended, never silently re-routed).
 - Configured-ness treats a multi-key service as configured once ANY key is set, so an accept can
   pass it and fail at dispatch.
 - `capture.describe` can start an approved connector (a listing per service, at most 3 services and 10 types per call, its own limiter), can record the one suspension audit row a submit would, names the approved Terraform directories and Kubernetes context and namespace names to an approved agent, and describes a user-registered type only when the owner approved that tool (I58 bounds 16 to 24). Describe does not say why a type cannot be proposed (one fixed `not_proposable` text; a refused submit names the class), a throwing check is one `unavailable` entry with a fixed text, and params are validated before the limiter (I58 bounds 20 to 24). It shares `verifyListed` with `verifyDefinition`: never copy the post-listing check.
@@ -358,11 +363,30 @@ members the shape names reach the tool. A new tool needs nothing else, but `adap
 be named in `ADDED_SINCE_THE_RECORD` (the recorded upstream 1.32.0 listing is never regenerated). The client label
 comes from the call's `ctx.clientInfo`, per request in the modern era. No tool may return `inputRequired`.
 
+## Static D49 and the agent door's files (Phase 28)
+
+| Rule | Confines |
+|---|---|
+| (a) | the retired deprecation-window names appear in NO production file; `createAgentDoor` only in `agent-door-runtime.ts` and `platform/assemble.ts` |
+| (b) | `connector_write_door_approval` (V97) only in `connectors/connector-writes/door-approval-store.ts` |
+| (c) | `origin: "agent"` written only by `ipc/capture-rpc.ts` `buildActDeps`; `proposer:` only there and the two declare/project sites |
+| (d) | an action's origin compared with a literal only in `engine/outside-origin.ts` (`isOutsideOrigin`/`isAgentOrigin`) |
+| (e) | order: `vetoingConsent` is the executor's consent; verdict and definition steps precede `claimAction(` and `writeSubmittedCapture(` |
+| (g), (h) | user-MCP call facts (`userMcpCall`) and the stripped listing / `removeDoorApprovals` named only at their sites |
+
+Door files: `connectors/connector-writes/agent-door.ts` (verdict, `agentDoorRow`), `agent-door-runtime.ts` (`createAgentDoor`, `verifyListed`, `userMcpCallFacts`),
+`agent-door-definition.ts` + `definition-hash.ts` (the listed-definition hash), `agent-door-describe.ts` (`describe_actions`), `door-approval-store.ts`;
+enforcement test `packages/gateway/src/security-invariants/i58-agent-door.test.ts`, user-MCP half `i42-user-mcp-approval.test.ts`. The door executor is
+`buildAgentWriteExecutor` over the shared `newDoorExecutor` (`engine/run-ask.ts`): same refusals and before-state as the model door, a Wave 4 or bound row
+needs the typed text or prepare step, a proposal is never delegated or standing-approved (`isOutsideOrigin`, I20/I55).
+
 ## Agent kits (AD7b)
 
-`nimbus agent install|uninstall|status` (`packages/cli/src/commands/agent.ts`, `packages/cli/src/agent-kits/`) writes the
-server entry `nimbus mcp-server --stdio --agent <kit>` and steering into an agent's own configuration. CLI only.
-Steering is guidance, never a boundary. When a connector write's action type is renamed or stops being
+`nimbus agent install|uninstall|status` (`packages/cli/src/commands/agent.ts`, `packages/cli/src/agent-kits/`: `kits/`, `plan-files.ts`, `apply.ts`, `removal.ts`,
+`status.ts`, `hook.ts`, `steer-table.ts`) writes the server entry `nimbus mcp-server --stdio --agent <kit>` and steering into an agent's own configuration. CLI only.
+Steering is guidance, never a boundary. Acceptance A6 was met on 2026-11-26: the Claude Code and Codex kits were verified against the real agents using the
+procedure in `docs/agent-kits-verification.md` (helper `scripts/agent-kits/verify-kit.ts`); the matrix lives on the docs site's Agent kits page.
+The agent door's bounds are one string, `AGENT_DOOR_BOUNDS` in `packages/cli/src/lib/agent-door-bounds.ts`, held verbatim by `scripts/agent-kits/bounds-copy.test.ts`. When a connector write's action type is renamed or stops being
 model-offerable, `scripts/agent-kits/steer-table.test.ts` fails: fix `steer-table.ts`, bump
 `STEER_TABLE_VERSION` (installed kits then read as drifted), and update the table on the docs site's Agent kits
 page (`scripts/agent-kits/kit-page.test.ts` holds it).

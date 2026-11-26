@@ -100,6 +100,14 @@ The key shape is `"<service>:<type>"` — same shape every `IndexedItem.id` uses
 
 **Default to omitting.** Adding a new entry sends every existing user's `(service, type)` corpus through OpenAI on the next embed pass — for free OSS users that means surprise API spend the first time the gateway encounters that type after upgrade. But when content is genuinely prose-paragraph-shaped (email bodies, transcribed speech, vulnerability descriptions), additions are justified and actively made — see the comment-annotated `snyk:vulnerability` / `zoom:transcript` / `imap:email` / `fastmail:email` / `protonmail:email` entries in `routing.ts`. For sparse/structured types (titles, paths, IDs), the default of "stay on local" remains the safer floor.
 
+## Two more sets, disjoint from `PROSE_HEAVY_TYPES`
+
+Read `routing.ts` and `embedding/embedding-exclusions.ts` for the live members; do not copy a list here.
+
+- **`LOCAL_ONLY_PROSE_TYPES`** (`routing.ts`) — paragraph-shaped types that are deliberately NEVER sent to the remote embedder (web clips, multimodal understanding text, MCP captures, Zotero notes, Stack Overflow for Teams answers, local glossary projections, `linear:project`, and so on). Membership is the whole enforcement and `routing.test.ts` pins that it is disjoint from `PROSE_HEAVY_TYPES`. Adding a long-body type whose text must stay on the machine goes here, not in the prose-heavy set.
+- **`EMBEDDING_EXCLUDED_TYPES` / `LOCAL_ONLY_EMBEDDING_TYPES`** (`embedding-exclusions.ts`) — types never embedded at all (`cost_allocation`, and the run rows `dag_run`, `job_run`, `flow_run`) and types a remote-embedder pipeline must skip (`cost_recommendation`). The exclusion must be applied at EVERY site that selects or schedules rows to embed (the file's header lists them), not inside `embedItem`, or `backfillAll` re-selects the row forever.
+- The long-term episodic memory (I61) embeds with the local embedder only, outside this routing.
+
 ## The Routing Pipeline
 
 `RoutingEmbeddingPipeline` is a drop-in `EmbeddingPipeline` that takes two `SqliteEmbeddingPipeline` instances at construction:

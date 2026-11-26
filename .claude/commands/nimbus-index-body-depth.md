@@ -52,7 +52,7 @@ code-review check.
 
 Caps (`packages/gateway/src/index/body-caps.ts`):
 
-- `BODY_MAX_PROSE = 16_384` — for item types in `PROSE_HEAVY_TYPES`.
+- `BODY_MAX_PROSE = 16_384` — for item types in `LONG_BODY_TYPES`, the union of `PROSE_HEAVY_TYPES` and `LOCAL_ONLY_PROSE_TYPES` (both in `embedding/routing.ts`). The storage cap is deliberately separate from the question "may this embedding be computed remotely?", so a long-bodied type that must stay on the local embedder goes in `LOCAL_ONLY_PROSE_TYPES`.
 - `BODY_MAX_DEFAULT = 512` — everything else. Unchanged from pre-V48 behaviour.
 - `clampBody` clamps by **UTF-16 code unit** and drops a trailing lone high surrogate rather than
   splitting a pair — a bare `slice(0, max)` corrupts the value on its way into SQLite.
@@ -133,7 +133,7 @@ as vectors after its text was gone.
 **This membership list has drifted three times. Do not hand-write it, and do not trust a
 hand-written one you find.** Two independent axes get conflated:
 
-1. **`PROSE_HEAVY_TYPES` membership** (`embedding/routing.ts`) — raises the cap from 512 to
+1. **`LONG_BODY_TYPES` membership** (`PROSE_HEAVY_TYPES` or `LOCAL_ONLY_PROSE_TYPES`, `embedding/routing.ts`) — raises the cap from 512 to
    16,384 UTF-16 code units. **It does not mean the connector writes a body.** There were 23
    members on 2026-10-25 (`google_drive:doc` was the 23rd, and its Drive sync does write the
    exported text) — count them rather than trusting this figure, and derive the writers below.
@@ -186,7 +186,8 @@ one.
 `jira` and `linear` at `TICKET_META_VERSION` (`connectors/ticket-depth.ts`) and `pagerduty` at
 `PAGERDUTY_INCIDENT_META_VERSION`; type-scoped: `pr` on `github`/`bitbucket`/`gitlab` at
 `PR_META_VERSION` (`connectors/pr-meta.ts`) and `git_commit` on `filesystem` at
-`GIT_COMMIT_META_VERSION` (`connectors/git-commit-meta.ts`). `ci_run` is deliberately absent —
+`GIT_COMMIT_META_VERSION` (`connectors/git-commit-meta.ts`) and `email` on `outlook` at
+`OUTLOOK_MAIL_META_VERSION` (the `is_read` field, Phase 10 MB1; type-scoped because `outlook` also writes `event` rows). GitHub issue and iCloud event depth are deliberately NOT listed: nothing could ever satisfy them (see the comment in the array). Read the array for the live list. `ci_run` is deliberately absent —
 the CI syncs fetch only recent runs, so an older row could never reach the current `meta_v`. **This list is where a future metadata-depth
 PR registers itself** — bump the version constant and add a row; the mechanism already exists.
 The counts stay separate (`pending*` for bodies, `pendingMeta*` for metadata) and are deliberately
@@ -221,8 +222,8 @@ retried automatically; it is re-examined only on a later edit or a rebody.
 
 ## Checklist — adding body indexing to a connector
 
-1. Add the `<service>:<type>` to `PROSE_HEAVY_TYPES` if it is paragraph-shaped (this only raises
-   the cap — see above).
+1. Add the `<service>:<type>` to `PROSE_HEAVY_TYPES` (remote-eligible embedding) or `LOCAL_ONLY_PROSE_TYPES` (embedding must stay local) if it is paragraph-shaped (this raises
+   the cap — see above; see `nimbus-embedding-routing` for which).
 2. Pass the `{ body }` arm from the sync handler, via **`upsertIndexedItemForSync`**.
 3. Guard the empty case — fall back to the `bodyPreview` arm rather than declaring `body: ""`.
 4. Set `bodyTruncated: true` if you know the fetch was partial.

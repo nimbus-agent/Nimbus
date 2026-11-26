@@ -35,9 +35,14 @@ The whole subsystem exists to make that one path the *only* path (`I27`/`D21`). 
 | `recipe-yaml.ts` | Serialize/parse the recipe to/from YAML for the `--as-recipe` artifact. |
 | `verify-share.ts` | `verifyShareFromBytes` / `verifyShareFromInput` — UNTRUSTED until `VerifyResult.signatureValid` is true; accepts JSON or YAML, normalizing YAML to JSON bytes before the single verify primitive. |
 | `share-consent-broker.ts` | Owner-approval round-trip wiring for the gate's `requestApproval` dependency. |
-| `safe-fetch.ts` | Guarded outbound fetch for the HTTP sink. |
+| `share-forward.ts` / `share-forwarding.ts` | `forwardShare()` (the other I27 emit path: re-sign and send a received share to a peer) and the signed forwarding-hop chain (`hopSigningMessage`, `appendForwardingHop`). |
+| `share-inbox-store.ts` | Received/forwarded shares (V43 `share_inbox`); received shares are inert. |
+| `recipe-runner.ts` / `read-tool-registry.ts` | `share.replay`: replays a recipe step by step using only a positive read-only tool allowlist (`read-tool-registry.ts`); writes and code-execution tool ids are never replayed. |
+| `attribution.ts` | Pure provenance chip ("forwarded from X, N hops away"). |
 
-**Wiring:** `packages/gateway/src/ipc/share-rpc.ts` (the sole emit site) · `packages/cli/src/commands/share.ts` (CLI).
+The guarded outbound fetch for the HTTP sink is `packages/gateway/src/util/safe-fetch.ts` (`safeFetch`), not under `share/`.
+
+**Wiring:** `packages/gateway/src/ipc/share-rpc.ts` (the emit site for `createShare`) · `packages/cli/src/commands/share.ts` (CLI).
 
 ## Security Invariant — I27 / static D21 (the triple)
 
@@ -55,7 +60,7 @@ An outbound share leaves the machine **only** through `share/share-gate.ts` `cre
 ## Surfaces
 
 - **CLI:** `nimbus share create <session-id> [--out <file> | --http | --to-peer <id>] [--as-recipe] [--redact <pattern>] [--expires <dur>]` · `nimbus share list [--all]` · `nimbus share prune` · `nimbus share pubkey` · `nimbus share approve|reject <request-id>` · `nimbus verify-share <file|url>`. `--as-recipe` produces the declarative recipe artifact instead of a transcript. Full reference: [`docs/cli-reference.md`](../../docs/cli-reference.md).
-- **IPC:** `share.create` / `share.list` / `share.get` / `share.pubkey` / `share.verify` / `share.prune` / `share.approvalRespond` — all in `ipc/share-rpc.ts`. `share.create` is the only method that calls `createShare`. See the `nimbus-ipc` skill registry; check `lan-rpc.ts` / the Tauri `ALLOWED_METHODS` (`I7`) before exposing any share method over the wire (credential/emit-class methods stay renderer- and LAN-restricted).
+- **IPC:** `share.create` / `share.list` / `share.inbox` / `share.get` / `share.pubkey` / `share.verify` / `share.replay` / `share.prune` / `share.approvalRespond` (and the peer-facing `federation.shareForward` / `federation.shareReceive`) — see `ipc/share-rpc.ts`. `share.create` is the only method that calls `createShare`. See the `nimbus-ipc` skill registry; check `lan-rpc.ts` / the Tauri `ALLOWED_METHODS` (`I7`) before exposing any share method over the wire (credential/emit-class methods stay renderer- and LAN-restricted).
 - **Schema:** V41 (`share_records` ledger) · V42 (`tool_call_log.params_json` — the recorded tool-call params the recipe builder reconstructs steps from). See `nimbus-db-migrations`.
 
 ## The two share kinds
