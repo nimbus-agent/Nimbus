@@ -39,6 +39,7 @@ export {
   checkToolgenModelDoorConfinement,
   checkWorkflowImportConfinement,
 } from "./invariants/briefing-incident-workflow-toolgen.ts";
+export { checkCostLineConfinement } from "./invariants/cost-line.ts";
 export {
   checkBoundCapabilities,
   checkDriftCheckConfined,

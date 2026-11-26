@@ -1,4 +1,5 @@
 import { dbRun } from "../db/write.ts";
+import { deleteCostLinesBySource } from "../finops/cost-line-store.ts";
 import {
   eraseIncidentDataForService,
   previewIncidentErasure,
@@ -111,6 +112,7 @@ export async function runDataDelete(input: RunDataDeleteInput): Promise<RunDataD
     deleteItemHistoryForService(input.index.rawDb, input.service);
     deleteSchemaHistoryForService(input.index.rawDb, input.service);
     deleteChatReadMarkersForService(input.index.rawDb, input.service);
+    deleteCostLinesBySource(input.index.rawDb, input.service);
     eraseIncidentDataForService(input.index.rawDb, input.service);
     dbRun(
       input.index.rawDb,

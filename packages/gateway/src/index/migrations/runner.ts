@@ -36,6 +36,7 @@ import { CONNECTOR_WRITE_APPROVED_V84_SQL } from "../connector-write-approved-v8
 import { CONNECTOR_WRITE_ENABLEMENT_V83_SQL } from "../connector-write-enablement-v83-sql.ts";
 import { CONNECTOR_WRITE_IAC_V85_SQL } from "../connector-write-iac-v85-sql.ts";
 import { CONNECTOR_WRITE_K8S_V86_SQL } from "../connector-write-k8s-v86-sql.ts";
+import { COST_LINE_V109_SQL } from "../cost-line-v109-sql.ts";
 import { DECISIONS_V47_SQL } from "../decisions-v47-sql.ts";
 import { DEPLOYMENT_V28_SCHEMA_SQL } from "../deployment-v28-sql.ts";
 import { DEPTH_DEFAULT_V49_SQL } from "../depth-default-v49-sql.ts";
@@ -80,7 +81,6 @@ import { INCIDENT_RECORD_V100_SQL } from "../incident-record-v100-sql.ts";
 import { INCIDENT_RUNBOOK_V104_SQL } from "../incident-runbook-v104-sql.ts";
 import { ITEM_HISTORY_V94_SQL } from "../item-history-v94-sql.ts";
 import { KNOWN_NAMESPACES_V38_SQL } from "../known-namespaces-v38-sql.ts";
-import { LAN_PEER_PROTO_V95_SQL } from "../lan-peer-proto-v95-sql.ts";
 import { LAN_PEERS_V19_SQL } from "../lan-peers-v19-sql.ts";
 import { LLM_CONTEXT_WINDOW_V16_ALTER_SQL, LLM_MODELS_V16_SQL } from "../llm-models-v16-sql.ts";
 import { LLM_TASK_DEFAULTS_V20_SQL } from "../llm-task-defaults-v20-sql.ts";
@@ -140,6 +140,7 @@ import { WORKFLOW_RUN_COLUMNS_V23_SQL } from "../workflow-run-columns-v23-sql.ts
 import { WORKFLOW_SCHEDULE_V89_SQL } from "../workflow-schedule-v89-sql.ts";
 import { WORKFLOW_V9_MIGRATION_SQL } from "../workflow-v9-sql.ts";
 import {
+  migrateIndexedV94ToV95,
   migrateIndexedV97ToV98,
   migrateIndexedV98ToV99,
   migrateIndexedV104ToV105,
@@ -234,22 +235,6 @@ function simpleStep(
     toVersion,
     apply: (db, now) => applySchemaStep(db, toVersion, description, sql, now),
   };
-}
-
-function lanPeersHasColumn(db: Database, columnName: string): boolean {
-  const rows = db.query("PRAGMA table_info(lan_peers)").all() as Array<{ name: string }>;
-  return rows.some((r) => r.name === columnName);
-}
-
-/** V95 - `lan_peers.proto_version`: no `ADD COLUMN IF NOT EXISTS`, so a column probe keeps the step re-runnable. */
-function migrateIndexedV94ToV95(db: Database, now: number): void {
-  db.transaction(() => {
-    if (!lanPeersHasColumn(db, "proto_version")) {
-      dbExec(db, LAN_PEER_PROTO_V95_SQL.trim());
-    }
-    dbExec(db, "PRAGMA user_version = 95");
-    recordMigration(db, 95, "lan peer protocol version (Phase 10 FS1)", now);
-  })();
 }
 
 /**
@@ -902,6 +887,7 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     "warehouse schema history (Phase 10, data incident brief)",
     SCHEMA_HISTORY_V108_SQL,
   ),
+  simpleStep(108, 109, "cost lines (Phase 7, the Cost Pack)", COST_LINE_V109_SQL),
 ];
 
 /**

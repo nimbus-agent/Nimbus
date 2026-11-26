@@ -192,6 +192,22 @@ describe("tryDispatchCostRpc", () => {
     expect(out.status).toBe("no_data");
   });
 
+  test("cost.import takes the connection's declared kind and the demo flag, never a param", async () => {
+    const ui = await rpcError(
+      tryDispatchCostRpc(ctxOf({ kind: "ui" }), "cost.import", { path: "/x.csv" }, "c1"),
+    );
+    expect(ui.message).toContain("ERR_COST_FORBIDDEN_CLIENT");
+    const demo = await rpcError(
+      tryDispatchCostRpc(
+        ctxOf({ options: { demo: true } }),
+        "cost.import",
+        { path: "/x.csv" },
+        "c1",
+      ),
+    );
+    expect(demo.message).toContain("ERR_COST_DEMO");
+  });
+
   test("an unknown cost method is a miss and a validation error keeps its code", async () => {
     expect(await tryDispatchCostRpc(ctxOf(), "cost.zzz", {})).toBe(phase4RpcSkipped);
     expect(await tryDispatchCostRpc(ctxOf({ noIndex: true }), "cost.waste", {})).toBe(

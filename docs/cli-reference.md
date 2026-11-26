@@ -1287,6 +1287,55 @@ nimbus cost waste --service vantage --json
 
 **Bounds.** Only what the vendor recommends is visible: no cloud inventory is indexed and no resource ids are shown (a recommendation carries only a count of affected resources). The IPC method is `cost.waste` (the whole `cost` namespace is LAN-forbidden; it is not on the desktop allowlist). In the text output, vendor strings are stripped of control and direction-control characters and cut to 200 characters. The `--json` output carries the vendor strings unchanged (JSON escaping covers control characters, not direction-control characters, and nothing is cut), so treat them as untrusted text. Only `http(s)` documentation links are kept, in both outputs.
 
+### `nimbus cost import`
+
+Imports FOCUS 1.x cost exports (the FinOps Open Cost and Usage Specification CSV that AWS Data Exports, Azure Cost Management exports and the Google Cloud billing export produce) into the local cost lines (schema V109). Local files only: **no network call, no credential**, nothing leaves the machine.
+
+```bash
+nimbus cost import ./exports/aws-2026-11.csv
+nimbus cost import ./exports --dry-run
+nimbus cost import ./gcp.csv --provider gcp --json
+nimbus cost import --remove focus:0123456789abcdef
+```
+
+| Flag | Description |
+|---|---|
+| `<file\|dir>` | A `.csv` file, or a directory whose `*.csv` files are imported (not recursive), oldest modification time first so the newest export of an overlapping period stands. When any file of the directory is not yet imported, every file of it is applied again in that order (already-imported ones included), so a new older file never overrides a newer one. A link is not followed. |
+| `--provider aws\|azure\|gcp` | The provider of rows whose `ProviderName` is empty. A row whose `ProviderName` names a different known provider is skipped with that reason. Without it, `ProviderName` decides (an unknown name becomes its own provider slug). |
+| `--dry-run` | Parse and count what would change; nothing is written. A directory is simulated as one run, so each file is counted against the files before it. |
+| `--remove <importId>` | Delete the lines of one import (`focus:<16 hex>`, printed by every import) and its entry in the import ledger, so the same file can be imported again. |
+| `--json` | Print the import report on one line. |
+
+**What a file needs.** The columns `BilledCost`, `BillingCurrency`, `ChargePeriodStart` and `ServiceName` (a file without one is refused, naming it). Read when present: `BillingAccountId`, `BillingPeriodStart`, `ChargeCategory`, `EffectiveCost`, `ProviderName` (or `ServiceProviderName`), `RegionId`, `ResourceId`, `ResourceName`, `ServiceCategory`, `SkuId`, `SubAccountId`, `SubAccountName`, `Tags` (a JSON object; at most 50 tags of at most 128 characters are kept, and every dropped tag is a warning). A UTF-8 BOM, CRLF line ends and quoted fields with commas or line breaks are accepted; the file must be valid UTF-8 and at most 512 MiB. Parquet is not read (CSV only).
+
+**How lines are stored.** One line per day (the UTC day of `ChargePeriodStart`), billing account, billing period, sub-account, service, region, resource (or SKU), charge category, currency and tag set; hourly rows of one grain are summed, and amounts in two currencies are never one line. Nothing is folded into an "other" bucket. A row with a non-numeric cost, a bad date or an unknown `ChargeCategory` is skipped and listed with its CSV record number (the header is record 1; at most 20 listed, the count is exact).
+
+**Re-imports.** A FOCUS export is cumulative per billing period, so for each (provider, billing account, billing period) an import REPLACES every stored line on exactly the days the file contains and keeps the other days: a month-to-date file that grew from day 19 to day 20 leaves exactly 20 days. The import id is the file's content hash, and every accepted import is recorded in a local import ledger: importing a file that is already in it writes nothing and is reported `already imported` (status `unchanged`), so replaying an older export never overwrites a later restatement of the same days while that export stays in the ledger. `--remove` deletes an import's lines and its ledger entry; importing that file again afterwards is a new import and replaces the days it covers. A refusal caused by storage or I/O is retried by the `[cost.focus] dir` watcher on its next pass; a file the importer refused is retried only when its bytes change. A directory import that re-applies an already accepted file (a replay, so the newest export stands) is all or nothing: if any file in it is refused, none of it is applied, the other files say `not applied`, and the stored lines stay as they were. To apply such a file again, remove it first with `--remove <importId>`. The report gives per-file totals per currency, which equal the sum of the stored lines. The ledger keeps an entry when the retention prune (`[finops] retain_days`) deletes its lines, so a replay of a pruned export stays a no-op; `nimbus data delete` and `connector remove` delete a source's entries with its lines.
+
+**Exit codes.** 0 when every file imported, would import (`--dry-run`) or was already imported; 1 when any file was refused or the call failed. The IPC methods are `cost.import` and `cost.importRemove`; both serve only a connection that declared the `cli` kind, refuse on the demo gateway, are LAN-forbidden (the whole `cost` namespace) and are not on the desktop allowlist.
+
+### `nimbus cost products` and `nimbus cost internal`
+
+Cost per product (with its parts: the service and provider, and the env), and the internal cost (CI and the dev and test environments), computed from the local cost lines (`nimbus cost import`), the indexed Vantage rows for a provider with no raw lines, and your `[[cost.rule]]` allocation rules. Local index only: **no network call, no model, no egress row**.
+
+```bash
+nimbus cost products
+nimbus cost products --period month --csv > november.csv
+nimbus cost internal --period week
+nimbus cost products --allocation cluster
+```
+
+| Flag | Description |
+|---|---|
+| `--period <N>d\|week\|month` | `<N>d` is the last N days including today (1 to 400; default `30d`), `week` is this Monday to today, `month` is the first of the month to today (UTC days). |
+| `--allocation cluster` | (`products` only) Kubecost and OpenCost allocations, as their own view: they re-describe the cluster machines a cloud bill already holds, so they are never added to cloud totals. With no allocation in the period it exits 1 (the CSV still prints its header, `currency,service,dimension,name,amount`). Stated bound: rows synced under an older series scope are not dropped, so after a cluster is relabelled (`<service>.cluster` changed) the overlapping days can show the same namespace spend twice until the old rows age out of retention. |
+| `--json` | Print the view object (`range`, `byCurrency`, `freshness`, `empty`, `excludedSources`, `notes`, `configError`). |
+| `--csv` | One row per currency and group. Header `currency,product,env,service,provider,amount,unassigned_reason` (`internal`: `currency,env,product,service,provider,amount,unassigned_reason`); unassigned rows have an empty product (or env) and the reason. A text cell that starts with `=`, `+`, `-`, `@`, a tab or a carriage return is prefixed with `'`, so a spreadsheet never runs it as a formula. Stdout holds only the header and the rows; the source freshness, the excluded sources and the notes that the text and `--json` outputs carry are written to stderr, in the text output's wording. |
+
+**Allocation.** Each line goes to the first `[[cost.rule]]` whose every given match key matches (see the `[cost]` keys under Configuration). A line no rule matches, a rule that sets no product (or, for `internal`, no env), and a rule whose substituted value is not a safe name (letters, digits and `. _ : / @ + -`, 1 to 64 characters, no `..`, not starting with `/` or `@`) land in **unassigned**, with the reason and the amount per reason. Rules are applied when you read, so editing one re-applies it to the past at once. `internal` shows only lines whose env is in `[cost] internal_envs` (default `ci, dev, test, staging`); lines of other envs are one "other envs" line.
+
+**Currencies, freshness and sources.** Amounts are grouped by currency and never added across currencies: two currencies give two totals and no grand total. Each source shows its newest day, and the last three days of a source are marked provisional. When raw lines exist for a provider, its Vantage rows are excluded and the output says so; `[cost] authoritative = { aws = "vantage" }` picks the source per provider instead. On a day where Vantage rows come from two report configurations (an older `group_by`), only the newest synced one is used and a note counts those days. **"No cost data imported"** (exit 1) means nothing is stored at all; a period with no lines prints `0.00` in each currency seen before (exit 0). A refused `[cost]` config allocates nothing and exits 1, naming the error. The IPC methods are `cost.products` and `cost.internal`; they serve only a connection that declared the `cli` or `ui` kind, are LAN-forbidden (the whole `cost` namespace) and are not on the desktop allowlist yet.
+
 ### `nimbus briefing`
 
 Your morning briefing, built from the local index. It makes **no provider call** and **uses no model**: the text is rendered deterministically, and nothing leaves the machine except a local notification.
@@ -3415,6 +3464,10 @@ Limits for the FinOps cost data the Vantage, OpenCost and Kubecost syncs index (
 | `[finops] anomaly_min_amount` | `10` | 0 to 1000000000 (a plain decimal): ... and only when it also exceeds the baseline by this much, in the series' currency |
 | `[finops] notify` | `false` | `true` shows ONE local OS notice when `nimbus cost anomalies` would list a new anomaly (counts and the service id only: `2 unusual cost jumps on vantage`; never a series name or an amount). Checked every 15 minutes, never on a demo gateway, a bad value falls back to `false` |
 | `[finops] notify_min_interval_minutes` | `360` | 5 to 1440: at most one such notice in this many minutes; an anomaly held back by the limit is announced after it. The memory of what was announced is in the gateway process, so a restart can announce a still-open anomaly once more |
+| `[cost] internal_envs` | `["ci", "dev", "test", "staging"]` | The envs `nimbus cost internal` shows (1 to 32 names). |
+| `[cost] authoritative` | `{}` | Per provider, the source the cost views use, for example `{ aws = "vantage" }`; without it, raw lines win over Vantage rows for a provider. |
+| `[cost.focus] dir` | unset | An absolute path. A minute after boot and then once a day the gateway imports its new or changed `*.csv` FOCUS exports (never on a demo gateway; a link is not followed). |
+| `[[cost.rule]]` | none | Ordered allocation rules, first match wins: `match = { … }` with any of `source`, `provider`, `sub_account` (id or name), `service`, `region`, `resource` (id or name), `repo`, `workflow` (globs with `*` and `?`, case-insensitive) and `tag = { key = "glob" }`; `set = { product, env, service }`, each a literal or a literal with one placeholder `{tag.<key>}`, `{repo}` or `{sub_account}`. Each key on one line. As for every array block, the highest layer with rules supplies all of them, so a role pack's rules apply until you write your own. An unknown key or placeholder refuses the whole cost config (the views say so) rather than dropping a rule. |
 
 The data comes from `vantage.api_token` (set with `nimbus vault set vantage.api_token`; every 6 hours the sync reads 45 days on the first run, then from three days before the last success). `vantage.group_by` is a comma-separated grouping (default `provider,service,account_id`); a `tag:<key>` entry (for example `provider,service,tag:team`) makes each tag value its own series, with cost that lacks the tag as `__untagged__` (verified against one live account's reply). Name the tag keys here: a saved report's own tag groupings are read as a single `tag` value. `vantage.cost_report_token` is optional: without it the connector (0.17.3 and later) asks for all costs with the filter `()`. `nimbus connector auth vantage` prints the keys.
 

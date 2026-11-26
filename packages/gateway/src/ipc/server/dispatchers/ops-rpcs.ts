@@ -83,18 +83,22 @@ export async function tryDispatchStatuspageRpc(
 /**
  * `cost.anomalies` (Phase 10 FinOps) - the cost anomaly detector over the indexed daily cost series - and
  * `cost.waste` (the waste report over the indexed FinOps recommendations), local index only. Both also
- * answer in a demo gateway (no cost rows there: `no_data`). LAN-forbidden by the `cost`
- * namespace entry (I5); NOT renderer-callable (CLI only).
+ * answer in a demo gateway (no cost rows there: `no_data`). `cost.import` and `cost.importRemove` (Phase 7) serve
+ * only a connection that declared `cli` (the connection's kind, never a param) and refuse on a demo gateway.
+ * LAN-forbidden by the `cost` namespace entry (I5); NOT renderer-callable (CLI only).
  */
 export async function tryDispatchCostRpc(
   ctx: ServerCtx,
   method: string,
   params: unknown,
+  clientId = "",
 ): Promise<unknown> {
   if (!method.startsWith("cost.") || ctx.options.localIndex === undefined) return phase4RpcSkipped;
   try {
     const out = await dispatchCostRpc(method, params, {
       db: ctx.options.localIndex.getDatabase(),
+      caller: { kind: ctx.getClientKind(clientId) },
+      ...(ctx.options.demo === true ? { demo: true } : {}),
       ...(ctx.options.configDir === undefined ? {} : { configDir: ctx.options.configDir }),
     });
     if (out.kind === "hit") return out.value;

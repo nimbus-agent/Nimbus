@@ -6,10 +6,20 @@ import {
   type CostAnomalyResult,
   queryCostAnomalies,
 } from "../finops/cost-anomaly-query.ts";
+import type { ImportReport } from "../finops/cost-import.ts";
 import { isCostServiceId } from "../finops/cost-item-contract.ts";
+import type { CostViewResult } from "../finops/cost-views.ts";
 import { isWasteKind, WASTE_KINDS } from "../finops/cost-waste.ts";
 import { type CostWasteResult, queryCostWaste } from "../finops/cost-waste-query.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
+import { CostImportRpcError, handleCostImport, handleCostImportRemove } from "./cost-import-rpc.ts";
+import {
+  type ClusterViewResult,
+  CostViewsRpcError,
+  handleCostInternal,
+  handleCostProducts,
+} from "./cost-views-rpc.ts";
+import type { ClientKind } from "./server/client-kind.ts";
 
 export class CostRpcError extends Error {
   constructor(
@@ -20,11 +30,33 @@ export class CostRpcError extends Error {
   }
 }
 
-/** What `cost.anomalies` and `cost.waste` need: the local index and (optionally) the config dir for `[finops]`. */
+/**
+ * What the `cost.*` methods need: the local index, (optionally) the config dir for `[finops]` and `[cost]`, the
+ * connection's DECLARED kind (`ctx.getClientKind`, never a param; the owner-only methods check it) and whether the
+ * gateway is demo-rooted (I41).
+ */
 export interface CostRpcCtx {
   readonly db: Database;
   readonly configDir?: string;
   readonly now?: () => number;
+  readonly caller?: { readonly kind: ClientKind };
+  readonly demo?: boolean;
+}
+
+/** Run an import handler, carrying its error as a `CostRpcError` with the same code. */
+function viaImport<T>(
+  fn: (params: unknown, ctx: CostRpcCtx) => T,
+): (params: unknown, ctx: CostRpcCtx) => T {
+  return (params, ctx) => {
+    try {
+      return fn(params, ctx);
+    } catch (e) {
+      if (e instanceof CostImportRpcError || e instanceof CostViewsRpcError) {
+        throw new CostRpcError(e.rpcCode, e.message);
+      }
+      throw e;
+    }
+  };
 }
 
 interface Parsed {
@@ -123,8 +155,20 @@ export async function dispatchCostRpc(
   params: unknown,
   ctx: CostRpcCtx,
 ): Promise<RpcMissOrHit> {
-  return dispatchByMethod<CostRpcCtx, CostAnomalyResult | CostWasteResult>(method, params, ctx, {
+  return dispatchByMethod<
+    CostRpcCtx,
+    | CostAnomalyResult
+    | CostWasteResult
+    | ImportReport
+    | { importId: string; removed: number }
+    | CostViewResult
+    | ClusterViewResult
+  >(method, params, ctx, {
     "cost.anomalies": handleAnomalies,
     "cost.waste": handleWaste,
+    "cost.import": viaImport(handleCostImport),
+    "cost.importRemove": viaImport(handleCostImportRemove),
+    "cost.products": viaImport(handleCostProducts),
+    "cost.internal": viaImport(handleCostInternal),
   });
 }

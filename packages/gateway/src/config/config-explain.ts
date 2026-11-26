@@ -9,7 +9,7 @@ import { loadNimbusAnomalyFromConfigDir } from "./anomaly-toml.ts";
 import { loadNimbusBriefingFromConfigDir } from "./briefing-toml.ts";
 import { CONFIG_ENV_OVERRIDES, isPolicyConstrainedPath } from "./config-env-overrides.ts";
 import { loadNimbusFilesystemRootsFromConfigDir } from "./filesystem-toml.ts";
-import { loadNimbusFinopsFromConfigDir } from "./finops-toml.ts";
+import { loadNimbusCostFromConfigDir, loadNimbusFinopsFromConfigDir } from "./finops-toml.ts";
 import {
   type FleetJobChecker,
   loadNimbusFleetFromConfigDir,
@@ -95,6 +95,7 @@ export const SECTION_LOADERS: Readonly<Record<string, (configDir: string) => unk
   code_execution: loadNimbusCodeExecutionFromConfigDir,
   computer_use: loadNimbusComputerUseFromConfigDir,
   connectors: loadNimbusConnectorsFromConfigDir,
+  cost: loadNimbusCostFromConfigDir,
   "connectors.workday": loadNimbusWorkdayFromConfigDir,
   decisions: loadNimbusDecisionsFromConfigDir,
   embedding: loadNimbusEmbeddingFromConfigDir,
@@ -146,9 +147,8 @@ export const SECTION_LOADERS: Readonly<Record<string, (configDir: string) => unk
 };
 
 /**
- * Runs `sectionId`'s loader against `reader`'s config dir so its fallback is recorded for the
- * current snapshot; a loader that throws is recorded as `refused: <message>`. `reader` must be the
- * registered one for its config dir (the loader reaches it through `getLayeredConfig`).
+ * Runs `sectionId`'s loader on the registered `reader`'s config dir (reached via `getLayeredConfig`)
+ * so its fallback, or `refused: <message>` when it throws, is recorded for the current snapshot.
  */
 export function probeSection(reader: LayeredConfig, sectionId: string): string | undefined {
   const load = SECTION_LOADERS[sectionId];
