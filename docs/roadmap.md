@@ -264,7 +264,6 @@ Not buildable, and the owner's to complete: what remained of [Phase 9.5](#phase-
 
 - [x] **Full IaC drift** (from [Phase 3 § Intentionally incomplete](#intentionally-incomplete-follow-ups)) — Terraform state vs. live resource diff; Phase 3 ships hints only. Overlaps [Phase 10 § Stretch — Infrastructure-as-Agent](#phase-10--the-autonomous-agent)'s *Autonomous drift detection*. *(✅ 2026-11-26 sweep: `nimbus iac drift` (2026-11-18) and the accept row (OR-S4-DRIFT, 2026-11-23) shipped; see Phase 10 *Autonomous drift detection*.)*
 
-
 ---
 
 ## Client surfaces
@@ -1568,9 +1567,9 @@ multimodal row, and *User MCP servers that actually run*, which shipped inside t
 
 ---
 
-
 <a id="phase-30--the-cost-pack"></a>
 <a id="phase-30-the-cost-pack"></a>
+
 ### Phase 7 — The Cost Pack
 
 *(formerly Phase 30)*
@@ -1614,6 +1613,7 @@ multimodal row, and *User MCP servers that actually run*, which shipped inside t
 
 <a id="phase-7--engineering-excellence"></a>
 <a id="phase-7-engineering-excellence"></a>
+
 ### Phase 8 — Engineering Excellence
 
 *(formerly Phase 7)*
@@ -1752,6 +1752,7 @@ Cross-cutting UX improvements that apply to every agent surface the project ship
 
 <a id="phase-8--security-engineering"></a>
 <a id="phase-8-security-engineering"></a>
+
 ### Phase 9 — Security Engineering
 
 *(formerly Phase 8)*
@@ -2135,6 +2136,7 @@ Status of the first three criteria (2026-11-10): met. Every row is driven throug
 
 <a id="phase-9--ai-engineering-loop"></a>
 <a id="phase-9-ai-engineering-loop"></a>
+
 ### Phase 11 — AI Engineering Loop
 
 *(formerly Phase 9)*
@@ -2248,6 +2250,7 @@ User-facing trust surfaces. "AI safety" as a product feature, not a marketing wo
 
 <a id="phase-125--compliance-receipts"></a>
 <a id="phase-125-compliance-receipts"></a>
+
 ### Phase 12 — Compliance Receipts
 
 *(formerly Phase 12.5)*
@@ -2306,6 +2309,7 @@ User-facing trust surfaces. "AI safety" as a product feature, not a marketing wo
 
 <a id="phase-14--agent-evolution--ai-v2"></a>
 <a id="phase-14-agent-evolution-ai-v2"></a>
+
 ### Phase 13 — Agent Evolution / AI v2
 
 *(formerly Phase 14)*
@@ -2358,7 +2362,6 @@ User-facing trust surfaces. "AI safety" as a product feature, not a marketing wo
 - [ ] **Domain-specific recall** *(owner ruling 15, 2026-11-23; moved from Phase 10 2026-11-26)* — fine-tuned adapter improves agent's ability to match user naming conventions and project context when drafting or classifying
 - [ ] **`nimbus model train --adapter writing-style`** *(owner ruling 15, 2026-11-23; moved from Phase 10 2026-11-26)* — background fine-tuning job; `nimbus model status` shows progress; adapters versioned and rollback-safe
 
-
 - [x] **Runtime tool generation** — agent writes its own MCP tool stub; runs `@nimbus-dev/sdk` contract test; if green, registers ephemerally for the session only; HITL per tool registration. **Shipped in a different shape (2026-09-09/10):** OWNER-initiated via `nimbus tool create`, where a model drafts the body and input schema and the owner approves the verbatim artifact (I39); there is no SDK contract-test step — a validation ladder and a pre-consent confinement probe run instead. Agent-initiated proposal did not ship and is a recorded deferral — see its own row below (2026-10-10).
 - [x] **Tool persistence** — `nimbus tool save <session-tool-id>` promotes ephemeral tool to a named installed extension after manual review; standard SHA-256-verified extension manifest path. **Shipped in a different shape (2026-09-10):** `nimbus tool save` persists a signed artifact verified by a Vault-key Ed25519 signature on every load and spawn (I40, schema V61), not an extension-manifest hash.
 - [ ] **Agent-initiated tool proposal** *(re-homed from the [S2 record](#spine-s2), 2026-10-10)* — the model proposes a network-reaching tool mid-conversation (`allow_agent_initiated` + `allowed_hosts`, a mid-turn consent pause, an approval prompt disclosing that the agent initiated it). Every toolgen capability that shipped is owner-initiated. Needs its own consent-UX design pass, and follows [S4](#carried-into-s4)'s model access to generated tools, without which a proposed tool has no model-facing caller.
@@ -2394,6 +2397,7 @@ User-facing trust surfaces. "AI safety" as a product feature, not a marketing wo
 
 <a id="phase-18--vertical-personas"></a>
 <a id="phase-18-vertical-personas"></a>
+
 ### Phase 14 — Vertical Personas
 
 *(formerly Phase 18)*
@@ -2438,6 +2442,7 @@ User-facing trust surfaces. "AI safety" as a product feature, not a marketing wo
 
 <a id="phase-11--sovereign-mesh"></a>
 <a id="phase-11-sovereign-mesh"></a>
+
 ### Phase 15 — Sovereign Mesh
 
 *(formerly Phase 11)*
@@ -2515,6 +2520,7 @@ The mobile companion is the natural moment to introduce locale awareness; the sa
 
 <a id="phase-135--mobile-companion"></a>
 <a id="phase-135-mobile-companion"></a>
+
 ### Phase 16 — Mobile Companion
 
 *(formerly Phase 13.5)*
@@ -2634,6 +2640,7 @@ The mobile companion is the natural moment to introduce locale awareness; the sa
 
 <a id="phase-13--desktop-distribution"></a>
 <a id="phase-13-desktop-distribution"></a>
+
 ### Phase 18 — Desktop Distribution
 
 *(formerly Phase 13)*
@@ -2692,6 +2699,7 @@ Native package-manager distribution; gated independently of the desktop tag, may
 
 <a id="phase-16--the-platform-layer"></a>
 <a id="phase-16-the-platform-layer"></a>
+
 ### Phase 19 — The Platform Layer
 
 *(formerly Phase 16, with the former Phase 29, The Team Server, folded in)*
@@ -2782,17 +2790,17 @@ Native package-manager distribution; gated independently of the desktop tag, may
 
 **Goal:** A Nimbus that a team runs on its own server: always on, with no desktop session, holding the production credentials in one place, answering questions and taking approvals in the team's chat. There is still no Nimbus-operated cloud. It is the shape teams adopt in, and it is what lets an engineer's agent act on production without that engineer, or that agent, holding a production credential. That holds for an agent that reaches production only through the server: the gate guards what passes through it.
 
-#### Non-negotiable guardrails
+##### Team server guardrails
 
 - **No approval behind a browser page.** A bearer-token approval page turns script injection into approve-anything; approvals stay in chat cards, the desktop app and the terminal (carried from the ecosystem landscape's non-goals).
 - **No plaintext credentials.** The sealed backend below is selected only by explicit configuration and never as a fallback (non-negotiable 3).
 - **Loopback stays the default.** Today every HTTP listener answers only when it is addressed as loopback (`I45`), the HTTP write surface is a short allowlist behind bearer auth (`I13`), and the LAN server, the one surface that can already be configured beyond loopback, binds to loopback unless told otherwise and limits the methods it accepts (`I5`, `I6`). A team server widens that on purpose, by explicit configuration. This section is not approval of any network posture: the phase's spec has to say which of those invariants it amends, under the triple rule.
 
-#### What its spec must decide
+##### What the team server's spec must decide
 
 The network posture and the invariants it amends; identity for remote callers; the sealed backend's key handling; and what a server refuses to index.
 
-#### Acceptance Criteria
+##### Team server acceptance criteria
 
 - On a fresh Linux host with no keyring and no display, the documented container start reaches a first answered chat question within 15 minutes, and CI exercises that path on each release.
 - No credential is readable at rest without the unseal key, proven by a test; a restart without the key leaves the server locked.
@@ -2804,6 +2812,7 @@ The network posture and the invariants it amends; identity for remote callers; t
 
 <a id="phase-12--enterprise"></a>
 <a id="phase-12-enterprise"></a>
+
 ### Phase 20 — Enterprise
 
 *(formerly Phase 12)*
@@ -2881,6 +2890,7 @@ Connectors for the GRC tools enterprises already use to evidence SOC 2 / ISO 270
 
 <a id="phase-15--cross-organizational-federation-the-global-mesh"></a>
 <a id="phase-15-cross-organizational-federation-the-global-mesh"></a>
+
 ### Phase 21 — Cross-Organizational Federation (The Global Mesh)
 
 *(formerly Phase 15)*
@@ -2914,6 +2924,7 @@ Connectors for the GRC tools enterprises already use to evidence SOC 2 / ISO 270
 
 <a id="phase-19--ambient-surfaces"></a>
 <a id="phase-19-ambient-surfaces"></a>
+
 ### Phase 22 — Ambient Surfaces
 
 *(formerly Phase 19)*
@@ -2971,6 +2982,7 @@ The flagship ambient surface. Promoted from Phase 16 stretch to Phase 22 core be
 
 <a id="phase-20--personal--household-federation"></a>
 <a id="phase-20-personal-household-federation"></a>
+
 ### Phase 23 — Personal & Household Federation
 
 *(formerly Phase 20)*
@@ -3018,6 +3030,7 @@ The federation primitive is intentionally general — once two Gateways can shar
 
 <a id="phase-21--sovereign-trust-substrate"></a>
 <a id="phase-21-sovereign-trust-substrate"></a>
+
 ### Phase 24 — Sovereign Trust Substrate
 
 *(formerly Phase 21)*
@@ -3073,6 +3086,7 @@ The federation primitive is intentionally general — once two Gateways can shar
 
 <a id="phase-22--the-proof-layer-verifiable-negatives"></a>
 <a id="phase-22-the-proof-layer-verifiable-negatives"></a>
+
 ### Phase 25 — The Proof Layer (Verifiable Negatives)
 
 *(formerly Phase 22)*
@@ -3112,6 +3126,7 @@ The federation primitive is intentionally general — once two Gateways can shar
 
 <a id="phase-23--inert-to-injection-the-unexfiltratable-agent"></a>
 <a id="phase-23-inert-to-injection-the-unexfiltratable-agent"></a>
+
 ### Phase 26 — Inert to Injection (The Unexfiltratable Agent)
 
 *(formerly Phase 23)*
@@ -3153,6 +3168,7 @@ The federation primitive is intentionally general — once two Gateways can shar
 
 <a id="phase-24--agent-archaeology"></a>
 <a id="phase-24-agent-archaeology"></a>
+
 ### Phase 27 — Agent Archaeology
 
 *(formerly Phase 24)*
@@ -3239,6 +3255,7 @@ How the act door's executor gains the before-state, guard and bound-prepare step
 
 <a id="phase-25--confidential-mesh-compute"></a>
 <a id="phase-25-confidential-mesh-compute"></a>
+
 ### Phase 29 — Confidential Mesh Compute
 
 *(formerly Phase 25)*
@@ -3279,6 +3296,7 @@ How the act door's executor gains the before-state, guard and bound-prepare step
 
 <a id="phase-26--provable-governance"></a>
 <a id="phase-26-provable-governance"></a>
+
 ### Phase 30 — Provable Governance
 
 *(formerly Phase 26)*
@@ -3314,6 +3332,7 @@ How the act door's executor gains the before-state, guard and bound-prepare step
 
 <a id="phase-27--the-agent-society"></a>
 <a id="phase-27-the-agent-society"></a>
+
 ### Phase 31 — The Agent Society
 
 *(formerly Phase 27)*
