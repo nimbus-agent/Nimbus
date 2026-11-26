@@ -15,8 +15,8 @@ Companion file: [`CLAUDE.md`](./CLAUDE.md) is the canonical source; both must st
 ### Status (summary — the detail lives elsewhere)
 
 - Phases 1–6 ✅; from Phase 6 the build order is the Sequencing Spine: **S1 Local Brain ✅, S2 Local Compute Fleet ✅, S3 Open Surface ✅** (MCP capture sink, extension runtime, role packs, the Phase 9.5 marketplace).
-- **S4 Autonomous Agent is the active slot.** Shipped within it: Phase 9.7 (model connector writes, all four waves; 126 write rows), Phase 10 standing approvals / scheduled workflows / morning briefing / incident engine IC1–IC10 / LAN forward secrecy FS1–FS3 / FinOps / IaC drift / episodic memory / personalization / federated scheduling, Phase 17 on-call work, and Phase 28 (the agent door, AD1–AD8, enforced since v11.0.0; closed 2026-11-26 when acceptance A6 verified the Claude Code and Codex kits against the real agents). S4 closes when Phase 9.7, all of Phase 10, Phase 17, Phase 28 and the carried-in items have shipped.
-- After S4: S5 Team Server (Phase 29), S6 Cost Pack (Phase 30), S7 Engineering Excellence breadth.
+- **S4 Autonomous Agent ✅ complete (2026-11-04 → 2026-11-26).** Shipped within it: Phase 9.7 (model connector writes, all four waves; 126 write rows), Phase 10 standing approvals / scheduled workflows / morning briefing / incident engine IC1–IC10 / LAN forward secrecy FS1–FS3 / FinOps / IaC drift / episodic memory / personalization / federated scheduling, Phase 17 on-call work, and Phase 28 (the agent door, AD1–AD8, enforced since v11.0.0; closed 2026-11-26 when acceptance A6 verified the Claude Code and Codex kits against the real agents, the last row of S4's exit condition). Rows moved out by owner rulings keep their places (LoRA in Phase 14, cost deletion and data FinOps in Phase 30, the signed mobile approval in Phase 11).
+- **No slot is open.** Next: S5 Team Server (Phase 29), opened by the owner; then S6 Cost Pack (Phase 30) and S7 Engineering Excellence breadth.
 - **Invariants I1–I61; schema V108.**
 - **Several shipped capabilities are deliberately narrower than their names** (model access to generated tools and computer-use, remote vision, fleet idle detection, brief `## Gaps`). Read the claim in code and `docs/roadmap.md` before relying on one.
 
@@ -220,4 +220,7 @@ Domain skills live in `.claude/commands/nimbus-*.md`, loaded on demand via the S
 | `nimbus-agent-patterns` | Authoring a built-in read-only agent |
 | `nimbus-implicit-knowledge-extraction` | Glossary + decisions pipelines |
 | `nimbus-sandbox-and-extensions` | Sandbox (I15/D10), user MCP servers (I42), extension runtime (I43/I44) |
-| `nimbus-mcp-sink` | The MCP server's write doors (I28/D32) |
+| `nimbus-mcp-sink` | The MCP server's write doors and the agent door (I28/I58, D32/D49), agent kits |
+| `nimbus-connector-writes` | Connector write rows and every door to them: opt-in, the model door (I53), before-state, Wave 4 typed confirm, bound writes (I54) |
+| `nimbus-incident-engine` | The incident engine IC1–IC10: item history, assembly, proposals, findings, runbooks (I57, D46) |
+| `nimbus-standing-workflows` | Workflow steps and `when` guards, standing approval rules (I55, D44), scheduled workflows, approval learning |

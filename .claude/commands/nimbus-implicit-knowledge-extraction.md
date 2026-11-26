@@ -123,6 +123,8 @@ Two standing decisions, both deliberate:
 | `decision_evidence` | V47 | `kind IN ('source','pr','commit','migration','iac','adr')`, cascades from `decision_record` |
 | `decision_pass_state` | V47 | Single-row watermark, same shape as glossary's |
 
+Later migrations touch these tables; read the current DDL in `docs/schema-reference.md` before assuming the V45-V47 shape: V68 rebuilt both `decision_record` and `glossary_term` to admit `'agent'` provenance and a nullable `capture_id` (the MCP capture sink, I28, owns a row until revoked), V74 added `decision_record.scored_kind` and the `source_catchup_state` cursors, and V75 added `glossary_term.definition_local` (a term mined from a non-remote-eligible source is projected as `nimbus:glossary_term_local`, `glossary/glossary-visibility.ts`, so it never reaches a remote embedder).
+
 Four schema decisions you must not undo:
 
 1. **The watermark cursor is `(modified_at, id)`, not `modified_at` alone.** A batch truncated
@@ -259,7 +261,7 @@ hand-written decision is an ADR, and the point of this pass is the ones nobody w
 ## Projection into the index
 
 `glossary-project.ts` writes each consolidated term into the item index as
-`nimbus:glossary_term`, so `nimbus search` / `nimbus ask` find it. Two constraints:
+`nimbus:glossary_term` (or `nimbus:glossary_term_local`, see the tables note), so `nimbus search` / `nimbus ask` find it. Two constraints:
 
 - **Synonyms must live in the body text.** `item_fts` indexes only `title` and the body —
   metadata JSON is invisible to both FTS and the embedding pipeline. Without the

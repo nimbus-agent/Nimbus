@@ -36,7 +36,7 @@ Adding a new metric or check means writing a pure calculator and wiring it; do n
 | | [`packages/gateway/src/metrics/dora-config.ts`](../../packages/gateway/src/metrics/dora-config.ts) | `ServiceConfig` type (and `DoraServiceConfig` back-compat alias), URN parser, provider-prefix → `service` column map |
 | **Bucketed series** | [`packages/gateway/src/metrics/stats.ts`](../../packages/gateway/src/metrics/stats.ts) | `nimbus stats`' six-metric registry: four entries wrap the DORA calculators unchanged (`wrapDora` binds the bucket's END to `nowMs` and its WIDTH to `sinceMs` — never the bucket's absolute start), two are native counters (`pr-merges` on `metadata.merged_at`, `incidents-opened` on `metadata.opened_at_ms`). Wire shape is snake_case (`start_ms`/`end_ms`/`bucket_ms`), matching `metrics.dora` |
 | | [`packages/gateway/src/metrics/stats-buckets.ts`](../../packages/gateway/src/metrics/stats-buckets.ts) | Pure bucket splitter: disjoint buckets walking BACKWARD from the request time, oldest bucket absorbs the remainder, `MAX_BUCKETS` guard |
-| **Preflight** | [`packages/gateway/src/preflight/preflight.ts`](../../packages/gateway/src/preflight/preflight.ts) | Pure: counts active P1 incidents, failing CI on target ref, open PR conflicts. Returns `DeployPreflightResult` envelope |
+| **Preflight** | [`packages/gateway/src/preflight/preflight.ts`](../../packages/gateway/src/preflight/preflight.ts) | Reads the index (`computeDeployPreflight(db, cfg, ...)`): counts active P1 incidents, failing CI on target ref, open PR conflicts. Returns `DeployPreflightResult` envelope |
 | **Deploy-risk advisor** | [`packages/gateway/src/preflight/deploy-risk.ts`](../../packages/gateway/src/preflight/deploy-risk.ts), [`config/preflight-risk-toml.ts`](../../packages/gateway/src/config/preflight-risk-toml.ts) | Phase 17. OPTIONAL `risk` member of the envelope: four factors (`system_state`, `change_velocity`, `oncall_coverage`, `time_of_week`), each `{ id, level, evidence, known }`; level = max of the KNOWN factors, `unknown` when none (never `low`); scoring in ONE table `RISK_SCORING`. Advisory: changes `verdict` only under `[preflight.risk] fail_at`. Reuses `deploymentFrequency`, `queryOncallNow`, `buildServiceIdentityResolver`; never write a second reader |
 | **Deployment annotation** | [`packages/gateway/src/deployment/annotate.ts`](../../packages/gateway/src/deployment/annotate.ts) | Pure validator + index upsert (one `item` row + one `deployment_items` shadow row + one audit entry) |
 | | [`packages/gateway/src/deployment/external-id.ts`](../../packages/gateway/src/deployment/external-id.ts) | Stable `external_id` derivation: `<provider>:<sha>:<env>` |
@@ -110,19 +110,24 @@ The envelope shape is uniform across all four metrics:
 | `sample` | Number of inputs the metric was computed from |
 | `gap` | Optional explanation when `value === null` (e.g. `"no deployments in window"`) |
 
+MTTR's resolution time is the PagerDuty incident's own `resolved_at_ms` (`last_status_change_at`, since IC2), never `modified_at`; a resolved row without it is dropped and reported as `incomplete_resolution_data`.
+
 Adding a fifth metric: add a fifth pure function with the same envelope shape, extend the `DoraEnvelope.metrics` type, and update both `metrics-rpc.ts` and the CLI renderer.
 
 ## Preflight
 
 ```typescript
-function computePreflight(input: {
-  readonly activeP1Count: number;
-  readonly failingCiCount: number;
-  readonly openPrConflictCount: number;
-}): DeployPreflightResult;
+function computeDeployPreflight(
+  db: Database,
+  cfg: ServiceConfig,
+  targetRef: string,
+  nowMs: number,
+  maxFindings: number,
+  riskOptions?: DeployRiskOptions,
+): DeployPreflightResult;
 ```
 
-The function itself is trivial; the heavy lifting is in the SQL the RPC handler runs to compute the three counts. Use the existing handler's queries as the template — they hit the unified `item` table with the provider→service-column map, filtered by the service's repo set and the optional `severity_p1_aliases`.
+It reads the index itself (`packages/gateway/src/preflight/preflight.ts`: `selectActiveP1Incidents`, `selectFailingCiRuns`, `selectMergeConflicts`), over the unified `item` table with the provider→service-column map, filtered by the service's repo set and the optional `severity_p1_aliases`. The optional advisory `risk` block is computed only when the caller passes `riskOptions`.
 
 Verdict is `ok` if all three counts are zero, `warn` otherwise. The CLI's `--mode block` flag flips a `warn` verdict into exit code 1; the calculator itself does not know about modes.
 
@@ -142,6 +147,8 @@ arrive at an already-published Action as `ok`.
 1. An `item` row with `type = 'deployment'`, `external_id` from the helper, `metadata` JSON containing `nimbus_service_id`, ref, status, durations, workflow URL.
 2. A `deployment_items` shadow row (V28) with structured columns for fast DORA queries.
 3. One audit entry — `actionType = 'deployment.annotated'`, `hitlStatus = 'not_required'`.
+
+Since Phase 10 IC2 the annotated deployment also reaches the relationship graph at annotation time (`deployment/graph-annotated.ts` calls `syncGraphFromIndexedItem`), so its `deployed` / `built_by` edges exist without a re-graph.
 
 The conflict resolution is `ON CONFLICT(service, external_id) DO UPDATE` so retries are idempotent. The `is_new` flag in the response tells the caller whether the row was created or updated.
 
