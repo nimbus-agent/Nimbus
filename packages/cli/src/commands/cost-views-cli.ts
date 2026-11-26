@@ -149,17 +149,18 @@ function renderBlockText(r: ViewResult, currency: string, b: Block, sink: CostVi
   sink.out(`  ${"total".padEnd(32)} ${money(b.total).padStart(14)}\n`);
 }
 
-function renderFooter(r: ViewResult, sink: CostViewsSink): void {
+/** Freshness, exclusions and notes, written to `write` (stdout for text, stderr for CSV). */
+function renderFooter(r: ViewResult, write: (s: string) => void): void {
   for (const f of r.freshness) {
     const prov = f.provisionalFrom === null ? "" : ` (provisional from ${f.provisionalFrom})`;
-    sink.out(`Source ${clean(f.source)}: data up to ${f.lastDay ?? "none"}${prov}\n`);
+    write(`Source ${clean(f.source)}: data up to ${f.lastDay ?? "none"}${prov}\n`);
   }
   for (const e of r.excludedSources) {
-    sink.out(
+    write(
       `Note: ${clean(e.source)} lines for ${clean(e.provider)} are not counted: ${clean(e.reason)}\n`,
     );
   }
-  for (const n of r.notes) sink.out(`Note: ${clean(n)}\n`);
+  for (const n of r.notes) write(`Note: ${clean(n)}\n`);
 }
 
 function renderText(r: ViewResult, sink: CostViewsSink): number {
@@ -182,7 +183,7 @@ function renderText(r: ViewResult, sink: CostViewsSink): number {
   if (currencies.length > 1)
     sink.out("Several currencies: each has its own total; they are never added together.\n");
   for (const c of currencies) renderBlockText(r, c, r.byCurrency[c] as Block, sink);
-  renderFooter(r, sink);
+  renderFooter(r, (s) => sink.out(s));
   return 0;
 }
 
@@ -200,6 +201,8 @@ function renderCsv(r: ViewResult, sink: CostViewsSink): number {
       );
     }
   }
+  // The CSV keeps its fixed header and rows on stdout; what text and JSON also carry goes to stderr.
+  renderFooter(r, (s) => sink.err(s));
   if (r.configError !== null) {
     sink.err(`The [cost] config is refused, so no rule applies: ${clean(r.configError)}\n`);
     return 1;
@@ -219,7 +222,7 @@ function renderCluster(
         `${[x.currency, x.service, x.dimension, x.name].map(csvCell).join(",")},${money(x.amount)}\n`,
       );
     }
-    return 0;
+    return r.rows.length === 0 ? 1 : 0;
   }
   if (r.rows.length === 0) {
     sink.err("No Kubecost or OpenCost allocation is indexed for this period.\n");

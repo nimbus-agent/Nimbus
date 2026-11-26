@@ -1,4 +1,5 @@
 import { CliExit } from "../lib/cli-exit.ts";
+import { declareCliClientKind } from "../lib/declare-client-kind.ts";
 import { runStatusCall } from "../lib/status-call.ts";
 import { stripControlChars } from "../lib/strip-control-chars.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
@@ -225,11 +226,27 @@ export async function runCostAnomaliesWith(
   });
 }
 
+type CostRun = (c: CostIpc) => Promise<number>;
+
+/**
+ * Every `nimbus cost` subcommand first declares the connection as the owner's CLI (best-effort, see
+ * `declareCliClientKind`): the gateway serves `cost.import`, `cost.importRemove`, `cost.products` and
+ * `cost.internal` only to a declared `cli` connection.
+ */
+function declaringCli(run: CostRun): CostRun {
+  return async (c) => {
+    await declareCliClientKind({ call: <T>(m: string, p?: unknown) => c.call(m, p) as Promise<T> });
+    return run(c);
+  };
+}
+
 /** The run for `nimbus cost <args>`, or undefined for a usage error (no gateway is contacted). */
-export function costRunner(
-  args: readonly string[],
-  sink: CostSink,
-): ((c: CostIpc) => Promise<number>) | undefined {
+export function costRunner(args: readonly string[], sink: CostSink): CostRun | undefined {
+  const run = subcommandRunner(args, sink);
+  return run === undefined ? undefined : declaringCli(run);
+}
+
+function subcommandRunner(args: readonly string[], sink: CostSink): CostRun | undefined {
   if (args[0] === "anomalies") {
     const a = parseCostAnomaliesArgs(args.slice(1));
     return a === undefined ? undefined : (c) => runCostAnomaliesWith(c, a, sink);

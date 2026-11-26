@@ -126,6 +126,20 @@ describe("runCostImportWith", () => {
     expect(s.err).toContain("b.csv: refused - not a FOCUS export");
   });
 
+  test("an already-imported export is unchanged, names --remove, and exits 0", async () => {
+    const { s, sink: k } = sink();
+    const code = await runCostImportWith(
+      fake({ dryRun: false, files: [{ ...FILE, status: "unchanged", lines: 0, inserted: 0 }] }),
+      { mode: "import", path: "/x", dryRun: false, json: false },
+      k,
+    );
+    expect(code).toBe(0);
+    expect(s.out).toContain("Imported 0 of 1 file (1 already imported).");
+    expect(s.out).toContain(
+      "aws.csv  focus:0123456789abcdef  already imported, nothing written (nimbus cost import --remove focus:0123456789abcdef imports it again)",
+    );
+  });
+
   test("a dry run says nothing was written; --json prints the report", async () => {
     const { s, sink: k } = sink();
     await runCostImportWith(

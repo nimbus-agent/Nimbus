@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { costRunner } from "./cost.ts";
 import {
+  COST_CLUSTER_CSV_HEADER,
   COST_PRODUCTS_CSV_HEADER,
   type CostViewsIpc,
   csvCell,
@@ -151,6 +152,44 @@ describe("runCostViewsWith", () => {
     expect(lines[0]).toBe(COST_PRODUCTS_CSV_HEADER);
     expect(lines[1]).toBe("USD,checkout,prod,Amazon EC2,aws,30.00,");
     expect(lines.at(-1)).toBe("USD,,,,,3.00,no rule matched");
+  });
+
+  test("csv: freshness, exclusions and notes go to stderr; stdout stays header and rows", async () => {
+    const { s, sink: k } = sink();
+    const v = VIEW({
+      excludedSources: [{ source: "vantage", provider: "aws", reason: "raw lines exist" }],
+      notes: ["n1"],
+    });
+    expect(await runCostViewsWith(fake(v), { ...ARGS, format: "csv" }, k)).toBe(0);
+    const lines = s.out.trimEnd().split("\n");
+    expect(lines[0]).toBe(COST_PRODUCTS_CSV_HEADER);
+    expect(lines.every((l, i) => i === 0 || l.startsWith("USD,"))).toBe(true);
+    expect(s.err).toContain("Source focus: data up to 2026-11-25 (provisional from 2026-11-24)");
+    expect(s.err).toContain("Note: vantage lines for aws are not counted: raw lines exist");
+    expect(s.err).toContain("Note: n1");
+  });
+
+  test("cluster csv with no rows prints the header and exits 1", async () => {
+    const empty = {
+      view: "cluster",
+      range: { fromDay: "a", toDay: "b", label: "x" },
+      rows: [],
+    };
+    const { s, sink: k } = sink();
+    expect(await runCostViewsWith(fake(empty), { ...ARGS, cluster: true, format: "csv" }, k)).toBe(
+      1,
+    );
+    expect(s.out).toBe(`${COST_CLUSTER_CSV_HEADER}\n`);
+    const full = sink();
+    const one = {
+      ...empty,
+      rows: [
+        { service: "kubecost", dimension: "namespace", name: "w", currency: "USD", amount: 1 },
+      ],
+    };
+    expect(
+      await runCostViewsWith(fake(one), { ...ARGS, cluster: true, format: "csv" }, full.sink),
+    ).toBe(0);
   });
 
   test("csv cells never start a formula and are quoted when needed", () => {

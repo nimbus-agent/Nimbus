@@ -223,8 +223,52 @@ describe("costRunner", () => {
       expect(run).toBeDefined();
       expect(await run?.(ipc)).toBe(1);
     }
-    expect(seen).toEqual(["cost.anomalies", "cost.waste"]);
+    expect(seen.filter((m) => m !== "session.declareKind")).toEqual([
+      "cost.anomalies",
+      "cost.waste",
+    ]);
     expect(costRunner(["waste", "--kind", "nope"], sink)).toBeUndefined();
     expect(costRunner(["nope"], sink)).toBeUndefined();
+  });
+
+  test("every subcommand first declares the cli kind, then calls its cost method", async () => {
+    const sink = { out: () => undefined, err: () => undefined };
+    for (const [argv, method] of [
+      [["anomalies"], "cost.anomalies"],
+      [["waste"], "cost.waste"],
+      [["products"], "cost.products"],
+      [["internal", "--csv"], "cost.internal"],
+      [["import", "/exports/a.csv"], "cost.import"],
+      [["import", "--remove", "focus:0123456789abcdef"], "cost.importRemove"],
+    ] as const) {
+      const calls: [string, unknown][] = [];
+      const ipc: CostIpc = {
+        call: async (m: string, p?: unknown) => {
+          calls.push([m, p]);
+          if (m === "session.declareKind") return { kind: "cli" };
+          throw new Error("stop");
+        },
+      };
+      await costRunner([...argv], sink)?.(ipc);
+      expect(
+        calls.map(([m]) => m),
+        method,
+      ).toEqual(["session.declareKind", method]);
+      expect(calls[0]?.[1]).toEqual({ kind: "cli" });
+    }
+  });
+
+  test("an older gateway without session.declareKind still runs the command", async () => {
+    const seen: string[] = [];
+    const ipc: CostIpc = {
+      call: async (m: string) => {
+        seen.push(m);
+        if (m === "session.declareKind") throw new Error("Method not found");
+        return { status: "no_data", gaps: ["none"] };
+      },
+    };
+    const sink = { out: () => undefined, err: () => undefined };
+    expect(await costRunner(["anomalies"], sink)?.(ipc)).toBe(1);
+    expect(seen).toEqual(["session.declareKind", "cost.anomalies"]);
   });
 });

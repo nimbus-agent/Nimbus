@@ -9,8 +9,8 @@ import { stripControlChars } from "../lib/strip-control-chars.ts";
  * nothing is fetched and nothing leaves the machine. The path is resolved against the current directory here,
  * so the gateway always receives an absolute path.
  *
- * Exit codes: 0 when every file imported (or would, with `--dry-run`), 1 when any file was refused or the call
- * failed.
+ * Exit codes: 0 when every file imported, would import (`--dry-run`) or was already imported (`unchanged`: the
+ * gateway's import ledger holds it, so nothing was written), 1 when any file was refused or the call failed.
  */
 export interface CostImportIpc {
   call(method: string, params?: unknown): Promise<unknown>;
@@ -89,7 +89,7 @@ type Issue = { row: number; reason: string };
 type FileReport = {
   name: string;
   importId: string | null;
-  status: "imported" | "dry_run" | "refused";
+  status: "imported" | "dry_run" | "unchanged" | "refused";
   error?: string;
   lines: number;
   inserted: number;
@@ -116,6 +116,13 @@ function money(totals: Record<string, number>): string {
 function renderFile(f: FileReport, sink: CostImportSink): void {
   if (f.status === "refused") {
     sink.err(`  ${clean(f.name)}: refused - ${clean(f.error ?? "unknown error")}\n`);
+    return;
+  }
+  if (f.status === "unchanged") {
+    const id = clean(f.importId ?? "");
+    sink.out(
+      `  ${clean(f.name)}  ${id}  already imported, nothing written (nimbus cost import --remove ${id} imports it again)\n`,
+    );
     return;
   }
   sink.out(
@@ -159,11 +166,13 @@ async function runRemove(
 function renderImport(r: ImportReport, sink: CostImportSink): void {
   const n = r.files.length;
   const refusedCount = r.files.filter((f) => f.status === "refused").length;
+  const unchangedCount = r.files.filter((f) => f.status === "unchanged").length;
   const files = `file${n === 1 ? "" : "s"}`;
+  const already = unchangedCount === 0 ? "" : ` (${String(unchangedCount)} already imported)`;
   sink.out(
     r.dryRun
       ? `Dry run over ${String(n)} ${files}: nothing was written.\n`
-      : `Imported ${String(n - refusedCount)} of ${String(n)} ${files}.\n`,
+      : `Imported ${String(n - refusedCount - unchangedCount)} of ${String(n)} ${files}${already}.\n`,
   );
   for (const f of r.files) renderFile(f, sink);
 }
