@@ -2,6 +2,14 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [11.16.0](https://github.com/nimbus-agent/Nimbus/compare/v11.15.0...v11.16.0) (2026-11-26)
+
+
+### Features
+
+* cost lines from FOCUS exports, allocation rules and cost views (Phase 7, slice 1) ([#2168](https://github.com/nimbus-agent/Nimbus/issues/2168)) ([bcfeb8a](https://github.com/nimbus-agent/Nimbus/commit/bcfeb8a0c870c7b8135137a7df9cab69302e17ff))
+* nimbus cost why joins a cost change to its deploys, pull requests and owners (Phase 7, slice 2) ([#2177](https://github.com/nimbus-agent/Nimbus/issues/2177)) ([b248cca](https://github.com/nimbus-agent/Nimbus/commit/b248ccad047f5e7b39e8688eb8800e386c8d28fe))
+
 ## [11.15.0](https://github.com/nimbus-agent/Nimbus/compare/v11.14.0...v11.15.0) (2026-11-26)
 
 

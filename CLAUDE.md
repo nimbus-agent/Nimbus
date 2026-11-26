@@ -6,7 +6,7 @@ Nimbus is a **local-first AI agent framework**: a headless Bun Gateway that keep
 
 **Runtime:** Bun v1.2+ / TypeScript 7.x strict (two pins stay on TypeScript 6: `packages/docs`, because `astro check` refuses 7.0, and the root `typescript-compiler-api` alias used by `scripts/cleanup/`, `scripts/structure-audit/check-connector-hosts.ts` and `audit:boundaries`) · **Linter:** Biome · **License:** AGPL-3.0 (gateway/cli) + MIT (sdk)
 
-**Latest release:** `v11.15.0` <!-- x-release-please-version -->
+**Latest release:** `v11.16.0` <!-- x-release-please-version -->
 
 The line above is rewritten by release-please (an `extra-files` entry in `.release-please-config.json`); `audit:release-please` fails if it disagrees with the manifest. Keep it on its own line.
 
