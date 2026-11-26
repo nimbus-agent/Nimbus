@@ -5,11 +5,12 @@
 //
 // Every substituted value is first stripped of control and format-invisible characters and capped at 128
 // characters. Then, per channel:
-// - `html` (Teams, Outlook): `& < > " '` HTML-escaped.
-// - Slack (`text`, `markdown`): `& < >` as Slack's own entities, and `@ * _ ~` and the backtick swapped for
-//   look-alikes, so a value can never mention, link or format (Slack's markup has no backslash escape).
-// - Teams `text`/`markdown`: `< > &` and `@ * _ ~` and the backtick swapped for look-alikes.
-// - Mail `text` (Gmail, Outlook): only stripped.
+// - Slack, Teams and every `html` body: `< > & @` become `‹ › ⅋ (at)` — stand-ins the send door's detectors do
+//   not decode or fold back — so a value can never open a tag, form an entity, mention or load content.
+// - Chat (`text`, `markdown`): `* _ ~` and the backtick also become look-alikes (no backslash escape exists).
+// - `html`: `" '` are entity-escaped, and `= ( )` become `꞊ ❨ ❩` (the remote-content detector reads
+//   `src=http…` and `url(…)` even outside a tag).
+// - Mail `text` (Gmail, Outlook): only stripped; the door does not scan it.
 // The template's own literal text is the owner's and is never escaped.
 import { FORMAT_INVISIBLE_RANGES, rangesRegExp } from "../util/invisible-text.ts";
 import type { CostReportCurrency, CostReportModel } from "./cost-report-model.ts";
@@ -27,24 +28,34 @@ const INVISIBLE_RE = rangesRegExp(FORMAT_INVISIBLE_RANGES);
 // biome-ignore lint/suspicious/noControlCharactersInRegex: the point is to remove control characters.
 const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f]/g;
 
-const LOOKALIKE: Readonly<Record<string, string>> = {
-  "@": "＠",
-  "*": "∗",
-  _: "＿",
-  "~": "∼",
-  "`": "ˋ",
-  "<": "‹",
-  ">": "›",
-  "&": "＆",
-};
-const SLACK_ENTITY: Readonly<Record<string, string>> = { "&": "&amp;", "<": "&lt;", ">": "&gt;" };
-const HTML_ENTITY: Readonly<Record<string, string>> = {
-  "&": "&amp;",
-  "<": "&lt;",
-  ">": "&gt;",
+/**
+ * Characters a value could use to mention, link, load or format, and their inert stand-ins. The stand-ins are
+ * stable under NFKC and are not entities, because the send door's detectors decode entities and fold
+ * look-alikes before they scan (`＠` folds back to `@`, `&lt;` decodes to `<`), so an escape the detectors
+ * undo would be refused at the door.
+ */
+const INERT: Readonly<Record<string, string>> = { "<": "‹", ">": "›", "&": "⅋", "@": "(at)" };
+/** Markup characters in chat (Slack mrkdwn, Teams markdown), which have no backslash escape. */
+const CHAT_MARKUP: Readonly<Record<string, string>> = { "*": "∗", _: "＿", "~": "∼", "`": "ˋ" };
+/**
+ * In html, quotes are entity-escaped, and `=` and parentheses get NFKC-stable stand-ins: the remote-content
+ * detector refuses attribute-like `src=http…` and CSS `url(…)` text even outside a tag.
+ */
+const HTML_INERT: Readonly<Record<string, string>> = {
   '"': "&quot;",
   "'": "&#39;",
+  "=": "꞊",
+  "(": "❨",
+  ")": "❩",
 };
+
+/** Make a cleaned value inert for a chat or html channel (mail `text` is left as is). */
+function inert(s: string, t: CostRenderTarget): string {
+  if (t.format !== "html" && t.kind !== "slack" && t.kind !== "teams") return s;
+  const base = s.replace(/[<>&@]/g, (c) => INERT[c] ?? c);
+  if (t.format === "html") return base.replace(/["'=()]/g, (c) => HTML_INERT[c] ?? c);
+  return base.replace(/[*_~`]/g, (c) => CHAT_MARKUP[c] ?? c);
+}
 
 /** Strip control and invisible characters, then cap at 128 characters (by code point). */
 export function cleanValue(v: string): string {
@@ -52,21 +63,9 @@ export function cleanValue(v: string): string {
   return Array.from(stripped).slice(0, COST_TEMPLATE_VALUE_MAX).join("");
 }
 
-/** One value, cleaned and escaped for its channel. */
+/** One value, cleaned and made inert for its channel. */
 export function escapeValue(v: string, t: CostRenderTarget): string {
-  const s = cleanValue(v);
-  if (t.format === "html") {
-    const html = s.replace(/[&<>"']/g, (c) => HTML_ENTITY[c] ?? c);
-    // A Teams html body still reads `@channel` as a mention.
-    return t.kind === "teams" ? html.replaceAll("@", LOOKALIKE["@"] ?? "@") : html;
-  }
-  if (t.kind === "slack") {
-    return s
-      .replace(/[&<>]/g, (c) => SLACK_ENTITY[c] ?? c)
-      .replace(/[@*_~`]/g, (c) => LOOKALIKE[c] ?? c);
-  }
-  if (t.kind === "teams") return s.replace(/[@*_~`<>&]/g, (c) => LOOKALIKE[c] ?? c);
-  return s;
+  return inert(cleanValue(v), t);
 }
 
 const money = (n: number, currency: string, t: CostRenderTarget): string =>
@@ -145,23 +144,23 @@ export function breakdownItems(m: CostReportModel, t: CostRenderTarget): string[
 }
 
 const CSV_FORMULA_RE = /^[=+\-@\t\r]/;
-function csvCell(v: string): string {
-  const s = cleanValue(v);
+function csvCell(v: string, t: CostRenderTarget): string {
+  const s = inert(cleanValue(v), t);
   const guarded = CSV_FORMULA_RE.test(s) ? `'${s}` : s;
   return /[",\n\r]/.test(guarded) ? `"${guarded.replaceAll('"', '""')}"` : guarded;
 }
 
 export const COST_REPORT_CSV_HEADER = "part,provider,env,currency,amount";
 
-/** The breakdown as CSV rows (no header), formula-guarded. */
-export function breakdownCsvRows(m: CostReportModel): string[] {
+/** The breakdown as CSV rows (no header), formula-guarded and inert for the channel. */
+export function breakdownCsvRows(m: CostReportModel, t: CostRenderTarget): string[] {
   return Object.entries(m.byCurrency).flatMap(([c, b]) =>
     b.breakdown.map((r) =>
       [
-        csvCell(r.part),
-        csvCell(r.provider),
-        csvCell(r.env ?? ""),
-        csvCell(c),
+        csvCell(r.part, t),
+        csvCell(r.provider, t),
+        csvCell(r.env ?? "", t),
+        csvCell(c, t),
         r.amount.toFixed(2),
       ].join(","),
     ),

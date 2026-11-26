@@ -124,8 +124,8 @@ function csvText(rows: readonly string[], keep: number, t: CostRenderTarget): st
   const body = [COST_REPORT_CSV_HEADER, ...kept].join("\n");
   const tail = more > 0 ? `\n… and ${String(more)} more rows` : "";
   if (t.format === "html") {
-    const escaped = body.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-    return `<pre>${escaped}</pre>${tail}`;
+    // The cells are already inert for html (`breakdownCsvRows`); the header holds no markup.
+    return `<pre>${body}</pre>${tail}`;
   }
   if (t.kind === "slack" || t.kind === "teams") return `\`\`\`\n${body}\n\`\`\`${tail}`;
   return `${body}${tail}`;
@@ -181,7 +181,7 @@ export function renderCostTemplate(
   const lists: Lists = {
     movers: moverItems(m, o),
     breakdown: breakdownItems(m, o),
-    csv: breakdownCsvRows(m),
+    csv: breakdownCsvRows(m, o),
   };
   const rows = o.breakdown === "csv" ? lists.csv.length : lists.breakdown.length;
   const render = (breakdown: number, movers: number) =>

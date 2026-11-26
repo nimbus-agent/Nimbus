@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
+import { broadcastMentionIn } from "../connectors/connector-writes/model-write-refusals.ts";
+import { remoteContentIn } from "../connectors/connector-writes/remote-content.ts";
 import type { CostReportModel } from "./cost-report-model.ts";
 import {
   COST_REPORT_BODY_MAX,
@@ -10,7 +12,8 @@ import {
   renderCostTemplate,
 } from "./cost-template.ts";
 
-const EVIL = "<!here> *x* _y_ ~z~ `c` & @channel <img src=x>";
+const EVIL =
+  '<!here> *x* _y_ ~z~ `c` & @channel <img src=x> &lt;at&gt; &#64;everyone &lt;img src=http://x/a.png&gt; background:url(http://x/b.png) srcset="http://x/c.png 1x"';
 
 function model(over: Partial<CostReportModel> = {}): CostReportModel {
   return {
@@ -145,8 +148,8 @@ describe("renderCostTemplate: escaping per channel", () => {
     expect(slack).not.toContain("<!here>");
     expect(slack).not.toContain("@channel");
     expect(slack).not.toMatch(/[*_~`](?:x|y|z|c)/);
-    expect(slack).toContain("&lt;!here&gt;");
-    expect(slack).toContain("&amp;");
+    expect(slack).toContain("‹!here›");
+    expect(slack).toContain("(at)channel");
     const teams = render("{breakdown}", "teams", "markdown");
     expect(teams).not.toContain("<");
     expect(teams).not.toContain("@channel");
@@ -155,9 +158,9 @@ describe("renderCostTemplate: escaping per channel", () => {
   test("HTML escapes and plain mail text only strips", () => {
     const html = render("<p>{breakdown}</p>", "outlook", "html");
     expect(html.startsWith("<p><ul><li>")).toBe(true);
-    expect(html).toContain("&lt;img src=x&gt;");
+    expect(html).toContain("‹img src꞊x›");
     expect(html).not.toContain("<img");
-    expect(html).toContain("&amp;");
+    expect(html).toContain("⅋");
     const plain = render(
       "{breakdown}",
       "gmail",
@@ -262,5 +265,46 @@ describe("renderCostSubject", () => {
     expect(() =>
       renderCostSubject(parseCostTemplate(`${"s".repeat(250)} {total}`), model()),
     ).toThrow("over 255 characters");
+  });
+});
+
+describe("the send door's detectors agree with the escaping", () => {
+  test("hostile data in every kind, format and breakdown mode trips no broadcast or remote-content detector", () => {
+    const usd = model().byCurrency["USD"] as NonNullable<CostReportModel["byCurrency"]["USD"]>;
+    const m = model({
+      byCurrency: {
+        USD: {
+          ...usd,
+          topMovers: [{ service: EVIL, part: EVIL, provider: EVIL, change: 1 }],
+          breakdown: [{ part: EVIL, provider: EVIL, env: EVIL, amount: 1 }],
+        },
+      },
+      freshness: [{ source: EVIL, lastDay: "2026-11-24", provisionalFrom: null }],
+    });
+    const text = "{breakdown}top_moversfreshnesscurrency";
+    const cases = [
+      ["slack", "text"],
+      ["slack", "markdown"],
+      ["teams", "text"],
+      ["teams", "markdown"],
+      ["teams", "html"],
+      ["outlook", "html"],
+    ] as const;
+    for (const [kind, format] of cases) {
+      for (const breakdown of ["list", "csv"] as const) {
+        const body = render(text, kind, format, m, breakdown);
+        const html = format === "html";
+        const label = `${kind}/${format}/${breakdown}`;
+        if (kind === "slack" || kind === "teams") {
+          expect(broadcastMentionIn(kind, body, { html }), label).toBe(false);
+        }
+        if (html) {
+          expect(
+            remoteContentIn(kind === "teams" ? "teams-html" : "outlook-html", body),
+            label,
+          ).toBe(false);
+        }
+      }
+    }
   });
 });
