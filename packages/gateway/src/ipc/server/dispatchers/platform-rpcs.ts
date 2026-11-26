@@ -138,16 +138,15 @@ function userMcpExecutorFor(
 
 type ConnectorRpcOptionalDeps = Pick<
   Parameters<typeof dispatchConnectorRpc>[0],
-  "connectorMesh" | "sandboxRunner" | "continuityTable"
+  "connectorMesh" | "sandboxRunner"
 >;
 
 /** The connector RPC's members that exist only when the gateway was given them. */
 function connectorRpcOptionalDeps(ctx: ServerCtx): ConnectorRpcOptionalDeps {
-  const { connectorMesh, sandboxRunner, continuityTable } = ctx.options;
+  const { connectorMesh, sandboxRunner } = ctx.options;
   return {
     ...(connectorMesh === undefined ? {} : { connectorMesh }),
     ...(sandboxRunner === undefined ? {} : { sandboxRunner }),
-    ...(continuityTable === undefined ? {} : { continuityTable }),
   };
 }
 
@@ -202,6 +201,9 @@ export async function tryDispatchConnectorRpc(
       openUrl,
       syncScheduler: ctx.options.syncScheduler,
       ...connectorRpcOptionalDeps(ctx),
+      ...(ctx.options.continuityTable === undefined
+        ? {}
+        : { continuityTable: ctx.options.continuityTable }),
       platform: process.platform,
       notify: (m, p) => ctx.broadcastNotification(m, p),
       getEnforcedPolicy: () => ctx.options.enforcedPolicy?.(),
