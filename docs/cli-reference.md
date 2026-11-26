@@ -1287,6 +1287,33 @@ nimbus cost waste --service vantage --json
 
 **Bounds.** Only what the vendor recommends is visible: no cloud inventory is indexed and no resource ids are shown (a recommendation carries only a count of affected resources). The IPC method is `cost.waste` (the whole `cost` namespace is LAN-forbidden; it is not on the desktop allowlist). In the text output, vendor strings are stripped of control and direction-control characters and cut to 200 characters. The `--json` output carries the vendor strings unchanged (JSON escaping covers control characters, not direction-control characters, and nothing is cut), so treat them as untrusted text. Only `http(s)` documentation links are kept, in both outputs.
 
+### `nimbus cost import`
+
+Imports FOCUS 1.x cost exports (the FinOps Open Cost and Usage Specification CSV that AWS Data Exports, Azure Cost Management exports and the Google Cloud billing export produce) into the local cost lines (schema V109). Local files only: **no network call, no credential**, nothing leaves the machine.
+
+```bash
+nimbus cost import ./exports/aws-2026-11.csv
+nimbus cost import ./exports --dry-run
+nimbus cost import ./gcp.csv --provider gcp --json
+nimbus cost import --remove focus:0123456789abcdef
+```
+
+| Flag | Description |
+|---|---|
+| `<file\|dir>` | A `.csv` file, or a directory whose `*.csv` files are imported (not recursive), oldest modification time first so the newest export of an overlapping period stands. A link is not followed. |
+| `--provider aws\|azure\|gcp` | The provider of rows whose `ProviderName` is empty. A row whose `ProviderName` names a different known provider is skipped with that reason. Without it, `ProviderName` decides (an unknown name becomes its own provider slug). |
+| `--dry-run` | Parse and count what would change; nothing is written. |
+| `--remove <importId>` | Delete the lines of one import (`focus:<16 hex>`, printed by every import). |
+| `--json` | Print the import report on one line. |
+
+**What a file needs.** The columns `BilledCost`, `BillingCurrency`, `ChargePeriodStart` and `ServiceName` (a file without one is refused, naming it). Read when present: `BillingAccountId`, `BillingPeriodStart`, `ChargeCategory`, `EffectiveCost`, `ProviderName` (or `ServiceProviderName`), `RegionId`, `ResourceId`, `ResourceName`, `ServiceCategory`, `SkuId`, `SubAccountId`, `SubAccountName`, `Tags` (a JSON object; at most 50 tags of at most 128 characters are kept, and every dropped tag is a warning). A UTF-8 BOM, CRLF line ends and quoted fields with commas or line breaks are accepted; the file must be valid UTF-8 and at most 512 MiB. Parquet is not read (CSV only).
+
+**How lines are stored.** One line per day (the UTC day of `ChargePeriodStart`), billing account, sub-account, service, region, resource (or SKU), charge category and tag set; hourly rows of one grain are summed. Nothing is folded into an "other" bucket. A row with a non-numeric cost, a bad date or an unknown `ChargeCategory` is skipped and listed with its CSV record number (the header is record 1; at most 20 listed, the count is exact).
+
+**Re-imports.** A FOCUS export is cumulative per billing period, so for each (provider, billing account, billing period) an import REPLACES every stored line on exactly the days the file contains and keeps the other days: a month-to-date file that grew from day 19 to day 20 leaves exactly 20 days. The import id is the file's content hash, so importing the same file again changes nothing (`0 new, 0 restated, N unchanged`). The report gives per-file totals per currency, which equal the sum of the stored lines.
+
+**Exit codes.** 0 when every file imported (or would, with `--dry-run`); 1 when any file was refused or the call failed. The IPC methods are `cost.import` and `cost.importRemove`; both serve only a connection that declared the `cli` kind, refuse on the demo gateway, are LAN-forbidden (the whole `cost` namespace) and are not on the desktop allowlist.
+
 ### `nimbus briefing`
 
 Your morning briefing, built from the local index. It makes **no provider call** and **uses no model**: the text is rendered deterministically, and nothing leaves the machine except a local notification.
