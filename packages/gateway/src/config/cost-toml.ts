@@ -18,7 +18,8 @@
  * section by section. As for every array block, the highest layer that has `[[cost.rule]]` blocks supplies all of
  * them: a role pack's default rules apply until the owner writes their own, which then replace them whole
  * (never interleaved, so first-match order is exactly what one file says). Unlike the other
- * sections, a bad value is NOT a per-key fallback: an unknown key, an unknown placeholder or a malformed rule
+ * sections, a bad value is NOT a per-key fallback: an unknown key, an unknown placeholder, a malformed rule or a
+ * malformed header that names a cost table (`[[cost.rule]`, `[cost`)
  * refuses the whole cost config (`error`, recorded through `sectionFallbackSink`), and the views say so,
  * because a silently dropped rule would move cost to another product without a word.
  */
@@ -148,12 +149,27 @@ function compileRules(blocks: readonly EffectiveSection[]): readonly CostRule[] 
 const isCostHeader = (h: string | null): h is string =>
   h === "cost" || (h?.startsWith("cost.") ?? false);
 
+/**
+ * A header line the layered reader could not parse (`[[cost.rule]`, `[cost`) that still names a cost table:
+ * after the opening brackets, optional spaces and an optional quote, the name `cost` ends there or at `.`,
+ * `]`, a quote or a space.
+ */
+const MALFORMED_COST_HEADER_RE = /^\[{1,2}\s*["']?cost(?:["'\s.\]]|$)/;
+
+function refuseMalformedCostHeader(s: EffectiveSection): void {
+  const raw = s.malformed?.trim();
+  if (raw !== undefined && MALFORMED_COST_HEADER_RE.test(raw)) {
+    throw new CostConfigError(`malformed section header ${raw.slice(0, 120)}`);
+  }
+}
+
 /** The cost config from the effective (layered) sections. Pure. */
 export function resolveCostConfig(sections: readonly EffectiveSection[]): NimbusCostConfig {
   const draft: Draft = { ...DEFAULT_COST_CONFIG };
   try {
     const ruleBlocks: EffectiveSection[] = [];
     for (const s of sections) {
+      refuseMalformedCostHeader(s);
       const header = s.header;
       if (!isCostHeader(header)) continue;
       if (header === "cost.rule" && s.isArray) ruleBlocks.push(s);

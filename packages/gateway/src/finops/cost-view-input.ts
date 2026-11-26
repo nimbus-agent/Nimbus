@@ -83,8 +83,7 @@ export function gatherCostViewInput(
   const lines = all.filter((l) => keep.get(l.provider)?.(l.source) ?? true);
   const lastDays = readCostLineFreshness(db);
   if (adapted.lastDay !== null) lastDays.push({ source: VANTAGE_SOURCE, lastDay: adapted.lastDay });
-  const currencies = new Set(readCostLineCurrencies(db));
-  for (const l of adapted.lines) currencies.add(l.currency);
+  const currencies = new Set([...readCostLineCurrencies(db), ...adapted.currencies]);
   const notes =
     adapted.supersededDays > 0
       ? [

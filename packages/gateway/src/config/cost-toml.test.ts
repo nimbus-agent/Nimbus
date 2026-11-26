@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { resolve } from "node:path";
 
 import { DEFAULT_COST_INTERNAL_ENVS, resolveCostConfig } from "./cost-toml.ts";
 import { type LayerKind, mergeLayerDocs, parseLayerDoc } from "./layered-merge.ts";
@@ -32,7 +33,8 @@ describe("[cost] config", () => {
   });
 
   test("internal_envs, authoritative, focus dir and rules in order", () => {
-    const dir = process.platform === "win32" ? "C:\\\\exports" : "/exports";
+    const exportsDir = resolve("/exports");
+    const dir = exportsDir.replaceAll("\\", "\\\\");
     const c = base(`[cost]
 internal_envs = ["ci", "sandbox"]
 authoritative = { aws = "vantage" }
@@ -51,7 +53,7 @@ set = { env = "ci", product = "{repo}" }
     expect(c.error).toBeNull();
     expect(c.internalEnvs).toEqual(["ci", "sandbox"]);
     expect(c.authoritative).toEqual({ aws: "vantage" });
-    expect(c.focusDir).toBe(process.platform === "win32" ? "C:\\exports" : "/exports");
+    expect(c.focusDir).toBe(exportsDir);
     expect(c.rules.map((r) => [r.index, r.match, r.set])).toEqual([
       [
         1,
@@ -96,5 +98,17 @@ set = { env = "ci", product = "{repo}" }
     expect(base('[cost.focus]\ndir = "relative/path"\n').error).toContain("absolute path");
     expect(base("[cost]\nauthoritative = 3\n").error).toContain("authoritative");
     expect(base("[[cost.rule]]\nset = { product = \n").error).toContain("not valid TOML");
+  });
+
+  test("a malformed header that names a cost table refuses the whole cost config, naming it", () => {
+    const later = '\n[[cost.rule]]\nmatch = {}\nset = { product = "other" }\n';
+    for (const header of ["[[cost.rule]", "[cost", "[[ cost.rule ]", '["cost".focus']) {
+      const c = base(`${header}\nmatch = { provider = "aws" }\nset = { product = "p" }\n${later}`);
+      expect(c.rules, header).toEqual([]);
+      expect(c.error, header).toBe(`malformed section header ${header}`);
+    }
+    // A malformed header of another section is not the cost config's business.
+    expect(base("[[fleet.node]\nx = 1\n").error).toBeNull();
+    expect(base("[costs\nx = 1\n").error).toBeNull();
   });
 });

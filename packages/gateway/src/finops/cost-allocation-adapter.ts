@@ -12,7 +12,7 @@
 import type { Database } from "bun:sqlite";
 
 import { DAY_MS } from "./cost-item-contract.ts";
-import type { CostLine } from "./cost-line.ts";
+import { type CostLine, setTag } from "./cost-line.ts";
 
 export const VANTAGE_SOURCE = "vantage";
 export const CLUSTER_COST_SERVICES = ["kubecost", "opencost"] as const;
@@ -73,6 +73,8 @@ export interface AdaptedAllocations {
   readonly supersededDays: number;
   /** The newest day with a Vantage row, any range. */
   readonly lastDay: string | null;
+  /** Every currency a Vantage row uses, any range (a period with no row is 0 in each). */
+  readonly currencies: string[];
 }
 
 /** Per day, the report configuration synced last, and how many days had more than one. */
@@ -104,7 +106,7 @@ function serviceNameOf(r: Row): string {
 function rowToLine(r: Row): CostLine {
   const chargeDay = dayText(r.day as number);
   const tags: Record<string, string> = {};
-  if (r.kind === "tag" && r.dkey !== null && r.value !== null) tags[r.dkey] = r.value;
+  if (r.kind === "tag" && r.dkey !== null && r.value !== null) setTag(tags, r.dkey, r.value);
   return {
     source: VANTAGE_SOURCE,
     provider: r.provider ?? "unknown",
@@ -150,7 +152,15 @@ export function adaptCostAllocationItems(
     )
     .get(VANTAGE_SOURCE) as { d: number | null } | null;
   const lastMs = last?.d ?? null;
-  return { lines, supersededDays, lastDay: lastMs === null ? null : dayText(lastMs) };
+  const currencies = (
+    db
+      .query(
+        `SELECT DISTINCT COALESCE(json_extract(metadata, '$.currency'), 'unknown') AS c FROM item
+          WHERE service = ? AND type = 'cost_allocation' ORDER BY c`,
+      )
+      .all(VANTAGE_SOURCE) as { c: string }[]
+  ).map((r) => r.c);
+  return { lines, supersededDays, lastDay: lastMs === null ? null : dayText(lastMs), currencies };
 }
 
 export interface ClusterAllocationRow {

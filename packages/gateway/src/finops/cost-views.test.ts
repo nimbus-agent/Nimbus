@@ -165,7 +165,7 @@ describe("productView", () => {
   });
 });
 
-function seedVantage(amount: number, provider = "aws"): void {
+function seedVantage(amount: number, provider = "aws", dayMs = Date.UTC(2026, 10, 20)): void {
   upsertIndexedItem(db, {
     service: "vantage",
     type: "cost_allocation",
@@ -178,7 +178,7 @@ function seedVantage(amount: number, provider = "aws"): void {
       dimensionKind: "service",
       dimensionKey: null,
       dimensionValue: "Amazon S3",
-      periodStartMs: Date.UTC(2026, 10, 20),
+      periodStartMs: dayMs,
       amount,
       currency: "USD",
       provider,
@@ -203,6 +203,13 @@ describe("sources: Vantage and the authoritative rule", () => {
       },
     ]);
     expect(v.freshness.map((f) => f.source)).toEqual(["focus", "vantage"]);
+  });
+
+  test("a period with no Vantage row is 0 in each currency an older Vantage row used", () => {
+    seedVantage(7, "aws", Date.UTC(2026, 0, 5));
+    const v = products();
+    expect(v.empty).toBe(false);
+    expect(v.byCurrency["USD"]).toMatchObject({ total: 0, rows: [], unassigned: 0 });
   });
 
   test("[cost] authoritative picks the source for a provider", () => {

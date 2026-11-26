@@ -181,11 +181,12 @@ describe("adaptCostAllocationItems: dimension edge cases", () => {
     expect(r.lines.map((l) => [l.billedCost, l.tags])).toEqual([[3, {}]]);
   });
 
-  test("no Vantage rows at all: no lines and no last day", () => {
+  test("no Vantage rows at all: no lines, no last day and no currency", () => {
     expect(adaptCostAllocationItems(db, { fromDay: "2026-11-01", toDay: "2026-11-30" })).toEqual({
       lines: [],
       supersededDays: 0,
       lastDay: null,
+      currencies: [],
     });
   });
 });
