@@ -47,6 +47,21 @@ function seed(o: {
   });
 }
 
+/** A row with exactly this metadata (the edge cases `seed` normalises away). */
+function seedRaw(service: string, metadata: Record<string, unknown>, synced = DAY(20)): void {
+  n++;
+  upsertIndexedItem(db, {
+    service,
+    type: "cost_allocation",
+    externalId: `raw${String(n)}`,
+    title: "t",
+    bodyPreview: "t",
+    modifiedAt: DAY(1),
+    metadata,
+    syncedAt: synced,
+  });
+}
+
 beforeEach(() => {
   db = new Database(":memory:");
   runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
@@ -111,6 +126,70 @@ describe("adaptCostAllocationItems", () => {
   });
 });
 
+describe("adaptCostAllocationItems: dimension edge cases", () => {
+  test("an account dimension names the sub-account; a non-service dimension gets a placeholder service", () => {
+    seed({ day: 1, amount: 4, kind: "account", value: "210000000001" });
+    seed({ day: 1, amount: 1, kind: "service" });
+    const r = adaptCostAllocationItems(db, { fromDay: "2026-11-01", toDay: "2026-11-01" });
+    // The read has no ORDER BY, so the row order is the query plan's: compare as a sorted list.
+    const got = r.lines.map((l) => [l.subAccountId ?? "", l.serviceName]).sort();
+    expect(got).toEqual([
+      ["", "Amazon S3"],
+      ["210000000001", "(vantage account)"],
+    ]);
+  });
+
+  test("a row with no dimension kind is the total; a scope without a hash is its own configuration", () => {
+    seedRaw("vantage", {
+      scopeSeries: "rep|ws|none",
+      dimensionKind: null,
+      dimensionValue: null,
+      periodStartMs: DAY(1),
+      amount: 6,
+      currency: "EUR",
+      provider: "gcp",
+    });
+    const r = adaptCostAllocationItems(db, { fromDay: "2026-11-01", toDay: "2026-11-01" });
+    expect(r.lines.map((l) => [l.billingAccountId, l.serviceName, l.currency, l.tags])).toEqual([
+      ["rep|ws|none", "(vantage total)", "EUR", {}],
+    ]);
+  });
+
+  test("a row with no scope still adapts, under an empty configuration", () => {
+    seedRaw("vantage", {
+      dimensionKind: "service",
+      dimensionValue: "BigQuery",
+      periodStartMs: DAY(1),
+      amount: 2,
+    });
+    const r = adaptCostAllocationItems(db, { fromDay: "2026-11-01", toDay: "2026-11-01" });
+    expect(r.lines.map((l) => [l.billingAccountId, l.serviceName, l.billedCost])).toEqual([
+      ["", "BigQuery", 2],
+    ]);
+  });
+
+  test("a tag dimension without a key keeps no tag; a non-numeric amount is dropped", () => {
+    seed({ day: 1, amount: 3, kind: "tag", key: null, value: "orphan" });
+    seedRaw("vantage", {
+      scopeSeries: "rep|ws|service~h",
+      dimensionKind: "service",
+      dimensionValue: "S3",
+      periodStartMs: DAY(1),
+      amount: "12.5",
+    });
+    const r = adaptCostAllocationItems(db, { fromDay: "2026-11-01", toDay: "2026-11-01" });
+    expect(r.lines.map((l) => [l.billedCost, l.tags])).toEqual([[3, {}]]);
+  });
+
+  test("no Vantage rows at all: no lines and no last day", () => {
+    expect(adaptCostAllocationItems(db, { fromDay: "2026-11-01", toDay: "2026-11-30" })).toEqual({
+      lines: [],
+      supersededDays: 0,
+      lastDay: null,
+    });
+  });
+});
+
 describe("readClusterAllocations", () => {
   test("sums Kubecost/OpenCost rows per service, dimension and name; Vantage rows are not read", () => {
     seed({ service: "kubecost", day: 1, amount: 7, kind: "namespace", value: "web" });
@@ -120,6 +199,22 @@ describe("readClusterAllocations", () => {
     expect(readClusterAllocations(db, { fromDay: "2026-11-01", toDay: "2026-11-02" })).toEqual([
       { service: "kubecost", dimension: "namespace", name: "web", currency: "USD", amount: 10 },
       { service: "opencost", dimension: "namespace", name: "ci", currency: "USD", amount: 1 },
+    ]);
+  });
+  test("missing currency, dimension and name are filled; a non-numeric amount is skipped; ties sort by name", () => {
+    seedRaw("opencost", { periodStartMs: DAY(1), amount: 2, currency: null, dimensionKind: null });
+    seedRaw("opencost", {
+      periodStartMs: DAY(1),
+      amount: "9",
+      dimensionKind: "namespace",
+      dimensionValue: "x",
+    });
+    seed({ service: "kubecost", day: 1, amount: 2, kind: "namespace", value: "b" });
+    seed({ service: "kubecost", day: 1, amount: 2, kind: "namespace", value: "a" });
+    expect(readClusterAllocations(db, { fromDay: "2026-11-01", toDay: "2026-11-01" })).toEqual([
+      { service: "opencost", dimension: "other", name: "", currency: "unknown", amount: 2 },
+      { service: "kubecost", dimension: "namespace", name: "a", currency: "USD", amount: 2 },
+      { service: "kubecost", dimension: "namespace", name: "b", currency: "USD", amount: 2 },
     ]);
   });
 });

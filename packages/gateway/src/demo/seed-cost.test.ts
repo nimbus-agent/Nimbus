@@ -8,7 +8,7 @@ import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { dispatchCostRpc } from "../ipc/cost-rpc.ts";
 import { seedDemoCorpus } from "./seed.ts";
-import { DEMO_COST_DAYS, demoFocusCsv } from "./seed-cost.ts";
+import { DEMO_COST_DAYS, demoFocusCsv, seedDemoCost } from "./seed-cost.ts";
 
 const NOW = Date.UTC(2026, 10, 26, 9);
 let roots: string[] = [];
@@ -87,5 +87,21 @@ describe("demo cost (Phase 7)", () => {
     const p = await view("cost.products", db, configDir);
     expect(p.empty).toBe(true);
     expect(p.byCurrency).toEqual({});
+  });
+  test("seedDemoCost writes the export under <demoRoot>/cost and imports it", () => {
+    const { db, dataDir } = fresh();
+    const r = seedDemoCost(db, dataDir, NOW);
+    expect(r.files.map((f) => [f.name, f.status])).toEqual([["acme-focus.csv", "imported"]]);
+    expect(r.files[0]?.path).toBe(join(dataDir, "cost", "acme-focus.csv"));
+    expect(r.files[0]?.lines).toBe(DEMO_COST_DAYS * 8);
+  });
+
+  test("a refused demo export throws with the refusal rather than seeding a partial demo", () => {
+    const { dataDir } = fresh();
+    const bare = new Database(":memory:");
+    dbs.push(bare);
+    expect(() => seedDemoCost(bare, dataDir, NOW)).toThrow(
+      /demo seed: the demo cost export was refused: .*cost_line/,
+    );
   });
 });

@@ -1,6 +1,14 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -154,5 +162,48 @@ describe("importFocusPath", () => {
     expect(removeCostImport(db, id)).toEqual({ importId: id, removed: 2 });
     expect(count()).toBe(0);
     expect(() => removeCostImport(db, "nope")).toThrow(CostImportError);
+  });
+  test("--provider forces the provider; a row naming a different known provider is skipped", () => {
+    const p = join(dir, "a.csv");
+    writeFileSync(
+      p,
+      `${HEADER}\n1,111,USD,2026-11-01T00:00:00Z,2026-11-01T00:00:00Z,Acme Cloud,Compute\n` +
+        "2,111,USD,2026-11-01T00:00:00Z,2026-11-02T00:00:00Z,Google Cloud,BigQuery\n",
+    );
+    const r = importFocusPath(db, p, { dryRun: false, now: NOW, provider: "aws" });
+    expect(r.files[0]?.status).toBe("imported");
+    expect(r.files[0]?.lines).toBe(1);
+    expect(r.files[0]?.skipped[0]?.reason).toContain("is not --provider aws");
+    expect(
+      readCostLines(db, { fromDay: "2026-11-01", toDay: "2026-11-30" }).map((l) => l.provider),
+    ).toEqual(["aws"]);
+  });
+
+  test("a store failure refuses the file with the store's message and writes nothing", () => {
+    const bare = new Database(":memory:");
+    try {
+      const p = join(dir, "a.csv");
+      writeFileSync(p, mtd(2));
+      const r = importFocusPath(bare, p, { dryRun: false, now: NOW });
+      expect(r.files[0]?.status).toBe("refused");
+      expect(r.files[0]?.sha256).toMatch(/^[0-9a-f]{64}$/);
+      expect(r.files[0]?.importId).toBeNull();
+      expect(r.files[0]?.error).toContain("cost_line");
+    } finally {
+      bare.close();
+    }
+  });
+
+  test("a linked path is refused, not followed", () => {
+    const target = join(dir, "real");
+    mkdirSync(target);
+    writeFileSync(join(target, "a.csv"), mtd(1));
+    const link = join(dir, "link");
+    // A junction needs no privilege on Windows; elsewhere the type is ignored and this is a symlink.
+    symlinkSync(target, link, "junction");
+    expect(() => importFocusPath(db, link, { dryRun: false, now: NOW })).toThrow(
+      /is a link, which is not followed/,
+    );
+    expect(count()).toBe(0);
   });
 });
