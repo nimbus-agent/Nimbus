@@ -314,7 +314,7 @@ describe("nimbus agent status", () => {
     const shown = text(h.out);
     expect(shown).toContain(`  steer: drifted  ${rules}`);
     expect(shown).toContain("  mcp: ok");
-    expect(shown).toContain("  note: MCP entry format not yet verified against a real Codex");
+    expect(shown).not.toContain("not yet verified against a real Codex");
     expect(shown).toContain("nimbus agent install <kit> --dry-run");
     expect(h.applied).toBe(applied);
     expect(new Map(h.m.files)).toEqual(before);

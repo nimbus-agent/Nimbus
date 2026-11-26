@@ -102,6 +102,19 @@ Once the results are recorded, `nimbus agent uninstall <kit>` (type `yes`) takes
 user scope `claude mcp remove --scope user nimbus`. Confirm with `nimbus agent status`: the kit reads as not installed.
 This checks the removal against the real agent's own files, which the in-memory tests cannot.
 
+## On Windows
+
+Learned in the 2026-11-26 run:
+
+- Redirect `APPDATA` and `LOCALAPPDATA` with the home folder, or Nimbus uses your real install. Codex ignores
+  `USERPROFILE` and needs `CODEX_HOME` set to the scratch home's `.codex`.
+- The gateway's pipe is machine-wide, so your own gateway cannot run while the scratch one does.
+- A Node or `npx` MCP server cannot start in the Windows sandbox (it fails with `EPERM` on `lstat 'C:'`) and lists
+  no tools. Use a single compiled executable (for example a small SDK server built with `bun build --compile`).
+- The action type of a user MCP tool is `mcp_<id>.<tool>` (for example `mcp_echo.echo`); `describe_actions` with no
+  arguments lists it.
+- Do not pipe `nimbus approvals <id>` or `nimbus agent install` into a file: the prompt needs the terminal.
+
 ## 7. Publish the row
 
 Fill the kit's row in `packages/docs/src/content/docs/user-guide/agent-kits.mdx` (agent version, OS, the four

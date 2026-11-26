@@ -7,7 +7,7 @@ import { applyPlan, pendingEdits } from "./apply.ts";
 import { fakeMachine, HOME, REPO } from "./fake-env.test-helpers.ts";
 import { KIT_IDS, type KitId, type KitPlan, type KitScope } from "./kit-types.ts";
 import { CLAUDE_DENY_RULES } from "./kits/claude-code.ts";
-import { CODEX_MCP_UNVERIFIED, codexRulesBody, codexServerConflict } from "./kits/codex.ts";
+import { codexRulesBody, codexServerConflict } from "./kits/codex.ts";
 import { NO_USER_STEERING } from "./kits/cursor.ts";
 import { DEFAULT_SCOPE, planKit, SUPPORTED_SCOPES } from "./kits/index.ts";
 import { VSCODE_LOCAL_HARNESS_NOTE } from "./kits/vscode.ts";
@@ -288,7 +288,7 @@ describe("codex", () => {
   test("the server table, the rules file and the instructions are three owned blocks", () => {
     const plan = planKit("codex", fakeMachine().env, "user");
     expect(plan.enforcement).toBe("rules");
-    expect(plan.notes).toEqual([CODEX_MCP_UNVERIFIED]);
+    expect(plan.notes).toEqual([]);
     expect(plan.files.map((f) => [f.component, f.path])).toEqual([
       ["mcp", CONFIG],
       ["steer", join(HOME, ".codex", "rules", "nimbus.rules")],
