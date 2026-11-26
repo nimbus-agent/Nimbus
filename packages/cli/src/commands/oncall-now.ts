@@ -50,6 +50,17 @@ function serviceValue(value: string | undefined): string | undefined {
   return value === undefined || value.trim() === "" || value.startsWith("-") ? undefined : value;
 }
 
+/** Reads `--service <v>` or `--service=<v>` at `i`; returns the value and the last index used. */
+function takeServiceFlag(
+  argv: readonly string[],
+  i: number,
+): { value: string; last: number } | undefined {
+  const a = argv[i] as string;
+  const last = a === "--service" ? i + 1 : i;
+  const value = serviceValue(a === "--service" ? argv[last] : a.slice("--service=".length));
+  return value === undefined ? undefined : { value, last };
+}
+
 export function parseOncallNowArgs(argv: readonly string[]): OncallNowArgs | undefined {
   let json = false;
   let service: string | undefined;
@@ -59,9 +70,10 @@ export function parseOncallNowArgs(argv: readonly string[]): OncallNowArgs | und
       json = true;
     } else if (a === "--service" || a.startsWith("--service=")) {
       if (service !== undefined) return undefined;
-      if (a === "--service") i += 1;
-      service = serviceValue(a === "--service" ? argv[i] : a.slice("--service=".length));
-      if (service === undefined) return undefined;
+      const taken = takeServiceFlag(argv, i);
+      if (taken === undefined) return undefined;
+      service = taken.value;
+      i = taken.last;
     } else {
       return undefined;
     }

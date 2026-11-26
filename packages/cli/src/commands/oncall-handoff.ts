@@ -152,24 +152,35 @@ function handoffValue(
   return value.startsWith("-") ? undefined : value;
 }
 
+type HandoffKey = "since" | "until" | "service";
+type HandoffValues = { since?: string; until?: string; service?: string };
+const HANDOFF_FLAGS = ["--since", "--until", "--service"] as const;
+
+/** Reads one `--flag value` or `--flag=value` into `v`; returns the last index used, or undefined if refused. */
+function takeHandoffFlag(v: HandoffValues, argv: readonly string[], i: number): number | undefined {
+  const a = argv[i] as string;
+  const flag = HANDOFF_FLAGS.find((f) => a === f || a.startsWith(`${f}=`));
+  if (flag === undefined) return undefined;
+  const key = flag.slice(2) as HandoffKey;
+  if (v[key] !== undefined) return undefined;
+  const last = a === flag ? i + 1 : i;
+  const value = handoffValue(key, a === flag ? argv[last] : a.slice(flag.length + 1));
+  if (value === undefined) return undefined;
+  v[key] = value;
+  return last;
+}
+
 export function parseOncallHandoffArgs(argv: readonly string[]): OncallHandoffArgs | undefined {
   let json = false;
-  const v: { since?: string; until?: string; service?: string } = {};
-  const flags = ["--since", "--until", "--service"] as const;
+  const v: HandoffValues = {};
   for (let i = 0; i < argv.length; i += 1) {
-    const a = argv[i] as string;
-    if (a === "--json") {
+    if (argv[i] === "--json") {
       json = true;
       continue;
     }
-    const flag = flags.find((f) => a === f || a.startsWith(`${f}=`));
-    if (flag === undefined) return undefined;
-    const key = flag.slice(2) as "since" | "until" | "service";
-    if (v[key] !== undefined) return undefined;
-    if (a === flag) i += 1;
-    const value = handoffValue(key, a === flag ? argv[i] : a.slice(flag.length + 1));
-    if (value === undefined) return undefined;
-    v[key] = value;
+    const last = takeHandoffFlag(v, argv, i);
+    if (last === undefined) return undefined;
+    i = last;
   }
   return {
     json,

@@ -70,14 +70,6 @@ function authorityOf(s: TrustStatement, source: StatementSource): StatementSigne
     : verifyTrustStatement(s, { nimbusRootKey: source.nimbusRootKey });
 }
 
-function installedWithKey(db: Database, fingerprint: string): boolean {
-  return (
-    db
-      .query("SELECT 1 FROM extension WHERE publisher_key_fingerprint = ? LIMIT 1")
-      .get(fingerprint) !== null
-  );
-}
-
 /** The keys a publisher-signed statement concerns: the signer, and for a rotation its new key too. */
 function concernedKeys(s: TrustStatement): string[] {
   return s.kind === "key.rotate" ? [s.fromKey, s.toKey] : [s.signerKey];
@@ -90,7 +82,11 @@ function publisherAdmitted(
 ): boolean {
   const listed = source.listedPublisherKeys.get(s.publisherId);
   return concernedKeys(s).some(
-    (k) => listed?.has(k) === true || installedWithKey(db, publisherKeyFingerprint(k)),
+    (k) =>
+      listed?.has(k) === true ||
+      db
+        .query("SELECT 1 FROM extension WHERE publisher_key_fingerprint = ? LIMIT 1")
+        .get(publisherKeyFingerprint(k)) !== null,
   );
 }
 
@@ -199,6 +195,24 @@ function cappedAtRegistry(
   return !publisherAdmitted(db, s, source) || storedPublisher >= MAX_STORED_STATEMENTS_PER_SOURCE;
 }
 
+/** Stores an admitted statement and its source, counts it, and says whether a publisher statement gained a source. */
+function storeAdmitted(
+  db: Database,
+  s: TrustStatement,
+  role: StatementSignerRole,
+  source: StatementSource,
+  now: number,
+  out: RecordOutcome,
+): boolean {
+  const id = trustStatementId(s);
+  const isNew = insertStatement(db, s, role, source, now);
+  const wasGlobal = !isNew && role === "publisher" && hasGlobalSource(db, id);
+  const gained = addSource(db, id, sourceColumn(source), now) && role === "publisher";
+  out[isNew ? "inserted" : "alreadyKnown"]++;
+  if (isNew || (gained && !wasGlobal)) out.insertedIds.push(id);
+  return gained;
+}
+
 /**
  * Records the statements a document carried, and that this document's source carried them.
  * Idempotent by (statement id, source). Never throws on DATA: every statement lands in exactly one
@@ -231,20 +245,7 @@ export function recordTrustStatements(
         out.capped++;
         continue;
       }
-      const id = trustStatementId(s);
-      const isNew = insertStatement(db, s, role, source, now);
-      // Only a publisher-signed statement is scoped by its sources (nimbus: everywhere; registry
-      // root: its own scope columns), and only one not yet global gains reach from a new source.
-      const wasGlobal = !isNew && role === "publisher" && hasGlobalSource(db, id);
-      const newSource = addSource(db, id, column, now);
-      const gainedPublisherSource = newSource && role === "publisher";
-      if (gainedPublisherSource) storedPublisher++;
-      if (isNew) {
-        out.inserted++;
-      } else {
-        out.alreadyKnown++;
-      }
-      if (isNew || (gainedPublisherSource && !wasGlobal)) out.insertedIds.push(id);
+      if (storeAdmitted(db, s, role, source, now, out)) storedPublisher++;
     }
   })();
   return out;
@@ -289,13 +290,11 @@ export type BlockCandidateRow = {
   sources: readonly string[];
 };
 
-const SOURCE_SEPARATOR = "\u001f";
-
-/** Selects a row's sources as one `SOURCE_SEPARATOR`-joined string (its first source at least). */
+/** Selects a row's sources as one `char(31)`-joined string (its first source at least). */
 const SOURCES_SQL = `COALESCE((SELECT group_concat(src.source, char(31)) FROM trust_statement_source src
                                 WHERE src.statement_id = st.statement_id), st.source) AS sources`;
 
-const splitSources = (joined: string): string[] => joined.split(SOURCE_SEPARATOR);
+const splitSources = (joined: string): string[] => joined.split("\u001f");
 
 /**
  * Every stored revocation of `(publisherId, keyFingerprint)` and takedown of

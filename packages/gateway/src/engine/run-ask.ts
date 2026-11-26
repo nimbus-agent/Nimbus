@@ -5,7 +5,7 @@ import type {
   TribalKbConfig,
 } from "../connectors/connector-writes/types.ts";
 import type { EgressSink } from "../egress/egress-ledger.ts";
-import { earliestHistoryMs, type PointInTimeFacts } from "../index/item-history-at.ts";
+import type { PointInTimeFacts } from "../index/item-history-at.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import type { ConsentCoordinator } from "../ipc/consent.ts";
 import type { LlmRouter } from "../llm/router.ts";
@@ -14,7 +14,6 @@ import type { PlatformPaths } from "../platform/paths.ts";
 import type { EnforcedPolicy } from "../policy/policy-gate.ts";
 import { createStandingRuleDeps } from "../standing/standing-rule-capability.ts";
 import type { AgentLatencyRecorder } from "../telemetry/agent-latency.ts";
-import { gatewayZone } from "../util/zoned-time.ts";
 import {
   agentRequestContext,
   type ComputerUseBinding,
@@ -34,19 +33,14 @@ import {
 import { GatewayAgentUnavailableError } from "./gateway-agent-error.ts";
 import { indexCountFor, indexCountLine } from "./index-count-question.ts";
 import { createOwnerOnlyAsk } from "./owner-only-approval.ts";
-import { resolveAskStyle } from "./personalization.ts";
 import { type PlanResult, planFromIntent } from "./planner.ts";
 import type { ClassifiedIntent } from "./router.ts";
 import { classifyIntentForAskWithLocalFallback } from "./run-ask/classify.ts";
+import { conversationalAgentParams, noteConversationalOutcome } from "./run-ask/conversational.ts";
 import type { RunAskResult } from "./run-ask/empty-index.ts";
 import { countIndexedItems, emptyIndexGuidanceIfNeeded } from "./run-ask/empty-index.ts";
 import { recallBlockFor, recordEpisodicTurn } from "./run-ask/episodic.ts";
-import {
-  conversationalExplainRoute,
-  describePlan,
-  type ExplainPartial,
-  recordExplainSafely,
-} from "./run-ask/explain.ts";
+import { describePlan, type ExplainPartial, recordExplainSafely } from "./run-ask/explain.ts";
 import { buildLocalIndexedContext } from "./run-ask/local-context.ts";
 import { runAskLog } from "./run-ask/log.ts";
 import {
@@ -334,48 +328,18 @@ async function answerConversationally(
   const countLine = count === undefined ? undefined : indexCountLine(count);
 
   partial.stage = "model";
-  const result = await runConversationalAgent({
-    input: p.input,
-    stream: p.stream,
-    sendChunk: p.sendChunk,
-    priorTurns,
-    ...(p.conversationalAgent === undefined ? {} : { agent: p.conversationalAgent }),
-    ...(p.llmRouter === undefined ? {} : { llmRouter: p.llmRouter }),
-    ...(localContext === undefined
-      ? {}
-      : { localContext: localContext.text, localContextTruncation: localContext.truncation }),
-    ...(memoryBlock === undefined ? {} : { episodicRecall: memoryBlock }),
-    ...(countLine === undefined ? {} : { indexCountLine: countLine }),
-    ...(p.devil === true ? { devil: true } : {}),
-    ...(atMs === undefined
-      ? {}
-      : {
-          pointInTime: {
-            atMs,
-            zone: gatewayZone(),
-            searched: searchedFacts,
-            fallbackHistoryStartMs: countDb === undefined ? null : earliestHistoryMs(countDb),
-          },
-        }),
-    // Per turn (D3): `[persona]` with `[personalization]` tone, plus its verbosity sentence.
-    ...resolveAskStyle(p.paths.configDir),
-    ...(p.notifyGasLimit === undefined ? {} : { notifyGasLimit: p.notifyGasLimit }),
-  });
-
-  if (result.fallbackFromLocalRouter !== undefined) {
-    partial.fallbackFromLocalRouter = result.fallbackFromLocalRouter;
-  }
-  if (result.stepBudgetExhausted !== undefined) {
-    partial.stepBudgetExhausted = result.stepBudgetExhausted;
-  }
-  if (result.modelMeta !== undefined) {
-    partial.modelRoute = {
-      provider: result.modelMeta.provider,
-      model: result.modelMeta.modelUsed,
-      isLocal: result.modelMeta.isLocal,
-    };
-  }
-  partial.route = conversationalExplainRoute(result.toolless, localContext);
+  const result = await runConversationalAgent(
+    conversationalAgentParams(p, {
+      priorTurns,
+      localContext,
+      memoryBlock,
+      countLine,
+      atMs,
+      searchedFacts,
+      countDb,
+    }),
+  );
+  noteConversationalOutcome(partial, result, localContext);
 
   if (atMs === undefined) {
     await persistConversationTurn(p.sessionMemoryStore, sessionId, p.input, result.reply);

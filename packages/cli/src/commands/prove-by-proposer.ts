@@ -85,6 +85,29 @@ function refusalFor(a: string): ProveUsageError {
   return usage("--by-proposer runs no query and takes no positional argument.");
 }
 
+/** Reads one accepted flag (and its value) into `s`; returns the last index used, or throws a usage error. */
+function takeProveToken(s: ProveScan, args: readonly string[], i: number, now: number): number {
+  const a = args[i] ?? "";
+  if (a === "--json") {
+    s.json = true;
+    return i;
+  }
+  if (a.startsWith("--proposer=")) {
+    // The unambiguous form: the label may start with `--`.
+    if (s.proposer !== undefined) throw usage("--proposer was given more than once.");
+    s.proposer = a.slice("--proposer=".length);
+    if (s.proposer === "") throw usage("--proposer needs a non-empty label.");
+    return i;
+  }
+  if (a === "--since" || a === "--proposer") {
+    const v = args[i + 1];
+    if (v === undefined || v.startsWith("--")) throw usage(`${a} needs a value.`);
+    takeProveValue(s, a, v, now);
+    return i + 1;
+  }
+  throw refusalFor(a);
+}
+
 /**
  * Parse the arguments of the `--by-proposer` form. This runs BEFORE the query path of `nimbus prove`
  * and never reaches it: a positional argument is a usage error (nothing is asked of the agent), and
@@ -97,23 +120,8 @@ export function parseProveByProposerArgs(
 ): ProveByProposerArgs {
   const s: ProveScan = { json: false };
   for (let i = 0; i < args.length; i += 1) {
-    const a = args[i] ?? "";
-    if (a === "--by-proposer") continue;
-    if (a === "--json") {
-      s.json = true;
-    } else if (a.startsWith("--proposer=")) {
-      // The unambiguous form: the label may start with `--`.
-      if (s.proposer !== undefined) throw usage("--proposer was given more than once.");
-      s.proposer = a.slice("--proposer=".length);
-      if (s.proposer === "") throw usage("--proposer needs a non-empty label.");
-    } else if (a === "--since" || a === "--proposer") {
-      const v = args[i + 1];
-      if (v === undefined || v.startsWith("--")) throw usage(`${a} needs a value.`);
-      i += 1;
-      takeProveValue(s, a, v, now);
-    } else {
-      throw refusalFor(a);
-    }
+    if (args[i] === "--by-proposer") continue;
+    i = takeProveToken(s, args, i, now);
   }
   if (s.proposer === "") throw usage("--proposer needs a non-empty label.");
   return { sinceMs: s.sinceMs, proposer: s.proposer, json: s.json };
