@@ -3,11 +3,12 @@
 //
 // Confined by static rule D48 (no network, no connector, no model). Pure.
 //
-// Every substituted value is first stripped of control and format-invisible characters and capped at 128
-// characters. Then, per channel:
+// Every substituted value is first NFKC-normalised, stripped of control and format-invisible characters and
+// capped at 128 characters. Then, per channel:
 // - Slack, Teams and every `html` body: `< > & @` become `‹ › ⅋ (at)` — stand-ins the send door's detectors do
 //   not decode or fold back — so a value can never open a tag, form an entity, mention or load content.
-// - Chat (`text`, `markdown`): `* _ ~` and the backtick also become look-alikes (no backslash escape exists).
+// - Chat (`text`, `markdown`): `* _ ~ [ ]` and the backtick also become look-alikes (no backslash escape
+//   exists), so a value cannot format text or form a `[label](url)` link.
 // - `html`: `" '` are entity-escaped, and `= ( )` become `꞊ ❨ ❩` (the remote-content detector reads
 //   `src=http…` and `url(…)` even outside a tag).
 // - Mail `text` (Gmail, Outlook): only stripped; the door does not scan it.
@@ -36,7 +37,15 @@ const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f]/g;
  */
 const INERT: Readonly<Record<string, string>> = { "<": "‹", ">": "›", "&": "⅋", "@": "(at)" };
 /** Markup characters in chat (Slack mrkdwn, Teams markdown), which have no backslash escape. */
-const CHAT_MARKUP: Readonly<Record<string, string>> = { "*": "∗", _: "＿", "~": "∼", "`": "ˋ" };
+const CHAT_MARKUP: Readonly<Record<string, string>> = {
+  "*": "∗",
+  _: "＿",
+  "~": "∼",
+  "`": "ˋ",
+  // A `[label](url)` value would render as a link with a label of its own choosing.
+  "[": "［",
+  "]": "］",
+};
 /**
  * In html, quotes are entity-escaped, and `=` and parentheses get NFKC-stable stand-ins: the remote-content
  * detector refuses attribute-like `src=http…` and CSS `url(…)` text even outside a tag.
@@ -54,12 +63,16 @@ function inert(s: string, t: CostRenderTarget): string {
   if (t.format !== "html" && t.kind !== "slack" && t.kind !== "teams") return s;
   const base = s.replace(/[<>&@]/g, (c) => INERT[c] ?? c);
   if (t.format === "html") return base.replace(/["'=()]/g, (c) => HTML_INERT[c] ?? c);
-  return base.replace(/[*_~`]/g, (c) => CHAT_MARKUP[c] ?? c);
+  return base.replace(/[*_~`[\]]/g, (c) => CHAT_MARKUP[c] ?? c);
 }
 
-/** Strip control and invisible characters, then cap at 128 characters (by code point). */
+/**
+ * NFKC-normalise (so a full-width `＠` or `＜` becomes the ASCII character the stand-ins below then replace,
+ * exactly as the send door's detectors would fold it), strip control and invisible characters, then cap at
+ * 128 characters (by code point).
+ */
 export function cleanValue(v: string): string {
-  const stripped = v.replace(CONTROL_RE, "").replace(INVISIBLE_RE, "");
+  const stripped = v.normalize("NFKC").replace(CONTROL_RE, "").replace(INVISIBLE_RE, "");
   return Array.from(stripped).slice(0, COST_TEMPLATE_VALUE_MAX).join("");
 }
 

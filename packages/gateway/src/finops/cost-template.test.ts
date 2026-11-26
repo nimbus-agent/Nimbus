@@ -13,7 +13,7 @@ import {
 } from "./cost-template.ts";
 
 const EVIL =
-  '<!here> *x* _y_ ~z~ `c` & @channel <img src=x> &lt;at&gt; &#64;everyone &lt;img src=http://x/a.png&gt; background:url(http://x/b.png) srcset="http://x/c.png 1x"';
+  '<!here> *x* _y_ ~z~ `c` & @channel <img src=x> &lt;at&gt; &#64;everyone &lt;img src=http://x/a.png&gt; background:url(http://x/b.png) srcset="http://x/c.png 1x" ＠channel ﹫here ＜!here＞ ＆lt;at＆gt; src＝http://x/d.png url（http://x/e.png） [pay here](https://evil.example)';
 
 function model(over: Partial<CostReportModel> = {}): CostReportModel {
   return {
@@ -268,20 +268,38 @@ describe("renderCostSubject", () => {
   });
 });
 
+/** Short hostile values (each under the 128-character cap, so none is cut before it is checked). */
+const HOSTILE = [
+  "<!here> <!channel> @channel @here @everyone",
+  "*x* _y_ ~z~ `c` & <at>u</at>",
+  "&lt;!here&gt; &lt;at&gt; &#64;everyone &amp;lt;!channel&amp;gt;",
+  "<img src=x> &lt;img src=http://x/a.png&gt;",
+  'background:url(http://x/b.png) srcset="http://x/c.png 1x" src=http://x/f.png',
+  "＠channel ﹫here ＜!here＞ ＆lt;at＆gt;",
+  "src＝http://x/d.png url（http://x/e.png） ｓｒｃ=http://x/g.png",
+  "[pay here](https://evil.example) [x]: https://evil.example",
+];
+
 describe("the send door's detectors agree with the escaping", () => {
-  test("hostile data in every kind, format and breakdown mode trips no broadcast or remote-content detector", () => {
+  test("hostile data in every placeholder, kind, format and breakdown mode trips no detector", () => {
     const usd = model().byCurrency["USD"] as NonNullable<CostReportModel["byCurrency"]["USD"]>;
-    const m = model({
-      byCurrency: {
-        USD: {
-          ...usd,
-          topMovers: [{ service: EVIL, part: EVIL, provider: EVIL, change: 1 }],
-          breakdown: [{ part: EVIL, provider: EVIL, env: EVIL, amount: 1 }],
-        },
-      },
-      freshness: [{ source: EVIL, lastDay: "2026-11-24", provisionalFrom: null }],
-    });
-    const text = "{breakdown}top_moversfreshnesscurrency";
+    // Every placeholder, so each value path meets the real detectors.
+    const text = [
+      "{report_name}",
+      "{period_start}",
+      "{period_end}",
+      "{week_start}",
+      "{total}",
+      "{currency}",
+      "{change}",
+      "{change_pct}",
+      "{top_movers}",
+      "{breakdown}",
+      "{unassigned}",
+      "{unassigned_pct}",
+      "{freshness}",
+      "{command}",
+    ].join(" | ");
     const cases = [
       ["slack", "text"],
       ["slack", "markdown"],
@@ -290,19 +308,35 @@ describe("the send door's detectors agree with the escaping", () => {
       ["teams", "html"],
       ["outlook", "html"],
     ] as const;
-    for (const [kind, format] of cases) {
-      for (const breakdown of ["list", "csv"] as const) {
-        const body = render(text, kind, format, m, breakdown);
-        const html = format === "html";
-        const label = `${kind}/${format}/${breakdown}`;
-        if (kind === "slack" || kind === "teams") {
-          expect(broadcastMentionIn(kind, body, { html }), label).toBe(false);
-        }
-        if (html) {
-          expect(
-            remoteContentIn(kind === "teams" ? "teams-html" : "outlook-html", body),
-            label,
-          ).toBe(false);
+    for (const evil of HOSTILE) {
+      const m = model({
+        name: evil,
+        command: evil,
+        byCurrency: {
+          [evil]: {
+            ...usd,
+            topMovers: [{ service: evil, part: evil, provider: evil, change: 1 }],
+            breakdown: [{ part: evil, provider: evil, env: evil, amount: 1 }],
+          },
+        },
+        freshness: [{ source: evil, lastDay: "2026-11-24", provisionalFrom: null }],
+      });
+      for (const [kind, format] of cases) {
+        for (const breakdown of ["list", "csv"] as const) {
+          const body = render(text, kind, format, m, breakdown);
+          const html = format === "html";
+          const label = `${kind}/${format}/${breakdown}: ${evil}`;
+          if (kind === "slack" || kind === "teams") {
+            expect(broadcastMentionIn(kind, body, { html }), label).toBe(false);
+            // No value can form a markdown link with a label of its own choosing.
+            if (!html) expect(body, label).not.toMatch(/\[[^\]]*\]\(/);
+          }
+          if (html) {
+            expect(
+              remoteContentIn(kind === "teams" ? "teams-html" : "outlook-html", body),
+              label,
+            ).toBe(false);
+          }
         }
       }
     }
