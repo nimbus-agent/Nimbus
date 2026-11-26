@@ -110,16 +110,18 @@ Branch: `dev/asaf/phase7-s1-cost-lines` from `origin/main`.
 
 ## Slice 2 (PR 2): `nimbus cost why` and `nimbus cost rules check`
 
+*Antigravity review 2026-11-26: APPROVED; binding fixes 1 to 5 and advisories 6 to 8 applied below (deploy window end, spike tie-break and near-spike window, own PR query, `distinctPrServiceColumns` path, target resolution over both ranges).*
+
 Branch: `dev/asaf/phase7-s2-cost-why` from `origin/main` (after PR #2168, slice 1, merged). Spec § 4 (`cost why`), Fixes 6 (D48 boundary), Resolved 5 and Fixes 7 (currency), acceptance criterion 1.
 
 **What slice 1 left that this slice uses (verified 2026-11-26):** a cost line's service is the `set.service` output of the matching `[[cost.rule]]` (a `[ci.service.<id>]` / `[metrics.dora.<id>]` id); `finops/cost-view-input.ts` `gatherCostViewInput` gives the lines after the authoritative-source rule; `finops/cost-rules.ts` `allocate`; `finops/cost-views.ts` `periodWindow` (renamed field `range`, because D48 bans the identifier `window`).
 
 **Index facts (verified 2026-11-26):**
 - Deployments: `item.type = 'deployment'` joined to `deployment_items` (`nimbus_service_id`, `environment`, `sha`, `started_at_ms`, `finished_at_ms`, `conclusion`, `workflow_url`), indexes `idx_deployment_items_service_env_started`, `idx_deployment_items_sha` (`deployment/annotate.ts`). No PR link is stored: the PR is joined by sha.
-- PR for a sha: `agents/_lib/oncall-queries.ts` `selectChangeForDeployment(db, sha, prServices)` (`item.type = 'pr'`, `metadata.merge_commit_sha`); PR services from `metrics/dora.ts` `distinctPrServiceColumns(repos)`.
+- PR for a sha: `agents/_lib/oncall-queries.ts` `selectChangeForDeployment(db, sha, prServices)` (`item.type = 'pr'`, `metadata.merge_commit_sha`); PR services from `metrics/dora-config.ts` `distinctPrServiceColumns(repos)` (not re-exported by `metrics/dora.ts`). `selectChangeForDeployment` returns `OncallChange` (`id, title, url, service, mergedAtMs`, diffstat) with no repo, number or author, so this slice runs its own PR query (Task 2).
 - Owners: `ownership/ownership-store.ts` `findServiceEntity(db, serviceId)` then `ownersOf(db, entityId)` (ranked `{ externalId, label, share, resolved }`).
 - Service configs: `config/nimbus-toml.ts` `loadNimbusServiceConfigsFromConfigDir` (`ServiceConfig.repos`, `deployEnvironments`).
-- D48: `finops/**` may not import `agents/` (including `_lib/`); D22(d) bars `agents/<name>.ts` outside `ipc/agents-rpc*` but not `agents/_lib/`. So the context query lives in `agents/_lib/cost-why-query.ts` and is called by the IPC layer, which hands plain data to `finops/cost-why.ts`.
+- D48: `finops/**` may not import `agents/` (including `_lib/`); D22(d) bars `agents/<name>.ts` outside `ipc/agents-rpc*` but not `agents/_lib/`. So the context query lives in `agents/_lib/cost-why-query.ts` and is called by the IPC layer, which combines its result with the `CostWhy` that `finops/cost-why.ts` computes; `finops/` never sees deploy, PR or owner types.
 - Demo: the story deploy (`payment-service`, run `7412`, sha of `acme/payments#412`, about 11 minutes before seed time) and a background `payment-service` deploy about 22 hours earlier both fall on the two spike days the slice-1 demo export seeds.
 
 ### Task 1: The pure cost comparison (`finops/cost-why.ts`)
@@ -128,16 +130,16 @@ Branch: `dev/asaf/phase7-s2-cost-why` from `origin/main` (after PR #2168, slice 
 
 **Interfaces:**
 - `previousRange(range: CostWindow): CostWindow` — the same number of days immediately before `range`.
-- `resolveCostTarget(lines, rules, name): { kind: "product" | "service"; name: string } | { kind: "unknown"; known: { products: string[]; services: string[] } }` — a product name wins over a service id of the same name (the result says which it read).
+- `resolveCostTarget(lines, rules, name): { kind: "product" | "service"; name: string } | { kind: "unknown"; known: { products: string[]; services: string[] } }` — a product name wins over a service id of the same name (the result says which it read). It is given the lines of BOTH the current and the previous range, so a target whose cost fell to 0 is still known (review fix 5).
 - `compareCost(input: { lines; rules; target; range; previous; nowMs }): CostWhy` where `CostWhy = { target; range; previous; byCurrency: Record<string, { current: number; previous: number; change: number; changePct: number | null; spikeDay: string | null; movers: { service: string | null; part: string; provider: string; current: number; previous: number; change: number }[]; moversTruncated: number }>; services: string[]; provisionalFrom: string | null }`.
   - Only lines whose allocation matches the target (product, or rule `service` output) count; amounts per currency, never across currencies.
   - `changePct` is null when the previous amount is 0 (no division by zero; the CLI says "new").
-  - `spikeDay`: the day in `range` whose amount minus the previous period's daily mean is largest and positive; null when no day exceeds it.
+  - `spikeDay`: the day in `range` whose amount minus the previous period's daily mean is largest and positive; on a tie the EARLIEST such day (the spike onset); null when no day exceeds it.
   - Movers: grouped by (rule service, part, provider), ranked by `|change|`, at most 10, the rest counted.
   - `services`: the distinct rule `service` outputs among the target's lines, movers with a positive change first.
 - `provisionalFrom` follows `COST_PROVISIONAL_DAYS` (the label, never an exclusion; Resolved 7).
 
-- [ ] **Step 1:** Tests: previous range alignment (14d → the 14 days before); per-currency comparison with two currencies and no total; `changePct` null on a zero baseline; spike day picked on the demo-shaped series (flat then two high days) and null on a flat series; movers ranking and truncation count; a product target and a service target; an unknown target lists the known names; a refused config (`configError`) reads everything as unassigned and the target as unknown.
+- [ ] **Step 1:** Tests: previous range alignment (14d → the 14 days before); per-currency comparison with two currencies and no total; `changePct` null on a zero baseline; spike day picked on the demo-shaped series (flat then two high days) and null on a flat series; movers ranking and truncation count; a product target and a service target; an unknown target lists the known names; a target whose current cost is 0 but whose previous cost is not is still resolved (and shows the drop); a tie between two spike days picks the earlier; a refused config (`configError`) reads everything as unassigned and the target as unknown.
 - [ ] **Step 2:** Implement (pure; named steps, each function under the S3776 limit). Run → PASS.
 - [ ] **Step 3:** Commit `feat(gateway): the cost comparison behind nimbus cost why`.
 
@@ -146,13 +148,14 @@ Branch: `dev/asaf/phase7-s2-cost-why` from `origin/main` (after PR #2168, slice 
 **Files:** Create `packages/gateway/src/agents/_lib/cost-why-query.ts`, `cost-why-query.test.ts`.
 
 **Interfaces:** `selectCostChangeContext(db, input: { serviceIds: readonly string[]; services: ReadonlyMap<string, ServiceConfig>; fromMs: number; toMs: number; spikeDayMs: number | null; maxDeploys?: number }): CostChangeContext[]`, one per service id: `{ serviceId; configured: boolean; deploys: { sha; environment; startedAtMs; finishedAtMs; conclusion; url; nearSpike: boolean; pr: { repo; number; title; url; author } | null }[]; deploysTruncated: number; owners: { label; share; resolved }[]; gaps: string[] }`.
-- Deploys: `deployment_items` joined to `item` (`type = 'deployment'`) for the service in `[fromMs, toMs)` by `COALESCE(finished_at_ms, started_at_ms)`, all conclusions (shown), newest first, at most 10 (default), `nearSpike` when within one UTC day of `spikeDayMs`, near-spike ones listed first.
-- PR: `selectChangeForDeployment` with the service's `distinctPrServiceColumns(repos)`; null when none, and a gap when the service has no repo configured.
+- Deploys: `deployment_items` joined to `item` (`type = 'deployment'`) for the service in `[fromMs, toMs)` by `COALESCE(finished_at_ms, started_at_ms)`, all conclusions (shown), newest first, at most 10 (default), near-spike ones listed first. The IPC layer passes `fromMs = Date.parse(`${range.fromDay}T00:00:00Z`)` and `toMs = Date.parse(`${range.toDay}T00:00:00Z`) + DAY_MS`, so today's deploys are inside (review fix 1). `nearSpike` is `deployMs >= spikeDayMs - DAY_MS && deployMs < spikeDayMs + 2 * DAY_MS`, where `spikeDayMs` is the spike day's UTC midnight: the day before, the day and the day after (review fix 2).
+- PR (review fix 3): its own bound-parameter query `SELECT i.id, i.title, i.url, i.external_id, i.metadata, p.display_name FROM item i LEFT JOIN person p ON p.id = i.author_id WHERE i.type = 'pr' AND i.service IN (…) AND json_valid(i.metadata) AND json_extract(i.metadata, '$.merge_commit_sha') = ? LIMIT 1`; `repo` and `number` from the metadata, falling back to splitting `external_id` (`owner/repo#N`); `author` is the person's display name, else `metadata.user`.
+- PR services: the service's `distinctPrServiceColumns(repos)`; the PR is null when none matches, and a gap when the service has no repo configured.
 - Owners: `findServiceEntity` + `ownersOf`, top 3; a gap when the service has no ownership entity.
 - A service id with no `[ci.service]` / `[metrics.dora]` block: `configured: false`, no deploy query, gap "service X is not configured ([ci.service.X])".
 - Read only; no write, no network, no model; bound parameters only (I9).
 
-- [ ] **Step 1:** Tests on real SQLite: a service with two deploys (one near the spike), the PR joined by sha, owners from a seeded ownership entity; a deploy outside the window excluded; an unconfigured service and a service with no owners produce the named gaps; the cap and truncation count.
+- [ ] **Step 1:** Tests on real SQLite: a service with two deploys (one near the spike), a deploy later on `toDay` than midnight is inside the window, a deploy 37 h after the spike day's midnight is `nearSpike`, the PR joined by sha with repo, number and author, owners from a seeded ownership entity; a deploy outside the window excluded; an unconfigured service and a service with no owners produce the named gaps; the cap and truncation count.
 - [ ] **Step 2:** Implement. Run → PASS; `bun run audit:invariants` stays green (no D48/D22(d) change).
 - [ ] **Step 3:** Commit `feat(gateway): the deploy, pull request and owner context for a cost change`.
 
@@ -160,7 +163,7 @@ Branch: `dev/asaf/phase7-s2-cost-why` from `origin/main` (after PR #2168, slice 
 
 **Files:** Create `packages/gateway/src/finops/cost-rules-check.ts`, `cost-rules-check.test.ts`.
 
-**Interfaces:** `checkCostRules(input: CostViewInput): { range; configError; byCurrency: Record<string, { total; unassigned; unassignedPct: number | null }>; rules: { index; lines; amountByCurrency: Record<string, number>; unassignedLines: number }[]; unusedRules: number[]; topUnassigned: { provider; service; subAccount: string | null; tagKeys: string[]; lines; amountByCurrency: Record<string, number>; reason: string }[] }` (top 10 by line count, the rest counted).
+**Interfaces:** `checkCostRules(input: CostViewInput): { range; configError; byCurrency: Record<string, { total; unassigned; unassignedPct: number | null }>; rules: { index; lines; amountByCurrency: Record<string, number>; unassignedLines: number }[]; unusedRules: number[]; topUnassigned: { provider; service; subAccount: string | null; tagKeys: string[]; lines; amountByCurrency: Record<string, number>; reason: string }[]; topUnassignedTruncated: number }` (top 10 by line count, the rest counted).
 
 - [ ] **Step 1:** Tests: per-rule counts including a rule that matched but produced an unsafe value (counted under that rule's `unassignedLines`); an unused rule listed; top unassigned grouped by (provider, service, sub-account, sorted tag keys) with the reason; a refused config reports the error and no rule counts.
 - [ ] **Step 2:** Implement. Run → PASS.
@@ -173,6 +176,7 @@ Branch: `dev/asaf/phase7-s2-cost-why` from `origin/main` (after PR #2168, slice 
 - `cost.why { target: string; period?: string }` (default `14d`): owner kinds `cli`/`ui` (`ctx.getClientKind`), loads `[cost]` and the service configs from `configDir`, runs `gatherCostViewInput` for the current and previous ranges, `compareCost`, then `selectCostChangeContext` for `CostWhy.services` (at most 3), and returns `{ ...CostWhy, context }`. Unknown target → `-32602` with the known names. Answers on a demo gateway (its seeded lines and deploys).
 - `cost.rulesCheck { period?: string }` (default `30d`): owner kinds `cli`/`ui`.
 - Both LAN-forbidden by the namespace entry; neither on the renderer allowlist (I7 unchanged).
+- Errors: the handlers throw `CostViewsRpcError` (or a subclass), which `cost-rpc.ts` `viaImport` already maps to `CostRpcError`.
 
 - [ ] **Step 1:** Tests: `cli` and `ui` served, every other kind refused; bad params `-32602`; an unknown target lists the known names; the result carries context only for the services in `CostWhy.services`; **no egress row** after either call; global `fetch` replaced by a throwing stub for the duration of the call is never reached; both refused over LAN.
 - [ ] **Step 2:** Implement. Run → PASS.
