@@ -1,0 +1,2 @@
+BilledCost,BillingAccountId,BillingAccountName,BillingCurrency,BillingPeriodStart,BillingPeriodEnd,ChargeCategory,ChargePeriodStart,ChargePeriodEnd,EffectiveCost,ProviderName,RegionId,ResourceId,ResourceName,ServiceCategory,ServiceName,SkuId,SubAccountId,SubAccountName,Tags
+8.00,01ABCD-23EF45-6789GH,Acme GCP,USD,2026-11-01 00:00:00,2026-12-01 00:00:00,Usage,2026-11-04 00:00:00,2026-11-05 00:00:00,8.00,Google Cloud,europe-west1,,,Compute,Cloud Run,CR-CPU,acme-ci,acme-ci,"{""env"":""ci""}"

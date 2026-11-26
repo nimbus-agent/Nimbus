@@ -54,13 +54,14 @@ export function sortedTags(tags: Readonly<Record<string, string>>): Record<strin
 }
 
 /**
- * SHA-256 hex of the canonical JSON of the grain: (subAccountId, serviceName, resourceId ?? skuId,
+ * SHA-256 hex of the canonical JSON of the grain: (subAccountId, serviceName, regionId, resourceId ?? skuId,
  * chargeCategory, sorted tags, repo, workflow, model). Two raw rows with one grain on one day are one line.
  */
 export function costLineGrainHash(line: CostLine): string {
   const canonical = JSON.stringify([
     line.subAccountId,
     line.serviceName,
+    line.regionId,
     line.resourceId ?? line.skuId,
     line.chargeCategory,
     Object.entries(sortedTags(line.tags)),
