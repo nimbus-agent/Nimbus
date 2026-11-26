@@ -93,6 +93,11 @@ const PERIOD_RE = /^(?:week|month|(\d{1,3})d)$/;
 const SLACK_CHANNEL_RE = /^[CDG][A-Z0-9]{2,31}$/;
 const ADDRESS_RE = /^[^\s@<>"',;:]+@[^\s@<>"',;:]+\.[^\s@<>"',;:]+$/;
 const TEMPLATE_FILE_RE = /^[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}$/;
+
+/** A `template_file` value: a plain file name (no path, no `..`, not hidden), read from `cost-templates/`. */
+export function isCostTemplateFileName(name: string): boolean {
+  return TEMPLATE_FILE_RE.test(name) && !name.includes("..");
+}
 // Control characters other than TAB and LF; a template is the owner's own literal text otherwise.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: the point is to find control characters.
 const TEMPLATE_CONTROL_RE = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/;
@@ -251,7 +256,7 @@ function readTemplate(t: Record<string, unknown>, what: string): CostReportChann
     throw new CostReportConfigError(`${what}: set exactly one of template or template_file`);
   }
   if (file !== undefined) {
-    if (typeof file !== "string" || !TEMPLATE_FILE_RE.test(file) || file.includes("..")) {
+    if (typeof file !== "string" || !isCostTemplateFileName(file)) {
       throw new CostReportConfigError(
         `${what}: template_file must be a plain file name in cost-templates/ (letters, digits, . _ -; no path)`,
       );
