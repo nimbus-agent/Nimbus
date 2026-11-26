@@ -173,8 +173,7 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   "google_drive.file.trash",
   "onedrive.item.delete",
   "onedrive.item.move",
-  // Wave 6 — mail + calendar. Per-connector types so serviceOf names the actual mail service:
-  // the ledger records "gmail" or "outlook", never a shared "email".
+  // Wave 6 — mail + calendar, per connector: the ledger records "gmail" or "outlook", never "email".
   "gmail.draft.create",
   "gmail.draft.send",
   "gmail.message.send",
@@ -192,8 +191,9 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   // Wave 4 — comms.
   "slack.chat.post",
   "teams.chat.post",
-  // Wave 3 — repos + CI.
+  // Wave 3 — repos + CI (and the Wave 2 Bitbucket comment, @nimbus-dev/connectors PR 106).
   "bitbucket.pr.merge",
+  "bitbucket.pr.comment.create",
   "gitlab.mr.merge",
   // Wave 4 — multi-file commits (classified, never offered; D1c adds their bound preview).
   "github.file.commit",

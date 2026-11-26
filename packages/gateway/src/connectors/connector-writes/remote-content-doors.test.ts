@@ -1,12 +1,10 @@
 /**
- * B3r (plan Task 5) and B3w (plan Task 3): the remote-content refusal on both doors, through the
- * shared check. Every
- * structural bypass form of both adversarial reviews (`testing/remote-content-fixtures.ts`), in the
- * scanned field of a real row, is refused identically by `messagingDestinationRefusal`, the model
- * door's `modelWriteRefusal` (the agent door runs the same one since AD3b); each allowed form passes
- * both. Plus the row-level rules (which field, which format, OPTIONAL Drive content, the
- * contentType and Drive type/name cases), the order pin, fail-closed throws, the completeness
- * tripwire and a source pin on the call.
+ * B3r and B3w (plan Tasks 5 and 3): the remote-content refusal on both doors. Every structural
+ * bypass form of both reviews (`testing/remote-content-fixtures.ts`), in the scanned field of a real
+ * row, is refused identically by `messagingDestinationRefusal` and `modelWriteRefusal` (which the
+ * agent door runs since AD3b); each allowed form passes both. Plus the row-level rules (field,
+ * format, OPTIONAL Drive content, contentType, Drive type/name), the order pin, fail-closed throws,
+ * the completeness tripwire and a source pin on the call.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -466,8 +464,9 @@ describe("B3r and B3w completeness tripwire", () => {
   // An outside agent reaches every row the model is offered, so one set covers both.
   const doorRows = CONNECTOR_WRITE_ROWS.filter((r) => isModelOfferableRow(r));
 
-  test("the scanned rows are exactly the twenty-four, with exactly the field column", () => {
+  test("the scanned rows are exactly the twenty-five, with exactly the field column", () => {
     expect([...remoteContentScannedRows()].sort((a, b) => a.localeCompare(b))).toEqual([
+      "bitbucket_pr_comment_create",
       "confluence_comment_add",
       "confluence_page_append",
       "confluence_page_create",
@@ -510,6 +509,7 @@ describe("B3r and B3w completeness tripwire", () => {
       teams_message_post: ["body"],
       teams_message_post_chat: ["body"],
       github_issue_comment_create: ["body"],
+      bitbucket_pr_comment_create: ["body"],
       github_issue_create: ["body"],
       github_pr_create: ["body"],
       github_pr_update: ["body"],

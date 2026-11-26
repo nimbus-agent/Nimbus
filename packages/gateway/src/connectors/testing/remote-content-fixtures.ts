@@ -1,11 +1,9 @@
 // packages/gateway/src/connectors/testing/remote-content-fixtures.ts
 // Test fixtures for the B3r and B3w remote-content refusal on the REAL doors: every structural
-// bypass form of the reviews, placed in the scanned field of a real row (the Outlook HTML draft
-// and send, a Confluence page append or comment, a Notion block append or page update, the
-// Obsidian daily-note append, a Drive file create; since B3w a Teams channel or chat post, and
-// GitHub, GitLab and Linear issues, comments and notes), each beside allowed cases. The
-// door tests (`model-write-refusals` doors, the act door's submit and accept, the injection
-// suite) run all of them; the detector unit tests live in `remote-content.test.ts`.
+// bypass form of the reviews in the scanned field of a real row (Outlook draft and send,
+// Confluence, Notion, Obsidian, a Drive create; since B3w Teams posts and GitHub, GitLab, Linear
+// and Bitbucket Markdown), beside allowed cases, for the door tests (`model-write-refusals`, the
+// act door, the injection suite); the detector unit tests live in `remote-content.test.ts`.
 //
 // Invisible, bidi and fullwidth characters are built from code points, never written literally.
 
@@ -491,6 +489,8 @@ const FORGE_ROWS: readonly ((label: string, body: string) => RemoteContentDoorCa
       mergeRequestIid: 9,
       body,
     })(l),
+  (l, body) =>
+    row("bitbucket", "bitbucket_pr_comment_create", { repoFull: "w/r", pullRequestId: 1, body })(l),
   (l, description) =>
     row("gitlab issue", "gitlab_issue_create", { projectPath: "g/r", title: "T", description })(l),
   // Phase 9.7 C2: the pull request and merge request creates and updates (title is plain text).

@@ -148,7 +148,7 @@
     "packages/gateway/src/connectors/connector-writes/k8s-manifest.ts": 577,
     "packages/gateway/src/connectors/connector-writes/knowledge.ts": 641,
     "packages/gateway/src/connectors/connector-writes/model-write-refusals.test.ts": 1078,
-    "packages/gateway/src/connectors/connector-writes/model-write-refusals.ts": 989,
+    "packages/gateway/src/connectors/connector-writes/model-write-refusals.ts": 958,
     "packages/gateway/src/connectors/connector-writes/model-write-source.test.ts": 987,
     "packages/gateway/src/connectors/connector-writes/preview.test.ts": 520,
     "packages/gateway/src/connectors/connector-writes/remote-content-doors.test.ts": 656,

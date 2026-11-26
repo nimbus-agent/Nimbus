@@ -1942,8 +1942,7 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
     return r.actionType;
   }
 
-  // The fixtures also cover the two VCS updates, which the model door offers and the act door
-  // withholds (not_yet_offered, C2): only proposable types are queued here.
+  // The fixtures also cover rows the act door withholds (C2): only proposable types are queued.
   const proposableType = (k: RemoteContentDoorCase): boolean => isProposable(typeOf(k));
   const ACT_REFUSED_CASES = REMOTE_CONTENT_REFUSED_CASES.filter(proposableType);
   const ACT_ALLOWED_CASES = REMOTE_CONTENT_ALLOWED_CASES.filter(proposableType);
@@ -1986,6 +1985,7 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
   test("the scanned types an approved agent can propose are all proposable (no mail send among them)", () => {
     const types = new Set(ACT_REFUSED_CASES.map(typeOf));
     expect([...types].sort((a, b) => a.localeCompare(b))).toEqual([
+      "bitbucket.pr.comment.create",
       "confluence.comment.add",
       "confluence.page.append",
       "confluence.page.create",

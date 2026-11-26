@@ -924,13 +924,13 @@ describe("D1: the Wave 4 writes are new to an earlier opt-in until it is re-run 
 
     await call("connector.writesEnable", { service: "bitbucket", wave: 4 }, { exec });
     const bb = seen[2]?.writes ?? [];
-    expect(bb).toHaveLength(1);
-    expect(bb[0]).toMatchObject({
-      toolId: "bitbucket_pr_merge",
+    expect(bb).toHaveLength(2); // the merge and (connectors PR 106) the Wave 2 comment
+    expect(bb.find((w) => w.toolId === "bitbucket_pr_merge")).toMatchObject({
       offerable: false,
       state: "not_offerable",
     });
-    expect(getModelWriteEnablement(db, "bitbucket")?.approvedToolIds.size).toBe(0);
+    expect(bb.find((w) => w.toolId === "bitbucket_pr_comment_create")?.offerable).toBe(true);
+    expect(getModelWriteEnablement(db, "bitbucket")?.approvedToolIds.size).toBe(1);
   });
 
   test("status counts: Jenkins at wave 3 has 0 offerable and 2 awaiting; at wave 4, approved, 2 offerable", async () => {

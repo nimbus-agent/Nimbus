@@ -37,7 +37,8 @@ Every tool below requires interactive consent through the Gateway HITL gate befo
 
 | Tool | Purpose |
 |---|---|
-| `bitbucket_pr_merge` | Merge a pull request. |
+| `bitbucket_pr_comment_create` | Post a comment on a pull request, inline on a file (and a line of its new version) when `path` is given. Offered to the model at wave 2 (`nimbus connector writes enable bitbucket --wave 2`); Nimbus cannot delete a posted comment. |
+| `bitbucket_pr_merge` | Merge a pull request. Never offered to the model. |
 
 ## See also
 
