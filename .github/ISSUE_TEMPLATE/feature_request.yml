@@ -58,7 +58,7 @@ body:
       label: Roadmap Phase
       description: Which phase does this belong to? Features outside the active phase will be deferred.
       options:
-        - "Phase 5 — The Extended Surface (Active)"
+        - "Phase 5 — The Extended Surface"
         - "Phase 6 — Team"
         - "Phase 7 — The Cost Pack"
         - "Phase 8 — Engineering Excellence"
