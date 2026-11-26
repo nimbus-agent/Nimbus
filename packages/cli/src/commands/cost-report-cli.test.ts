@@ -381,3 +381,32 @@ describe("runCostReportWith: the remaining list and render paths", () => {
     expect(s.err).toBe("nimbus cost report: socket closed\n");
   });
 });
+
+describe("runCostReportWith: --channel honours the documented exit codes", () => {
+  const one = {
+    mode: "render" as const,
+    name: "checkout-weekly",
+    channel: "slack",
+    format: "text" as const,
+  };
+  test("no cost data and a refused config exit 1 before any body is printed", async () => {
+    const empty = sink();
+    const noData = {
+      ...RENDER,
+      model: { ...MODEL, empty: true, byCurrency: {} },
+      channels: [RENDER.channels[0]],
+    };
+    expect(await runCostReportWith(fake(noData), one, empty.sink)).toBe(1);
+    expect(empty.s.err).toContain("No cost data imported");
+    expect(empty.s.out).toBe("");
+    const refused = sink();
+    const bad = {
+      ...RENDER,
+      model: { ...MODEL, configError: "bad [cost]" },
+      channels: [RENDER.channels[0]],
+    };
+    expect(await runCostReportWith(fake(bad), one, refused.sink)).toBe(1);
+    expect(refused.s.err).toContain("bad [cost]");
+    expect(refused.s.out).toBe("");
+  });
+});

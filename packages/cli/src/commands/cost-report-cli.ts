@@ -222,6 +222,7 @@ function renderText(r: RenderResult, sink: CostWhySink): number {
 }
 
 function renderOneBody(r: RenderResult, sink: CostWhySink): number {
+  if (modelRefusal(r.model, sink)) return 1;
   const ch = r.channels[0];
   if (ch === undefined || ch.body === null || ch.error !== null) {
     sink.err(`not rendered: ${clean(ch?.error ?? "no such channel")}\n`);
