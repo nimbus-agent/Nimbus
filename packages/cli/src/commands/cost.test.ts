@@ -242,6 +242,8 @@ describe("costRunner", () => {
       [["import", "--remove", "focus:0123456789abcdef"], "cost.importRemove"],
       [["why", "checkout"], "cost.why"],
       [["rules", "check"], "cost.rulesCheck"],
+      [["report"], "cost.reportList"],
+      [["report", "checkout-weekly"], "cost.reportRender"],
     ] as const) {
       const calls: [string, unknown][] = [];
       const ipc: CostIpc = {

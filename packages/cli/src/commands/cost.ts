@@ -5,6 +5,7 @@ import { stripControlChars } from "../lib/strip-control-chars.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 import { parseCostImportArgs, runCostImportWith } from "./cost-import-cli.ts";
+import { parseCostReportArgs, runCostReportWith } from "./cost-report-cli.ts";
 import { parseCostRulesCheckArgs, runCostRulesCheckWith } from "./cost-rules-check-cli.ts";
 import { parseCostViewsArgs, runCostViewsWith } from "./cost-views-cli.ts";
 import { parseCostWasteArgs, runCostWasteWith } from "./cost-waste.ts";
@@ -35,7 +36,8 @@ export const COST_USAGE =
   "       nimbus cost products [--period <N>d|week|month] [--allocation cluster] [--json|--csv]\n" +
   "       nimbus cost internal [--period <N>d|week|month] [--json|--csv]\n" +
   "       nimbus cost why <product|service> [--period <N>d|week|month] [--json]\n" +
-  "       nimbus cost rules check [--period <N>d|week|month] [--json]";
+  "       nimbus cost rules check [--period <N>d|week|month] [--json]\n" +
+  "       nimbus cost report [<name> [--channel slack|teams|gmail|outlook] [--json|--csv]]";
 
 export interface CostAnomaliesArgs {
   readonly json: boolean;
@@ -270,6 +272,10 @@ function subcommandRunner(args: readonly string[], sink: CostSink): CostRun | un
   if (args[0] === "rules") {
     const r = parseCostRulesCheckArgs(args.slice(1));
     return r === undefined ? undefined : (c) => runCostRulesCheckWith(c, r, sink);
+  }
+  if (args[0] === "report") {
+    const p = parseCostReportArgs(args.slice(1));
+    return p === undefined ? undefined : (c) => runCostReportWith(c, p, sink);
   }
   if (args[0] === "waste") {
     const w = parseCostWasteArgs(args.slice(1));
