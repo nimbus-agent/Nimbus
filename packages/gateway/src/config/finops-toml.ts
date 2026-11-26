@@ -190,3 +190,6 @@ export function loadNimbusFinopsFromConfigDir(configDir: string): NimbusFinopsTo
   if (raw === null) return DEFAULT_FINOPS_CONFIG;
   return parseNimbusTomlFinops(raw, sectionFallbackSink(configDir, "finops"));
 }
+
+/** The Cost Pack's `[cost]` sections (Phase 7) are read by `cost-toml.ts`; re-exported beside `[finops]`. */
+export { loadNimbusCostFromConfigDir } from "./cost-toml.ts";
