@@ -8,33 +8,11 @@
  * key in the same file; with the count pinned, a read added or removed under an existing exemption
  * fails as `exemption-count` until someone reviews it and updates `reads` (or the reason).
  */
-/**
- * - `disclosed` — a partial/dead read whose gap the brief or metric discloses to the user.
- * - `legacy` — a pre-contract key read only for rows written before the canonical key existed.
- * - `not-item` — the receiver is not item metadata (e.g. a parsed vendor file).
- * - `by-design` — absence of the key is an intended, handled state, not a gap.
- * - `census-blind` — a read whose real production writer the census writer scan cannot see; the
- *   reason must name that writer function and file (e.g. `ingestClip` in clips/clip-ingest.ts
- *   writes `sourceWordCount` inside a conditional spread). Teaching `writer-emissions.ts` the
- *   shape makes the exemption go stale, which is the intended way to retire it.
- */
-export type LaneExemptionCategory =
-  | "disclosed"
-  | "legacy"
-  | "not-item"
-  | "by-design"
-  | "census-blind";
 
-export type LaneExemption = {
-  /** Repo-relative, e.g. "packages/gateway/src/metrics/dora.ts". */
-  readonly file: string;
-  /** Metadata key (or item type, for a `kind: "type"` read). */
-  readonly key: string;
-  readonly category: LaneExemptionCategory;
-  /** The exact number of violations this exemption suppresses — see the module comment. */
-  readonly reads: number;
-  readonly reason: string;
-};
+import type { LaneExemption } from "./exemption-types.ts";
+import { AGENTS_LANE_EXEMPTIONS } from "./exemptions-agents.ts";
+
+export type { LaneExemption, LaneExemptionCategory } from "./exemption-types.ts";
 
 export const LANE_EXEMPTIONS: readonly LaneExemption[] = [
   // ── prreview/ ────────────────────────────────────────────────────────────────────────────
@@ -63,70 +41,7 @@ export const LANE_EXEMPTIONS: readonly LaneExemption[] = [
       "Only GitHub writes PR line counts; for any other forge the size lane is empty and buildPrereviewBrief's 'No review data is indexed for <service>' gap says the review lane and the size comparison are empty.",
   },
   // ── agents/ ──────────────────────────────────────────────────────────────────────────────
-  {
-    file: "packages/gateway/src/agents/_lib/oncall-queries.ts",
-    key: "merge_commit_sha",
-    category: "disclosed",
-    reads: 1,
-    reason:
-      "Only the GitHub connector writes merge_commit_sha, so selectChangeForDeployment is empty on GitLab/Bitbucket; agents/oncall.ts runtimeGaps discloses it as a missing_connector gap ('A deployment is matched to its change by merge commit, which only the GitHub connector records').",
-  },
-  {
-    file: "packages/gateway/src/agents/changelog-queries.ts",
-    key: "merged_at",
-    category: "disclosed",
-    reads: 1,
-    reason:
-      "nonGithubMergedPrCount reads merged_at IS NULL precisely to count merged non-GitHub PRs that carry no merge time; agents/changelog.ts buildChangelogBrief renders that count as a missing_connector gap ('merged pull request(s) on a non-GitHub forge carry no merge time and so are not listed').",
-  },
-  {
-    file: "packages/gateway/src/agents/standup-queries.ts",
-    key: "merged_at",
-    category: "disclosed",
-    reads: 1,
-    reason:
-      "nonGithubMergedPrCount reads merged_at IS NULL precisely to count merged non-GitHub PRs that carry no merge time; agents/standup.ts buildStandupBrief renders that count as a missing_connector gap ('merged pull request(s) of yours on a non-GitHub forge carry no merge time and so are not listed under merged').",
-  },
-  {
-    file: "packages/gateway/src/agents/_lib/negotiate/lanes-prs.ts",
-    key: "additions",
-    category: "disclosed",
-    reads: 1,
-    reason:
-      "PR size stats are written by GitHub alone; accumulateAuthoredPrStats tallies statsCoverage and agents/_lib/render/negotiate.ts renderNegotiateAuthoredPrs prints '(stats coverage N/M)' or 'stats: not available (no enriched PR in this window)'.",
-  },
-  {
-    file: "packages/gateway/src/agents/_lib/negotiate/lanes-prs.ts",
-    key: "deletions",
-    category: "disclosed",
-    reads: 1,
-    reason:
-      "PR size stats are written by GitHub alone; read only on rows counted in statsCoverage, which agents/_lib/render/negotiate.ts renderNegotiateAuthoredPrs prints as '(stats coverage N/M)'.",
-  },
-  {
-    file: "packages/gateway/src/agents/_lib/negotiate/lanes-prs.ts",
-    key: "changed_files",
-    category: "disclosed",
-    reads: 1,
-    reason:
-      "PR size stats are written by GitHub alone; read only on rows counted in statsCoverage, which agents/_lib/render/negotiate.ts renderNegotiateAuthoredPrs prints as '(stats coverage N/M)'.",
-  },
-  {
-    file: "packages/gateway/src/agents/premortem.ts",
-    key: "merged_at",
-    category: "disclosed",
-    reads: 5,
-    reason:
-      "Bitbucket never records a merge time (and GitLab only inside the synced window), so such PRs drop out of the review-drag medians; agents/premortem.ts repoForgesMissingTiming adds the forges of such merged BASELINE PRs, and premortem/risks.ts computeReviewDrag appends leftOutSentence ('Pull requests without both timestamps are left out of both medians.' plus the per-forge reason from forgeTimingReasons).",
-  },
-  {
-    file: "packages/gateway/src/agents/why.ts",
-    key: "number",
-    category: "by-design",
-    reads: 1,
-    reason:
-      "resolveItemArm reads number for ANY URL-resolved item type into WhyItemSubject.number, a nullable display field the published SDK type documents as 'Null when the indexed item carried no number — an incident usually has none'. The PR reads in this file (prResolvingItem, findPrForSha) are annotated scope=pr and covered by the canonical PR contract.",
-  },
+  ...AGENTS_LANE_EXEMPTIONS,
   // ── connectors/ ──────────────────────────────────────────────────────────────────────────
   {
     file: "packages/gateway/src/connectors/great-expectations-sync.ts",

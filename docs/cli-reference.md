@@ -1336,6 +1336,27 @@ nimbus cost products --allocation cluster
 
 **Currencies, freshness and sources.** Amounts are grouped by currency and never added across currencies: two currencies give two totals and no grand total. Each source shows its newest day, and the last three days of a source are marked provisional. When raw lines exist for a provider, its Vantage rows are excluded and the output says so; `[cost] authoritative = { aws = "vantage" }` picks the source per provider instead. On a day where Vantage rows come from two report configurations (an older `group_by`), only the newest synced one is used and a note counts those days. **"No cost data imported"** (exit 1) means nothing is stored at all; a period with no lines prints `0.00` in each currency seen before (exit 0). A refused `[cost]` config allocates nothing and exits 1, naming the error. The IPC methods are `cost.products` and `cost.internal`; they serve only a connection that declared the `cli` or `ui` kind, are LAN-forbidden (the whole `cost` namespace) and are not on the desktop allowlist yet.
 
+### `nimbus cost why` and `nimbus cost rules check`
+
+`nimbus cost why <product|service>` compares the cost of a product (or of a service a `[[cost.rule]]` sets) in the period with the same number of days immediately before it, per currency, and shows the spike day (the day furthest above the previous period's daily mean; the earliest on a tie), the parts that moved most (at most 10, the rest counted) and, for up to three of the target's services that rose most, the deploys in the period with their CI run id and the pull request each shipped (joined by merge sha), and the service's owners from the ownership graph. Deploys on the spike day, the day before or the day after are listed first and marked `near the spike`. `nimbus cost rules check` shows how your rules allocate the period: the unassigned share per currency, what each rule matched (and how many of its matches produced a refused value), the rules that matched nothing, and the largest groups of unassigned lines (provider, service, sub-account and tag keys) with their reason, so the next rule to write is visible. Both read the local index only: no network call, no model, no egress row.
+
+```bash
+nimbus cost why checkout
+nimbus cost why payment-service --period 30d --json
+nimbus cost rules check --period month
+```
+
+| Flag | Description |
+|---|---|
+| `--period <N>d\|week\|month` | As for `nimbus cost products`; the default is `14d` for `why` and `30d` for `rules check`. The previous period of `why` has the same number of days. |
+| `--json` | Print the result object (`why`: `target`, `range`, `previous`, `byCurrency`, `services`, `context`, `freshness`, `provisionalFrom`; `rules check`: `byCurrency`, `rules`, `unusedRules`, `topUnassigned`). |
+
+**Targets.** A product name is read before a service of the same name, and the output says which it read. The name is looked up in both periods, so a cost that fell to zero is still found; an unknown name exits 1 listing the known products and services. A change from 0 reads `new` (no percent). Amounts are never added across currencies.
+
+**What is not guessed.** Deploys are listed only for a service configured with a `[ci.service.<id>]` or `[metrics.dora.<id>]` block, by the service id the deploy recorded; a service without one, a service with no repo (so no pull request can be joined) and a service with no ownership entry (`nimbus owners --refresh` derives one for a repo root bound to the service) each print a `Gap:` line. Owners are authorship-derived (git blame), not an approval list.
+
+**Exit codes.** `why`: 0 for a comparison; 1 for no cost data imported, an unknown target or an error. `rules check`: 0 for a check; 1 for a refused `[cost]` config, no cost data or an error. The IPC methods are `cost.why` and `cost.rulesCheck`; they serve only a connection that declared the `cli` or `ui` kind, are LAN-forbidden (the whole `cost` namespace) and are not on the desktop allowlist.
+
 ### `nimbus briefing`
 
 Your morning briefing, built from the local index. It makes **no provider call** and **uses no model**: the text is rendered deterministically, and nothing leaves the machine except a local notification.

@@ -32,6 +32,7 @@ const SERVICES = new Map<string, ServiceConfig>([
     svc("payment-service", [{ provider: "github", providerId: "acme/payments" }]),
   ],
   ["norepo-service", svc("norepo-service", [])],
+  ["lab-service", svc("lab-service", [{ provider: "gitlab", providerId: "acme/lab" }])],
 ]);
 
 let db: Database;
@@ -222,6 +223,14 @@ describe("selectCostChangeContext", () => {
     );
     const [ctx] = selectCostChangeContext(db, { ...baseInput, serviceIds: ["payment-service"] });
     expect(ctx?.deploys[0]?.runId).toBe("7412");
+  });
+
+  test("a non-GitHub repo says that a pull request is joined by a merge commit only GitHub records", () => {
+    deploy("d1", "lab-service", "sha-1", SPIKE, SPIKE + HOUR);
+    const [ctx] = selectCostChangeContext(db, { ...baseInput, serviceIds: ["lab-service"] });
+    expect(ctx?.gaps).toContain(
+      "service lab-service: a deploy is matched to its pull request by merge commit, which only the GitHub connector records",
+    );
   });
 
   test("no spike day means no deploy is near it", () => {

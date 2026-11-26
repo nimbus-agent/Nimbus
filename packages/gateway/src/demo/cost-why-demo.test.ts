@@ -32,7 +32,7 @@ type Why = {
     serviceId: string;
     deploys: {
       sha: string;
-      url: string | null;
+      runId: string | null;
       nearSpike: boolean;
       pr: { repo: string | null; number: number | null } | null;
     }[];

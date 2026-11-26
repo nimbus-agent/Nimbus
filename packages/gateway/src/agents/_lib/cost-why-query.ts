@@ -119,6 +119,7 @@ function selectPr(db: Database, sha: string, prServices: readonly string[]): Cos
   if (row === null) return null;
   const meta = metaRecord(row.metadata);
   const fallback = splitExternalId(row.external_id);
+  // lane-census: scope=pr
   return {
     repo: str(meta["repo"]) ?? fallback.repo,
     number: int(meta["number"]) ?? fallback.number,
@@ -170,6 +171,11 @@ function contextFor(
   const prServices = distinctPrServiceColumns(cfg.repos);
   if (cfg.repos.length === 0)
     gaps.push(`service ${serviceId} has no repo configured, so no pull request is joined`);
+  if (cfg.repos.some((r) => r.provider !== "github")) {
+    gaps.push(
+      `service ${serviceId}: a deploy is matched to its pull request by merge commit, which only the GitHub connector records`,
+    );
+  }
   const rows = selectDeploys(db, serviceId, input.fromMs, input.toMs)
     .map((r) => ({ r, ms: deployMsOf(r), near: isNearSpike(deployMsOf(r), input.spikeDayMs) }))
     .sort(
