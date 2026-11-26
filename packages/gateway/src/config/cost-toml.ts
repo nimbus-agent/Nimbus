@@ -31,6 +31,11 @@ import {
   CostRuleError,
   compileCostRule,
 } from "../finops/cost-rules.ts";
+import {
+  CostReportConfigError,
+  type CostReportDef,
+  compileCostReports,
+} from "./cost-report-toml.ts";
 import { getLayeredConfig, layerReadError, sectionFallbackSink } from "./layered-config.ts";
 import type { EffectiveSection } from "./layered-merge.ts";
 
@@ -40,6 +45,8 @@ export interface NimbusCostConfig {
   /** Per provider, the source id the views use for it (e.g. `{ aws: "vantage" }`). */
   readonly authoritative: Readonly<Record<string, string>>;
   readonly focusDir: string | null;
+  /** `[[cost.report]]` with their `[[cost.report.channel]]` blocks (slice 3; see `cost-report-toml.ts`). */
+  readonly reports: readonly CostReportDef[];
   /** Non-null: the cost config is refused (no rules apply) and every view says so. */
   readonly error: string | null;
 }
@@ -57,6 +64,7 @@ export const DEFAULT_COST_CONFIG: NimbusCostConfig = Object.freeze({
   internalEnvs: DEFAULT_COST_INTERNAL_ENVS,
   authoritative: Object.freeze({}),
   focusDir: null,
+  reports: Object.freeze([]) as readonly CostReportDef[],
   error: null,
 });
 
@@ -154,6 +162,11 @@ function compileRules(blocks: readonly EffectiveSection[]): readonly CostRule[] 
   );
 }
 
+const ARRAY_HEADERS = ["cost.rule", "cost.report", "cost.report.channel"] as const;
+type ArrayHeader = (typeof ARRAY_HEADERS)[number];
+const isArrayHeader = (h: string): h is ArrayHeader =>
+  (ARRAY_HEADERS as readonly string[]).includes(h);
+
 const isCostHeader = (h: string | null): h is string =>
   h === "cost" || (h?.startsWith("cost.") ?? false);
 
@@ -175,18 +188,32 @@ function refuseMalformedCostHeader(s: EffectiveSection): void {
 export function resolveCostConfig(sections: readonly EffectiveSection[]): NimbusCostConfig {
   const draft: Draft = { ...DEFAULT_COST_CONFIG };
   try {
-    const ruleBlocks: EffectiveSection[] = [];
+    const blocks: Record<ArrayHeader, EffectiveSection[]> = {
+      "cost.rule": [],
+      "cost.report": [],
+      "cost.report.channel": [],
+    };
     for (const s of sections) {
       refuseMalformedCostHeader(s);
       const header = s.header;
       if (!isCostHeader(header)) continue;
-      if (header === "cost.rule" && s.isArray) ruleBlocks.push(s);
+      if (s.isArray && isArrayHeader(header)) blocks[header].push(s);
       else readPlainSection({ ...s, header }, draft);
     }
-    draft.rules = compileRules(ruleBlocks);
+    draft.rules = compileRules(blocks["cost.rule"]);
+    draft.reports = compileCostReports(
+      blocks["cost.report"].map((b, i) => parseSection(b, `[[cost.report]] ${String(i + 1)}`)),
+      blocks["cost.report.channel"].map((b, i) =>
+        parseSection(b, `[[cost.report.channel]] ${String(i + 1)}`),
+      ),
+    );
     return Object.freeze(draft);
   } catch (e) {
-    if (e instanceof CostConfigError || e instanceof CostRuleError) {
+    if (
+      e instanceof CostConfigError ||
+      e instanceof CostRuleError ||
+      e instanceof CostReportConfigError
+    ) {
       return Object.freeze({ ...DEFAULT_COST_CONFIG, error: e.message });
     }
     throw e;

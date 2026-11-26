@@ -27,6 +27,7 @@ describe("[cost] config", () => {
       internalEnvs: DEFAULT_COST_INTERNAL_ENVS,
       authoritative: {},
       focusDir: null,
+      reports: [],
       error: null,
     });
     expect(DEFAULT_COST_INTERNAL_ENVS).toEqual(["ci", "dev", "test", "staging"]);
@@ -123,5 +124,52 @@ set = { env = "ci", product = "{repo}" }
     expect(ok.rules).toHaveLength(1);
     expect(base("[[fleet.node]\nx = 1\n").error).toBeNull();
     expect(base("[costs\nx = 1\n").error).toBeNull();
+  });
+});
+
+describe("[[cost.report]] and [[cost.report.channel]]", () => {
+  const REPORTS = [
+    "[[cost.report]]",
+    'name = "checkout-weekly"',
+    'scope = { product = "checkout" }',
+    'period = "week"',
+    'schedule = "0 8 * * 1"',
+    'tz = "Europe/Berlin"',
+    "",
+  ].join("\n");
+  const SLACK = [
+    "[[cost.report.channel]]",
+    'report = "checkout-weekly"',
+    'kind = "slack"',
+    'to = "C0123ABC"',
+    'format = "markdown"',
+    'template = "Checkout, week of {week_start}: {total} ({change}).\\nTop: {top_movers}"',
+    "",
+  ].join("\n");
+
+  test("reports and channels are read from their own arrays", () => {
+    const c = base(REPORTS + SLACK);
+    expect(c.error).toBeNull();
+    expect(c.reports.map((r) => [r.name, r.channels.map((ch) => ch.kind)])).toEqual([
+      ["checkout-weekly", ["slack"]],
+    ]);
+    expect(c.reports[0]?.channels[0]?.template).toEqual({
+      inline: "Checkout, week of {week_start}: {total} ({change}).\nTop: {top_movers}",
+    });
+    expect(base("").reports).toEqual([]);
+  });
+
+  test("a role pack's reports combine with the owner's channels", () => {
+    const c = cfg({ kind: "pack", text: REPORTS }, { kind: "base", text: SLACK });
+    expect(c.error).toBeNull();
+    expect(c.reports[0]?.channels.map((ch) => ch.to)).toEqual(["C0123ABC"]);
+  });
+
+  test("a bad report or channel refuses the whole cost config", () => {
+    const c = base(`${REPORTS}${SLACK.replace('kind = "slack"', 'kind = "sms"')}`);
+    expect(c.reports).toEqual([]);
+    expect(c.rules).toEqual([]);
+    expect(c.error).toContain("kind must be one of");
+    expect(base('[cost.report]\nname = "x"\n').error).toBe("unknown section [cost.report]");
   });
 });
