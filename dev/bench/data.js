@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795725727253,
+  "lastUpdate": 1795726294195,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "95571be3d48f1d57da4633f16b22db2111af6583",
-          "message": "chore(diagnostics): promote the local-auth detect verification script (#1559)\n\nPromotes the ad-hoc acceptance script written while building `nimbus\nconnector detect` into\n`scripts/diagnostics/`, alongside the two single-platform diagnostics\nscripts already there\n(`test-google-oauth-refresh.ps1`, `macos-sandbox-bisect.sh`) and\nfollowing the first one's\ncomment-based-help idiom.\n\nIt drives the one path no automated test covers: a real gateway, real\nlocal `gh` / `aws` /\n`kubectl` installs, the interactive numbered pick, and the consent\nprompt.\n\n## Why it was not repo-worthy as written\n\nIt writes `kubernetes.kubeconfig` / `kubernetes.context` into the\n**real** Vault. `configDir` is\n`%APPDATA%\\Nimbus` and no environment variable relocates it — overriding\n`LOCALAPPDATA` moves the\ndatabase, logs and extensions but *not* credentials, so the\nobvious-looking sandbox is a trap. The\nheader now says so, and adds that `nimbus --demo` is not a substitute\neither: a demo-rooted gateway\nrefuses `connector.*` with `ERR_DEMO_FORBIDDEN` under invariant I41, so\ndetect and adopt cannot run\nunder it at all. That saves the next reader an hour.\n\nThe script now **refuses to run** when the `kubernetes` connector is\nalready configured, printing\nwhat is on file and telling the operator to remove it first. Clobbering\na credential that might be\nreal is worse than not running. It gates on the finding's own\n`alreadyConfigured` flag — the same\nsignal `adopt-local-auth.ts` refuses on — rather than re-deriving \"is it\nconfigured\" independently.\nRefusal exits `2`, distinct from pass and fail.\n\n## A check that cannot fail must not report success\n\n`gcloud` is the fourth detect source as of #1557, but it is not\ninstalled on most machines that will\nrun this, including the one it was written on. The script always\nexercises the shape, asserts the\none status it can actually reach (`cli_not_found`), and **skips the\nother three by name** with the\nreason. `SKIP` is a distinct state with its own count, and the summary\nreads\n`N passed, N skipped, N failed` under the heading \"not run, not\nasserted, not counted as passed\".\n\n## Two assertions kept deliberately, with the reasoning inline\n\n- The liveness probe is a **real IPC call**, never `nimbus status` —\nwhich prints \"not running\" and\nstill exits `0`, so its exit code is not a liveness signal, and a stale\n`gateway.json` makes it\n  worse.\n- The interactive pick asserts a **non-default** choice. `accept-alpha`\nis both option 1 and the\nEnter default, so an `accept-alpha` result cannot distinguish \"keystroke\nread\" from \"keystroke\nsilently dropped\"; the fixture picks option 2 and expects `accept-beta`.\n\n## Also\n\n`#Requires -Version 5.1`, and one real 5.1 trap fixed along the way:\nunder 5.1 a native command's\nstderr merged via `2>&1` becomes a terminating error when\n`$ErrorActionPreference = 'Stop'`, so a\nharmless `bun` warning would have crashed the run instead of returning\nthe `{Ok; Text}` its callers\ncheck. The override is scoped to that one call with a comment. The\nworktree path is derived from\n`$PSScriptRoot` rather than one developer's checkout. Cleanup already\nran in a single `try/finally`\ncovering failure and Ctrl-C, not just the happy path; that is now stated\nrather than implied.\n\n## Verification\n\n`audit:doc-refs` (1544 refs), `audit:cross-platform`, `preflight:fast`\n34/34 — all pass. The\nPowerShell parses (`Parser::ParseFile`). **The script itself was not\nexecuted end to end**: it needs\na live gateway and would write to the real Vault. No doc references it,\nso nothing new for\n`audit:doc-refs` to resolve.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added a diagnostic utility for validating Kubernetes connector\ndetection, adoption, contexts, statuses, and credential handling.\n* Added optional interactive validation for selecting and naming\nKubernetes contexts.\n* Added support for skipping interactive checks and retaining the\nadopted connector for further inspection.\n* **Bug Fixes**\n* Improved handling of unavailable gcloud installations by\ndistinguishing skipped checks from failures.\n* Added safe cleanup and restoration after diagnostic runs, including\nwhen checks fail or are refused.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-20T14:56:50Z",
-          "tree_id": "8ffd47171df7c95593245ab6f3de00dac4c23120",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/95571be3d48f1d57da4633f16b22db2111af6583"
-        },
-        "date": 1789916983953,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 342.5776175500061,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 342.5872428500035,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 175.20830309999693,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "28f07036d1d2ccd47cce272d0de0631a7b750bba",
+          "message": "chore: release main (#2180)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>11.17.0</summary>\n\n##\n[11.17.0](https://github.com/nimbus-agent/Nimbus/compare/v11.16.0...v11.17.0)\n(2026-11-26)\n\n\n### Features\n\n* **connectors:** bitbucket_pr_comment_create write row and connectors\n0.18.0 ([#2179](https://github.com/nimbus-agent/Nimbus/issues/2179))\n([6a977c0](https://github.com/nimbus-agent/Nimbus/commit/6a977c0e97dd94cff6652fb8d45972bc5ab35363))\n* nimbus cost report renders configured cost reports for Slack, Teams\nand email drafts (Phase 7, slice 3)\n([#2178](https://github.com/nimbus-agent/Nimbus/issues/2178))\n([34cbeb4](https://github.com/nimbus-agent/Nimbus/commit/34cbeb41926417585abd54dcb27cc90f64482e87))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-26T20:42:53Z",
+          "tree_id": "6ea16424e4e49d24c1aeea3f47720ab15de6ddb3",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/28f07036d1d2ccd47cce272d0de0631a7b750bba"
+        },
+        "date": 1795726288635,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 211.71802819999866,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 206.23060005000443,
             "unit": "ms"
           }
         ]
