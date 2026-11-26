@@ -241,3 +241,101 @@ describe("runCostWhyWith", () => {
     expect(s.err).toContain("products: checkout");
   });
 });
+
+describe("runCostWhyWith: a fall, bare pull requests and the footer notes", () => {
+  const FALL = {
+    ...WHY,
+    target: { kind: "service", name: "payment-service" },
+    byCurrency: {
+      USD: {
+        current: 50,
+        previous: 80,
+        change: -30,
+        changePct: -37.5,
+        spikeDay: null,
+        movers: [],
+        moversTruncated: 0,
+      },
+    },
+    services: ["payment-service"],
+    provisionalFrom: null,
+    coverage: { USD: { current: 14, previous: 14, days: 14 } },
+    unassigned: { USD: { current: 0, previous: 0 } },
+    freshness: [{ source: "focus", lastDay: null, provisionalFrom: null }],
+    excludedSources: [
+      { source: "vantage", provider: "aws", reason: "raw lines are counted instead" },
+    ],
+    notes: ["one import is still running"],
+    context: [
+      {
+        serviceId: "payment-service",
+        configured: true,
+        deploys: [
+          {
+            sha: "deadbeef",
+            environment: "prod",
+            startedAtMs: SPIKE_MS,
+            finishedAtMs: null,
+            conclusion: "success",
+            url: null,
+            runId: null,
+            nearSpike: false,
+            pr: { repo: null, number: null, title: "Untitled change", url: null, author: null },
+          },
+        ],
+        deploysTruncated: 3,
+        owners: [],
+        gaps: [],
+      },
+      {
+        serviceId: "orders-service",
+        configured: true,
+        deploys: [],
+        deploysTruncated: 0,
+        owners: [],
+        gaps: [],
+      },
+    ],
+  };
+
+  test("renders a fall with no spike, no caveats, bare pull requests and the notes", async () => {
+    const { s, sink: k } = sink();
+    expect(
+      await runCostWhyWith(
+        fake(FALL),
+        { target: "payment-service", period: "14d", json: false },
+        k,
+      ),
+    ).toBe(0);
+    const o = s.out;
+    expect(o).toContain("Why the cost of service payment-service changed");
+    expect(o).toContain("USD  50.00 vs 80.00  -30.00 (-37.5%)\n");
+    for (const absent of [
+      "Several currencies",
+      "Spike day",
+      "Moved most",
+      "partial periods",
+      "Unassigned",
+      "provisional",
+      "Owners",
+    ]) {
+      expect(o).not.toContain(absent);
+    }
+    expect(o).toContain("2026-11-25 14:03 UTC  prod  success  deadbeef\n");
+    expect(o).toContain("      Untitled change\n");
+    expect(o).toContain("    ... and 3 more deploys\n");
+    expect(o).toContain("Service orders-service\n  No deploy in this period.\n");
+    expect(o).toContain("Source focus: data up to none\n");
+    expect(o).toContain(
+      "Note: vantage lines for aws are not counted: raw lines are counted instead\n",
+    );
+    expect(o).toContain("Note: one import is still running\n");
+  });
+
+  test("a non-Error rejection is still reported and exits 1", async () => {
+    const { s, sink: k } = sink();
+    const ipc: CostWhyIpc = { call: () => Promise.reject("socket closed") };
+    expect(await runCostWhyWith(ipc, { target: "x", period: "14d", json: false }, k)).toBe(1);
+    expect(s.err).toBe("nimbus cost why: socket closed\n");
+  });
+});

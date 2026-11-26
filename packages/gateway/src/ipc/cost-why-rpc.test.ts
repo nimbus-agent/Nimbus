@@ -284,3 +284,30 @@ describe("cost.rulesCheck", () => {
     expect(fetchCalls).toBe(0);
   });
 });
+
+describe("cost.why and cost.rulesCheck: a refused config and the wall clock", () => {
+  test("a refused [cost] config allocates nothing, so the target is unknown and the refusal is named", async () => {
+    writeFileSync(
+      join(dir, "nimbus.toml"),
+      ["[[cost.rule]]", 'match = { nope = "x" }', 'set = { product = "a" }', ""].join("\n"),
+    );
+    const e = await rpcError(call("cost.why", { target: "checkout" }, "cli"));
+    expect(e.rpcCode).toBe(-32602);
+    expect(e.message).toContain("(products: none; services: none)");
+    expect(e.message).toContain("(the [cost] config was refused:");
+  });
+
+  test("without an injected clock both read the period against the wall clock", async () => {
+    const ctx = { db, configDir: dir, caller: { kind: "cli" as const } };
+    const today = (): string => new Date().toISOString().slice(0, 10);
+    const before = today();
+    const why = await dispatchCostRpc("cost.why", { target: "checkout" }, ctx);
+    const check = await dispatchCostRpc("cost.rulesCheck", {}, ctx);
+    const after = today();
+    for (const out of [why, check]) {
+      if (out.kind !== "hit") throw new Error("miss");
+      const toDay = (out.value as { range: { toDay: string } }).range.toDay;
+      expect([before, after]).toContain(toDay);
+    }
+  });
+});

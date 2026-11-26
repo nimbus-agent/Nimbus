@@ -140,3 +140,62 @@ describe("runCostRulesCheckWith", () => {
     expect(JSON.parse(j.s.out)).toEqual(CHECK);
   });
 });
+
+describe("runCostRulesCheckWith: the quiet and the failing cases", () => {
+  const QUIET = {
+    ...CHECK,
+    byCurrency: { USD: { total: 0, unassigned: 0, unassignedPct: null } },
+    rules: [{ index: 1, lines: 3, amountByCurrency: { USD: 0 }, unassignedLines: 0 }],
+    unusedRules: [],
+    topUnassigned: [
+      {
+        provider: "gcp",
+        service: "Compute Engine",
+        subAccount: null,
+        tagKeys: [],
+        lines: 1,
+        amountByCurrency: { USD: 0 },
+        reason: "no rule matched",
+      },
+    ],
+    topUnassignedTruncated: 0,
+    freshness: [{ source: "focus", lastDay: null, provisionalFrom: null }],
+  };
+
+  test("no share for a zero total, no refusal note, no more-groups line, no data day", async () => {
+    const { s, sink: k } = sink();
+    expect(await runCostRulesCheckWith(fake(QUIET), { period: "30d", json: false }, k)).toBe(0);
+    expect(s.out).toContain("USD  0.00 of 0.00 unassigned\n");
+    expect(s.out).toContain("  rule 1: 3 lines (USD 0.00)\n");
+    expect(s.out).not.toContain("refused");
+    expect(s.out).toContain("Largest unassigned groups:\n");
+    expect(s.out).not.toContain("more group");
+    expect(s.out).toContain("Source focus: data up to none\n");
+    expect(s.out).not.toContain("provisional");
+  });
+
+  test("with no unassigned group the groups heading is not printed", async () => {
+    const { s, sink: k } = sink();
+    const none = { ...QUIET, topUnassigned: [] };
+    expect(await runCostRulesCheckWith(fake(none), { period: "30d", json: false }, k)).toBe(0);
+    expect(s.out).not.toContain("Largest unassigned groups");
+  });
+
+  test("--json exits 1 for no data and for a refused config", async () => {
+    for (const r of [
+      { ...QUIET, empty: true },
+      { ...QUIET, configError: "rule 1: unknown match key" },
+    ]) {
+      const { s, sink: k } = sink();
+      expect(await runCostRulesCheckWith(fake(r), { period: "30d", json: true }, k)).toBe(1);
+      expect(JSON.parse(s.out)).toEqual(r);
+    }
+  });
+
+  test("a non-Error rejection is still reported and exits 1", async () => {
+    const { s, sink: k } = sink();
+    const ipc = { call: (): Promise<unknown> => Promise.reject("socket closed") };
+    expect(await runCostRulesCheckWith(ipc, { period: "30d", json: false }, k)).toBe(1);
+    expect(s.err).toBe("nimbus cost rules check: socket closed\n");
+  });
+});
