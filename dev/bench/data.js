@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795686220881,
+  "lastUpdate": 1795708280826,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "0756397b6077a467d30abe6f40af2d8089b05e10",
-          "message": "chore: release main (#1551)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.27.1</summary>\n\n##\n[7.27.1](https://github.com/nimbus-agent/Nimbus/compare/v7.27.0...v7.27.1)\n(2026-09-19)\n\n\n### Bug Fixes\n\n* **cli:** nimbus start waits for the gateway state file, not only the\nsocket ([#1549](https://github.com/nimbus-agent/Nimbus/issues/1549))\n([4267055](https://github.com/nimbus-agent/Nimbus/commit/4267055986ab9e6e12bc85543a8e0e9fa0f4f838))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>\nCo-authored-by: Asaf <asafgolombek@gmail.com>",
-          "timestamp": "2026-09-19T22:19:59+03:00",
-          "tree_id": "8f4edb398ce17caf04a77dc36edb24ba36ee90fa",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/0756397b6077a467d30abe6f40af2d8089b05e10"
-        },
-        "date": 1789846159235,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 227.24385159999656,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 227.1965786999979,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 177.30623319999867,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "bcfeb8a0c870c7b8135137a7df9cab69302e17ff",
+          "message": "feat: cost lines from FOCUS exports, allocation rules and cost views (Phase 7, slice 1) (#2168)\n\n## Summary\n\nPhase 7 (the Cost Pack), slice 1 of 8: FOCUS cost exports become local\ncost lines, owner-written rules allocate them to products and envs, and\ntwo views show the result.\n\n- **Migration V109, table `cost_line`.** One FOCUS-shaped daily line per\n(source, provider, billing account, charge day, grain). It is not the\n`item` table and is never embedded. The grain hash covers sub-account,\nservice, region, resource or SKU, charge category, sorted tags, repo,\nworkflow and model. Its only writer is `finops/cost-line-store.ts`,\nenforced by a new static D24 rule `cost-line-confined` (14 write shapes\nred-proved). Rows are erased by `connector remove`, `nimbus data delete`\nand `--remove`, and pruned by `[finops] retain_days`.\n- **`nimbus cost import <file|dir> [--provider] [--dry-run] [--json]`\nand `--remove <importId>`.**\n- The FOCUS 1.x CSV parser has no dependency: it strips a BOM and\naccepts CRLF and quoted commas or line breaks.\n- For each (provider, billing account, billing period), the stored lines\non exactly the days the file contains are replaced.\n  - Per-file totals per currency are checked against the stored lines.\n- The import id is the file's content hash, so re-importing the same\nfile changes nothing.\n- A directory imports oldest first. `[cost.focus] dir` is imported a\nminute after boot and then daily (never on a demo gateway).\n- **`[[cost.rule]]` allocation rules.** First match wins. Matchers live\nin one registry. Placeholders are `{tag.<key>}`, `{repo}` and\n`{sub_account}`. A substituted value that is not a safe name leaves the\nline `unassigned` with the reason. An unknown key or placeholder refuses\nthe whole `[cost]` config instead of silently dropping a rule. `nimbus\nconfig explain` knows the section.\n- **`nimbus cost products` and `nimbus cost internal`** (`--period\n<N>d|week|month`, `--json`, `--csv`).\n  - Amounts are per currency, with no grand total across currencies.\n- Each view shows the unassigned share with its reasons and each\nsource's freshness (the last 3 days are provisional).\n- \"No cost data imported\" and a zero-cost period give different output.\n- Vantage rows fill a provider that has no raw lines. `[cost]\nauthoritative` picks the source per provider.\n  - Kubecost/OpenCost appear only under `--allocation cluster`.\n  - CSV cells are guarded against spreadsheet formulas.\n- **IPC.**\n- `cost.import` and `cost.importRemove` serve only a `cli` connection\nand refuse on the demo gateway.\n  - `cost.products` and `cost.internal` serve `cli`/`ui`.\n- The `cost` namespace stays LAN-forbidden. None of the four is on the\ndesktop allowlist yet.\n- **Demo.** 30 days of lines for three products (`checkout`, `search`,\n`internal-tools`), with a spike on `payment-service` on the story-deploy\ndays, loaded through the real import. Two demo rules.\n\n## Builder decisions (within the spec)\n\n- The grain includes the region, so the same service in two regions\nstays two lines for region rules.\n- Array blocks follow the layered config's existing rule: the highest\nlayer with `[[cost.rule]]` blocks supplies all of them. A role pack's\nrules therefore apply until the owner writes their own, which replace\nthem whole.\n- The Vantage adapter uses one report configuration per day (the newest\nsynced). An older `group_by` can never double count, and the days set\naside are noted.\n- `--period week` runs from this Monday to today and `month` is month to\ndate. Reports (slice 3) define their own full-week period.\n- `finops/` uses `range` rather than `window`, because D48 bans the\nbrowser-global identifier.\n\n## Stated bounds\n\n- CSV only: no Parquet reader.\n- No network call, no model and no egress row on any of the four\nmethods.\n- The watched folder remembers imported files only for the current\ngateway run. After a restart it re-imports oldest first, which ends in\nthe same state.\n- `why`, reports, delivery and the connector sources are slices 2 to 8.\n\n## Test plan\n\n- [x] `bun run preflight:fast` green.\n- [x] Touched suites green: finops, ipc, config, demo, index, commands,\nplatform/assemble, cli commands, structure-audit (15 068 pass).\n- [x] The plan's Review Focus 1 to 5 each have a test: BOM/CRLF/quoted\nequal, month-to-date growth, two currencies, `<!here>` and `../../x`\nunassigned, empty vs zero.\n- [ ] CI (coverage floor and Sonar are Linux-authoritative).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Import FOCUS CSV cost data from files or configured folders, with dry\nruns, provider selection, and import removal.\n* View product and internal costs using configurable allocation rules,\nwith currency-separated totals and optional cluster allocation. Reports\nare available in text, CSV, and JSON formats.\n  * Demo data now includes sample cloud costs.\n* **Bug Fixes**\n  * Removing service data now also removes its associated cost records.\n* **Documentation**\n* Added guidance for cost imports, views, configuration, and data\nhandling. Phase 7’s Cost Pack is in progress, with its first of eight\nslices shipped.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-26T15:43:38Z",
+          "tree_id": "99d7d8620c5362d1093b015e212c5f06649f2514",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/bcfeb8a0c870c7b8135137a7df9cab69302e17ff"
+        },
+        "date": 1795708276011,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 182.7607807500033,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 181.50646150000176,
             "unit": "ms"
           }
         ]
