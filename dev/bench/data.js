@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795680369773,
+  "lastUpdate": 1795686220881,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "47a6f62280a071e6e352be9e26907484b587cf63",
-          "message": "test(e2e): pick the demo no-sidecar sentinel port outside the ephemeral range (#1552)\n\n## What\n\nThe release PR #1551 went red on one test: `demo-tour.e2e.test.ts` test\n5, \"the env-selected HTTP sidecar never started\", got\n`canConnect(httpPort) === true`. `main` itself is green; the same code\npassed on `main`, on #1549 and on #1550.\n\n## Cause\n\nThe test picked its port with `listen(0)`, read the number and closed\nthe listener. That returns an EPHEMERAL port, and the kernel hands\nephemeral ports to every later `listen(0)`. These suites run in one\nprocess with the whole repo, where dozens of tests bind port 0 in the\nminute or two between the pick and the assertion. When one of them lands\non the released number, \"nothing listens here\" is false with no sidecar\nanywhere. `demo-root-isolation.e2e.test.ts` had the identical shape and\nthe identical exposure.\n\n## Fix\n\nA shared `pickSentinelPort` helper picks a verified-free loopback port\nin 20000 to 29999, below every OS's ephemeral range: Linux starts at\n32768, macOS and Windows at 49152. No `listen(0)` can return a port from\nthere, so the port stays free unless the code under test binds it. The\nassertion is unchanged and stays strict.\n\nI considered identifying the listener instead, since `GET /v1/health`\nanswers `gateway: read_only_http`. Rejected: other tests start real\nread-only HTTP servers on ephemeral ports, so identity alone keeps a\nsmaller version of the same collision.\n\nThe helper's own test pins the premise: 64 concurrent `listen(0)` binds\nmust all land outside the sentinel range. If a runner image ever moves\nits ephemeral range down, that fails loudly instead of the collision\nquietly returning.\n\n## Verification\n\n- both demo e2e suites: 15 pass, 0 fail\n- `sentinel-port.test.ts`: 2 pass\n- `bun run typecheck:tests`: 0 new errors\n- `bun run preflight:fast`: passed\n- Not reproduced locally: the collision itself needs the whole-repo\nLinux run and luck. The mechanism is read from the code, and the single\nobserved failure matches it.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **Tests**\n- Added end-to-end coverage for selecting bindable sentinel ports within\nthe configured range.\n- Verified concurrent ephemeral ports remain outside the sentinel range.\n- Updated demo isolation and tour tests to use consistent sentinel-port\nallocation.\n  - Improved cleanup behavior for test servers when assertions fail.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Fable 5.1 <noreply@anthropic.com>",
-          "timestamp": "2026-09-19T22:04:29+03:00",
-          "tree_id": "afbad66f136ed8dac1a9662b81a2582024610558",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/47a6f62280a071e6e352be9e26907484b587cf63"
-        },
-        "date": 1789845114714,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 230.34492540000173,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 225.73074554999874,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 188.28277910000142,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b0a8d25fa55f1ab68586857e238ca235949ce8b5",
+          "message": "docs(roadmap): phase numbers follow the build order (#2167)\n\nThe roadmap's phase numbers now follow the build order, and the spine\nslots are gone. This is docs only: no code, migration, invariant, HITL\ntype or IPC method changes. The only code edits are three comment lines.\n\n**The owner's rulings (2026-11-26)**\n- Adoption comes first: what one engineer can do alone ships first.\n- The business is support and hosting. Everything stays open (OR-ECO-7\nstands).\n- Spine slot S5 (the Team Server) is removed, and its rows fold into the\nPlatform Layer.\n- The phase number is the build order. Done phases keep their numbers\n(1–6, 9.5, 9.7, 10, 17, 28), and the open phases are renumbered from 7.\n- Desktop Distribution is the last step before the team and business\nband.\n- The editor shows agent proposals read-only; approval stays at the\nterminal.\n\n**The new order** (each is new number, phase, old number)\n- 7: Cost Pack (formerly 30)\n- 8: Engineering Excellence (7)\n- 9: Security Engineering (8)\n- 11: AI Engineering Loop (9)\n- 12: Compliance Receipts (12.5)\n- 13: Agent Evolution (14)\n- 14: Vertical Personas (18)\n- 15: Sovereign Mesh (11)\n- 16: Mobile Companion (13.5)\n- 18: Desktop Distribution (13)\n- 19: Platform Layer (16, with the former 29 folded in)\n- 20: Enterprise (12)\n- 21: Cross-Org Federation (15)\n- 22: Ambient Surfaces (19)\n- 23: Personal & Household Federation (20)\n- 24–27 and 29–31: the research phases (21–27)\n\n**Structure**\n- New top-level **Build order** and **Client surfaces** sections.\n- The spine section becomes a short historical note.\n- Contents, Direction (with the new ruling block), Status Overview,\nActive and How to Update are rewritten.\n- Every renumbered heading carries a *formerly Phase N* line and keeps\nits old anchor, in both slug variants.\n- Historical text (shipped records, S1–S4, dated notes and older\nchangelog entries) keeps its numbers. The roadmap annotates them with\n`(now Phase N)`.\n\n**Rows:** open rows went from 423 to 412.\n- 9 deduplicated into pointers: the Phase 4 notarization row, S4-F6,\nS4-F8 and two installer rows, the Phase 5 RUM and web-vitals rows, and\nthe Phase 10 Data FinOps and sustainability rows.\n- 1 merged: the Team Server's service artifacts, folded into\nEnterprise's Docker and Helm rows.\n- 4 ticked as shipped: `nimbus why`, `nimbus egress`, the listing half\nof cost clean-up, and Full IaC drift.\n- 3 added:\n  - In Phase 7, the owner's launch of the held agent-door copy.\n  - In Phase 8, a read-only `POST /v1/agents/prereview` route.\n- In Phase 8, a design-first incident-records HTTP route. Both Phase 8\nroutes are for the browser extension.\n\nEvery other move is a relocation with a `(moved from Phase N)` note.\nThat includes the Team Server's other 7 rows, release-please, the Teams\nhalf of notification routing, the LoRA rows, Bedrock and the ecosystem\nrow.\n\n**References elsewhere** were updated in the files that cite open\nphases:\n- `CLAUDE.md`, `GEMINI.md`, `docs/README.md`, `SECURITY.md` and\n`SECURITY-INVARIANTS.md`.\n- `architecture.md`, `ecosystem-roadmap.md`, `schema-reference.md` and\nthe desktop smoke doc.\n- The nimbus-architecture skill and the docs site's HITL page.\n- The issue-template labels.\n- 3 gateway comments.\n\nThe spec and plan were reviewed and approved by Antigravity. They lived\non this branch only and are removed.\n\n`bun run preflight:fast` passes, including the markdown lint,\n`audit:doc-refs` and `audit:status-drift`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Documentation**\n* Updated the roadmap to use phase numbers as the build order, with\nPhase 7 (Cost Pack) next and the team server planned for Phase 19.\n* Recorded S1–S4 as shipped and S5 as removed; revised phase\nassignments, roadmap entries, and cross-references across project\ndocumentation.\n* Updated the feature-request phase options and clarified that v0.1.0\nstill requires one-shot consent for each covered action. No runtime\nbehavior changed.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-26T09:35:51Z",
+          "tree_id": "b6187d92c75c62ed85bdf2ae1babf4ab53b532a5",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/b0a8d25fa55f1ab68586857e238ca235949ce8b5"
+        },
+        "date": 1795686216464,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 178.57933850000117,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 177.30623319999867,
             "unit": "ms"
           }
         ]
