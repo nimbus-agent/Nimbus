@@ -114,6 +114,8 @@ Branch: `dev/asaf/phase7-s1-cost-lines` from `origin/main`.
 
 Branch: `dev/asaf/phase7-s2-cost-why` from `origin/main` (after PR #2168, slice 1, merged). Spec § 4 (`cost why`), Fixes 6 (D48 boundary), Resolved 5 and Fixes 7 (currency), acceptance criterion 1.
 
+**As built (branch `dev/asaf/phase7-s2-cost-why`, stacked on slice 1, 2026-11-26):** Tasks 1 to 6 shipped with these builder calls: movers name the provider service as `part`; `rulesInForce` handles a refused config in the pure layer; deploys of every environment are listed and carry a `runId` (`ci_run_external_id`, else the annotation metadata `run_id`); a non-GitHub repo gets a merge-commit gap; the demo acceptance asserts the owners GAP (spec acceptance names the owning service; the demo binds no repo to a service); `nimbus cost rules check` has its own CLI file. Final review fixes: one gather over both periods (one source rule), the deploy window reaches the day before a first-day spike, services ranked by net rise within each currency (round-robin), per-currency `coverage` and `unassigned`, freshness on rules check.
+
 **What slice 1 left that this slice uses (verified 2026-11-26):** a cost line's service is the `set.service` output of the matching `[[cost.rule]]` (a `[ci.service.<id>]` / `[metrics.dora.<id>]` id); `finops/cost-view-input.ts` `gatherCostViewInput` gives the lines after the authoritative-source rule; `finops/cost-rules.ts` `allocate`; `finops/cost-views.ts` `periodWindow` (renamed field `range`, because D48 bans the identifier `window`).
 
 **Index facts (verified 2026-11-26):**
@@ -139,9 +141,9 @@ Branch: `dev/asaf/phase7-s2-cost-why` from `origin/main` (after PR #2168, slice 
   - `services`: the distinct rule `service` outputs among the target's lines, movers with a positive change first.
 - `provisionalFrom` follows `COST_PROVISIONAL_DAYS` (the label, never an exclusion; Resolved 7).
 
-- [ ] **Step 1:** Tests: previous range alignment (14d → the 14 days before); per-currency comparison with two currencies and no total; `changePct` null on a zero baseline; spike day picked on the demo-shaped series (flat then two high days) and null on a flat series; movers ranking and truncation count; a product target and a service target; an unknown target lists the known names; a target whose current cost is 0 but whose previous cost is not is still resolved (and shows the drop); a tie between two spike days picks the earlier; a refused config (`configError`) reads everything as unassigned and the target as unknown.
-- [ ] **Step 2:** Implement (pure; named steps, each function under the S3776 limit). Run → PASS.
-- [ ] **Step 3:** Commit `feat(gateway): the cost comparison behind nimbus cost why`.
+- [x] **Step 1:** Tests: previous range alignment (14d → the 14 days before); per-currency comparison with two currencies and no total; `changePct` null on a zero baseline; spike day picked on the demo-shaped series (flat then two high days) and null on a flat series; movers ranking and truncation count; a product target and a service target; an unknown target lists the known names; a target whose current cost is 0 but whose previous cost is not is still resolved (and shows the drop); a tie between two spike days picks the earlier; a refused config (`configError`) reads everything as unassigned and the target as unknown.
+- [x] **Step 2:** Implement (pure; named steps, each function under the S3776 limit). Run → PASS.
+- [x] **Step 3:** Commit `feat(gateway): the cost comparison behind nimbus cost why`.
 
 ### Task 2: The change context query (`agents/_lib/cost-why-query.ts`)
 
@@ -155,9 +157,9 @@ Branch: `dev/asaf/phase7-s2-cost-why` from `origin/main` (after PR #2168, slice 
 - A service id with no `[ci.service]` / `[metrics.dora]` block: `configured: false`, no deploy query, gap "service X is not configured ([ci.service.X])".
 - Read only; no write, no network, no model; bound parameters only (I9).
 
-- [ ] **Step 1:** Tests on real SQLite: a service with two deploys (one near the spike), a deploy later on `toDay` than midnight is inside the window, a deploy 37 h after the spike day's midnight is `nearSpike`, the PR joined by sha with repo, number and author, owners from a seeded ownership entity; a deploy outside the window excluded; an unconfigured service and a service with no owners produce the named gaps; the cap and truncation count.
-- [ ] **Step 2:** Implement. Run → PASS; `bun run audit:invariants` stays green (no D48/D22(d) change).
-- [ ] **Step 3:** Commit `feat(gateway): the deploy, pull request and owner context for a cost change`.
+- [x] **Step 1:** Tests on real SQLite: a service with two deploys (one near the spike), a deploy later on `toDay` than midnight is inside the window, a deploy 37 h after the spike day's midnight is `nearSpike`, the PR joined by sha with repo, number and author, owners from a seeded ownership entity; a deploy outside the window excluded; an unconfigured service and a service with no owners produce the named gaps; the cap and truncation count.
+- [x] **Step 2:** Implement. Run → PASS; `bun run audit:invariants` stays green (no D48/D22(d) change).
+- [x] **Step 3:** Commit `feat(gateway): the deploy, pull request and owner context for a cost change`.
 
 ### Task 3: `cost.rulesCheck` (`finops/cost-rules-check.ts`)
 
@@ -165,9 +167,9 @@ Branch: `dev/asaf/phase7-s2-cost-why` from `origin/main` (after PR #2168, slice 
 
 **Interfaces:** `checkCostRules(input: CostViewInput): { range; configError; byCurrency: Record<string, { total; unassigned; unassignedPct: number | null }>; rules: { index; lines; amountByCurrency: Record<string, number>; unassignedLines: number }[]; unusedRules: number[]; topUnassigned: { provider; service; subAccount: string | null; tagKeys: string[]; lines; amountByCurrency: Record<string, number>; reason: string }[]; topUnassignedTruncated: number }` (top 10 by line count, the rest counted).
 
-- [ ] **Step 1:** Tests: per-rule counts including a rule that matched but produced an unsafe value (counted under that rule's `unassignedLines`); an unused rule listed; top unassigned grouped by (provider, service, sub-account, sorted tag keys) with the reason; a refused config reports the error and no rule counts.
-- [ ] **Step 2:** Implement. Run → PASS.
-- [ ] **Step 3:** Commit `feat(gateway): nimbus cost rules check`.
+- [x] **Step 1:** Tests: per-rule counts including a rule that matched but produced an unsafe value (counted under that rule's `unassignedLines`); an unused rule listed; top unassigned grouped by (provider, service, sub-account, sorted tag keys) with the reason; a refused config reports the error and no rule counts.
+- [x] **Step 2:** Implement. Run → PASS.
+- [x] **Step 3:** Commit `feat(gateway): nimbus cost rules check`.
 
 ### Task 4: IPC `cost.why` and `cost.rulesCheck`
 
@@ -178,9 +180,9 @@ Branch: `dev/asaf/phase7-s2-cost-why` from `origin/main` (after PR #2168, slice 
 - Both LAN-forbidden by the namespace entry; neither on the renderer allowlist (I7 unchanged).
 - Errors: the handlers throw `CostViewsRpcError` (or a subclass), which `cost-rpc.ts` `viaImport` already maps to `CostRpcError`.
 
-- [ ] **Step 1:** Tests: `cli` and `ui` served, every other kind refused; bad params `-32602`; an unknown target lists the known names; the result carries context only for the services in `CostWhy.services`; **no egress row** after either call; global `fetch` replaced by a throwing stub for the duration of the call is never reached; both refused over LAN.
-- [ ] **Step 2:** Implement. Run → PASS.
-- [ ] **Step 3:** Commit `feat(gateway): cost.why and cost.rulesCheck`.
+- [x] **Step 1:** Tests: `cli` and `ui` served, every other kind refused; bad params `-32602`; an unknown target lists the known names; the result carries context only for the services in `CostWhy.services`; **no egress row** after either call; global `fetch` replaced by a throwing stub for the duration of the call is never reached; both refused over LAN.
+- [x] **Step 2:** Implement. Run → PASS.
+- [x] **Step 3:** Commit `feat(gateway): cost.why and cost.rulesCheck`.
 
 ### Task 5: CLI `nimbus cost why` and `nimbus cost rules check`
 
@@ -189,16 +191,16 @@ Branch: `dev/asaf/phase7-s2-cost-why` from `origin/main` (after PR #2168, slice 
 - `nimbus cost why <product|service> [--period <N>d|week|month] [--json]`: per currency the current vs previous amount, the change and percent ("new" when the previous was 0), the spike day, the movers, then per service the deploys (near-spike first, with the PR number, title and author) and the owners, then the gaps, the provisional marker and the source freshness. Text output strips control characters and caps vendor strings at 200 characters. Exit 0 for a comparison, 1 for no cost data, an unknown target or an error.
 - `nimbus cost rules check [--period ...] [--json]`: the unassigned share per currency, per-rule counts, unused rules, the top unassigned groups with their reasons. Exit 0, or 1 for a refused config, no cost data or an error.
 
-- [ ] **Step 1:** Tests over faked IPC results: rendering of each section, the "new" case, two currencies, an unknown target's known names, exit codes, `--json`.
-- [ ] **Step 2:** Implement (named steps; each function under the S3776 limit). Run → PASS.
-- [ ] **Step 3:** Commit `feat(cli): nimbus cost why and nimbus cost rules check`.
+- [x] **Step 1:** Tests over faked IPC results: rendering of each section, the "new" case, two currencies, an unknown target's known names, exit codes, `--json`.
+- [x] **Step 2:** Implement (named steps; each function under the S3776 limit). Run → PASS.
+- [x] **Step 3:** Commit `feat(cli): nimbus cost why and nimbus cost rules check`.
 
 ### Task 6: Demo acceptance, docs, slice close-out
 
 **Files:** Create `packages/gateway/src/demo/cost-why-demo.test.ts`; Modify `docs/cli-reference.md`, `docs/architecture.md` (Cost lines section: `cost why`, the D48 split), `docs/roadmap.md` (Phase 7 rows: the cost-to-change join and the briefs row progress notes; status line "slice 2 of 8"), `docs/CHANGELOG.md`, `CLAUDE.md`/`GEMINI.md` (status line), the plan's slice-2 checkboxes on `dev/asaf/phase7-cost-pack`.
 
-- [ ] **Step 1:** Acceptance test (spec acceptance 1): seed the demo corpus, call `cost.why { target: "checkout" }` through `dispatchCostRpc` with the demo config dir; assert the spike day is the seed day or the day before, `payment-service` is the first service, its deploys include run `7412` with `nearSpike: true` and PR `acme/payments#412`, the owners list is non-empty, no egress row was written, and the throwing `fetch` stub was never called.
-- [ ] **Step 2:** Docs; `bun run preflight:fast`; the touched suites (`packages/gateway/src/finops`, `packages/gateway/src/agents/_lib`, `packages/gateway/src/ipc`, `packages/gateway/src/demo`, `packages/cli/src/commands`).
+- [x] **Step 1:** Acceptance test (spec acceptance 1): seed the demo corpus, call `cost.why { target: "checkout" }` through `dispatchCostRpc` with the demo config dir; assert the spike day is the seed day or the day before, `payment-service` is the first service, its deploys include run `7412` with `nearSpike: true` and PR `acme/payments#412`, the payment-service context carries the "no ownership entry" gap (the demo binds no repo to a service; spec acceptance names the owning service), no egress row was written, and the throwing `fetch` stub was never called.
+- [x] **Step 2:** Docs; `bun run preflight:fast`; the touched suites (`packages/gateway/src/finops`, `packages/gateway/src/agents/_lib`, `packages/gateway/src/ipc`, `packages/gateway/src/demo`, `packages/cli/src/commands`).
 - [ ] **Step 3:** PR `feat: nimbus cost why joins a cost change to its deploys, pull requests and owners (Phase 7, slice 2)`; `gh pr merge --squash --auto`; resolve review threads.
 
 **Review focus (slice 2):**
