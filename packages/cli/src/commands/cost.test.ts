@@ -240,6 +240,8 @@ describe("costRunner", () => {
       [["internal", "--csv"], "cost.internal"],
       [["import", "/exports/a.csv"], "cost.import"],
       [["import", "--remove", "focus:0123456789abcdef"], "cost.importRemove"],
+      [["why", "checkout"], "cost.why"],
+      [["rules", "check"], "cost.rulesCheck"],
     ] as const) {
       const calls: [string, unknown][] = [];
       const ipc: CostIpc = {
