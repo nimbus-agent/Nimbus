@@ -240,3 +240,144 @@ describe("runCostReportWith: render", () => {
     expect(JSON.parse(json.s.out)).toEqual(RENDER);
   });
 });
+
+describe("runCostReportWith: the remaining list and render paths", () => {
+  const args = {
+    mode: "render" as const,
+    name: "checkout-weekly",
+    channel: null,
+    format: "text" as const,
+  };
+
+  test("list --json exits 1 only for a refused config; a bare list names missing schedule and channels", async () => {
+    const ok = sink();
+    expect(await runCostReportWith(fake(LIST), { mode: "list", json: true }, ok.sink)).toBe(0);
+    expect(JSON.parse(ok.s.out)).toEqual(LIST);
+    const refused = sink();
+    const bad = { reports: [], configError: "bad" };
+    expect(await runCostReportWith(fake(bad), { mode: "list", json: true }, refused.sink)).toBe(1);
+    expect(JSON.parse(refused.s.out)).toEqual(bad);
+    const bare = sink();
+    const BARE = {
+      reports: [
+        { name: "a", scope: { env: "prod" }, period: "7d", schedule: null, tz: null, channels: [] },
+        {
+          name: "b",
+          scope: { product: "x" },
+          period: "month",
+          schedule: "0 8 1 * *",
+          tz: null,
+          channels: [{ kind: "teams", format: "html" }],
+        },
+      ],
+      configError: null,
+    };
+    expect(await runCostReportWith(fake(BARE), { mode: "list", json: false }, bare.sink)).toBe(0);
+    expect(bare.s.out).toContain("a  env=prod  7d  no schedule  no channel\n");
+    expect(bare.s.out).toContain(
+      "b  product=x  month  schedule 0 8 1 * * (gateway zone)  teams (html)\n",
+    );
+  });
+
+  test("a falling, new or unattributed currency, many rows, a Teams target and a shortened body", async () => {
+    const rows = Array.from({ length: 23 }, (_, i) => ({
+      part: `svc-${String(i)}`,
+      provider: "gcp",
+      env: null,
+      amount: 1,
+    }));
+    const model = {
+      ...MODEL,
+      byCurrency: {
+        EUR: {
+          total: 10,
+          previous: 30,
+          change: -20,
+          changePct: null,
+          topMovers: [{ service: null, part: "BigQuery", provider: "gcp", change: -20 }],
+          breakdown: rows,
+          unassigned: 0,
+          unassignedPct: null,
+        },
+      },
+      provisionalFrom: "2026-11-21",
+      freshness: [{ source: "focus", lastDay: null, provisionalFrom: null }],
+    };
+    const r = {
+      model,
+      channels: [
+        channel({
+          kind: "teams",
+          format: "html",
+          to: { team: "Finance", channel: "Cost" },
+          truncated: { breakdown: 3, topMovers: 1 },
+        }),
+        channel({ body: null }),
+      ],
+    };
+    const { s, sink: k } = sink();
+    expect(await runCostReportWith(fake(r), args, k)).toBe(0);
+    expect(s.out).toContain("EUR  10.00 vs 30.00  -20.00 (new)");
+    expect(s.out).toContain("  mover: BigQuery (gcp) -20.00\n");
+    expect(s.out).toContain("  svc-19 (gcp): 1.00\n");
+    expect(s.out).not.toContain("svc-20");
+    expect(s.out).toContain("  … and 3 more (--csv lists them all)\n");
+    expect(s.out).toContain("Unassigned EUR (in no product or service): 0.00\n");
+    expect(s.out).toContain("The days from 2026-11-21 are provisional.\n");
+    expect(s.out).toContain("Source focus: data up to none\n");
+    expect(s.out).toContain("--- teams to Finance/Cost (html) ---");
+    expect(s.out).toContain("(shortened to fit: 3 breakdown rows and 1 movers left out)\n");
+  });
+
+  test("a refused config in the model exits 1 before any channel", async () => {
+    const { s, sink: k } = sink();
+    const r = { ...RENDER, model: { ...MODEL, configError: "rule 2 is bad" } };
+    expect(await runCostReportWith(fake(r), args, k)).toBe(1);
+    expect(s.err).toContain("The [cost] config is refused, so no rule applies: rule 2 is bad");
+    expect(s.out).toBe("");
+  });
+
+  test("--channel: an error, no channel or a door refusal exits 1", async () => {
+    const one = { ...args, channel: "slack" };
+    const errored = sink();
+    const withError = { ...RENDER, channels: [channel({ body: null, error: "over the cap" })] };
+    expect(await runCostReportWith(fake(withError), one, errored.sink)).toBe(1);
+    expect(errored.s.err).toBe("not rendered: over the cap\n");
+    const none = sink();
+    expect(await runCostReportWith(fake({ ...RENDER, channels: [] }), one, none.sink)).toBe(1);
+    expect(none.s.err).toBe("not rendered: no such channel\n");
+    const door = sink();
+    const withDoor = { ...RENDER, channels: [channel({ doorRefusal: "a broadcast mention" })] };
+    expect(await runCostReportWith(fake(withDoor), one, door.sink)).toBe(1);
+    expect(door.s.out).toContain("*Checkout*");
+    expect(door.s.err).toBe("the send door would refuse it: a broadcast mention\n");
+  });
+
+  test("--csv and --json exit 1 for no data, a refused config or a channel that did not render", async () => {
+    const csv = { ...args, format: "csv" as const };
+    const json = { ...args, format: "json" as const };
+    const empty = { ...RENDER, model: { ...MODEL, empty: true, byCurrency: {} } };
+    const refused = { ...RENDER, model: { ...MODEL, configError: "bad" } };
+    const csvEmpty = sink();
+    expect(await runCostReportWith(fake(empty), csv, csvEmpty.sink)).toBe(1);
+    expect(csvEmpty.s.out).toBe("currency,part,provider,env,amount\n");
+    expect(await runCostReportWith(fake(refused), csv, sink().sink)).toBe(1);
+    expect(await runCostReportWith(fake(empty), json, sink().sink)).toBe(1);
+    expect(await runCostReportWith(fake(refused), json, sink().sink)).toBe(1);
+    const withError = { ...RENDER, channels: [channel({ error: "x", body: null })] };
+    expect(await runCostReportWith(fake(withError), json, sink().sink)).toBe(1);
+    const withDoor = { ...RENDER, channels: [channel({ doorRefusal: "y" })] };
+    expect(await runCostReportWith(fake(withDoor), json, sink().sink)).toBe(1);
+  });
+
+  test("a non-Error thrown by the IPC is reported and exits 1", async () => {
+    const { s, sink: k } = sink();
+    const ipc = {
+      async call(): Promise<unknown> {
+        throw "socket closed";
+      },
+    };
+    expect(await runCostReportWith(ipc, { mode: "list", json: false }, k)).toBe(1);
+    expect(s.err).toBe("nimbus cost report: socket closed\n");
+  });
+});

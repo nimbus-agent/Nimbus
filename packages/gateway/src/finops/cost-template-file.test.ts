@@ -1,5 +1,6 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import * as fs from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, type Stats, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -90,5 +91,123 @@ describe("readCostTemplateFile", () => {
     writeFileSync(outside, "outside the folder");
     symlinkSync(outside, join(templates, "weekly.md"), "file");
     expect(reason("weekly.md")).toContain("is a link");
+  });
+});
+
+describe("readCostTemplateFile: a cost-templates that is not a folder", () => {
+  test("a regular file named cost-templates is refused", () => {
+    rmSync(templates, { recursive: true, force: true });
+    writeFileSync(templates, "not a folder");
+    expect(reason("weekly.md")).toBe("cost-templates is not a folder");
+  });
+});
+
+// A swap between the checks and the read cannot be timed on a real filesystem, so these drive the fs
+// calls the reader makes to the outcome a swap produces. Every spy is synchronous and restored before the
+// test returns, so no other test in the process can see it.
+describe("readCostTemplateFile: a swap between the checks and the read is refused", () => {
+  const errno = (code: string): NodeJS.ErrnoException => {
+    const e = new Error(code) as NodeJS.ErrnoException;
+    e.code = code;
+    return e;
+  };
+  function withSpy(spy: { mockRestore(): void }, f: () => void): void {
+    try {
+      f();
+    } finally {
+      spy.mockRestore();
+    }
+  }
+  beforeEach(() => {
+    writeFileSync(join(templates, "weekly.md"), "Checkout: {total}");
+  });
+
+  test("the file became a link before it was opened (O_NOFOLLOW's ELOOP)", () => {
+    const spy = spyOn(fs, "openSync").mockImplementation(() => {
+      throw errno("ELOOP");
+    });
+    withSpy(spy, () => {
+      expect(reason("weekly.md")).toBe("the template file weekly.md is a link");
+    });
+  });
+
+  test("any other open failure names its code", () => {
+    const spy = spyOn(fs, "openSync").mockImplementation(() => {
+      throw errno("EACCES");
+    });
+    withSpy(spy, () => {
+      expect(reason("weekly.md")).toBe("could not open weekly.md: EACCES");
+    });
+  });
+
+  test("the opened handle is not a regular file", () => {
+    const real = fs.fstatSync;
+    const spy = spyOn(fs, "fstatSync").mockImplementation(((fd: number) => {
+      const st = real(fd);
+      return Object.assign(Object.create(Object.getPrototypeOf(st) as object) as Stats, st, {
+        isFile: () => false,
+      });
+    }) as typeof fs.fstatSync);
+    withSpy(spy, () => {
+      expect(reason("weekly.md")).toBe("the template file weekly.md is not a regular file");
+    });
+  });
+
+  test("a file that shrank during the read yields only what was read", () => {
+    const real = fs.readSync;
+    let calls = 0;
+    const spy = spyOn(fs, "readSync").mockImplementation(((
+      fd: number,
+      buf: NodeJS.ArrayBufferView,
+      off: number,
+      _len: number,
+      pos: number,
+    ) => {
+      calls += 1;
+      return calls === 1 ? real(fd, buf, off, 8, pos) : 0;
+    }) as typeof fs.readSync);
+    withSpy(spy, () => {
+      expect(readCostTemplateFile(configDir, "weekly.md")).toBe("Checkout");
+    });
+  });
+
+  /** lstat answers truly for the folder and file checks, then `after` for the check after the read. */
+  function afterRead(after: (real: Stats) => Stats): { mockRestore(): void } {
+    const real = fs.lstatSync;
+    let calls = 0;
+    return spyOn(fs, "lstatSync").mockImplementation(((p: string) => {
+      calls += 1;
+      const st = real(p);
+      return calls <= 2 ? st : after(st);
+    }) as typeof fs.lstatSync);
+  }
+  const variant = (st: Stats, over: Partial<Stats>): Stats =>
+    Object.assign(Object.create(Object.getPrototypeOf(st) as object) as Stats, st, over);
+  const CHANGED = "the template file weekly.md changed while it was read";
+
+  test("the file was removed, became a link, or is another file after the read", () => {
+    withSpy(
+      afterRead(() => {
+        throw errno("ENOENT");
+      }),
+      () => expect(reason("weekly.md")).toBe(CHANGED),
+    );
+    withSpy(
+      afterRead((st) => variant(st, { isSymbolicLink: () => true })),
+      () => expect(reason("weekly.md")).toBe(CHANGED),
+    );
+    withSpy(
+      afterRead((st) => variant(st, { ino: st.ino + 1 })),
+      () => expect(reason("weekly.md")).toBe(CHANGED),
+    );
+    withSpy(
+      afterRead((st) => variant(st, { dev: st.dev + 1 })),
+      () => expect(reason("weekly.md")).toBe(CHANGED),
+    );
+    // Unchanged: the same reader with a truthful lstat reads the file.
+    withSpy(
+      afterRead((st) => st),
+      () => expect(readCostTemplateFile(configDir, "weekly.md")).toBe("Checkout: {total}"),
+    );
   });
 });
