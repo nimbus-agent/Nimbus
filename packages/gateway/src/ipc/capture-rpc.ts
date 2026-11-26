@@ -1,4 +1,3 @@
-import { agentDoorRow } from "../connectors/connector-writes/agent-door.ts";
 import type {
   AgentDoor,
   DefinitionVerification,
@@ -17,7 +16,7 @@ import type {
   ConnectorWriteRow,
   PreviewCredentialResolver,
 } from "../connectors/connector-writes/types.ts";
-import { userMcpActionParts, userMcpToolKeyForActionType } from "../connectors/user-mcp-store.ts";
+import { userMcpActionParts } from "../connectors/user-mcp-store.ts";
 import type { EgressSink } from "../egress/egress-ledger.ts";
 import { classifyDoorRejection } from "../engine/door-rejection.ts";
 import type { ExecuteOptions, ExecutorPolicyDep } from "../engine/executor.ts";
@@ -49,12 +48,14 @@ import {
 import type { CaptureAttemptLimiter } from "../mcp-sink/capture-rate-limit.ts";
 import {
   type ActDeps,
+  type ActExecuteOutcome,
   type ActionBasis,
   type ActionProvenance,
   type ActionRejectCode,
   CaptureError,
 } from "../mcp-sink/capture-types.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
+import { type ActRoute, actRoute, refreshCredentialOrReject } from "./capture-act-steps.ts";
 import { type ConsentCoordinator, humanOnlyConsent, vetoingConsent } from "./consent.ts";
 import { RpcMethodError } from "./server/rpc-error.ts";
 
@@ -136,9 +137,6 @@ export interface AgentDoorActWiring {
 export function actWriteRows(w: CaptureActWiring | undefined): readonly ConnectorWriteRow[] {
   return w?.beforeStateRows ?? CONNECTOR_WRITE_ROWS;
 }
-
-/** The fixed text when the write's credential instance cannot be established (echoes no stored value). */
-const CREDENTIAL_UNVERIFIED_REASON = "the credential the write would use could not be verified";
 
 /** The stored row's provenance as the executor's gateway-set proposer (all of it UNVERIFIED). */
 function agentProposerOf(p: ActionProvenance): AgentProposer {
@@ -225,92 +223,40 @@ export function buildActDeps(
   return {
     ...(opts.humanOnly === undefined ? {} : { humanOnly: true }),
     async execute(actionType, input, provenance) {
-      // The tool is ALWAYS gateway-chosen: the write row for a first-party type, the canonical
-      // `<serviceId>_<tool>` key for a user-MCP type (the exact pair `connector.userMcpCall` builds,
-      // and the only key the dispatcher's I42 pairing accepts for that type). The second lookup
-      // returns undefined for anything that is not an `mcp_*` type.
-      // Routed by the PRODUCTION write table (the `beforeStateRows` seam only changes what the
-      // preview and the before-state are built from). What may reach here is decided by the gate's
-      // verdict at submit and at approval (the agent door), never by routing.
-      const row = agentDoorRow(actionType);
-      const toolId = row?.toolId ?? userMcpToolKeyForActionType(actionType);
-      if (toolId === undefined) {
-        // Never dispatch a first-party write by its type (spec § 6.3): no routing row, no call.
-        // This exact message is what classifyActionError maps to ERR_ACTION_TOOL_NOT_FOUND.
-        throw new Error("Tool not found");
-      }
+      // 1. Routing: the tool is ALWAYS gateway-chosen, never the proposer's (spec § 6.3).
+      const route = actRoute(actionType);
+      // 2. The door runtime: a proposal with no `approved` basis, or no runtime, is refused.
       const door = w.agentDoor;
       if (provenance.basis !== "approved" || door === undefined) {
         return { status: "rejected", reason: NO_DOOR_RUNTIME_REASON };
       }
-      // The prompt must name the instance the write WILL run against, read fresh from the Vault
-      // the write uses (as the executor does on every other door). A credential whose instance
-      // cannot be established (a present but invalid base) is rejected here: no prompt, no
-      // dispatch, a fixed outcome that echoes no stored value.
-      try {
-        await w.previewCredentialFor?.refresh?.(serviceOf(actionType));
-      } catch {
-        return {
-          status: "rejected",
-          reason: CREDENTIAL_UNVERIFIED_REASON,
-          code: "ERR_ACTION_CREDENTIAL_UNVERIFIED",
-        };
-      }
-      // AD5a: a user-MCP call carries the facts the prompt shows (third-party code, the server, the
-      // sandbox reach, the approval), checked against ONE listing here; a failed check is rejected
-      // with no prompt. No facts function wired: fail closed.
-      let userMcpCall: UserMcpCallFacts | undefined;
-      if (userMcpActionParts(actionType) !== undefined) {
-        const f: UserMcpCallFactsOutcome =
-          door.userMcpCallFacts === undefined
-            ? { ok: false, detail: USER_MCP_FACTS_UNCHECKED }
-            : await door
-                .userMcpCallFacts(actionType, provenance.basis, provenance.createdAt)
-                .catch(
-                  (): UserMcpCallFactsOutcome => ({ ok: false, detail: USER_MCP_FACTS_UNCHECKED }),
-                );
-        if (!f.ok) {
-          return {
-            status: "rejected",
-            reason: escapeUnverifiedLine(f.detail),
-            ...(f.code === undefined ? {} : { code: f.code }),
-          };
-        }
-        userMcpCall = f.facts;
-      }
-      const options = await executeOptionsFor(door, rowNamed(row, w));
-      let vetoed: string | undefined;
-      let vetoCode: ActionRejectCode | undefined;
-      // What the prompt showed, carried to the check after the answer: the registration it named and
-      // the FULL hash of the approval. Only a user-MCP call has facts; one with no approval is refused.
-      if (userMcpCall?.approval === null) {
-        return { status: "rejected", reason: USER_MCP_FACTS_UNCHECKED };
-      }
-      const shown: UserMcpCallBinding | undefined =
-        userMcpCall?.approval == null
-          ? undefined
-          : {
-              registeredAt: userMcpCall.registeredAt,
-              definitionSha256: userMcpCall.approval.definitionSha256,
-            };
+      // 3. The credential instance the prompt will name.
+      const unverified = await refreshCredentialOrReject(w.previewCredentialFor, actionType);
+      if (unverified !== undefined) return unverified;
+      // 4. A user-MCP call's facts: one listing and the definition check, before any prompt.
+      const call = await userMcpCallFor(door, actionType, {
+        ...provenance,
+        basis: provenance.basis,
+      });
+      if (call.rejected !== undefined) return call.rejected;
+      const userMcpCall = call.facts;
+      // 5. The row's support tools, as the live listing shows them.
+      const row = rowNamed(route.row, w);
+      const options = await executeOptionsFor(door, row);
+      // 6. The veto channel: the owner's approval is re-checked AFTER the answer (`veto` records why).
+      const veto: DoorVeto = {};
+      const shown = shownBindingOf(userMcpCall);
       const channel =
         door !== undefined
           ? vetoingConsent(
               humanChannel,
-              async () => {
-                const v = await door.verifyDefinition(actionType, provenance.createdAt, shown);
-                if (v.ok) return undefined;
-                // Only the recheck's own suspension code is stored: a tool merely missing from the
-                // listing is refused without a mark and without a code (OR-AD-14).
-                vetoCode = v.code === VETO_CODE ? VETO_CODE : undefined;
-                return v.detail;
-              },
+              vetoCheckOf(door, actionType, provenance, shown, veto),
               (reason) => {
-                vetoed = reason;
+                veto.reason = reason;
               },
             )
           : humanChannel;
-      // Phase 28 AD1: the SAME door maker as the model door (no delegate, no standing rule, the
+      // 7. Phase 28 AD1: the SAME door maker as the model door (no delegate, no standing rule, the
       // before-state runner), so the executor's own prompt (the typed preview with the target's
       // current state) is what the owner sees. The LOCAL owner who ran `captures accept` answers.
       // The action's `origin` and `proposer` are set here, by the gateway, from the stored row;
@@ -318,45 +264,149 @@ export function buildActDeps(
       const executor = buildAgentWriteExecutor({
         clientId,
         consentCoordinator: channel,
-        audit: w.audit,
-        dispatcher: w.dispatcher,
-        egressSink: w.egressSink,
-        policyHitl: w.policyHitl,
-        getTribalKbConfig: w.getTribalKbConfig,
-        ...(w.previewCredentialFor === undefined
-          ? {}
-          : { previewCredentialFor: w.previewCredentialFor }),
-        ...(w.beforeStateRows === undefined ? {} : { beforeStateRows: w.beforeStateRows }),
+        ...doorExecutorWiring(w),
       });
-      const action: PlannedAction = {
-        type: actionType,
-        origin: "agent",
-        proposer: agentProposerOf(provenance),
-        ...(userMcpCall === undefined ? {} : { userMcpCall }),
-        payload: { mcpToolId: toolId, input },
-      };
-      const out =
-        options === undefined
-          ? await executor.execute(action)
-          : await executor.execute(action, options);
-      if (out.status === "ok") return { status: "ok", result: out.result };
-      // A veto is the owner's answer overruled: the executor recorded a decline, the capture
-      // records why. Escaped HERE, once, so both captures.accept and approvals.approve return a
-      // one-line, control-free reason (a guard's text can quote agent-supplied values).
-      if (vetoed !== undefined) {
-        return {
-          status: "rejected",
-          reason: escapeUnverifiedLine(vetoed),
-          ...(vetoCode === undefined ? {} : { code: vetoCode }),
-        };
-      }
-      const code = classifyDoorRejection(rowNamed(row, w), out.reason);
-      return {
-        status: "rejected",
-        ...(out.reason === undefined ? {} : { reason: escapeUnverifiedLine(out.reason) }),
-        ...(code === undefined ? {} : { code }),
-      };
+      const action = doorActionOf(actionType, route, input, provenance, userMcpCall);
+      const out = await executeWithOptions(executor, action, options);
+      // 8. The outcome: a veto overrules the executor's answer, with its own reason and code.
+      return doorOutcomeOf(out, veto, row);
     },
+  };
+}
+
+type UserMcpCallPhase =
+  | { readonly rejected: ActExecuteOutcome; readonly facts?: undefined }
+  | { readonly rejected?: undefined; readonly facts?: UserMcpCallFacts };
+
+/**
+ * AD5a: a user-MCP call carries the facts the prompt shows (third-party code, the server, the
+ * sandbox reach, the approval), checked against ONE listing here; a failed check is rejected
+ * with no prompt. No facts function wired: fail closed. A call with no approval is refused too.
+ */
+async function userMcpCallFor(
+  door: AgentDoorActWiring,
+  actionType: string,
+  provenance: ActionProvenance & { readonly basis: ActionBasis },
+): Promise<UserMcpCallPhase> {
+  if (userMcpActionParts(actionType) === undefined) return {};
+  const f: UserMcpCallFactsOutcome =
+    door.userMcpCallFacts === undefined
+      ? { ok: false, detail: USER_MCP_FACTS_UNCHECKED }
+      : await door
+          .userMcpCallFacts(actionType, provenance.basis, provenance.createdAt)
+          .catch((): UserMcpCallFactsOutcome => ({ ok: false, detail: USER_MCP_FACTS_UNCHECKED }));
+  if (!f.ok) {
+    return {
+      rejected: {
+        status: "rejected",
+        reason: escapeUnverifiedLine(f.detail),
+        ...(f.code === undefined ? {} : { code: f.code }),
+      },
+    };
+  }
+  // Only a user-MCP call has facts; one with no approval is refused.
+  if (f.facts.approval === null) {
+    return { rejected: { status: "rejected", reason: USER_MCP_FACTS_UNCHECKED } };
+  }
+  return { facts: f.facts };
+}
+
+/** What the prompt showed, carried to the check after the answer: the registration and the FULL approval hash. */
+function shownBindingOf(userMcpCall: UserMcpCallFacts | undefined): UserMcpCallBinding | undefined {
+  return userMcpCall?.approval == null
+    ? undefined
+    : {
+        registeredAt: userMcpCall.registeredAt,
+        definitionSha256: userMcpCall.approval.definitionSha256,
+      };
+}
+
+/** Why the owner's answer was overruled after it was given (one record per run, written by the veto). */
+interface DoorVeto {
+  reason?: string;
+  code?: ActionRejectCode | undefined;
+}
+
+/** The re-check run after the owner's answer; it writes the veto's code, the channel writes its reason. */
+function vetoCheckOf(
+  door: AgentDoorActWiring,
+  actionType: string,
+  provenance: ActionProvenance,
+  shown: UserMcpCallBinding | undefined,
+  veto: DoorVeto,
+): () => Promise<string | undefined> {
+  return async () => {
+    const v = await door.verifyDefinition(actionType, provenance.createdAt, shown);
+    if (v.ok) return undefined;
+    // Only the recheck's own suspension code is stored: a tool merely missing from the
+    // listing is refused without a mark and without a code (OR-AD-14).
+    veto.code = v.code === VETO_CODE ? VETO_CODE : undefined;
+    return v.detail;
+  };
+}
+
+/** What the door executor is built from, beside the consent channel (the same members as the model door). */
+function doorExecutorWiring(w: CaptureActWiring) {
+  return {
+    audit: w.audit,
+    dispatcher: w.dispatcher,
+    egressSink: w.egressSink,
+    policyHitl: w.policyHitl,
+    getTribalKbConfig: w.getTribalKbConfig,
+    ...(w.previewCredentialFor === undefined
+      ? {}
+      : { previewCredentialFor: w.previewCredentialFor }),
+    ...(w.beforeStateRows === undefined ? {} : { beforeStateRows: w.beforeStateRows }),
+  };
+}
+
+function doorActionOf(
+  actionType: string,
+  route: ActRoute,
+  input: Readonly<Record<string, unknown>>,
+  provenance: ActionProvenance,
+  userMcpCall: UserMcpCallFacts | undefined,
+): PlannedAction {
+  return {
+    type: actionType,
+    origin: "agent",
+    proposer: agentProposerOf(provenance),
+    ...(userMcpCall === undefined ? {} : { userMcpCall }),
+    payload: { mcpToolId: route.toolId, input },
+  };
+}
+
+function executeWithOptions(
+  executor: ReturnType<typeof buildAgentWriteExecutor>,
+  action: PlannedAction,
+  options: ExecuteOptions | undefined,
+): ReturnType<ReturnType<typeof buildAgentWriteExecutor>["execute"]> {
+  return options === undefined ? executor.execute(action) : executor.execute(action, options);
+}
+
+/**
+ * A veto is the owner's answer overruled: the executor recorded a decline, the capture records
+ * why. Escaped HERE, once, so both captures.accept and approvals.approve return a one-line,
+ * control-free reason (a guard's text can quote agent-supplied values).
+ */
+function doorOutcomeOf(
+  out: Awaited<ReturnType<typeof executeWithOptions>>,
+  veto: DoorVeto,
+  row: ConnectorWriteRow | undefined,
+): ActExecuteOutcome {
+  if (out.status === "ok") return { status: "ok", result: out.result };
+  if (veto.reason !== undefined) {
+    return {
+      status: "rejected",
+      reason: escapeUnverifiedLine(veto.reason),
+      ...(veto.code === undefined ? {} : { code: veto.code }),
+    };
+  }
+  const code = classifyDoorRejection(row, out.reason);
+  return {
+    status: "rejected",
+    ...(out.reason === undefined ? {} : { reason: escapeUnverifiedLine(out.reason) }),
+    ...(code === undefined ? {} : { code }),
   };
 }
 

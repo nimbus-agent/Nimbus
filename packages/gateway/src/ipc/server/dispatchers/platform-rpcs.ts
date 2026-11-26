@@ -112,6 +112,44 @@ function userMcpCallExecutor(
   );
 }
 
+/** `connector.auth` needs a way to open the browser; every other method runs without one. */
+function requireOpenUrlFor(
+  method: string,
+  openUrl: CreateIpcServerOptions["openUrl"],
+): NonNullable<CreateIpcServerOptions["openUrl"]> {
+  if (openUrl === undefined && method === "connector.auth") {
+    throw new RpcMethodError(-32603, "Gateway is not configured for OAuth (missing openUrl)");
+  }
+  return openUrl ?? (async () => {});
+}
+
+/** The dispatching executor of the owner's own `connector.userMcpCall`; no other method gets one. */
+function userMcpExecutorFor(
+  ctx: ServerCtx,
+  method: string,
+  clientId: string,
+  localIndex: NonNullable<ServerCtx["options"]["localIndex"]>,
+): ToolExecutor | undefined {
+  const mesh = ctx.options.connectorMesh;
+  return method === "connector.userMcpCall" && mesh !== undefined
+    ? userMcpCallExecutor(ctx, clientId, localIndex, mesh)
+    : undefined;
+}
+
+type ConnectorRpcOptionalDeps = Pick<
+  Parameters<typeof dispatchConnectorRpc>[0],
+  "connectorMesh" | "sandboxRunner"
+>;
+
+/** The connector RPC's members that exist only when the gateway was given them. */
+function connectorRpcOptionalDeps(ctx: ServerCtx): ConnectorRpcOptionalDeps {
+  const { connectorMesh, sandboxRunner } = ctx.options;
+  return {
+    ...(connectorMesh === undefined ? {} : { connectorMesh }),
+    ...(sandboxRunner === undefined ? {} : { sandboxRunner }),
+  };
+}
+
 export async function tryDispatchConnectorRpc(
   ctx: ServerCtx,
   method: string,
@@ -121,10 +159,7 @@ export async function tryDispatchConnectorRpc(
   if (!method.startsWith("connector.") || ctx.options.localIndex === undefined) {
     return connectorRpcSkipped;
   }
-  const openUrl = ctx.options.openUrl;
-  if (openUrl === undefined && method === "connector.auth") {
-    throw new RpcMethodError(-32603, "Gateway is not configured for OAuth (missing openUrl)");
-  }
+  const openUrl = requireOpenUrlFor(method, ctx.options.openUrl);
   try {
     const stubDispatcher: ConnectorDispatcher = {
       dispatch(): Promise<unknown> {
@@ -157,32 +192,25 @@ export async function tryDispatchConnectorRpc(
       NULL_EGRESS_SINK,
       ctx.options.policyHitl ?? NO_POLICY_OVERLAY,
     );
-    const mesh = ctx.options.connectorMesh;
-    const userMcpExecutor =
-      method === "connector.userMcpCall" && mesh !== undefined
-        ? userMcpCallExecutor(ctx, clientId, ctx.options.localIndex, mesh)
-        : undefined;
+    const userMcpExecutor = userMcpExecutorFor(ctx, method, clientId, ctx.options.localIndex);
     const out = await dispatchConnectorRpc({
       method,
       params,
       vault: ctx.options.vault,
       localIndex: ctx.options.localIndex,
-      openUrl: openUrl ?? (async () => {}),
+      openUrl,
       syncScheduler: ctx.options.syncScheduler,
-      ...(mesh === undefined ? {} : { connectorMesh: mesh }),
-      platform: process.platform,
-      ...(ctx.options.sandboxRunner === undefined
+      ...connectorRpcOptionalDeps(ctx),
+      ...(ctx.options.continuityTable === undefined
         ? {}
-        : { sandboxRunner: ctx.options.sandboxRunner }),
+        : { continuityTable: ctx.options.continuityTable }),
+      platform: process.platform,
       notify: (m, p) => ctx.broadcastNotification(m, p),
       getEnforcedPolicy: () => ctx.options.enforcedPolicy?.(),
       toolExecutor,
       clientKind: ctx.getClientKind(clientId),
       agentAnswerWasNonHuman: () => agentAnswerNonHuman,
       ...(userMcpExecutor === undefined ? {} : { userMcpExecutor }),
-      ...(ctx.options.continuityTable === undefined
-        ? {}
-        : { continuityTable: ctx.options.continuityTable }),
     });
     if (out.kind === "hit") {
       return out.value;
