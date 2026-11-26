@@ -2,6 +2,19 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [11.15.0](https://github.com/nimbus-agent/Nimbus/compare/v11.14.0...v11.15.0) (2026-11-26)
+
+
+### Features
+
+* **gateway:** index Stack Overflow for Teams answers ([#2144](https://github.com/nimbus-agent/Nimbus/issues/2144)) ([1f505e6](https://github.com/nimbus-agent/Nimbus/commit/1f505e6a2a434b13555c0cbb74a859e80c20f6d8))
+* **gateway:** Vantage per-tag cost attribution ([#2153](https://github.com/nimbus-agent/Nimbus/issues/2153)) ([bd881b1](https://github.com/nimbus-agent/Nimbus/commit/bd881b1894ba823a754754fc6c578f43e6d42657))
+
+
+### Bug Fixes
+
+* **gateway:** pin @nimbus-dev/connectors 0.17.3 (Vantage cost list without a report token) ([#2160](https://github.com/nimbus-agent/Nimbus/issues/2160)) ([324c1cf](https://github.com/nimbus-agent/Nimbus/commit/324c1cf09471094bf85dc1d2a968c63ec1d96451))
+
 ## [11.14.0](https://github.com/nimbus-agent/Nimbus/compare/v11.13.1...v11.14.0) (2026-11-25)
 
 
