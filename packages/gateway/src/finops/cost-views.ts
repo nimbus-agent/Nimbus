@@ -7,7 +7,7 @@
 // data imported" (`empty`) is a different answer from a period whose cost is 0.
 import { DAY_MS } from "./cost-item-contract.ts";
 import type { CostLine } from "./cost-line.ts";
-import { allocate, type CostRule } from "./cost-rules.ts";
+import { allocate, type CostAllocation, type CostRule } from "./cost-rules.ts";
 
 /** The last this-many days of a source are provisional (the provider may still restate them). */
 export const COST_PROVISIONAL_DAYS = 3;
@@ -170,50 +170,59 @@ function finish(acc: Acc): CostCurrencyBlock {
   };
 }
 
+/** Why a line is unassigned in this view, or null: no rule, a refused value, or no value for the view's key. */
+function unassignedReasonOf(a: CostAllocation, view: "products" | "internal"): string | null {
+  if (a.unassignedReason !== null) return a.unassignedReason;
+  if (view === "products" && a.product === null) return `rule ${String(a.rule)} sets no product`;
+  if (view === "internal" && a.env === null) return `rule ${String(a.rule)} sets no env`;
+  return null;
+}
+
+function addUnassigned(acc: Acc, reason: string, amount: number): void {
+  acc.unassigned += amount;
+  const r = acc.reasons.get(reason) ?? { amount: 0, lines: 0 };
+  r.amount += amount;
+  r.lines++;
+  acc.reasons.set(reason, r);
+}
+
+function addRow(acc: Acc, l: CostLine, a: CostAllocation, view: "products" | "internal"): void {
+  const key = (view === "products" ? a.product : a.env) as string;
+  const secondary = view === "products" ? a.env : a.product;
+  const part = a.service ?? l.serviceName;
+  const k = JSON.stringify([key, secondary, part, l.provider]);
+  const prior = acc.rows.get(k)?.amount ?? 0;
+  acc.rows.set(k, { key, secondary, part, provider: l.provider, amount: prior + l.billedCost });
+}
+
+/** Add one line to its currency's accumulator. */
+function addLine(
+  acc: Acc,
+  l: CostLine,
+  a: CostAllocation,
+  view: "products" | "internal",
+  internalEnvs: readonly string[],
+): void {
+  acc.total += l.billedCost;
+  const reason = unassignedReasonOf(a, view);
+  if (reason !== null) addUnassigned(acc, reason, l.billedCost);
+  else if (view === "internal" && !internalEnvs.includes(a.env as string))
+    acc.outside += l.billedCost;
+  else addRow(acc, l, a, view);
+}
+
 function build(
   input: CostViewInput,
   view: "products" | "internal",
   internalEnvs: readonly string[],
 ): CostViewResult {
   const accs = new Map<string, Acc>();
-  const inWindow = input.lines.filter(
-    (l) => l.chargeDay >= input.range.fromDay && l.chargeDay <= input.range.toDay,
-  );
-  for (const l of inWindow) {
+  const rules = input.configError === null ? input.rules : [];
+  for (const l of input.lines) {
+    if (l.chargeDay < input.range.fromDay || l.chargeDay > input.range.toDay) continue;
     const acc = accs.get(l.currency) ?? newAcc();
     accs.set(l.currency, acc);
-    acc.total += l.billedCost;
-    const a = allocate(l, input.configError === null ? input.rules : []);
-    const unassignedReason =
-      a.unassignedReason ??
-      (view === "products" && a.product === null
-        ? `rule ${String(a.rule)} sets no product`
-        : null) ??
-      (view === "internal" && a.env === null ? `rule ${String(a.rule)} sets no env` : null);
-    if (unassignedReason !== null) {
-      acc.unassigned += l.billedCost;
-      const r = acc.reasons.get(unassignedReason) ?? { amount: 0, lines: 0 };
-      r.amount += l.billedCost;
-      r.lines++;
-      acc.reasons.set(unassignedReason, r);
-      continue;
-    }
-    if (view === "internal" && !internalEnvs.includes(a.env as string)) {
-      acc.outside += l.billedCost;
-      continue;
-    }
-    const key = (view === "products" ? a.product : a.env) as string;
-    const secondary = view === "products" ? a.env : a.product;
-    const part = a.service ?? l.serviceName;
-    const k = JSON.stringify([key, secondary, part, l.provider]);
-    const row = acc.rows.get(k);
-    acc.rows.set(k, {
-      key,
-      secondary,
-      part,
-      provider: l.provider,
-      amount: (row?.amount ?? 0) + l.billedCost,
-    });
+    addLine(acc, l, allocate(l, rules), view, internalEnvs);
   }
   if (accs.size === 0 && !input.empty) for (const c of input.knownCurrencies) accs.set(c, newAcc());
   const byCurrency: Record<string, CostCurrencyBlock> = {};

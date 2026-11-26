@@ -120,35 +120,46 @@ function readFocusTable(t: Record<string, unknown>): string | null {
   return dir;
 }
 
+type Draft = { -readonly [K in keyof NimbusCostConfig]: NimbusCostConfig[K] };
+
+/** Read one non-rule cost section into the draft; an unknown cost section is a refusal. */
+function readPlainSection(s: EffectiveSection & { header: string }, draft: Draft): void {
+  if (s.header === "cost" && !s.isArray) readCostTable(parseSection(s, "[cost]"), draft);
+  else if (s.header === "cost.focus" && !s.isArray) {
+    draft.focusDir = readFocusTable(parseSection(s, "[cost.focus]"));
+  } else {
+    throw new CostConfigError(`unknown section ${s.isArray ? `[[${s.header}]]` : `[${s.header}]`}`);
+  }
+}
+
+function compileRules(blocks: readonly EffectiveSection[]): readonly CostRule[] {
+  if (blocks.length > COST_MAX_RULES) {
+    throw new CostConfigError(`at most ${String(COST_MAX_RULES)} [[cost.rule]] blocks`);
+  }
+  return Object.freeze(
+    blocks.map((b, i) => {
+      const t = parseSection(b, `[[cost.rule]] ${String(i + 1)}`);
+      only(t, ["match", "set"], `[[cost.rule]] ${String(i + 1)}`);
+      return compileCostRule({ match: t["match"], set: t["set"] }, i + 1);
+    }),
+  );
+}
+
+const isCostHeader = (h: string | null): h is string =>
+  h === "cost" || (h?.startsWith("cost.") ?? false);
+
 /** The cost config from the effective (layered) sections. Pure. */
 export function resolveCostConfig(sections: readonly EffectiveSection[]): NimbusCostConfig {
-  const draft = { ...DEFAULT_COST_CONFIG };
+  const draft: Draft = { ...DEFAULT_COST_CONFIG };
   try {
     const ruleBlocks: EffectiveSection[] = [];
     for (const s of sections) {
-      if (s.header === null) continue;
-      if (s.header === "cost.rule" && s.isArray) {
-        ruleBlocks.push(s);
-        continue;
-      }
-      if (s.header === "cost" && !s.isArray) readCostTable(parseSection(s, "[cost]"), draft);
-      else if (s.header === "cost.focus" && !s.isArray)
-        draft.focusDir = readFocusTable(parseSection(s, "[cost.focus]"));
-      else if (s.header === "cost" || s.header.startsWith("cost.")) {
-        throw new CostConfigError(
-          `unknown section ${s.isArray ? `[[${s.header}]]` : `[${s.header}]`}`,
-        );
-      }
+      const header = s.header;
+      if (!isCostHeader(header)) continue;
+      if (header === "cost.rule" && s.isArray) ruleBlocks.push(s);
+      else readPlainSection({ ...s, header }, draft);
     }
-    if (ruleBlocks.length > COST_MAX_RULES)
-      throw new CostConfigError(`at most ${String(COST_MAX_RULES)} [[cost.rule]] blocks`);
-    draft.rules = Object.freeze(
-      ruleBlocks.map((b, i) => {
-        const t = parseSection(b, `[[cost.rule]] ${String(i + 1)}`);
-        only(t, ["match", "set"], `[[cost.rule]] ${String(i + 1)}`);
-        return compileCostRule({ match: t["match"], set: t["set"] }, i + 1);
-      }),
-    );
+    draft.rules = compileRules(ruleBlocks);
     return Object.freeze(draft);
   } catch (e) {
     if (e instanceof CostConfigError || e instanceof CostRuleError) {

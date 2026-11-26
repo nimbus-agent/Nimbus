@@ -75,6 +75,62 @@ export interface AdaptedAllocations {
   readonly lastDay: string | null;
 }
 
+/** Per day, the report configuration synced last, and how many days had more than one. */
+function pickConfigs(rows: readonly Row[]): {
+  newest: Map<number, string>;
+  supersededDays: number;
+} {
+  const newest = new Map<number, { config: string; synced: number }>();
+  const perDay = new Map<number, Set<string>>();
+  for (const r of rows) {
+    const day = r.day as number;
+    const config = configOf(r.scope);
+    const seen = perDay.get(day) ?? new Set<string>();
+    seen.add(config);
+    perDay.set(day, seen);
+    const cur = newest.get(day);
+    if (cur === undefined || r.synced > cur.synced) newest.set(day, { config, synced: r.synced });
+  }
+  const supersededDays = [...perDay.values()].filter((set) => set.size > 1).length;
+  return { newest: new Map([...newest].map(([d, v]) => [d, v.config])), supersededDays };
+}
+
+function serviceNameOf(r: Row): string {
+  if (r.cloud !== null) return r.cloud;
+  if (r.kind === "service" && r.value !== null) return r.value;
+  return `(vantage ${r.kind ?? "total"})`;
+}
+
+function rowToLine(r: Row): CostLine {
+  const chargeDay = dayText(r.day as number);
+  const tags: Record<string, string> = {};
+  if (r.kind === "tag" && r.dkey !== null && r.value !== null) tags[r.dkey] = r.value;
+  return {
+    source: VANTAGE_SOURCE,
+    provider: r.provider ?? "unknown",
+    billingAccountId: configOf(r.scope),
+    billingPeriod: chargeDay.slice(0, 7),
+    chargeDay,
+    subAccountId: r.kind === "account" ? r.value : null,
+    subAccountName: null,
+    serviceName: serviceNameOf(r),
+    serviceCategory: null,
+    regionId: null,
+    resourceId: null,
+    resourceName: null,
+    skuId: null,
+    chargeCategory: "usage",
+    billedCost: r.amount as number,
+    effectiveCost: null,
+    currency: r.currency ?? "unknown",
+    tags,
+    repo: null,
+    workflow: null,
+    model: null,
+    importId: VANTAGE_SOURCE,
+  };
+}
+
 /** The Vantage rows of `[fromDay, toDay]` as cost lines (one configuration per day). */
 export function adaptCostAllocationItems(
   db: Database,
@@ -83,61 +139,18 @@ export function adaptCostAllocationItems(
   const rows = readRows(db, [VANTAGE_SOURCE], range.fromDay, range.toDay).filter(
     (r) => r.day !== null && typeof r.amount === "number" && Number.isFinite(r.amount),
   );
-  const newestConfig = new Map<number, { config: string; synced: number }>();
-  const configsPerDay = new Map<number, Set<string>>();
-  for (const r of rows) {
-    const day = r.day as number;
-    const config = configOf(r.scope);
-    const seen = configsPerDay.get(day) ?? new Set<string>();
-    seen.add(config);
-    configsPerDay.set(day, seen);
-    const cur = newestConfig.get(day);
-    if (cur === undefined || r.synced > cur.synced)
-      newestConfig.set(day, { config, synced: r.synced });
-  }
-  const lines: CostLine[] = [];
-  for (const r of rows) {
-    const day = r.day as number;
-    if (newestConfig.get(day)?.config !== configOf(r.scope)) continue;
-    const chargeDay = dayText(day);
-    const tags: Record<string, string> = {};
-    if (r.kind === "tag" && r.dkey !== null && r.value !== null) tags[r.dkey] = r.value;
-    lines.push({
-      source: VANTAGE_SOURCE,
-      provider: r.provider ?? "unknown",
-      billingAccountId: configOf(r.scope),
-      billingPeriod: chargeDay.slice(0, 7),
-      chargeDay,
-      subAccountId: r.kind === "account" ? r.value : null,
-      subAccountName: null,
-      serviceName:
-        r.cloud ??
-        (r.kind === "service" && r.value !== null ? r.value : `(vantage ${r.kind ?? "total"})`),
-      serviceCategory: null,
-      regionId: null,
-      resourceId: null,
-      resourceName: null,
-      skuId: null,
-      chargeCategory: "usage",
-      billedCost: r.amount as number,
-      effectiveCost: null,
-      currency: r.currency ?? "unknown",
-      tags,
-      repo: null,
-      workflow: null,
-      model: null,
-      importId: VANTAGE_SOURCE,
-    });
-  }
-  let supersededDays = 0;
-  for (const set of configsPerDay.values()) if (set.size > 1) supersededDays++;
+  const { newest, supersededDays } = pickConfigs(rows);
+  const lines = rows
+    .filter((r) => newest.get(r.day as number) === configOf(r.scope))
+    .map(rowToLine);
   const last = db
     .query(
       `SELECT MAX(json_extract(metadata, '$.periodStartMs')) AS d FROM item
         WHERE service = ? AND type = 'cost_allocation'`,
     )
     .get(VANTAGE_SOURCE) as { d: number | null } | null;
-  return { lines, supersededDays, lastDay: last?.d == null ? null : dayText(last.d) };
+  const lastMs = last?.d ?? null;
+  return { lines, supersededDays, lastDay: lastMs === null ? null : dayText(lastMs) };
 }
 
 export interface ClusterAllocationRow {

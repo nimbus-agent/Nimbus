@@ -36,38 +36,53 @@ export function parseCostImportArgs(
   args: readonly string[],
   cwd: string = process.cwd(),
 ): CostImportArgs | undefined {
-  let path: string | undefined;
-  let provider: (typeof PROVIDERS)[number] | undefined;
-  let remove: string | undefined;
-  let dryRun = false;
-  let json = false;
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a === "--json") json = true;
-    else if (a === "--dry-run") dryRun = true;
-    else if (a === "--provider") {
-      const v = args[++i];
-      if (v === undefined || !(PROVIDERS as readonly string[]).includes(v)) return undefined;
-      provider = v as (typeof PROVIDERS)[number];
-    } else if (a === "--remove") {
-      const v = args[++i];
-      if (v === undefined) return undefined;
-      remove = v;
-    } else if (a !== undefined && !a.startsWith("--") && path === undefined) path = a;
-    else return undefined;
+  const f = scanImportFlags(args);
+  if (f === undefined) return undefined;
+  if (f.remove !== undefined) {
+    if (f.path !== undefined || f.provider !== undefined || f.dryRun) return undefined;
+    return { mode: "remove", importId: f.remove, json: f.json };
   }
-  if (remove !== undefined) {
-    if (path !== undefined || provider !== undefined || dryRun) return undefined;
-    return { mode: "remove", importId: remove, json };
-  }
-  if (path === undefined) return undefined;
+  if (f.path === undefined) return undefined;
   return {
     mode: "import",
-    path: resolve(cwd, path),
-    dryRun,
-    json,
-    ...(provider === undefined ? {} : { provider }),
+    path: resolve(cwd, f.path),
+    dryRun: f.dryRun,
+    json: f.json,
+    ...(f.provider === undefined ? {} : { provider: f.provider }),
   };
+}
+
+type ImportFlags = {
+  path?: string;
+  provider?: (typeof PROVIDERS)[number];
+  remove?: string;
+  dryRun: boolean;
+  json: boolean;
+};
+
+/** Apply one argument (and its value, when it takes one); false for a usage error. */
+function applyImportFlag(f: ImportFlags, a: string, next: string | undefined): boolean {
+  if (a === "--provider") {
+    if (next === undefined || !(PROVIDERS as readonly string[]).includes(next)) return false;
+    f.provider = next as (typeof PROVIDERS)[number];
+  } else if (a === "--remove") {
+    if (next === undefined) return false;
+    f.remove = next;
+  } else if (!a.startsWith("--") && f.path === undefined) f.path = a;
+  else return false;
+  return true;
+}
+
+function scanImportFlags(args: readonly string[]): ImportFlags | undefined {
+  const f: ImportFlags = { dryRun: false, json: false };
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] ?? "";
+    if (a === "--json") f.json = true;
+    else if (a === "--dry-run") f.dryRun = true;
+    else if (!applyImportFlag(f, a, args[i + 1])) return undefined;
+    else if (a === "--provider" || a === "--remove") i++;
+  }
+  return f;
 }
 
 type Issue = { row: number; reason: string };
@@ -126,39 +141,48 @@ function errorText(e: unknown): string {
   return clean(e instanceof Error ? e.message : String(e));
 }
 
+async function runRemove(
+  c: CostImportIpc,
+  importId: string,
+  json: boolean,
+  sink: CostImportSink,
+): Promise<number> {
+  const r = (await c.call("cost.importRemove", { importId })) as {
+    importId: string;
+    removed: number;
+  };
+  if (json) sink.out(`${JSON.stringify(r)}\n`);
+  else sink.out(`Removed ${String(r.removed)} cost lines of import ${clean(r.importId)}.\n`);
+  return 0;
+}
+
+function renderImport(r: ImportReport, sink: CostImportSink): void {
+  const n = r.files.length;
+  const refusedCount = r.files.filter((f) => f.status === "refused").length;
+  const files = `file${n === 1 ? "" : "s"}`;
+  sink.out(
+    r.dryRun
+      ? `Dry run over ${String(n)} ${files}: nothing was written.\n`
+      : `Imported ${String(n - refusedCount)} of ${String(n)} ${files}.\n`,
+  );
+  for (const f of r.files) renderFile(f, sink);
+}
+
 export async function runCostImportWith(
   c: CostImportIpc,
   a: CostImportArgs,
   sink: CostImportSink,
 ): Promise<number> {
   try {
-    if (a.mode === "remove") {
-      const r = (await c.call("cost.importRemove", { importId: a.importId })) as {
-        importId: string;
-        removed: number;
-      };
-      if (a.json) sink.out(`${JSON.stringify(r)}\n`);
-      else sink.out(`Removed ${String(r.removed)} cost lines of import ${clean(r.importId)}.\n`);
-      return 0;
-    }
+    if (a.mode === "remove") return await runRemove(c, a.importId, a.json, sink);
     const r = (await c.call("cost.import", {
       path: a.path,
       dryRun: a.dryRun,
       ...(a.provider === undefined ? {} : { provider: a.provider }),
     })) as ImportReport;
-    const refusedCount = r.files.filter((f) => f.status === "refused").length;
-    if (a.json) {
-      sink.out(`${JSON.stringify(r)}\n`);
-      return refusedCount === 0 ? 0 : 1;
-    }
-    const n = r.files.length;
-    sink.out(
-      r.dryRun
-        ? `Dry run over ${String(n)} file${n === 1 ? "" : "s"}: nothing was written.\n`
-        : `Imported ${String(n - refusedCount)} of ${String(n)} file${n === 1 ? "" : "s"}.\n`,
-    );
-    for (const f of r.files) renderFile(f, sink);
-    return refusedCount === 0 ? 0 : 1;
+    if (a.json) sink.out(`${JSON.stringify(r)}\n`);
+    else renderImport(r, sink);
+    return r.files.some((f) => f.status === "refused") ? 1 : 0;
   } catch (e) {
     sink.err(`nimbus cost import: ${errorText(e)}\n`);
     return 1;

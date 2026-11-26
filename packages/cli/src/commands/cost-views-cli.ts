@@ -39,24 +39,40 @@ export function parseCostViewsArgs(
   view: "products" | "internal",
   args: readonly string[],
 ): CostViewsArgs | undefined {
-  let period = "30d";
-  let cluster = false;
-  let format: CostViewsArgs["format"] = "text";
+  const out = { view, period: "30d", cluster: false, format: "text" as CostViewsArgs["format"] };
   for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a === "--json" || a === "--csv") {
-      if (format !== "text") return undefined;
-      format = a === "--json" ? "json" : "csv";
-    } else if (a === "--period") {
-      const v = args[++i];
-      if (v === undefined || !/^(\d{1,3}d|week|month)$/.test(v)) return undefined;
-      period = v;
-    } else if (a === "--allocation" && view === "products") {
-      if (args[++i] !== "cluster") return undefined;
-      cluster = true;
-    } else return undefined;
+    const taken = applyViewFlag(out, args[i] ?? "", args[i + 1]);
+    if (taken === null) return undefined;
+    i += taken;
   }
-  return { view, period, cluster, format };
+  return out;
+}
+
+/** Apply one argument; the number of extra arguments it consumed, or null for a usage error. */
+function applyViewFlag(
+  out: {
+    view: CostViewsArgs["view"];
+    period: string;
+    cluster: boolean;
+    format: CostViewsArgs["format"];
+  },
+  a: string,
+  next: string | undefined,
+): number | null {
+  if (a === "--json" || a === "--csv") {
+    if (out.format !== "text") return null;
+    out.format = a === "--json" ? "json" : "csv";
+    return 0;
+  }
+  if (a === "--period" && next !== undefined && /^(\d{1,3}d|week|month)$/.test(next)) {
+    out.period = next;
+    return 1;
+  }
+  if (a === "--allocation" && out.view === "products" && next === "cluster") {
+    out.cluster = true;
+    return 1;
+  }
+  return null;
 }
 
 type Row = {
@@ -220,6 +236,12 @@ function renderCluster(
   return 0;
 }
 
+function renderJson(r: ViewResult | ClusterResult, sink: CostViewsSink): number {
+  sink.out(`${JSON.stringify(r)}\n`);
+  if (r.view === "cluster") return r.rows.length === 0 ? 1 : 0;
+  return r.empty || r.configError !== null ? 1 : 0;
+}
+
 export async function runCostViewsWith(
   c: CostViewsIpc,
   a: CostViewsArgs,
@@ -231,11 +253,7 @@ export async function runCostViewsWith(
     const r = (await c.call(a.view === "products" ? "cost.products" : "cost.internal", params)) as
       | ViewResult
       | ClusterResult;
-    if (a.format === "json") {
-      sink.out(`${JSON.stringify(r)}\n`);
-      if (r.view === "cluster") return r.rows.length === 0 ? 1 : 0;
-      return r.empty || r.configError !== null ? 1 : 0;
-    }
+    if (a.format === "json") return renderJson(r, sink);
     if (r.view === "cluster") return renderCluster(r, a.format, sink);
     return a.format === "csv" ? renderCsv(r, sink) : renderText(r, sink);
   } catch (e) {

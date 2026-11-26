@@ -35,28 +35,28 @@ const NAME_RULES: ReadonlyArray<{ re: RegExp; allowed: readonly string[] }> = [
   { re: /\bpruneCostLinesBefore\b/g, allowed: [STORE, `${SRC}finops/cost-retention.ts`] },
 ];
 
+function scanFile(f: FileEntry, out: Violation[]): void {
+  const commentFree = stripComments(f.contents);
+  const add = (index: number | undefined): void => {
+    const line = commentFree.slice(0, index).split("\n").length;
+    const snippet = (f.contents.split("\n")[line - 1] ?? "").trim();
+    out.push({ rule: RULE, file: f.relPath, line, snippet });
+  };
+  if (f.relPath !== STORE && f.relPath !== DDL) {
+    for (const m of commentFree.matchAll(WRITE_RE)) add(m.index);
+  }
+  for (const r of NAME_RULES.filter((n) => !n.allowed.includes(f.relPath))) {
+    for (const m of commentFree.matchAll(r.re)) add(m.index);
+  }
+}
+
+const inScope = (f: FileEntry): boolean =>
+  f.relPath.startsWith(SRC) &&
+  !f.relPath.endsWith(".test.ts") &&
+  !f.relPath.endsWith(".test-helpers.ts");
+
 export function checkCostLineConfinement(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];
-  for (const f of files) {
-    if (f.relPath.endsWith(".test.ts") || f.relPath.endsWith(".test-helpers.ts")) continue;
-    if (!f.relPath.startsWith(SRC)) continue;
-    const commentFree = stripComments(f.contents);
-    const add = (index: number | undefined): void => {
-      const line = commentFree.slice(0, index).split("\n").length;
-      out.push({
-        rule: RULE,
-        file: f.relPath,
-        line,
-        snippet: (f.contents.split("\n")[line - 1] ?? "").trim(),
-      });
-    };
-    if (f.relPath !== STORE && f.relPath !== DDL) {
-      for (const m of commentFree.matchAll(WRITE_RE)) add(m.index);
-    }
-    for (const r of NAME_RULES) {
-      if (r.allowed.includes(f.relPath)) continue;
-      for (const m of commentFree.matchAll(r.re)) add(m.index);
-    }
-  }
+  for (const f of files.filter(inScope)) scanFile(f, out);
   return out;
 }

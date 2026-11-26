@@ -31,54 +31,62 @@ export type FocusProvider = "aws" | "azure" | "gcp";
 /** RFC 4180 records. Throws {@link FocusCsvError} on an unterminated quoted field. */
 export function parseCsv(text: string): string[][] {
   const src = text.startsWith("﻿") ? text.slice(1) : text;
-  const records: string[][] = [];
-  let record: string[] = [];
-  let field = "";
-  let quoted = false;
-  let i = 0;
-  const endField = (): void => {
-    record.push(field);
-    field = "";
-  };
-  const endRecord = (): void => {
-    endField();
-    if (!(record.length === 1 && record[0] === "")) records.push(record);
-    record = [];
-  };
-  while (i < src.length) {
-    const c = src[i];
-    if (quoted) {
-      if (c === '"') {
-        if (src[i + 1] === '"') {
-          field += '"';
-          i += 2;
-          continue;
-        }
-        quoted = false;
-        i++;
-        continue;
-      }
-      field += c;
-      i++;
-      continue;
-    }
-    if (c === '"' && field === "") {
-      quoted = true;
-    } else if (c === ",") {
-      endField();
-    } else if (c === "\r" && src[i + 1] === "\n") {
-      endRecord();
-      i++;
-    } else if (c === "\n") {
-      endRecord();
-    } else {
-      field += c;
-    }
-    i++;
+  const st: CsvState = { src, i: 0, field: "", record: [], records: [], quoted: false };
+  while (st.i < src.length) {
+    if (st.quoted) quotedStep(st);
+    else plainStep(st);
   }
-  if (quoted) throw new FocusCsvError("the CSV ends inside a quoted field");
-  if (field !== "" || record.length > 0) endRecord();
-  return records;
+  if (st.quoted) throw new FocusCsvError("the CSV ends inside a quoted field");
+  if (st.field !== "" || st.record.length > 0) endRecord(st);
+  return st.records;
+}
+
+type CsvState = {
+  readonly src: string;
+  i: number;
+  field: string;
+  record: string[];
+  readonly records: string[][];
+  quoted: boolean;
+};
+
+function endField(st: CsvState): void {
+  st.record.push(st.field);
+  st.field = "";
+}
+
+function endRecord(st: CsvState): void {
+  endField(st);
+  if (!(st.record.length === 1 && st.record[0] === "")) st.records.push(st.record);
+  st.record = [];
+}
+
+/** Inside quotes: a doubled quote is one quote, a single quote closes, anything else is data. */
+function quotedStep(st: CsvState): void {
+  const c = st.src[st.i];
+  if (c !== '"') {
+    st.field += c;
+    st.i++;
+  } else if (st.src[st.i + 1] === '"') {
+    st.field += '"';
+    st.i += 2;
+  } else {
+    st.quoted = false;
+    st.i++;
+  }
+}
+
+/** Outside quotes: a quote opens an empty field, a comma ends a field, CRLF or LF ends a record. */
+function plainStep(st: CsvState): void {
+  const c = st.src[st.i];
+  if (c === '"' && st.field === "") st.quoted = true;
+  else if (c === ",") endField(st);
+  else if (c === "\n") endRecord(st);
+  else if (c === "\r" && st.src[st.i + 1] === "\n") {
+    endRecord(st);
+    st.i++;
+  } else st.field += c;
+  st.i++;
 }
 
 export interface FocusRowIssue {
@@ -174,51 +182,57 @@ function parseCategory(text: string): CostChargeCategory | null {
     : null;
 }
 
-function parseTags(text: string, row: number, warnings: FocusRowIssue[]): Record<string, string> {
+/** The `Tags` cell as a JSON object, or null (a warning when it is present but not an object). */
+function tagObject(
+  text: string,
+  row: number,
+  warnings: FocusRowIssue[],
+): Record<string, unknown> | null {
   const t = text.trim();
-  if (t === "") return {};
-  let v: unknown;
+  if (t === "") return null;
+  let v: unknown = null;
   try {
     v = JSON.parse(t);
   } catch {
-    warnings.push({ row, reason: "Tags is not a JSON object; the row keeps no tags" });
-    return {};
+    v = null;
   }
   if (v === null || typeof v !== "object" || Array.isArray(v)) {
     warnings.push({ row, reason: "Tags is not a JSON object; the row keeps no tags" });
-    return {};
+    return null;
   }
+  return v as Record<string, unknown>;
+}
+
+/** One tag's string value, or the reason it is dropped. */
+function tagValue(k: string, raw: unknown): { value: string } | { reason: string } {
+  const name = k.slice(0, FOCUS_MAX_TAG_CHARS);
+  const scalar = typeof raw === "number" || typeof raw === "boolean";
+  if (typeof raw !== "string" && !scalar) return { reason: `tag ${name} dropped: not a string` };
+  const value = String(raw);
+  if (k.length > FOCUS_MAX_TAG_CHARS || value.length > FOCUS_MAX_TAG_CHARS) {
+    return { reason: `tag ${name} dropped: longer than ${FOCUS_MAX_TAG_CHARS} characters` };
+  }
+  return { value };
+}
+
+function parseTags(text: string, row: number, warnings: FocusRowIssue[]): Record<string, string> {
+  const obj = tagObject(text, row, warnings);
+  if (obj === null) return {};
   const out: Record<string, string> = {};
+  let kept = 0;
   let beyond = 0;
-  for (const [k, raw] of Object.entries(v)) {
-    const val =
-      typeof raw === "string"
-        ? raw
-        : typeof raw === "number" || typeof raw === "boolean"
-          ? String(raw)
-          : null;
-    if (val === null) {
-      warnings.push({
-        row,
-        reason: `tag ${k.slice(0, FOCUS_MAX_TAG_CHARS)} dropped: not a string`,
-      });
-      continue;
+  for (const [k, raw] of Object.entries(obj)) {
+    const r = tagValue(k, raw);
+    if ("reason" in r) warnings.push({ row, reason: r.reason });
+    else if (kept >= FOCUS_MAX_TAGS) beyond++;
+    else {
+      out[k] = r.value;
+      kept++;
     }
-    if (k.length > FOCUS_MAX_TAG_CHARS || val.length > FOCUS_MAX_TAG_CHARS) {
-      warnings.push({
-        row,
-        reason: `tag ${k.slice(0, FOCUS_MAX_TAG_CHARS)} dropped: longer than ${FOCUS_MAX_TAG_CHARS} characters`,
-      });
-      continue;
-    }
-    if (Object.keys(out).length >= FOCUS_MAX_TAGS) {
-      beyond++;
-      continue;
-    }
-    out[k] = val;
   }
-  if (beyond > 0)
+  if (beyond > 0) {
     warnings.push({ row, reason: `${beyond} tags dropped beyond the first ${FOCUS_MAX_TAGS}` });
+  }
   return out;
 }
 

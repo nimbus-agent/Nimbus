@@ -146,23 +146,59 @@ function refused(path: string, error: string, sha256: string | null = null): Imp
   };
 }
 
-function importOneFile(db: Database, path: string, opts: ImportOptions): ImportFileReport {
+type Counts = { inserted: number; replaced: number; unchanged: number; removed: number };
+type Refusal = { readonly error: string; readonly sha256: string | null };
+
+/** Read phase: the bytes through one capped handle, their hash and strict UTF-8 text. */
+function readFile(path: string, maxBytes: number): { sha256: string; text: string } | Refusal {
   let bytes: Buffer;
   try {
-    bytes = readCapped(path, opts.maxBytes ?? COST_IMPORT_MAX_BYTES);
+    bytes = readCapped(path, maxBytes);
   } catch (e) {
-    return refused(
-      path,
-      e instanceof CostImportError ? e.message : `could not read the file: ${String(e)}`,
-    );
+    const error =
+      e instanceof CostImportError ? e.message : `could not read the file: ${String(e)}`;
+    return { error, sha256: null };
   }
   const sha256 = createHash("sha256").update(bytes).digest("hex");
-  let text: string;
   try {
-    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return { sha256, text: new TextDecoder("utf-8", { fatal: true }).decode(bytes) };
   } catch {
-    return refused(path, "the file is not valid UTF-8", sha256);
+    return { error: "the file is not valid UTF-8", sha256 };
   }
+}
+
+/** Apply phase: reconcile each billing period with the file's totals and replace its days. */
+function applyParsed(
+  db: Database,
+  parsed: ReturnType<typeof parseFocusCsv>,
+  totals: Record<string, number>,
+  acc: Counts,
+): void {
+  for (const [periodKey, period] of parsed.byPeriod) {
+    const lines = parsed.lines.filter(
+      (l) => `${l.provider}|${l.billingAccountId}|${l.billingPeriod}` === periodKey,
+    );
+    const sums = sumByCurrency(lines);
+    for (const [currency, total] of period.totals) {
+      if (Math.abs((sums.get(currency) ?? 0) - total) > EPSILON) {
+        throw new CostImportError(
+          `internal: ${periodKey} ${currency} lines do not sum to the file total`,
+        );
+      }
+      totals[currency] = (totals[currency] ?? 0) + total;
+    }
+    const r: ReplaceCostLinesResult = replaceCostLines(db, period.key, [...period.days], lines);
+    acc.inserted += r.inserted;
+    acc.replaced += r.replaced;
+    acc.unchanged += r.unchanged;
+    acc.removed += r.removed;
+  }
+}
+
+function importOneFile(db: Database, path: string, opts: ImportOptions): ImportFileReport {
+  const read = readFile(path, opts.maxBytes ?? COST_IMPORT_MAX_BYTES);
+  if ("error" in read) return refused(path, read.error, read.sha256);
+  const { sha256, text } = read;
   const importId = `focus:${sha256.slice(0, 16)}`;
   let parsed: ReturnType<typeof parseFocusCsv>;
   try {
@@ -174,31 +210,12 @@ function importOneFile(db: Database, path: string, opts: ImportOptions): ImportF
     return refused(path, e instanceof FocusCsvError ? e.message : String(e), sha256);
   }
   const totals: Record<string, number> = {};
-  const acc = { inserted: 0, replaced: 0, unchanged: 0, removed: 0 };
-  const apply = (): void => {
-    for (const [periodKey, period] of parsed.byPeriod) {
-      const lines = parsed.lines.filter(
-        (l) => `${l.provider}|${l.billingAccountId}|${l.billingPeriod}` === periodKey,
-      );
-      const sums = sumByCurrency(lines);
-      for (const [currency, total] of period.totals) {
-        if (Math.abs((sums.get(currency) ?? 0) - total) > EPSILON) {
-          throw new CostImportError(
-            `internal: ${periodKey} ${currency} lines do not sum to the file total`,
-          );
-        }
-        totals[currency] = (totals[currency] ?? 0) + total;
-      }
-      const r: ReplaceCostLinesResult = replaceCostLines(db, period.key, [...period.days], lines);
-      acc.inserted += r.inserted;
-      acc.replaced += r.replaced;
-      acc.unchanged += r.unchanged;
-      acc.removed += r.removed;
-    }
-    if (opts.dryRun) throw ROLLBACK;
-  };
+  const acc: Counts = { inserted: 0, replaced: 0, unchanged: 0, removed: 0 };
   try {
-    db.transaction(apply)();
+    db.transaction(() => {
+      applyParsed(db, parsed, totals, acc);
+      if (opts.dryRun) throw ROLLBACK;
+    })();
   } catch (e) {
     if (e !== ROLLBACK) return refused(path, e instanceof Error ? e.message : String(e), sha256);
   }

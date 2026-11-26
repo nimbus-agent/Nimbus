@@ -20,6 +20,49 @@ export interface CostViewConfig {
   readonly error: string | null;
 }
 
+type Excluded = CostViewResult["excludedSources"][number];
+
+function sourcesByProvider(lines: readonly CostLine[]): [string, Set<string>][] {
+  const m = new Map<string, Set<string>>();
+  for (const l of lines) {
+    const s = m.get(l.provider) ?? new Set<string>();
+    s.add(l.source);
+    m.set(l.provider, s);
+  }
+  return [...m.entries()].sort(([a], [b]) => a.localeCompare(b));
+}
+
+/** One provider's source rule: which sources stay, and the exclusions to report. */
+function chooseSources(
+  provider: string,
+  sources: ReadonlySet<string>,
+  chosen: string | undefined,
+): { keep: ((source: string) => boolean) | null; excluded: Excluded[] } {
+  if (chosen !== undefined) {
+    const excluded = [...sources]
+      .sort()
+      .filter((s) => s !== chosen)
+      .map((source) => ({
+        source,
+        provider,
+        reason: `[cost] authoritative names ${chosen} for ${provider}`,
+      }));
+    return { keep: (s) => s === chosen, excluded };
+  }
+  const hasRaw = [...sources].some((s) => s !== VANTAGE_SOURCE);
+  if (!hasRaw || !sources.has(VANTAGE_SOURCE)) return { keep: null, excluded: [] };
+  return {
+    keep: (s) => s !== VANTAGE_SOURCE,
+    excluded: [
+      {
+        source: VANTAGE_SOURCE,
+        provider,
+        reason: "raw cost lines exist for this provider (set [cost] authoritative to choose)",
+      },
+    ],
+  };
+}
+
 export function gatherCostViewInput(
   db: Database,
   cfg: CostViewConfig,
@@ -29,52 +72,25 @@ export function gatherCostViewInput(
   const raw = readCostLines(db, { fromDay: range.fromDay, toDay: range.toDay });
   const adapted = adaptCostAllocationItems(db, range);
   const all: CostLine[] = [...raw, ...adapted.lines];
-  const sourcesByProvider = new Map<string, Set<string>>();
-  for (const l of all) {
-    const s = sourcesByProvider.get(l.provider) ?? new Set<string>();
-    s.add(l.source);
-    sourcesByProvider.set(l.provider, s);
-  }
-  const excluded: CostViewResult["excludedSources"][number][] = [];
+  const excluded: Excluded[] = [];
   const keep = new Map<string, (source: string) => boolean>();
-  for (const [provider, sources] of [...sourcesByProvider.entries()].sort(([a], [b]) =>
-    a.localeCompare(b),
-  )) {
+  for (const [provider, sources] of sourcesByProvider(all)) {
     const chosen = cfg.error === null ? cfg.authoritative[provider] : undefined;
-    if (chosen !== undefined) {
-      keep.set(provider, (s) => s === chosen);
-      for (const s of [...sources].sort()) {
-        if (s !== chosen) {
-          excluded.push({
-            source: s,
-            provider,
-            reason: `[cost] authoritative names ${chosen} for ${provider}`,
-          });
-        }
-      }
-      continue;
-    }
-    const hasRaw = [...sources].some((s) => s !== VANTAGE_SOURCE);
-    if (hasRaw && sources.has(VANTAGE_SOURCE)) {
-      keep.set(provider, (s) => s !== VANTAGE_SOURCE);
-      excluded.push({
-        source: VANTAGE_SOURCE,
-        provider,
-        reason: "raw cost lines exist for this provider (set [cost] authoritative to choose)",
-      });
-    }
+    const c = chooseSources(provider, sources, chosen);
+    if (c.keep !== null) keep.set(provider, c.keep);
+    excluded.push(...c.excluded);
   }
   const lines = all.filter((l) => keep.get(l.provider)?.(l.source) ?? true);
   const lastDays = readCostLineFreshness(db);
   if (adapted.lastDay !== null) lastDays.push({ source: VANTAGE_SOURCE, lastDay: adapted.lastDay });
   const currencies = new Set(readCostLineCurrencies(db));
   for (const l of adapted.lines) currencies.add(l.currency);
-  const notes: string[] = [];
-  if (adapted.supersededDays > 0) {
-    notes.push(
-      `${String(adapted.supersededDays)} days had Vantage rows from more than one report configuration; only the newest synced one was used`,
-    );
-  }
+  const notes =
+    adapted.supersededDays > 0
+      ? [
+          `${String(adapted.supersededDays)} days had Vantage rows from more than one report configuration; only the newest synced one was used`,
+        ]
+      : [];
   return {
     lines,
     rules: cfg.rules,

@@ -36,6 +36,29 @@ function hashOf(path: string): string | null {
   }
 }
 
+/** The folder's files, or none when it holds no `.csv` file (any other error propagates). */
+function folderFiles(dir: string): string[] {
+  try {
+    return listFocusFiles(dir);
+  } catch (e) {
+    if (e instanceof CostImportError && e.message.startsWith("no .csv file")) return [];
+    throw e;
+  }
+}
+
+/** Import one file unless this run already imported these exact bytes. */
+function importIfChanged(
+  opts: CostFolderWatchOptions,
+  done: Map<string, string>,
+  file: string,
+): ImportFileReport | null {
+  const sha = hashOf(file);
+  if (sha === null || done.get(file) === sha) return null;
+  const report = importFocusPath(opts.db, file, { dryRun: false, now: opts.now }).files[0] ?? null;
+  if (report?.status === "imported") done.set(file, sha);
+  return report;
+}
+
 /** One pass: import every file whose bytes this run has not imported yet. Returns the files imported. */
 export function createCostFolderPass(opts: CostFolderWatchOptions): () => ImportFileReport[] {
   const done = new Map<string, string>();
@@ -43,20 +66,9 @@ export function createCostFolderPass(opts: CostFolderWatchOptions): () => Import
     const out: ImportFileReport[] = [];
     try {
       const dir = opts.dir();
-      if (dir === null) return out;
-      let files: string[];
-      try {
-        files = listFocusFiles(dir);
-      } catch (e) {
-        if (e instanceof CostImportError && e.message.startsWith("no .csv file")) return out;
-        throw e;
-      }
-      for (const f of files) {
-        const sha = hashOf(f);
-        if (sha === null || done.get(f) === sha) continue;
-        const report = importFocusPath(opts.db, f, { dryRun: false, now: opts.now }).files[0];
-        if (report === undefined) continue;
-        if (report.status === "imported") done.set(f, sha);
+      for (const f of dir === null ? [] : folderFiles(dir)) {
+        const report = importIfChanged(opts, done, f);
+        if (report === null) continue;
         out.push(report);
         opts.onFile?.(report);
       }
