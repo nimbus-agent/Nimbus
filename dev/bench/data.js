@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795708280826,
+  "lastUpdate": 1795709906012,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "ab9aef563782b4d42c0a6d033a7bff5d364f75b2",
-          "message": "ci(release): run nimbus demo against the published binary on all three OSes (#1550)\n\n## What\n\n`released-install-smoke.yml` installed from published assets on Linux,\nmacOS and Windows and then stopped at `nimbus --version`. Nothing\nanywhere ran a RELEASED gateway on macOS or Windows: `install-smoke.yml`\ncovers first run against freshly built binaries on a PR, and the e2e\nsuite runs from source.\n\nThe `documented-install` job now goes one step further on each OS. It\nruns `nimbus demo`, requires exit 0, then judges the output with a new\nscript:\n\n- the seed line reports a non-empty org\n- the three tour headers appear, in order, each with its command line\n- each brief carries its own anchors inside its own section:\n`payment-service`, `412` and `## Gaps` for oncall, `## Authorship`,\n`PAY-231` and `## Gaps` for why, Dana Okafor and `## Gaps` for owners\n- no failure marker such as \"Gateway is not running\"\n- `nimbus --demo egress --json` shows a verified chain, a covered window\nand zero outbound rows. An unverifiable or indeterminate ledger fails;\nit is never read as zero\n\nThe demo needs no credentials, no model and no network, so the step is\ndeterministic. The Linux leg runs with no D-Bus session and no keyring,\nwhich also proves I41's ephemeral-vault claim against a published\nbinary.\n\n## Decisions\n\n- **One assertion script, not inline greps.**\n`scripts/release/assert-demo-tour.ts` is unit-tested against a real\ncapture, spinner escape sequences included, and every negative case is a\nmutation of that capture. It imports only `node:fs`, so the job needs a\nsparse checkout and Bun but no `bun install`.\n- **One bash step on all three OSes.** A pwsh redirect re-decodes the\nbinary's UTF-8 stdout through the console code page and would mangle the\nbox-drawing tour headers into a false failure.\n- **No skip branch.** A release without `nimbus demo` is a red job. This\nmust therefore merge AFTER the release carrying `nimbus demo` is\npublished, and the workflow should be dispatched by hand once after\nmerge, since a new step's first scheduled run is otherwise a week away.\n- The one-liner job is untouched and stays install-only.\n\n## It already found a bug\n\nCapturing the fixture surfaced a readiness race in `nimbus start`, 1\nfailure in 5 fresh-root runs: the tour died at step 1 with \"Gateway is\nnot running\". Fixed separately in #1549. The script rejects that real\nfailed capture, and a test pins the shape.\n\n## Also\n\n`docs/release/gate-1-fresh-machine.md`: the manual half of Gate 1. It\nsays what CI cannot see on a runner, mainly SmartScreen, Defender and\nGatekeeper prompts that nobody has ever recorded, and gives run sheets\nfor a local Windows 11 evaluation VM with a snapshot and for a rented\nMac.\n\n## Verification\n\n- `bun test scripts/release/assert-demo-tour.test.ts`: 20 pass\n- script run against the real good capture exits 0, against the real\nfailed capture exits 1\n- script run from a simulated sparse checkout with no `node_modules`\nexits 0\n- `bun run preflight:fast`: passed, including workflow-lint,\naction-sha-pins and doc-refs\n- Not yet proven: the workflow step itself on the three runners. That\nneeds a published release with `nimbus demo` and a manual dispatch.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n- **Documentation**\n- Added a fresh-machine release validation runbook for Linux, macOS, and\nWindows.\n- Documented installer setup, first-run demo commands, security prompts,\nPATH checks, expected results, and pass criteria.\n\n- **Quality Improvements**\n  - Expanded published-install smoke testing across major platforms.\n- Added validation for demo-tour output and egress reports, including\nfailure handling and clean first-run behavior.\n- Added deterministic demo-tour examples and coverage for invalid,\nincomplete, and non-interactive output scenarios.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Fable 5.1 <noreply@anthropic.com>",
-          "timestamp": "2026-09-19T20:21:39Z",
-          "tree_id": "ffeb8c0a8e29e49beb67e82686ae24e493744569",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/ab9aef563782b4d42c0a6d033a7bff5d364f75b2"
-        },
-        "date": 1789850039662,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 331.88711055000095,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 325.5713046500008,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 181.50646150000176,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b248ccad047f5e7b39e8688eb8800e386c8d28fe",
+          "message": "feat: nimbus cost why joins a cost change to its deploys, pull requests and owners (Phase 7, slice 2) (#2177)\n\n## Summary\n\nPhase 7 (the Cost Pack), slice 2 of 8: `nimbus cost why` sets a cost\nchange beside the deploys, pull requests and owners around it, and\n`nimbus cost rules check` shows how the `[[cost.rule]]` list allocates a\nperiod.\n\n- **`nimbus cost why <product|service> [--period <N>d|week|month]\n[--json]`** (default `14d`).\n- Compares the period with the same number of days before it, per\ncurrency, never across currencies; a change from 0 reads `new`.\n- Names the spike day (furthest above the previous daily mean; the\nearliest on a tie) and the parts that moved most (at most 10, the rest\ncounted).\n- For up to three of the target's services (those whose net cost rose\nmost first, ranked within each currency): the deploys in the period with\ntheir CI run id (near-spike first: the spike day, the day before, the\nday after), the pull request each shipped (joined by merge sha, with its\nauthor), and the owners from the ownership graph.\n- States per currency the unassigned cost of each period and any days\nwith no data (\"the comparison covers partial periods\"), plus the\nprovisional days and source freshness.\n- Both periods are read in ONE gather, so one source rule (`[cost]\nauthoritative`, or raw lines over Vantage) applies to both: a switch of\nsource is never reported as a change.\n- **`nimbus cost rules check [--period ...] [--json]`** (default `30d`):\nthe unassigned share per currency, per-rule match counts (including\nmatches whose value was refused), unused rules, the largest unassigned\ngroups (provider, service, sub-account, tag keys) with their reason, and\nsource freshness.\n- **IPC** `cost.why` and `cost.rulesCheck`: `cli`/`ui` kinds only,\nLAN-forbidden with the `cost` namespace, not on the renderer allowlist.\nLocal reads only: no network, no model, no egress row (tested with a\nthrowing `fetch` and the egress table).\n- **D48 boundary:** `finops/cost-why.ts` and\n`finops/cost-rules-check.ts` are pure; the deploy, PR and owner query is\n`agents/_lib/cost-why-query.ts`; the two meet only in\n`ipc/cost-why-rpc.ts` as plain data.\n- **Demo (spec acceptance 1):** `nimbus --demo cost why checkout` names\nthe spike, `payment-service`, run 7412 and `acme/payments#412`, with no\nnetwork.\n\n## Builder decisions\n\n- Deploys of every environment are listed (the env is shown); 10 per\nservice, the rest counted.\n- Deploys are marked near the earliest spike day of any currency\n(amounts across currencies are not comparable).\n- An empty store answers \"no cost data imported\" (exit 1), not \"unknown\ntarget\".\n- Each deploy carries `runId` (`ci_run_external_id`, else the\nannotation's metadata `run_id`).\n- A service with a non-GitHub repo gets a gap: a deploy is matched to\nits PR by merge commit, which only the GitHub connector records.\nLane-census exemptions: `merge_commit_sha` (disclosed), `user`\n(by-design fallback), `run_id` (census-blind: `annotateDeployment`\nwrites it inline); `lane-census/exemptions.ts` split\n(`exemptions-agents.ts`, `exemption-types.ts`) to stay under 500 lines.\n- The demo shows an ownership GAP for `payment-service`: its ownership\npass runs without git, so no repo is bound to a service. Spec acceptance\nnames the owning service, which is shown.\n\n## Stated bounds\n\n- Flag changes are not joined.\n- Owners are authorship-derived (git blame), not an approval list.\n- Deferred minors from the review: no gap when the target's rules set no\nservice; an ownership entry with zero owners prints nothing; a negative\nprevious amount (credits) flips the percent's sign; `rules check` counts\nunassigned differently from `cost products` (\"rule N sets no product\");\n`rules check` prints no 0.00 line for an all-zero period.\n\n## Test plan\n\n- [x] `bun run preflight:fast` green.\n- [x] Touched suites on main: finops, agents/_lib, ipc, demo, config,\ncli commands, structure-audit: 14 418 pass, 0 fail.\n- [x] Per-file coverage floor on the Linux Docker run: `coverage-floor:\nok`.\n- [x] Whole-branch review (fresh reviewer): 5 Important findings fixed\ntest-first (two-period source mix, deploy before a first-day spike,\ncross-currency service ranking, partial periods, unassigned share /\nrules-check freshness).\n- [ ] CI.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-26T16:10:29Z",
+          "tree_id": "0034f1ff0532c52a7fcf703e2daf4a96e135f148",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/b248ccad047f5e7b39e8688eb8800e386c8d28fe"
+        },
+        "date": 1795709902003,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 186.52089075000094,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 185.6556534500025,
             "unit": "ms"
           }
         ]
