@@ -7,9 +7,9 @@
 // lines are used for it. Otherwise, when raw lines (a FOCUS import or a direct source) exist for a provider in the
 // range, its Vantage rows are excluded. Every exclusion is listed, so the output says which source it set aside.
 import type { Database } from "bun:sqlite";
-
+import { codeUnitCompare } from "../util/code-unit-compare.ts";
 import { adaptCostAllocationItems, VANTAGE_SOURCE } from "./cost-allocation-adapter.ts";
-import { type CostLine, compareCodeUnits } from "./cost-line.ts";
+import type { CostLine } from "./cost-line.ts";
 import { readCostLineCurrencies, readCostLineFreshness, readCostLines } from "./cost-line-store.ts";
 import type { CostRule } from "./cost-rules.ts";
 import type { CostViewInput, CostViewResult, CostWindow } from "./cost-views.ts";
@@ -40,7 +40,7 @@ function chooseSources(
 ): { keep: ((source: string) => boolean) | null; excluded: Excluded[] } {
   if (chosen !== undefined) {
     const excluded = [...sources]
-      .sort(compareCodeUnits)
+      .sort(codeUnitCompare)
       .filter((s) => s !== chosen)
       .map((source) => ({
         source,
@@ -97,7 +97,7 @@ export function gatherCostViewInput(
     nowMs,
     empty: lastDays.length === 0,
     lastDays,
-    knownCurrencies: [...currencies].sort(compareCodeUnits),
+    knownCurrencies: [...currencies].sort(codeUnitCompare),
     excludedSources: excluded,
     notes,
     configError: cfg.error,

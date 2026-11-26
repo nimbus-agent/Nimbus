@@ -63,6 +63,13 @@ export const DEFAULT_COST_CONFIG: NimbusCostConfig = Object.freeze({
 class CostConfigError extends Error {}
 
 function parseSection(s: EffectiveSection, what: string): Record<string, unknown> {
+  // A line the layered reader could not read as `key = value` would otherwise be dropped, silently widening a rule.
+  for (const p of s.passthrough) {
+    const line = p.raw.trim();
+    if (line !== "" && !line.startsWith("#")) {
+      throw new CostConfigError(`${what}: not a key = value line: ${line.slice(0, 120)}`);
+    }
+  }
   const text = s.entries.map((e) => `${e.key} = ${e.valRaw}`).join("\n");
   try {
     return Bun.TOML.parse(text) as Record<string, unknown>;

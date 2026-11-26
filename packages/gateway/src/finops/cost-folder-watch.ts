@@ -79,7 +79,11 @@ export function createCostFolderPass(opts: CostFolderWatchOptions): () => Import
         maxBytes,
         replay,
       }).files;
-      for (const f of files) opts.onFile?.(f);
+      for (const f of files) {
+        // A storage or I/O failure may pass: forget the file so the next pass tries it again.
+        if (f.status === "refused" && f.retryable === true) seen.delete(f.path);
+        opts.onFile?.(f);
+      }
       return files;
     } catch (e) {
       opts.onFailure?.(e);

@@ -5,8 +5,10 @@
 // Every amount is grouped by currency and NEVER summed across currencies: a range with two currencies has two
 // subtotals and no grand total. Every view states the unassigned share and the source freshness, and "no cost
 // data imported" (`empty`) is a different answer from a period whose cost is 0.
+
+import { codeUnitCompare } from "../util/code-unit-compare.ts";
 import { DAY_MS } from "./cost-item-contract.ts";
-import { type CostLine, compareCodeUnits } from "./cost-line.ts";
+import type { CostLine } from "./cost-line.ts";
 import { allocate, type CostAllocation, type CostRule } from "./cost-rules.ts";
 
 /** The last this-many days of a source are provisional (the provider may still restate them). */
@@ -226,7 +228,7 @@ function build(
   }
   if (accs.size === 0 && !input.empty) for (const c of input.knownCurrencies) accs.set(c, newAcc());
   const byCurrency: Record<string, CostCurrencyBlock> = {};
-  for (const c of [...accs.keys()].sort(compareCodeUnits))
+  for (const c of [...accs.keys()].sort(codeUnitCompare))
     byCurrency[c] = finish(accs.get(c) as Acc);
   return {
     view,

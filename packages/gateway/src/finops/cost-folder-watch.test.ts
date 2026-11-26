@@ -85,6 +85,26 @@ describe("createCostFolderPass", () => {
     expect(seen).toEqual(["refused", "imported"]);
   });
 
+  test("a storage failure is retried on the next pass once storage recovers, with unchanged bytes", () => {
+    const seen: string[] = [];
+    const pass = createCostFolderPass({
+      db,
+      dir: () => dir,
+      now: Date.now,
+      onFile: (f) => seen.push(f.status),
+    });
+    writeFileSync(join(dir, "a.csv"), csv("3"));
+    db.run("ALTER TABLE cost_import RENAME TO cost_import_away");
+    pass();
+    expect(seen).toEqual(["refused"]);
+    db.run("ALTER TABLE cost_import_away RENAME TO cost_import");
+    pass();
+    expect(seen).toEqual(["refused", "imported"]);
+    expect(total()).toBe(3);
+    pass();
+    expect(seen).toEqual(["refused", "imported"]);
+  });
+
   test("an older file that changes re-imports the whole folder oldest first: the newest export stands", () => {
     const day = (d: number) => new Date(Date.UTC(2026, 10, d));
     const a = join(dir, "a.csv");

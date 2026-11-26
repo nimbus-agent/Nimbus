@@ -3,6 +3,7 @@
 // Confined by static rule D48 (no network, no connector, no model). Pure types and the grain hash; the
 // only writer of the `cost_line` table is `cost-line-store.ts` (D24 rule `cost-line-confined`).
 import { createHash } from "node:crypto";
+import { codeUnitCompare } from "../util/code-unit-compare.ts";
 
 export const COST_CHARGE_CATEGORIES = ["usage", "purchase", "tax", "credit", "adjustment"] as const;
 export type CostChargeCategory = (typeof COST_CHARGE_CATEGORIES)[number];
@@ -58,20 +59,9 @@ export function tagOf(tags: Readonly<Record<string, string>>, key: string): stri
   return typeof v === "string" ? v : undefined;
 }
 
-/**
- * Order two strings by UTF-16 code unit — the order a bare `.sort()` gives, written out so it is explicit.
- * Never `localeCompare`: the tag order feeds the grain hash and canonical storage, so it must be identical
- * on every machine and locale.
- */
-export function compareCodeUnits(a: string, b: string): number {
-  if (a < b) return -1;
-  if (a > b) return 1;
-  return 0;
-}
-
 export function sortedTags(tags: Readonly<Record<string, string>>): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const k of Object.keys(tags).sort(compareCodeUnits)) {
+  for (const k of Object.keys(tags).sort(codeUnitCompare)) {
     const v = tagOf(tags, k);
     if (v !== undefined) setTag(out, k, v);
   }

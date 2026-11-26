@@ -18,7 +18,8 @@ import { createHash } from "node:crypto";
 import { closeSync, fstatSync, lstatSync, openSync, readdirSync, readSync } from "node:fs";
 import { basename, isAbsolute, join } from "node:path";
 
-import { type CostLine, compareCodeUnits } from "./cost-line.ts";
+import { codeUnitCompare } from "../util/code-unit-compare.ts";
+import type { CostLine } from "./cost-line.ts";
 import {
   type CostImportRecord,
   deleteCostImport,
@@ -53,6 +54,8 @@ export interface ImportFileReport {
   /** `unchanged`: the import ledger already holds this export, so nothing was (or would be) written. */
   readonly status: "imported" | "dry_run" | "unchanged" | "refused";
   readonly error?: string;
+  /** `refused` only: true when the cause may pass (an I/O or storage failure), so a watcher tries again. */
+  readonly retryable?: boolean;
   readonly lines: number;
   readonly inserted: number;
   readonly replaced: number;
@@ -193,12 +196,34 @@ function emptyReport(
   };
 }
 
-function refused(path: string, error: string, sha256: string | null = null): ImportFileReport {
-  return { ...emptyReport(path, "refused", sha256, null), error };
+function refused(
+  path: string,
+  error: string,
+  sha256: string | null = null,
+  retryable = false,
+): ImportFileReport {
+  return {
+    ...emptyReport(path, "refused", sha256, null),
+    error,
+    ...(retryable ? { retryable } : {}),
+  };
 }
 
+/** A storage failure may pass; a file the importer itself refused (`CostImportError`) will not. */
+const storageRefusal = (path: string, e: unknown, sha256: string): ImportFileReport =>
+  refused(
+    path,
+    e instanceof Error ? e.message : String(e),
+    sha256,
+    !(e instanceof CostImportError),
+  );
+
 type Counts = { inserted: number; replaced: number; unchanged: number; removed: number };
-type Refusal = { readonly error: string; readonly sha256: string | null };
+type Refusal = {
+  readonly error: string;
+  readonly sha256: string | null;
+  readonly retryable?: boolean;
+};
 
 /** Read phase: the bytes through one capped handle, their hash and strict UTF-8 text. */
 function readFile(path: string, maxBytes: number): { sha256: string; text: string } | Refusal {
@@ -206,9 +231,8 @@ function readFile(path: string, maxBytes: number): { sha256: string; text: strin
   try {
     bytes = readCapped(path, maxBytes);
   } catch (e) {
-    const error =
-      e instanceof CostImportError ? e.message : `could not read the file: ${String(e)}`;
-    return { error, sha256: null };
+    if (e instanceof CostImportError) return { error: e.message, sha256: null };
+    return { error: `could not read the file: ${String(e)}`, sha256: null, retryable: true };
   }
   const sha256 = createHash("sha256").update(bytes).digest("hex");
   try {
@@ -254,7 +278,7 @@ function ledgerRow(
   at: number,
 ): CostImportRecord {
   const providers = [...new Set(parsed.lines.map((l) => l.provider))]
-    .sort(compareCodeUnits)
+    .sort(codeUnitCompare)
     .join(",");
   return {
     importId,
@@ -273,7 +297,7 @@ function importOneFile(
   at: number,
 ): ImportFileReport {
   const read = readFile(path, opts.maxBytes ?? COST_IMPORT_MAX_BYTES);
-  if ("error" in read) return refused(path, read.error, read.sha256);
+  if ("error" in read) return refused(path, read.error, read.sha256, read.retryable === true);
   const { sha256, text } = read;
   const importId = importIdOf(sha256);
   try {
@@ -281,7 +305,7 @@ function importOneFile(
       return emptyReport(path, "unchanged", sha256, importId);
     }
   } catch (e) {
-    return refused(path, e instanceof Error ? e.message : String(e), sha256);
+    return storageRefusal(path, e, sha256);
   }
   let parsed: ReturnType<typeof parseFocusCsv>;
   try {
@@ -301,7 +325,7 @@ function importOneFile(
       recordCostImport(db, ledgerRow(parsed, importId, sha256, at));
     })();
   } catch (e) {
-    return refused(path, e instanceof Error ? e.message : String(e), sha256);
+    return storageRefusal(path, e, sha256);
   }
   return {
     path,

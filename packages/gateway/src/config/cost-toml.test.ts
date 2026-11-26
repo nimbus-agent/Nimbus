@@ -109,6 +109,19 @@ set = { env = "ci", product = "{repo}" }
     }
     // A malformed header of another section is not the cost config's business.
     expect(base("[[fleet.node]\nx = 1\n").error).toBeNull();
+  });
+
+  test("a line in a cost section that is not key = value refuses the whole cost config", () => {
+    const c = base('[[cost.rule]]\nmatch { provider "aws" }\nset = { product = "checkout" }\n');
+    expect(c.rules).toEqual([]);
+    expect(c.error).toBe('[[cost.rule]] 1: not a key = value line: match { provider "aws" }');
+    // Blank lines and comments are not refusals.
+    const ok = base(
+      '[[cost.rule]]\n# a comment\n\nmatch = { provider = "aws" }\nset = { product = "p" }\n',
+    );
+    expect(ok.error).toBeNull();
+    expect(ok.rules).toHaveLength(1);
+    expect(base("[[fleet.node]\nx = 1\n").error).toBeNull();
     expect(base("[costs\nx = 1\n").error).toBeNull();
   });
 });

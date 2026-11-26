@@ -136,7 +136,7 @@ describe("runCostImportWith", () => {
     expect(code).toBe(0);
     expect(s.out).toContain("Imported 0 of 1 file (1 already imported).");
     expect(s.out).toContain(
-      "aws.csv  focus:0123456789abcdef  already imported, nothing written (nimbus cost import --remove focus:0123456789abcdef imports it again)",
+      "aws.csv  focus:0123456789abcdef  already imported, nothing written (to import it again: nimbus cost import --remove focus:0123456789abcdef deletes its lines, then nimbus cost import <path>)",
     );
   });
 

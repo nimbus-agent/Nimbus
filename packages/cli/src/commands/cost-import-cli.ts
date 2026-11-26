@@ -121,7 +121,7 @@ function renderFile(f: FileReport, sink: CostImportSink): void {
   if (f.status === "unchanged") {
     const id = clean(f.importId ?? "");
     sink.out(
-      `  ${clean(f.name)}  ${id}  already imported, nothing written (nimbus cost import --remove ${id} imports it again)\n`,
+      `  ${clean(f.name)}  ${id}  already imported, nothing written (to import it again: nimbus cost import --remove ${id} deletes its lines, then nimbus cost import <path>)\n`,
     );
     return;
   }

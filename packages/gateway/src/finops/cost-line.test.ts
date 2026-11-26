@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
-import { type CostLine, compareCodeUnits, costLineGrainHash, sortedTags } from "./cost-line.ts";
+import { codeUnitCompare } from "../util/code-unit-compare.ts";
+import { type CostLine, costLineGrainHash, sortedTags } from "./cost-line.ts";
 
 function line(over: Partial<CostLine> = {}): CostLine {
   return {
@@ -86,11 +87,11 @@ describe("costLineGrainHash", () => {
   });
 });
 
-describe("compareCodeUnits", () => {
+describe("codeUnitCompare (the order of the grain hash and the stored tags)", () => {
   test("is the bare .sort() order (UTF-16 code units), not a locale order", () => {
     const keys = ["b", "B", "a", "_x", "Z", "é", "e", "😀", "ﬀ", "10", "9", "", "a"];
-    expect([...keys].sort(compareCodeUnits)).toEqual([...keys].sort());
-    expect(["b", "B", "a"].sort(compareCodeUnits)).toEqual(["B", "a", "b"]);
-    expect(compareCodeUnits("a", "a")).toBe(0);
+    expect([...keys].sort(codeUnitCompare)).toEqual([...keys].sort());
+    expect(["b", "B", "a"].sort(codeUnitCompare)).toEqual(["B", "a", "b"]);
+    expect(codeUnitCompare("a", "a")).toBe(0);
   });
 });
