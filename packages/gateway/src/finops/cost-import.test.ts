@@ -14,7 +14,12 @@ import { join } from "node:path";
 
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
-import { CostImportError, importFocusPath, removeCostImport } from "./cost-import.ts";
+import {
+  CostImportError,
+  hashFileCapped,
+  importFocusPath,
+  removeCostImport,
+} from "./cost-import.ts";
 import { readCostLines } from "./cost-line-store.ts";
 
 const FIXTURES = join(import.meta.dir, "__fixtures__", "focus");
@@ -45,6 +50,8 @@ afterEach(() => {
 
 const count = (): number =>
   (db.query("SELECT COUNT(*) AS n FROM cost_line").get() as { n: number }).n;
+const sumAll = (): number =>
+  (db.query("SELECT TOTAL(billed_cost) AS s FROM cost_line").get() as { s: number }).s;
 
 describe("importFocusPath", () => {
   test("a directory imports every *.csv (not recursive); per-file totals equal the lines", () => {
@@ -76,13 +83,102 @@ describe("importFocusPath", () => {
     expect(count()).toBe(0);
   });
 
-  test("a second identical run reports no net change", () => {
+  test("a second identical run is reported unchanged and writes nothing", () => {
     const p = join(dir, "a.csv");
     writeFileSync(p, mtd(5));
-    importFocusPath(db, p, { dryRun: false, now: NOW });
+    const first = importFocusPath(db, p, { dryRun: false, now: NOW });
     const again = importFocusPath(db, p, { dryRun: false, now: NOW });
-    expect(again.files[0]).toMatchObject({ inserted: 0, replaced: 0, removed: 0, unchanged: 5 });
+    expect(again.files[0]).toMatchObject({
+      status: "unchanged",
+      importId: first.files[0]?.importId,
+      inserted: 0,
+      replaced: 0,
+      removed: 0,
+    });
     expect(count()).toBe(5);
+  });
+
+  test("replaying an accepted export never overwrites a later restatement (A, B, A again)", () => {
+    const a = join(dir, "a.csv");
+    const b = join(dir, "b.csv");
+    writeFileSync(a, mtd(1, "1"));
+    writeFileSync(b, mtd(1, "5"));
+    importFocusPath(db, a, { dryRun: false, now: NOW });
+    importFocusPath(db, b, { dryRun: false, now: NOW });
+    const replay = importFocusPath(db, a, { dryRun: false, now: NOW });
+    expect(replay.files[0]?.status).toBe("unchanged");
+    expect(sumAll()).toBe(5);
+    // --remove clears the ledger row, so the same export can be imported again.
+    removeCostImport(db, replay.files[0]?.importId ?? "");
+    const again = importFocusPath(db, a, { dryRun: false, now: NOW });
+    expect(again.files[0]?.status).toBe("imported");
+    expect(sumAll()).toBe(1);
+  });
+
+  test("the ledger records each accepted import with its provider, hash and time", () => {
+    const p = join(dir, "a.csv");
+    writeFileSync(p, mtd(1));
+    const r = importFocusPath(db, p, { dryRun: false, now: NOW });
+    expect(db.query("SELECT * FROM cost_import").all()).toEqual([
+      {
+        import_id: r.files[0]?.importId ?? "",
+        source: "focus",
+        provider: "aws",
+        file_sha256: r.files[0]?.sha256 ?? "",
+        imported_at: NOW(),
+      },
+    ]);
+    importFocusPath(db, p, { dryRun: true, now: NOW });
+    const dry = join(dir, "b.csv");
+    writeFileSync(dry, mtd(2));
+    importFocusPath(db, dry, { dryRun: true, now: NOW });
+    expect(db.query("SELECT COUNT(*) AS n FROM cost_import").get()).toEqual({ n: 1 });
+  });
+
+  test("a directory with a new older file replays the accepted newer one, so the newest still wins", () => {
+    const older = join(dir, "a.csv");
+    const newer = join(dir, "b.csv");
+    writeFileSync(newer, mtd(1, "4"));
+    importFocusPath(db, newer, { dryRun: false, now: NOW });
+    writeFileSync(older, mtd(1, "3"));
+    utimesSync(older, new Date(Date.UTC(2026, 10, 1)), new Date(Date.UTC(2026, 10, 1)));
+    utimesSync(newer, new Date(Date.UTC(2026, 10, 2)), new Date(Date.UTC(2026, 10, 2)));
+    const r = importFocusPath(db, dir, { dryRun: false, now: NOW });
+    expect(r.files.map((f) => [f.name, f.status])).toEqual([
+      ["a.csv", "imported"],
+      ["b.csv", "imported"],
+    ]);
+    expect(sumAll()).toBe(4);
+    // Nothing new: the whole directory is unchanged and nothing is written.
+    const again = importFocusPath(db, dir, { dryRun: false, now: NOW });
+    expect(again.files.map((f) => f.status)).toEqual(["unchanged", "unchanged"]);
+  });
+
+  test("a directory --dry-run lets each file see the earlier files' simulated changes", () => {
+    const older = join(dir, "a.csv");
+    const newer = join(dir, "b.csv");
+    writeFileSync(older, mtd(1, "1"));
+    writeFileSync(newer, mtd(1, "2"));
+    utimesSync(older, new Date(Date.UTC(2026, 10, 1)), new Date(Date.UTC(2026, 10, 1)));
+    utimesSync(newer, new Date(Date.UTC(2026, 10, 2)), new Date(Date.UTC(2026, 10, 2)));
+    writeFileSync(join(dir, "c.csv"), "x,y\n1,2\n");
+    const r = importFocusPath(db, dir, { dryRun: true, now: NOW });
+    const byName = new Map(r.files.map((f) => [f.name, f]));
+    expect(byName.get("a.csv")).toMatchObject({ status: "dry_run", inserted: 1, replaced: 0 });
+    expect(byName.get("b.csv")).toMatchObject({ status: "dry_run", inserted: 0, replaced: 1 });
+    expect(byName.get("c.csv")?.status).toBe("refused");
+    expect(count()).toBe(0);
+    expect(db.query("SELECT COUNT(*) AS n FROM cost_import").get()).toEqual({ n: 0 });
+  });
+
+  test("hashFileCapped refuses a file above the cap and hashes one below it", () => {
+    const p = join(dir, "a.csv");
+    writeFileSync(p, "hello");
+    expect(() => hashFileCapped(p, 4)).toThrow(/larger than the import cap of 4 bytes/);
+    expect(hashFileCapped(p, 5)).toBe(
+      "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+    );
+    expect(() => hashFileCapped(join(dir, "missing.csv"))).toThrow();
   });
 
   test("a month-to-date file that grew is replaced on its days; a restated day is counted", () => {
@@ -188,10 +284,36 @@ describe("importFocusPath", () => {
       expect(r.files[0]?.status).toBe("refused");
       expect(r.files[0]?.sha256).toMatch(/^[0-9a-f]{64}$/);
       expect(r.files[0]?.importId).toBeNull();
-      expect(r.files[0]?.error).toContain("cost_line");
+      expect(r.files[0]?.error).toContain("no such table");
     } finally {
       bare.close();
     }
+  });
+
+  test("a failure while writing the lines refuses the file and records nothing", () => {
+    const partial = new Database(":memory:");
+    try {
+      // The ledger exists but the line table does not: the write fails after the ledger check.
+      partial.run(
+        "CREATE TABLE cost_import (import_id TEXT PRIMARY KEY, source TEXT, provider TEXT, file_sha256 TEXT, imported_at INTEGER)",
+      );
+      const p = join(dir, "a.csv");
+      writeFileSync(p, mtd(1));
+      const r = importFocusPath(partial, p, { dryRun: false, now: NOW });
+      expect(r.files[0]?.status).toBe("refused");
+      expect(r.files[0]?.error).toContain("cost_line");
+      expect(partial.query("SELECT COUNT(*) AS n FROM cost_import").get()).toEqual({ n: 0 });
+    } finally {
+      partial.close();
+    }
+  });
+
+  test("a directory whose files are all above the cap refuses each one", () => {
+    writeFileSync(join(dir, "a.csv"), mtd(1));
+    writeFileSync(join(dir, "b.csv"), mtd(2));
+    const r = importFocusPath(db, dir, { dryRun: false, now: NOW, maxBytes: 8 });
+    expect(r.files.map((f) => f.status)).toEqual(["refused", "refused"]);
+    expect(count()).toBe(0);
   });
 
   test("a linked path is refused, not followed", () => {

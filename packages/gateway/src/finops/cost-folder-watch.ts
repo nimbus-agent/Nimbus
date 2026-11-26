@@ -1,17 +1,22 @@
-// Phase 7 (the Cost Pack): the watched FOCUS folder (`[cost.focus] dir`). Once a day the gateway imports the
-// folder's new or changed `*.csv` files (by SHA-256) through the same path as `nimbus cost import`.
+// Phase 7 (the Cost Pack): the watched FOCUS folder (`[cost.focus] dir`). Once a day the gateway checks the
+// folder's `*.csv` files and, when ANY of them is new or changed (by SHA-256), re-imports EVERY file of the
+// folder oldest-modification-first through the same path as `nimbus cost import` (accepted files included), so
+// the stored lines always equal a fresh oldest-first import of the folder and the newest export of an
+// overlapping period stands. When nothing changed, nothing is imported.
 //
 // Confined by static rule D48 (no network, no connector, no model). Never started on a demo gateway (the
 // caller, `platform/assemble/finops-sidecars.ts`, checks; I41). The folder is re-read from the config on every
-// pass. Stated bound: the "already imported" memory is per gateway run; after a restart the first pass
-// re-imports every file, oldest first, which ends in the same state (an identical file is a no-op and the
-// newest export of an overlapping period is applied last).
+// pass. Each file's size is checked before a byte of it is read (the importer's cap, `COST_IMPORT_MAX_BYTES`),
+// and the hash is streamed. Stated bound: the "already seen" memory is per gateway run; after a restart the
+// first pass imports the folder through the import ledger, where every accepted file is `unchanged`, which
+// ends in the same state. A refused file is retried when its bytes change.
 import type { Database } from "bun:sqlite";
-import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { lstatSync } from "node:fs";
 
 import {
+  COST_IMPORT_MAX_BYTES,
   CostImportError,
+  hashFileCapped,
   type ImportFileReport,
   importFocusPath,
   listFocusFiles,
@@ -26,13 +31,21 @@ export interface CostFolderWatchOptions {
   readonly now: () => number;
   readonly onFile?: (file: ImportFileReport) => void;
   readonly onFailure?: (err: unknown) => void;
+  /** Test seam: the per-file size cap (default {@link COST_IMPORT_MAX_BYTES}). */
+  readonly maxBytes?: number;
 }
 
-function hashOf(path: string): string | null {
+/** The file's content hash, or (unhashable: above the cap, unreadable) its size and modification time. */
+function fingerprintOf(path: string, maxBytes: number): string {
   try {
-    return createHash("sha256").update(readFileSync(path)).digest("hex");
+    return hashFileCapped(path, maxBytes);
   } catch {
-    return null;
+    try {
+      const st = lstatSync(path);
+      return `unhashed:${String(st.size)}:${String(st.mtimeMs)}`;
+    } catch {
+      return "unreadable";
+    }
   }
 }
 
@@ -46,35 +59,31 @@ function folderFiles(dir: string): string[] {
   }
 }
 
-/** Import one file unless this run already imported these exact bytes. */
-function importIfChanged(
-  opts: CostFolderWatchOptions,
-  done: Map<string, string>,
-  file: string,
-): ImportFileReport | null {
-  const sha = hashOf(file);
-  if (sha === null || done.get(file) === sha) return null;
-  const report = importFocusPath(opts.db, file, { dryRun: false, now: opts.now }).files[0] ?? null;
-  if (report?.status === "imported") done.set(file, sha);
-  return report;
-}
-
-/** One pass: import every file whose bytes this run has not imported yet. Returns the files imported. */
+/** One pass: when any file is new or changed, re-import the whole folder. Returns the files imported. */
 export function createCostFolderPass(opts: CostFolderWatchOptions): () => ImportFileReport[] {
-  const done = new Map<string, string>();
+  let seen = new Map<string, string>();
+  const maxBytes = opts.maxBytes ?? COST_IMPORT_MAX_BYTES;
   return () => {
-    const out: ImportFileReport[] = [];
     try {
       const dir = opts.dir();
-      for (const f of dir === null ? [] : folderFiles(dir)) {
-        const report = importIfChanged(opts, done, f);
-        if (report === null) continue;
-        out.push(report);
-        opts.onFile?.(report);
-      }
+      if (dir === null) return [];
+      const now = new Map(folderFiles(dir).map((f) => [f, fingerprintOf(f, maxBytes)]));
+      const changed = [...now].some(([f, fp]) => seen.get(f) !== fp);
+      if (!changed) return [];
+      // After a restart (empty memory) the ledger decides; after a change in this run, every file replays.
+      const replay = seen.size > 0;
+      seen = now;
+      const files = importFocusPath(opts.db, dir, {
+        dryRun: false,
+        now: opts.now,
+        maxBytes,
+        replay,
+      }).files;
+      for (const f of files) opts.onFile?.(f);
+      return files;
     } catch (e) {
       opts.onFailure?.(e);
+      return [];
     }
-    return out;
   };
 }

@@ -94,6 +94,8 @@ describe("demo cost (Phase 7)", () => {
     expect(r.files.map((f) => [f.name, f.status])).toEqual([["acme-focus.csv", "imported"]]);
     expect(r.files[0]?.path).toBe(join(dataDir, "cost", "acme-focus.csv"));
     expect(r.files[0]?.lines).toBe(DEMO_COST_DAYS * 8);
+    // A second seed of the same export is an accepted replay, not a refusal.
+    expect(seedDemoCost(db, dataDir, NOW).files[0]?.status).toBe("unchanged");
   });
 
   test("a refused demo export throws with the refusal rather than seeding a partial demo", () => {
@@ -101,7 +103,7 @@ describe("demo cost (Phase 7)", () => {
     const bare = new Database(":memory:");
     dbs.push(bare);
     expect(() => seedDemoCost(bare, dataDir, NOW)).toThrow(
-      /demo seed: the demo cost export was refused: .*cost_line/,
+      /demo seed: the demo cost export was refused: .*no such table/,
     );
   });
 });

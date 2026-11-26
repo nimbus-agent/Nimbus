@@ -6,8 +6,13 @@
 // and written in its own transaction. A directory imports its `*.csv` files (not recursive) oldest first by
 // modification time, so when two exports overlap the newest one's values stand.
 //
-// The import id is the file's content hash (`focus:<16 hex>`), so re-importing the same bytes is a no-op
-// and `nimbus cost import --remove <importId>` names one export.
+// The import id is the file's content hash (`focus:<16 hex>`) and every accepted import is recorded in the
+// import ledger (`cost_import`, in the same transaction as its lines). An import whose id the ledger holds is
+// `unchanged` and writes nothing, so replaying an older export never overwrites a later restatement;
+// `nimbus cost import --remove <importId>` deletes one export's lines and its ledger row. A directory in which
+// ANY file is not yet accepted re-applies EVERY file oldest first (accepted ones included), so the newest
+// export still wins an overlap. A `--dry-run` runs every file inside one transaction that is rolled back, each
+// file in its own savepoint, so a later file sees the earlier files' simulated changes.
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { closeSync, fstatSync, lstatSync, openSync, readdirSync, readSync } from "node:fs";
@@ -15,11 +20,15 @@ import { basename, isAbsolute, join } from "node:path";
 
 import type { CostLine } from "./cost-line.ts";
 import {
+  type CostImportRecord,
   deleteCostImport,
+  isCostImportAccepted,
   type ReplaceCostLinesResult,
+  recordCostImport,
   replaceCostLines,
 } from "./cost-line-store.ts";
 import {
+  FOCUS_SOURCE,
   FocusCsvError,
   type FocusProvider,
   type FocusRowIssue,
@@ -30,6 +39,7 @@ export const COST_IMPORT_MAX_BYTES = 512 * 1024 * 1024;
 /** Skipped rows and warnings listed per file; the counts are always exact. */
 export const COST_IMPORT_MAX_LISTED = 20;
 const IMPORT_ID_RE = /^focus:[0-9a-f]{16}$/;
+const HASH_CHUNK = 1024 * 1024;
 
 export class CostImportError extends Error {
   override readonly name = "CostImportError";
@@ -40,7 +50,8 @@ export interface ImportFileReport {
   readonly name: string;
   readonly sha256: string | null;
   readonly importId: string | null;
-  readonly status: "imported" | "dry_run" | "refused";
+  /** `unchanged`: the import ledger already holds this export, so nothing was (or would be) written. */
+  readonly status: "imported" | "dry_run" | "unchanged" | "refused";
   readonly error?: string;
   readonly lines: number;
   readonly inserted: number;
@@ -67,6 +78,8 @@ export interface ImportOptions {
   readonly now: () => number;
   /** Test seam: the per-file size cap (default {@link COST_IMPORT_MAX_BYTES}). */
   readonly maxBytes?: number;
+  /** Re-apply every file, accepted ones included (the watched folder after a change). */
+  readonly replay?: boolean;
 }
 
 /** The `*.csv` files a path names: the file itself, or a directory's (not recursive), oldest first. */
@@ -93,16 +106,46 @@ export function listFocusFiles(path: string): string[] {
   return files.map((f) => f.p);
 }
 
+function checkCap(size: number, maxBytes: number): void {
+  if (size > maxBytes) {
+    throw new CostImportError(
+      `the file is larger than the import cap of ${String(maxBytes)} bytes; split the export`,
+    );
+  }
+}
+
+/**
+ * SHA-256 hex of one file, through one handle: the size is checked on that handle BEFORE any byte is read
+ * (refused above the cap with {@link CostImportError}), then the bytes are hashed in 1 MiB chunks.
+ */
+export function hashFileCapped(path: string, maxBytes: number = COST_IMPORT_MAX_BYTES): string {
+  const fd = openSync(path, "r");
+  try {
+    checkCap(fstatSync(fd).size, maxBytes);
+    const h = createHash("sha256");
+    const buf = Buffer.alloc(HASH_CHUNK);
+    let off = 0;
+    for (;;) {
+      const n = readSync(fd, buf, 0, HASH_CHUNK, off);
+      if (n === 0) break;
+      h.update(buf.subarray(0, n));
+      off += n;
+      checkCap(off, maxBytes);
+    }
+    return h.digest("hex");
+  } finally {
+    closeSync(fd);
+  }
+}
+
+const importIdOf = (sha256: string): string => `focus:${sha256.slice(0, 16)}`;
+
 /** The bytes of one file, through one handle, refused above the cap. */
 function readCapped(path: string, maxBytes: number): Buffer {
   const fd = openSync(path, "r");
   try {
     const size = fstatSync(fd).size;
-    if (size > maxBytes) {
-      throw new CostImportError(
-        `the file is larger than the import cap of ${String(maxBytes)} bytes; split the export`,
-      );
-    }
+    checkCap(size, maxBytes);
     const buf = Buffer.alloc(size);
     let off = 0;
     while (off < size) {
@@ -125,14 +168,18 @@ function sumByCurrency(lines: readonly CostLine[]): Map<string, number> {
   return m;
 }
 
-function refused(path: string, error: string, sha256: string | null = null): ImportFileReport {
+function emptyReport(
+  path: string,
+  status: ImportFileReport["status"],
+  sha256: string | null,
+  importId: string | null,
+): ImportFileReport {
   return {
     path,
     name: basename(path),
     sha256,
-    importId: null,
-    status: "refused",
-    error,
+    importId,
+    status,
     lines: 0,
     inserted: 0,
     replaced: 0,
@@ -144,6 +191,10 @@ function refused(path: string, error: string, sha256: string | null = null): Imp
     warningCount: 0,
     warnings: [],
   };
+}
+
+function refused(path: string, error: string, sha256: string | null = null): ImportFileReport {
+  return { ...emptyReport(path, "refused", sha256, null), error };
 }
 
 type Counts = { inserted: number; replaced: number; unchanged: number; removed: number };
@@ -195,11 +246,41 @@ function applyParsed(
   }
 }
 
-function importOneFile(db: Database, path: string, opts: ImportOptions): ImportFileReport {
+/** The ledger row of an accepted file: its providers, sorted and comma-joined. */
+function ledgerRow(
+  parsed: ReturnType<typeof parseFocusCsv>,
+  importId: string,
+  sha256: string,
+  at: number,
+): CostImportRecord {
+  const providers = [...new Set(parsed.lines.map((l) => l.provider))].sort().join(",");
+  return {
+    importId,
+    source: FOCUS_SOURCE,
+    provider: providers.slice(0, 256),
+    fileSha256: sha256,
+    importedAtMs: at,
+  };
+}
+
+function importOneFile(
+  db: Database,
+  path: string,
+  opts: ImportOptions,
+  replay: boolean,
+  at: number,
+): ImportFileReport {
   const read = readFile(path, opts.maxBytes ?? COST_IMPORT_MAX_BYTES);
   if ("error" in read) return refused(path, read.error, read.sha256);
   const { sha256, text } = read;
-  const importId = `focus:${sha256.slice(0, 16)}`;
+  const importId = importIdOf(sha256);
+  try {
+    if (!replay && isCostImportAccepted(db, importId)) {
+      return emptyReport(path, "unchanged", sha256, importId);
+    }
+  } catch (e) {
+    return refused(path, e instanceof Error ? e.message : String(e), sha256);
+  }
   let parsed: ReturnType<typeof parseFocusCsv>;
   try {
     parsed = parseFocusCsv(text, {
@@ -212,12 +293,13 @@ function importOneFile(db: Database, path: string, opts: ImportOptions): ImportF
   const totals: Record<string, number> = {};
   const acc: Counts = { inserted: 0, replaced: 0, unchanged: 0, removed: 0 };
   try {
+    // Inside a dry run's outer transaction this is a savepoint: a failure undoes this file only.
     db.transaction(() => {
       applyParsed(db, parsed, totals, acc);
-      if (opts.dryRun) throw ROLLBACK;
+      recordCostImport(db, ledgerRow(parsed, importId, sha256, at));
     })();
   } catch (e) {
-    if (e !== ROLLBACK) return refused(path, e instanceof Error ? e.message : String(e), sha256);
+    return refused(path, e instanceof Error ? e.message : String(e), sha256);
   }
   return {
     path,
@@ -235,17 +317,50 @@ function importOneFile(db: Database, path: string, opts: ImportOptions): ImportF
   };
 }
 
+/** Whether a directory holds a file the ledger has not accepted (one that cannot be hashed is not new). */
+function hasNewFile(db: Database, files: readonly string[], maxBytes: number): boolean {
+  return files.some((f) => {
+    try {
+      return !isCostImportAccepted(db, importIdOf(hashFileCapped(f, maxBytes)));
+    } catch {
+      return false;
+    }
+  });
+}
+
+/** Every file in order; a dry run inside ONE transaction that is always rolled back. */
+function importFiles(
+  db: Database,
+  files: readonly string[],
+  opts: ImportOptions,
+  replay: boolean,
+  at: number,
+): ImportFileReport[] {
+  const run = (): ImportFileReport[] => files.map((f) => importOneFile(db, f, opts, replay, at));
+  if (!opts.dryRun) return run();
+  let reports: ImportFileReport[] = [];
+  try {
+    db.transaction(() => {
+      reports = run();
+      throw ROLLBACK;
+    })();
+  } catch (e) {
+    if (e !== ROLLBACK) throw e;
+  }
+  return reports;
+}
+
 /** Import one FOCUS CSV file or a directory of them. Throws {@link CostImportError} for a bad path. */
 export function importFocusPath(db: Database, path: string, opts: ImportOptions): ImportReport {
   const files = listFocusFiles(path);
-  return {
-    dryRun: opts.dryRun,
-    importedAtMs: opts.now(),
-    files: files.map((f) => importOneFile(db, f, opts)),
-  };
+  const at = opts.now();
+  const replay =
+    opts.replay === true ||
+    (files.length > 1 && hasNewFile(db, files, opts.maxBytes ?? COST_IMPORT_MAX_BYTES));
+  return { dryRun: opts.dryRun, importedAtMs: at, files: importFiles(db, files, opts, replay, at) };
 }
 
-/** `nimbus cost import --remove <importId>`: delete one import's lines. */
+/** `nimbus cost import --remove <importId>`: delete one import's lines and its ledger row. */
 export function removeCostImport(
   db: Database,
   importId: string,

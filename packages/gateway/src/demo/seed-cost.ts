@@ -125,7 +125,7 @@ export function seedDemoCost(db: Database, demoRoot: string, nowMs: number): Imp
   const path = join(dir, "acme-focus.csv");
   writeFileSync(path, demoFocusCsv(nowMs));
   const report = importFocusPath(db, path, { dryRun: false, now: () => nowMs });
-  const refused = report.files.find((f) => f.status !== "imported");
+  const refused = report.files.find((f) => f.status === "refused");
   if (refused !== undefined)
     throw new Error(`demo seed: the demo cost export was refused: ${refused.error ?? ""}`);
   return report;
