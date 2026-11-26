@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795678164154,
+  "lastUpdate": 1795679844793,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "f3615e045ba824d2ea5a96d8b3c97b41689828b9",
-          "message": "chore: release main (#1546)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.27.0</summary>\n\n##\n[7.27.0](https://github.com/nimbus-agent/Nimbus/compare/v7.26.0...v7.27.0)\n(2026-09-19)\n\n\n### Features\n\n* **cli:** nimbus demo — a seeded synthetic org and a three-brief tour\n([#1547](https://github.com/nimbus-agent/Nimbus/issues/1547))\n([b238a13](https://github.com/nimbus-agent/Nimbus/commit/b238a1386312746994a8a3ab4e668464c5dd1e5d))\n* isolated demo root for nimbus --demo (invariant I41)\n([#1545](https://github.com/nimbus-agent/Nimbus/issues/1545))\n([8791c19](https://github.com/nimbus-agent/Nimbus/commit/8791c1990e85f27364e0c8110da43709fba9b07f))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-09-19T20:45:19+03:00",
-          "tree_id": "d86bc74ec266cebee8e526a89152e010211555ca",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/f3615e045ba824d2ea5a96d8b3c97b41689828b9"
-        },
-        "date": 1789840857361,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 327.8629594500013,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 328.1173081000023,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 177.8240278500003,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9b4765e0ff430d4efb695f7ac0ae9efa1e86cabf",
+          "message": "docs: close spine S4 and bring the skills up to date (#2166)\n\nS4 (Autonomous Agent) closes: it ran from 2026-11-04 to 2026-11-26, and\nits last exit-condition row, acceptance A6 (Phase 28), was met in #2165.\nDocs only: no code, migration, invariant, HITL type or IPC method\nchanges.\n\n**The roadmap**\n- S4's record moves under Shipped as **Spine S4 — Autonomous Agent ✅**\n(with a `spine-s4` anchor), the same way S3's did. It ends with a \"What\nstays open\" list of the rows owner rulings moved to Phases 14, 30, 11\nand 16.\n- **Active** now says no slot is open: S5 (the Team Server, Phase 29) is\nnext, and the owner opens it.\n- Phases 10 and 17 are marked complete in the status table and in their\nsection headers.\n- The contents list, the current-slot line, the Direction \"Now\" line,\nthe spine status line, the Track 1 S4 row and \"Last updated\" are all\nupdated.\n\n**Status lines in other docs**\n- `CLAUDE.md` and `GEMINI.md`: S4 is complete, no slot is open, and S5\nis next.\n- `docs/README.md`: the S4 row in the status table, the \"active slot\"\nsentence and the Recorded direction paragraph, which still described\nAD3b, AD6 and AD8 as still to come.\n- `.claude/commands/nimbus-architecture.md`: the slot status.\n- `docs/architecture.md`: the header now says V108 (it said V107).\n- `docs/SECURITY-INVARIANTS.md`: the egress coverage set has nine\nclasses, not eight (`registry`).\n- `docs/CHANGELOG.md`: a new entry for the S4 close.\n\n**Skills (`.claude/commands/`)**\n- **New: `nimbus-connector-writes`.** The Phase 9.7 write rows and every\ndoor to them (I53, I54, D39–D43).\n- **New: `nimbus-incident-engine`.** IC1–IC10 (I57, D46).\n- **New: `nimbus-standing-workflows`.** Workflow steps and `when`\nguards, standing rules, scheduled workflows and approval learning (I55,\nD44).\n- **Updated: `nimbus-mcp-sink`.** Covers the finished agent door: the\nD49 rules, the dispatch text, the kits and their A6 verification.\nHard-coded counts are gone.\n- **Stale facts fixed in 16 more skills:**\n- Invariant and static-rule ceilings (I61, D10–D52) and the egress class\ncount.\n  - The wrap sites in the tool-output-envelope skill.\n- The embedding exclusions and local-only types, and the body-cap key\nset.\n  - The preflight function signature.\n  - The share file locations.\n  - The sandbox write-grant exceptions.\n  - The Noise LAN session.\n  - The new IPC namespaces and `gateway.event` kinds.\n  - The S4 CLI surface.\n  - File-map pointers.\n  - The lineage-skill additions for DAG runs, dbt tests and V108.\n- The three new skills are listed in the skill tables in `CLAUDE.md` and\n`GEMINI.md`.\n\n`bun run preflight:fast` passes, including `audit:doc-refs` and\n`audit:status-drift`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-26T07:46:23Z",
+          "tree_id": "8eb011d872a8e221d1c7f4be5b5d277e88ea6366",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/9b4765e0ff430d4efb695f7ac0ae9efa1e86cabf"
+        },
+        "date": 1795679839847,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 280.6756197499999,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 267.1620617000026,
             "unit": "ms"
           }
         ]
