@@ -160,3 +160,39 @@ why every renumbered heading carries `(formerly Phase N)`.
 7. **Phase 29's guardrails and acceptance criteria** move into new 19 as a "Team server" subsection
    verbatim; where one duplicates a Platform Layer criterion, both stay and the builder notes the
    overlap. No criterion is dropped.
+
+## Fixes from the Antigravity review (2026-11-26)
+
+1. **Placeholder order (binding).** Pass 1 replaces the longest phase tokens first: `12.5` and `13.5`
+   (and `9.5`, `9.7`, which stay as they are) before `12` and `13`; a regex with a lookahead
+   `Phase 12(?!\.\d)` is used for whole numbers so `Phase 12.5` can never become `@@P12@@.5`.
+2. **Client surfaces (binding).** The `Client surfaces` subsection (today under Track 2) moves intact,
+   with its anchor, to a top-level section right after **Build order**. Nothing in it is dropped. It
+   also gains the two editor/browser rows below (Extensions).
+3. **Duplicate rows (binding).** Phase 4's two open rows (`data.import` native picker S4-F6, profile
+   switch broadcast S4-F8) already exist verbatim in old Phase 13. They are de-duplicated: the Phase 4
+   copies become a pointer line `→ Phase 18 (Desktop Distribution)`, so the count check expects -2.
+4. **Row-count rule (binding).** Expected after = before − (rows merged) − (rows deduplicated) − (rows
+   ticked by the stale sweep) + (new rows). Every term is listed in the PR body; the check uses that
+   formula, not equality.
+5. **How to Update This Document (advisory, taken).** Rewritten: the phase number is the build order;
+   a new phase is numbered by where it ships; done phases keep their numbers; no spine slots.
+6. **Contents, Direction, Status Overview, Active (advisory, taken).** All four are rewritten for the new
+   numbers; the Active section says no phase is open and Phase 7 (Cost Pack) is next.
+7. **`carried-into-s7` and other moved anchors (advisory, taken).** Every anchor whose section goes away
+   (`carried-into-s7`, the spine's Track anchors, `phase-29--the-team-server`) is kept as an `<a id>`
+   alias at the new home of its content.
+8. **Stale sweep (advisory, taken).** Done systematically for old 7, 8, 9 (e.g. `nimbus why` shipped
+   2026-07-24 in S1, `nimbus principles` and siblings checked against the code).
+9. **Slug variants (advisory, taken).** Alias anchors are added for both the double- and single-hyphen
+   slug of each renumbered heading.
+
+## Extensions decided 2026-11-26 (owner)
+
+- The editor shows agent proposals read-only; approval stays at the terminal (owner: for the near
+  future; editor approval may be reconsidered with collaboration features). Recorded in Client surfaces.
+- A new row in new Phase 8 (Engineering Excellence): a read-only external agent route for the PR
+  pre-review brief, `POST /v1/agents/prereview` under the `agents` token scope, so the browser extension
+  can show it on pull-request pages (no write, nothing posted).
+- A design-first row in new Phase 8: an HTTP read route for incident records (scope to be decided),
+  for the browser extension's alert pages.
