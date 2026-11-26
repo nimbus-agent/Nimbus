@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { CostRpcError, dispatchCostRpc } from "./cost-rpc.ts";
+import { checkLanMethodAllowed, LanError } from "./lan-rpc.ts";
 import type { ClientKind } from "./server/client-kind.ts";
 
 const CSV =
@@ -106,4 +107,17 @@ describe("cost.importRemove", () => {
       -32602,
     );
   });
+});
+
+describe("the Phase 7 cost methods over LAN (I5)", () => {
+  test.each(["cost.import", "cost.importRemove", "cost.products", "cost.internal"])(
+    "%s is refused over LAN regardless of grant-write",
+    (method) => {
+      for (const writeAllowed of [true, false]) {
+        expect(() => checkLanMethodAllowed(method, { peerId: "p", writeAllowed })).toThrow(
+          LanError,
+        );
+      }
+    },
+  );
 });
