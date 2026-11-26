@@ -25,6 +25,7 @@ export const CONNECTOR_WRITE_MANIFEST: readonly ConnectorWriteRegistration[] = [
   { toolId: "azure_app_service_restart", connector: "azure" },
   { toolId: "bigeye_issue_acknowledge", connector: "bigeye" },
   { toolId: "bigeye_issue_resolve", connector: "bigeye" },
+  { toolId: "bitbucket_pr_comment_create", connector: "bitbucket" },
   { toolId: "bitbucket_pr_merge", connector: "bitbucket" },
   { toolId: "bitrise_build_trigger", connector: "bitrise" },
   { toolId: "circleci_job_cancel", connector: "circleci" },

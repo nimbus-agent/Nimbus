@@ -107,8 +107,11 @@ describe("C0: the sends are never offered to the model (OR-W34-1)", () => {
     expect(r.confirm).toBeDefined();
     expect(isModelOfferableRow(r)).toBe(false);
     expect(MODEL_NEVER_OFFERED_REASONS["bitbucket_pr_merge"]).toContain("head-commit");
+    // Only the Wave 2 pull request comment (connectors PR 106) is offerable on Bitbucket.
     for (const wave of [2, 3, 4] as const) {
-      expect(offerableWritesEnabledBy("bitbucket", wave).map((x) => x.toolId)).toEqual([]);
+      expect(offerableWritesEnabledBy("bitbucket", wave).map((x) => x.toolId)).toEqual([
+        "bitbucket_pr_comment_create",
+      ]);
     }
   });
 

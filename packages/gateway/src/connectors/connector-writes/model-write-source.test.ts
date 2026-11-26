@@ -48,8 +48,7 @@ import {
 import { createModelWriteToolSource, type ModelWriteSourceDeps } from "./model-write-source.ts";
 import { previewTemplateKeys, row, withPreview } from "./types.ts";
 
-// SYNTHETIC templated rows for the offer filters, so the wave and approved-set filters can be shown
-// over rows a test controls. The real B1 rows go through the real door at the end of this file.
+// SYNTHETIC templated rows for the wave and approved-set filters; the real rows' door is at the end.
 const T = { target: "{name}", summary: "s", fields: [] };
 const SYNC = withPreview(row("argocd_app_sync", "argocd.app.sync", "write", 2), T);
 const ROLLBACK = withPreview(row("argocd_app_rollback", "argocd.app.rollback", "write", 3), T);
@@ -295,6 +294,7 @@ const REAL_SERVICES = [
   "discord",
   "github",
   "gitlab",
+  "bitbucket",
   "jira",
   "linear",
   "notion",
@@ -387,7 +387,7 @@ describe("the real messaging rows through the real door (plan Task 3)", () => {
         .map((r) => `${serviceOf(r.actionType)}__${r.toolId}`)
         .sort((a, b) => a.localeCompare(b)),
     );
-    expect(door.offered).toHaveLength(39);
+    expect(door.offered).toHaveLength(40);
   });
 
   test("Slack: the bound channel by id and any channel NAME are refused, the DM too; nothing executed", async () => {

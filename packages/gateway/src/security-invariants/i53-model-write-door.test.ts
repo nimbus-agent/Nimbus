@@ -96,8 +96,7 @@ describe("I53 — a first-party connector write reaches the model only through t
         const res = await exec.execute(action);
         return { status: res.status, dispatched, plainAsked };
       };
-      // A row the gate refuses itself (D2: the Pulumi apply) is refused on every channel, exact
-      // text included, and nobody is asked.
+      // A row the gate refuses itself (D2: the Pulumi apply): refused on every channel, nobody asked.
       if (refusedByRow) {
         for (const channel of ["plain", "exact", "wrong", "empty"] as const) {
           const r = await attempt(channel);
@@ -769,7 +768,7 @@ describe("I53 — a first-party connector write reaches the model only through t
     expect(naming).not.toContain("platform/assemble.ts");
   });
 
-  test("the production rows with a before reader are B1's seven comment rows, B2's nine issue writes, B3's five page writes, B4a's Drive create, B4b's Obsidian append (all wave 2), C1's eight wave-3 file, pull request and incident writes, C2's four wave-3 branch, pull request and merge request writes and C3's five wave-3 flag and alert writes, D1's 28 wave-4 rows (27 offered, plus the never-offered Bitbucket merge) and D3b's seven deploy and mobile-release rows and D3c's two Kubernetes rows and SA2's Gmail thread archive", () => {
+  test("the production rows with a before reader are B1's seven comment rows, B2's nine issue writes, B3's five page writes, B4a's Drive create, B4b's Obsidian append (all wave 2), C1's eight wave-3 file, pull request and incident writes, C2's four wave-3 branch, pull request and merge request writes and C3's five wave-3 flag and alert writes, D1's 28 wave-4 rows (27 offered, plus the never-offered Bitbucket merge) and D3b's seven deploy and mobile-release rows and D3c's two Kubernetes rows and SA2's Gmail thread archive, and the wave-2 Bitbucket pull request comment", () => {
     const withReader = CONNECTOR_WRITE_ROWS.filter((r) => r.before !== undefined);
     const D1_WAVE4 = [
       "apple_calendar_event_delete",
@@ -824,6 +823,7 @@ describe("I53 — a first-party connector write reaches the model only through t
         .map((r) => r.toolId)
         .sort((a, b) => a.localeCompare(b)),
     ).toEqual([
+      "bitbucket_pr_comment_create",
       "confluence_comment_add",
       "confluence_page_append",
       "confluence_page_update",

@@ -245,6 +245,8 @@ export const REVERSIBILITY_TABLE: Readonly<Record<string, ReversibilityEntry>> =
   github_pr_merge: irreversible(`a merge ${NO_UNDO}`),
   gitlab_mr_merge: irreversible(`a merge ${NO_UNDO}`),
   bitbucket_pr_merge: irreversible(`a merge ${NO_UNDO}`),
+  // Owner ruling 2026-11-26: the connector has no comment delete tool.
+  bitbucket_pr_comment_create: irreversible(`a posted comment ${NO_UNDO}`),
   github_branch_delete: irreversible(`a deleted branch ${NO_UNDO}`),
   onedrive_item_delete: irreversible(`a delete ${NO_UNDO}`),
   outlook_calendar_delete: irreversible(`a deleted event ${NO_UNDO}`),

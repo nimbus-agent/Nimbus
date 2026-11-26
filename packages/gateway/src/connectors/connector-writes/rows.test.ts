@@ -110,9 +110,9 @@ const REFUSED_BEFORE_A1: readonly string[] = [
 ];
 
 describe("connector write rows", () => {
-  test("126 rows, unique tool ids", () => {
-    expect(CONNECTOR_WRITE_ROWS).toHaveLength(126);
-    expect(new Set(CONNECTOR_WRITE_ROWS.map((r) => r.toolId)).size).toBe(126);
+  test("127 rows, unique tool ids", () => {
+    expect(CONNECTOR_WRITE_ROWS).toHaveLength(127);
+    expect(new Set(CONNECTOR_WRITE_ROWS.map((r) => r.toolId)).size).toBe(127);
   });
 
   test("every row's action type is in the HITL frozen set", () => {

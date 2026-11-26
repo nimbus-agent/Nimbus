@@ -1,6 +1,7 @@
 // packages/gateway/src/connectors/connector-writes/index.ts
 // The one row table for every connector write. Must not import the chatops or tribal gates: the
 // structure audit imports this module.
+import { BITBUCKET_COMMENT_ROWS } from "./bitbucket-comment-rows.ts";
 import { CLOUD_INFRA_ROWS } from "./cloud-infra.ts";
 import { DEPLOY_MOBILE_ROWS } from "./deploy-mobile.ts";
 import { FILES_ROWS } from "./files.ts";
@@ -23,6 +24,7 @@ export const CONNECTOR_WRITE_ROWS: readonly ConnectorWriteRow[] = applyReversibi
   ...MAIL_CALENDAR_ROWS,
   ...FILES_ROWS,
   ...VCS_CI_ROWS,
+  ...BITBUCKET_COMMENT_ROWS,
   ...INCIDENT_ROWS,
   ...FLAGS_ROWS,
   ...CLOUD_INFRA_ROWS,

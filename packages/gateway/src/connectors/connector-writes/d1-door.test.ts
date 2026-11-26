@@ -242,7 +242,10 @@ describe("D1 through the real door", () => {
 
   test("the Bitbucket merge is never offered, even enabled at wave 4 and approved by name", async () => {
     setModelWriteEnablement(db, "bitbucket", 4, 1, ["bitbucket_pr_merge"]);
-    expect(offerableWritesEnabledBy("bitbucket", 4)).toEqual([]);
+    // The Wave 2 pull request comment (connectors PR 106) is the only offerable Bitbucket row.
+    expect(offerableWritesEnabledBy("bitbucket", 4).map((r) => r.toolId)).toEqual([
+      "bitbucket_pr_comment_create",
+    ]);
     expect(writesEnabledBy("bitbucket", 4).map((r) => r.toolId)).toContain("bitbucket_pr_merge");
     const src = createModelWriteToolSource({
       db,

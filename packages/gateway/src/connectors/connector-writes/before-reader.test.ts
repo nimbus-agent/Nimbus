@@ -168,7 +168,7 @@ describe("BeforeStateReader (spec § 5.4)", () => {
     expect(Object.getPrototypeOf(picked)).toBeNull();
   });
 
-  test("the rows with readers are exactly the 78 (seven B1 comments, nine B2 issue writes, five B3 page writes, the B4a Drive create, the B4b Obsidian append, the eight C1 file, PR and incident writes, the four C2 branch, PR and MR rows with a reader, the five C3 flag and alert rows, the 28 D1 Wave 4 rows, the seven D3b deploy and mobile rows, the two D3c Kubernetes rows, and the SA2 Gmail archive), and every reader passes", () => {
+  test("the rows with readers are exactly the 79 (seven B1 comments, the Bitbucket PR comment, nine B2 issue writes, five B3 page writes, the B4a Drive create, the B4b Obsidian append, the eight C1 file, PR and incident writes, the four C2 branch, PR and MR rows with a reader, the five C3 flag and alert rows, the 28 D1 Wave 4 rows, the seven D3b deploy and mobile rows, the two D3c Kubernetes rows, and the SA2 Gmail archive), and every reader passes", () => {
     const withReader = CONNECTOR_WRITE_ROWS.filter((r) => r.before !== undefined)
       .map((r) => r.toolId)
       .sort((a, b) => a.localeCompare(b));
@@ -195,6 +195,7 @@ describe("BeforeStateReader (spec § 5.4)", () => {
         "gitlab_issue_note_create",
         "gitlab_issue_state_set",
         "gitlab_mr_note_create",
+        "bitbucket_pr_comment_create",
         "gitlab_mr_update",
         "gmail_thread_archive",
         "jira_comment_add",
@@ -256,7 +257,7 @@ describe("BeforeStateReader (spec § 5.4)", () => {
         "firebase_app_distribution_distribute",
       ].sort((a, b) => a.localeCompare(b)),
     );
-    expect(withReader).toHaveLength(78);
+    expect(withReader).toHaveLength(79);
     for (const r of CONNECTOR_WRITE_ROWS) expect(beforeReaderProblems(r)).toEqual([]);
   });
 });
@@ -275,9 +276,8 @@ interface ReaderCase {
   /** A realistic reply body, shaped from the 0.4.0 tool's request. */
   readonly reply: Record<string, unknown>;
   readonly fields: ReadonlyArray<{ label: string; value: string }>;
-  /** `reply` without the identity field. */
+  /** `reply` without the identity field, and (`withIdentity`) with it set to `v`. */
   readonly withoutIdentity: Record<string, unknown>;
-  /** `reply` with the identity field set to `v`. */
   readonly withIdentity: (v: string) => Record<string, unknown>;
 }
 
