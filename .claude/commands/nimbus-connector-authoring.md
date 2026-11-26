@@ -136,7 +136,7 @@ A connector write tool is never reachable by itself: the gateway classifies ever
 - [ ] `nimbus.extension.json` populated with `id`, `displayName`, `version`, `entrypoint`, `runtime: "bun"`, `permissions`, `hitlRequired`, `syncInterval`, `minNimbusVersion`.
 - [ ] Every write tool registered through `createWriteToolRegistrar` (nimbus-mcp-servers `shared/consent-kit.ts`), and given a row in `CONNECTOR_WRITE_ROWS`.
 - [ ] Credentials read from `process.env` only; no Vault API calls.
-- [ ] `ConnectorSyncHandler` implemented; `SyncResult.nextSyncToken` always populated.
+- [ ] If the owner decided the connector is indexed: `ConnectorSyncHandler` implemented; `SyncResult.nextSyncToken` always populated.
 - [ ] Item IDs follow `"<service>:<native_id>"` — no UUIDs.
 - [ ] `nimbus test` passes (contract tests green).
 - [ ] Gateway half done (see § Gateway half of a new connector): catalog, secrets manifest, first-party manifests, spawn wiring, regenerated bundled registry, docs page.
