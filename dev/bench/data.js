@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795679844793,
+  "lastUpdate": 1795680369773,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "4267055986ab9e6e12bc85543a8e0e9fa0f4f838",
-          "message": "fix(cli): nimbus start waits for the gateway state file, not only the socket (#1549)\n\n## What\n\n`nimbus start` reported \"Gateway started\" as soon as the IPC socket\nanswered. The gateway binds its socket first and writes `gateway.json`\nafterwards, and every other command reads that file before it connects,\nreporting \"Gateway is not running\" when the file is absent. A command\nrun immediately after a start could land in the gap between the two.\n\nFound by running `nimbus demo` on a fresh root while preparing a\nreleased first-run CI gate: the tour died at step 1 with \"Gateway is not\nrunning (demo root)\" and exit 1, while `nimbus --demo egress` a few\nseconds later reached the same gateway without trouble. It reproduced on\n1 of 5 fresh-root runs on a fast Windows machine. It is not\ndemo-specific: any script doing `nimbus start && nimbus <cmd>` can hit\nit, and a slow machine makes the gap wider.\n\n## Fix\n\n`waitForGatewayReady` now requires both conditions: the socket answers\nand `gateway.json` names the pid that was spawned. A state file left by\na different gateway process does not count. The function takes its\ncollaborators by injection, so the four cases are unit-tested directly:\nsocket up with the file still absent, a file naming another pid, a file\npresent with the socket silent, and a dead child.\n\nThe gateway side is unchanged. Writing the state file before binding\nwould only move the race to the other side, where a reader finds the\nfile and then fails to connect.\n\n## Verification\n\n- New `waitForGatewayReady` tests, red before the change and green\nafter.\n- `bun test packages/cli/src`: 3270 pass, 0 fail.\n- `bun run preflight:fast`: passed.\n- Real `nimbus demo` from source on fresh temp roots: 8 of 8 clean after\nthe fix. At a 1 in 5 failure rate that is supporting evidence only; the\nunit tests are what pin the behaviour.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **Bug Fixes**\n- Improved gateway startup reliability by confirming the service is\nresponsive and running the expected process before reporting readiness.\n- Startup now detects unavailable services, unexpected process state,\nand early process exits more accurately, reducing misleading successful\nlaunches and unnecessary waiting.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Fable 5.1 <noreply@anthropic.com>",
-          "timestamp": "2026-09-19T21:26:58+03:00",
-          "tree_id": "2cced889438cb741eb2a71e3432f76d700f9cbaf",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/4267055986ab9e6e12bc85543a8e0e9fa0f4f838"
-        },
-        "date": 1789843174600,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 342.1828868000022,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 340.85898029999953,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 267.1620617000026,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ee9a62155b0984d4b1c3d665dd5a9c8e770efeef",
+          "message": "chore: release main (#2152)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>11.15.0</summary>\n\n##\n[11.15.0](https://github.com/nimbus-agent/Nimbus/compare/v11.14.0...v11.15.0)\n(2026-11-26)\n\n\n### Features\n\n* **gateway:** index Stack Overflow for Teams answers\n([#2144](https://github.com/nimbus-agent/Nimbus/issues/2144))\n([1f505e6](https://github.com/nimbus-agent/Nimbus/commit/1f505e6a2a434b13555c0cbb74a859e80c20f6d8))\n* **gateway:** Vantage per-tag cost attribution\n([#2153](https://github.com/nimbus-agent/Nimbus/issues/2153))\n([bd881b1](https://github.com/nimbus-agent/Nimbus/commit/bd881b1894ba823a754754fc6c578f43e6d42657))\n\n\n### Bug Fixes\n\n* **gateway:** pin @nimbus-dev/connectors 0.17.3 (Vantage cost list\nwithout a report token)\n([#2160](https://github.com/nimbus-agent/Nimbus/issues/2160))\n([324c1cf](https://github.com/nimbus-agent/Nimbus/commit/324c1cf09471094bf85dc1d2a968c63ec1d96451))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-26T09:56:25+02:00",
+          "tree_id": "dcc54d692f639eab1af9e07d251c6f4581ed1228",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/ee9a62155b0984d4b1c3d665dd5a9c8e770efeef"
+        },
+        "date": 1795680365937,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 186.7936650999978,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 188.28277910000142,
             "unit": "ms"
           }
         ]
