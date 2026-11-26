@@ -160,7 +160,7 @@ function findReport(
   const def = reports.find((r) => r.name === name);
   if (def !== undefined) return def;
   const known = reports.length === 0 ? "none" : reports.map((r) => r.name).join(", ");
-  const refused = configError === null ? "" : ` (the [cost] config was refused: ${configError})`;
+  const refused = configError === null ? "" : ` (the report config was refused: ${configError})`;
   throw new CostViewsRpcError(
     -32602,
     `cost.reportRender: no report named "${name}" (known: ${known})${refused}`,
@@ -196,7 +196,7 @@ export function handleCostReportList(
       tz: r.tz,
       channels: r.channels.map((c) => ({ kind: c.kind, format: c.format })),
     })),
-    configError: cfg.error,
+    configError: cfg.error ?? cfg.reportsError,
   };
 }
 
@@ -204,7 +204,7 @@ export function handleCostReportRender(raw: unknown, ctx: CostViewsRpcCtx): Cost
   requireOwner(ctx, "cost.reportRender");
   const p = params(raw ?? {}, "cost.reportRender", ["name", "channel"]);
   const cfg = config(ctx);
-  const def = findReport(cfg.reports, p["name"], cfg.error);
+  const def = findReport(cfg.reports, p["name"], cfg.error ?? cfg.reportsError);
   const channels = channelsOf(def, p["channel"]);
   const nowMs = (ctx.now ?? Date.now)();
   const { range, previous, weekStart } = reportPeriods(

@@ -47,6 +47,8 @@ export interface NimbusCostConfig {
   readonly focusDir: string | null;
   /** `[[cost.report]]` with their `[[cost.report.channel]]` blocks (slice 3; see `cost-report-toml.ts`). */
   readonly reports: readonly CostReportDef[];
+  /** Non-null: the report definitions are refused (`reports` is empty); the rules still apply. */
+  readonly reportsError: string | null;
   /** Non-null: the cost config is refused (no rules apply) and every view says so. */
   readonly error: string | null;
 }
@@ -65,6 +67,7 @@ export const DEFAULT_COST_CONFIG: NimbusCostConfig = Object.freeze({
   authoritative: Object.freeze({}),
   focusDir: null,
   reports: Object.freeze([]) as readonly CostReportDef[],
+  reportsError: null,
   error: null,
 });
 
@@ -184,6 +187,28 @@ function refuseMalformedCostHeader(s: EffectiveSection): void {
   }
 }
 
+/**
+ * The reports, refused on their own: a bad report or channel leaves `reports` empty with `reportsError` set,
+ * and the rules (and every cost view) stay in force.
+ */
+function compileReportsScoped(
+  reportBlocks: readonly EffectiveSection[],
+  channelBlocks: readonly EffectiveSection[],
+): { reports: readonly CostReportDef[]; reportsError: string | null } {
+  try {
+    const reports = compileCostReports(
+      reportBlocks.map((b, i) => parseSection(b, `[[cost.report]] ${String(i + 1)}`)),
+      channelBlocks.map((b, i) => parseSection(b, `[[cost.report.channel]] ${String(i + 1)}`)),
+    );
+    return { reports, reportsError: null };
+  } catch (e) {
+    if (e instanceof CostConfigError || e instanceof CostReportConfigError) {
+      return { reports: Object.freeze([]), reportsError: e.message };
+    }
+    throw e;
+  }
+}
+
 /** The cost config from the effective (layered) sections. Pure. */
 export function resolveCostConfig(sections: readonly EffectiveSection[]): NimbusCostConfig {
   const draft: Draft = { ...DEFAULT_COST_CONFIG };
@@ -201,19 +226,13 @@ export function resolveCostConfig(sections: readonly EffectiveSection[]): Nimbus
       else readPlainSection({ ...s, header }, draft);
     }
     draft.rules = compileRules(blocks["cost.rule"]);
-    draft.reports = compileCostReports(
-      blocks["cost.report"].map((b, i) => parseSection(b, `[[cost.report]] ${String(i + 1)}`)),
-      blocks["cost.report.channel"].map((b, i) =>
-        parseSection(b, `[[cost.report.channel]] ${String(i + 1)}`),
-      ),
+    Object.assign(
+      draft,
+      compileReportsScoped(blocks["cost.report"], blocks["cost.report.channel"]),
     );
     return Object.freeze(draft);
   } catch (e) {
-    if (
-      e instanceof CostConfigError ||
-      e instanceof CostRuleError ||
-      e instanceof CostReportConfigError
-    ) {
+    if (e instanceof CostConfigError || e instanceof CostRuleError) {
       return Object.freeze({ ...DEFAULT_COST_CONFIG, error: e.message });
     }
     throw e;
@@ -226,5 +245,8 @@ export function loadNimbusCostFromConfigDir(configDir: string): NimbusCostConfig
   if (readError !== undefined) return Object.freeze({ ...DEFAULT_COST_CONFIG, error: readError });
   const cfg = resolveCostConfig(getLayeredConfig(configDir).snapshot().doc.sections);
   if (cfg.error !== null) sectionFallbackSink(configDir, "cost")(`refused: ${cfg.error}`);
+  else if (cfg.reportsError !== null) {
+    sectionFallbackSink(configDir, "cost")(`reports refused: ${cfg.reportsError}`);
+  }
   return cfg;
 }

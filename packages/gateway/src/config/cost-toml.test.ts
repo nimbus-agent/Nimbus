@@ -28,6 +28,7 @@ describe("[cost] config", () => {
       authoritative: {},
       focusDir: null,
       reports: [],
+      reportsError: null,
       error: null,
     });
     expect(DEFAULT_COST_INTERNAL_ENVS).toEqual(["ci", "dev", "test", "staging"]);
@@ -165,11 +166,19 @@ describe("[[cost.report]] and [[cost.report.channel]]", () => {
     expect(c.reports[0]?.channels.map((ch) => ch.to)).toEqual(["C0123ABC"]);
   });
 
-  test("a bad report or channel refuses the whole cost config", () => {
-    const c = base(`${REPORTS}${SLACK.replace('kind = "slack"', 'kind = "sms"')}`);
+  test("a bad report or channel refuses only the reports; the rules stay in force", () => {
+    const rule = '[[cost.rule]]\nmatch = {}\nset = { product = "p" }\n\n';
+    const c = base(`${rule}${REPORTS}${SLACK.replace('kind = "slack"', 'kind = "sms"')}`);
     expect(c.reports).toEqual([]);
-    expect(c.rules).toEqual([]);
-    expect(c.error).toContain("kind must be one of");
+    expect(c.reportsError).toContain("kind must be one of");
+    expect(c.error).toBeNull();
+    expect(c.rules.map((r) => r.set.product)).toEqual(["p"]);
+    // A refused rule still refuses everything, reports included.
+    const both = base(
+      `[[cost.rule]]\nmatch = { nope = "x" }\nset = { product = "p" }\n\n${REPORTS}${SLACK}`,
+    );
+    expect(both.error).toContain("nope");
+    expect(both.reports).toEqual([]);
     expect(base('[cost.report]\nname = "x"\n').error).toBe("unknown section [cost.report]");
   });
 });

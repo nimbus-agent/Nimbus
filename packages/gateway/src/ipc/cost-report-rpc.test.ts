@@ -180,6 +180,24 @@ describe("cost.reportList", () => {
   });
 });
 
+describe("a refused report config", () => {
+  test("is reported by both methods, while the cost views keep their rules", async () => {
+    writeConfig(report(SLACK.replace('to = "C0123ABC"', 'to = "general"')));
+    const list = (await call("cost.reportList", {}, "cli")) as {
+      reports: unknown[];
+      configError: string | null;
+    };
+    expect(list.reports).toEqual([]);
+    expect(list.configError).toContain("a Slack channel id");
+    const e = await rpcError(call("cost.reportRender", { name: "checkout-weekly" }, "cli"));
+    expect(e.message).toContain("the report config was refused");
+    const products = (await call("cost.products", { period: "30d" }, "cli")) as {
+      configError: string | null;
+    };
+    expect(products.configError).toBeNull();
+  });
+});
+
 describe("cost.reportRender", () => {
   test("renders every channel for the previous full week, with no network and no egress row", async () => {
     const r = (await call("cost.reportRender", { name: "checkout-weekly" }, "cli")) as Rendered;
