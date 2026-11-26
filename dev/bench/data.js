@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795653542553,
+  "lastUpdate": 1795672358643,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "8791c1990e85f27364e0c8110da43709fba9b07f",
-          "message": "feat: isolated demo root for nimbus --demo (invariant I41) (#1545)\n\n## What this adds\n\nAn isolated **demo root**: `nimbus --demo <command>` (or\n`NIMBUS_DEMO=1`) runs the CLI and any gateway it starts against a\nsecond, throwaway Nimbus inside `<data dir>/demo` — its own config, data\nand logs, a separate IPC endpoint, and an in-memory vault. Nothing in it\ncan read or damage the owner's real install. This is the first half of\nthe First-Run row's seeded-sandbox work; the synthetic-org corpus that\ngets seeded into this root, and the guided tour on top of it, follow in\na second PR.\n\nNo schema migration, no new egress class, no new IPC method. An existing\nuser who never sets `NIMBUS_DEMO` or passes `--demo` sees no behaviour\nchange.\n\n## Invariant I41 — a demo-rooted process never reaches the real install\n\n1. Every config/data/log/extensions path resolves INSIDE\n`<realDataDir>/demo`, and no real path lies inside that root. It is a\nsubtree rule because on macOS `configDir` and `dataDir` are the same\ndirectory.\n2. `tempDir` and the IPC endpoint differ from the real ones. The Windows\npipe name carries a hash of the demo root, because named pipes are\nmachine-global.\n3. The vault factory returns an in-process `EphemeralVault` BEFORE its\nOS switch — a demo process never opens the OS credential store.\n4. A demo gateway skips the Windows AppContainer boot reap and never\nstarts the env-selected HTTP or metrics sidecars.\n\nAn ambiguous `NIMBUS_DEMO` value, or `NIMBUS_DEMO=1` combined with\n`NIMBUS_CONFIG_DIR` or `NIMBUS_GATEWAY_SOCKET`, refuses at path\nresolution instead of choosing a winner. Section in\n`docs/SECURITY-INVARIANTS.md`, enforcement test in\n`security-invariants.test.ts`, bullet in `CLAUDE.md`/`GEMINI.md`.\n\n## Why path isolation alone was not enough\n\nFound while planning, before any code was written — three pieces of\nstate are host-global rather than path-derived:\n\n- **The vault.** On macOS it is the Keychain under the fixed service\n`dev.nimbus`, and on Linux it is libsecret with no path at all. A demo\ngateway would have READ the owner's credentials, and\n`sweepToolgenCredentials`, which runs at every boot and shutdown, would\nhave DELETED the owner's `toolgen.*` credentials.\n- **The Windows AppContainer boot reap** deletes every profile absent\nfrom the gateway's OWN index. A demo index holds none of the owner's\ninstalled extensions, so a demo boot would have deleted the real\ngateway's extension profiles.\n- **The HTTP API and metrics sidecars** are selected by\n`NIMBUS_HTTP_PORT` / `NIMBUS_METRICS_PORT`, not config. A demo gateway\ninheriting them would crash on the port or serve the demo index on the\nowner's real port.\n\nThe final whole-branch review found a fourth instance of the same shape,\nnow fixed: on Linux the gateway probed the OS keyring BEFORE resolving\npaths, so a demo gateway touched — and depended on — the real Secret\nService.\n\n## Also in this PR\n\n- **The CLI applies `--demo` before it resolves any path**, since it\nopens its log file ahead of dispatch; a refusal now prints before the\nbanner, not after it.\n- **Every \"Gateway is not running\" hint goes through one builder.**\nAbout 25 sites hardcoded `Start with: nimbus start`, which in demo mode\npoints at the REAL gateway. A static test now forbids that hint form\noutside the builder.\n- **Two surfaces stopped advertising an HTTP origin a demo gateway does\nnot serve:** the clip-pairing URL is gated by the same boot policy, and\n`nimbus --demo serve` refuses.\n- **Docs:** `--demo` and `NIMBUS_DEMO` in `cli-reference.md`, an\n`architecture.md` paragraph, and every restatement that \"no variable can\nrelocate the data directory\" corrected.\n\n## What changed at plan time, and what is deliberately not here\n\n- The e2e test boots ONLY a demo gateway. The design originally booted a\nreal one beside it, but a non-demo gateway started from the real entry\nopens the developer's real OS credential store on macOS/Linux, and its\nboot sweep deletes `toolgen.*` credentials there — the test would itself\nhave been the damage I41 forbids.\n- Carried to the next PR, where the spec claims the demo makes no\noutbound calls: the updater's startup check and env-selected telemetry\nin a demo gateway, follow-up hints that drop `--demo`, and the MCP\ntool-runtime's mid-connection-drop hint.\n\n## Verification\n\n- New unit tests for both path modules, a parity test importing both CLI\nand gateway derivations, and a CLI subprocess e2e test on temp roots\nwith a hard premise check that the child's home directory is the temp\none.\n- The I41 enforcement test with negative controls, plus source\nassertions pinning the guarded `assemble.ts` and `linux.ts` call sites;\nred-proved by removing each guard.\n- An e2e test that boots the real gateway entry demo-rooted on temp\nroots, asserts it binds the demo endpoint, answers `gateway.ping`,\nleaves an exported `NIMBUS_HTTP_PORT` unbound, and writes nothing\noutside the demo root; both assertions red-proved.\n- A CLI smoke of `--demo start`, `status` and `stop` on temp roots with\nan inherited `NIMBUS_PROFILE`: every file written landed under\n`…/demo/data/`.\n- Locally on Windows, three gates were red for reasons traced to the\nmachine rather than this branch: two `win32.test.ts` cases fail only in\nthe single-process whole-repo run once the git-ignored sandbox helper is\nfreshly built, via `NIMBUS_SANDBOX_HELPER_PATH`, which this branch never\ntouches; two OAuth tests fail because the machine exports real\n`NIMBUS_OAUTH_*` credentials; and the coverage floor, which is\nCI-Linux-authoritative, flagged five untouched files. CI is the\nauthority here.\n\nThe design spec, the PR 1 plan and both design reviews were branch-only\nand are removed in the last commit; they are recoverable from this\nbranch at `eba2cda6`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n  * Added isolated demo mode via `nimbus --demo` or `NIMBUS_DEMO=1`.\n* Demo sessions use separate configuration, data, logs, extensions,\ntemporary files, IPC endpoints, and an in-memory vault.\n* Demo mode disables HTTP/metrics sidecars and host-global cleanup\nactions.\n* Added validation for unsupported demo values and conflicting\nconfiguration overrides.\n* Gateway-unavailable guidance now provides demo-specific start\ncommands.\n\n* **Bug Fixes**\n* `nimbus --demo serve` now exits safely with guidance to use demo start\nmode.\n\n* **Documentation**\n* Updated CLI, security, architecture, and changelog documentation for\ndemo isolation and security invariant I41.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-19T04:16:24Z",
-          "tree_id": "e8e3dd09aee555595e051e1fc507763202f86225",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/8791c1990e85f27364e0c8110da43709fba9b07f"
-        },
-        "date": 1789792087237,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 335.7782157000023,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 332.49142934999327,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 183.11595839999936,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7e1e67b5debe70708e0aa81761cbe33013b37a7b",
+          "message": "docs(agent-kits): record the A6 runs against real Claude Code and Codex (#2164)\n\nRecords the owner's acceptance A6 run (Windows 11, Nimbus v11.14.0,\nlocal model \\`qwen3:14b\\` through Ollama) in the Agent kits matrix. A6\nand the roadmap row stay open.\n\n**Claude Code 2.1.332: all four checks pass**\n- The Nimbus server is listed and its tools can be called.\n- \\`propose_action\\` queued one proposal, shown as \\`claude-code\n(--agent)\\` in \\`nimbus approvals\\`. The owner approved it and the echo\nserver logged \\`echo received: kit check\\`.\n- The \\`PreToolUse\\` hook blocked \\`gh pr merge 1\\` with the Nimbus\nreason.\n- \\`nimbus agent status\\` reported \\`drifted\\` and exit 1 after an edit,\nand \\`ok\\` after the reinstall.\n\n**Codex 0.172.0: three of four**\n- Codex listed the Nimbus server, and its \\`describe_actions\\` and\n\\`propose_action\\` calls reached Nimbus. This confirms the\n\\`[mcp_servers.nimbus]\\` format, so the kit's \"MCP entry format not yet\nverified\" note is removed (\\`codex.ts\\` and two tests).\n- The \\`forbidden\\` rule refused \\`gh pr merge 1\\` with the Nimbus\nreason, in a live run and in \\`codex execpolicy check\\`.\n- Status reported \\`drifted\\` and exit 1.\n- Not reached: the model never sent a valid \\`propose_action\\` call\nthrough Codex in four runs (\\`missing field cmd\\`). The Codex proposal\nand approval stay unchecked until a run with a stronger model.\n\n**Changes to the docs**\n- New finding: a hand edit that breaks a \\`match\\` example in\n\\`nimbus.rules\\` makes Codex refuse to start (\\`Error loading rules\\`).\nThe Codex section now says so.\n- Both runs added one line to the fixed prompt naming the action type\n(\\`mcp_a6echo.echo\\`). This is disclosed above the matrix.\n- \\`docs/agent-kits-verification.md\\` gains an \"On Windows\" section:\nredirect APPDATA, LOCALAPPDATA and CODEX_HOME; a Node or npx server\ncannot start in the sandbox (\\`EPERM lstat 'C:\\'\\`); action types are\n\\`mcp_<id>.<tool>\\`; don't pipe the prompts.\n- Roadmap progress note and CHANGELOG entry added.\n\nChecks: the agent-kit tests (234) and \\`bun run preflight:fast\\` pass.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Documentation**\n* Updated the agent-kit guidance with Windows setup notes and\nverification results for Claude Code and Codex.\n* Documented that Codex can list and call the Nimbus server and enforce\ncommand rules, but its proposal-and-approval flow remains unverified.\n* Clarified that a malformed Codex rules file can prevent startup and\nthat reinstalling restores the file.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-26T05:45:06Z",
+          "tree_id": "e7960970c3fcd2153ebde8e6621da24124af9150",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/7e1e67b5debe70708e0aa81761cbe33013b37a7b"
+        },
+        "date": 1795672354394,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 178.05612369999707,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 178.96466904999798,
             "unit": "ms"
           }
         ]
