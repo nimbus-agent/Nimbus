@@ -1,9 +1,9 @@
 ---
 name: nimbus-connector-authoring
 description: >
-  Complete reference for authoring first-party MCP connectors: package layout, mandatory
+  Complete reference for authoring first-party MCP connectors: package layout,
   tool surface, manifest structure, credential injection, the sync handler contract, item
-  ID format, HITL declaration, contract tests, and coverage gates. Use when creating or
+  ID format, consent and gateway write gating, contract tests, and coverage gates. Use when creating or
   modifying a connector, deciding which tools to expose (incl. write tools), debugging a
   contract-test failure, wiring an MCP server into the registry, or asking how credentials
   reach the connector process / what a sync handler returns. Consult before writing any
@@ -22,15 +22,11 @@ real dependency set is declared once in that repository's root manifest. Each co
 - `src/server.ts` entry point
 - `nimbus.extension.json` manifest
 
-## Mandatory Tool Surface
+## Tool Surface
 
-Every connector must expose **at minimum**:
+There is no mandatory `list`/`get`/`search` triple. A connector exposes the tools its service needs; `collection-tool-kit.ts` in nimbus-mcp-servers offers that triple as a convenience, not a requirement. The connector half (tool surface, consent, kits, contract tests) is documented in nimbus-mcp-servers' [guide to adding a connector](https://github.com/nimbus-agent/nimbus-mcp-servers/blob/main/docs/adding-a-connector.md); follow it for everything under `connectors/<id>/`.
 
-- `list` (no HITL)
-- `get` (no HITL)
-- `search` (no HITL)
-
-Write tools (`create`, `update`, `move`, `delete`) are conditional or always-HITL per the table in `docs/architecture.md`. **`move` and `delete` are always HITL.** Never omit a read tool to save time — the contract test will fail.
+Every mutating tool registers through `createWriteToolRegistrar` in that repository's `shared/consent-kit.ts`, never the raw MCP registration call. The consent gate lives in the registrar, not in a prompt.
 
 ## Manifest Structure
 
@@ -48,7 +44,7 @@ Write tools (`create`, `update`, `move`, `delete`) are conditional or always-HIT
 | `syncInterval` | seconds | default sync cadence |
 | `minNimbusVersion` | semver | gating |
 
-The `hitlRequired` field lists which write/delete permissions require Gateway HITL consent. This field is mandatory per the contract test (it must be an array). Populate it with the permission types (`"write"`, `"delete"`) that your connector's tools require; leave it empty if all tools are read-only. The Gateway gates actions based on the entries you list here — **if a write tool's permission is omitted from this array, the HITL gate is bypassed for that tool**.
+The `hitlRequired` field is a manifest declaration of which write/delete permissions need consent (it must be an array; leave it empty if all tools are read-only). It is NOT what the gateway gates on: omitting an entry does not bypass the gateway's gate. Connector writes are gated by `HITL_REQUIRED_BACKING` (module-private in `packages/gateway/src/engine/executor.ts`) and by `CONNECTOR_WRITE_ROWS` (`packages/gateway/src/connectors/connector-writes/index.ts`); a write tool with no row is refused. See § Write tools on the gateway side.
 
 ### Sandbox declaration
 
@@ -93,15 +89,13 @@ Always `"<service>:<native_id>"` — e.g. `"github:pr_12345"`.
 
 ## HITL Tool Declaration
 
-Write tools in the MCP server must call `server.assertHitlRequired()` at the **top of their handler**. The Gateway enforces HITL regardless, but the assertion makes intent explicit and the contract test checks for it.
+There is no `server.assertHitlRequired()`. A write tool gets its consent gate structurally, by registering through `createWriteToolRegistrar` in nimbus-mcp-servers' `shared/consent-kit.ts`. The gateway then classifies and gates it separately (see § Write tools on the gateway side).
 
 ## Contract Tests
 
 Run `nimbus test` from the connector directory before submitting. This executes `runContractTests()` from `@nimbus-dev/sdk` which checks:
 
 - Manifest schema validity.
-- Mandatory tool surface presence (`list`, `get`, `search`).
-- HITL declaration on write tools.
 - Item ID format on returned items.
 - `SyncResult` shape.
 
@@ -118,7 +112,19 @@ No generator produces a first-party connector today. Write it by hand from nimbu
 - `create-nimbus-connector`'s default target is still the pre-move `packages/mcp-connectors/<name>/` layout. Its `../../shared/*` imports and `extends: "../../../tsconfig.base.json"` do not resolve in nimbus-mcp-servers, even with `--out-dir connectors/<id>`, and it emits no `src/tools.ts`. Its `--standalone` output is for a connector outside that repository.
 - `nimbus scaffold mcp` (alias `scaffold extension`) emits a standalone user MCP server, not a first-party connector, so its output is invisible to every connector gate.
 
-Then add the sync handler and register in the connector registry at `packages/gateway/src/connectors/registry.ts`.
+Then do the gateway half below.
+
+## Gateway half of a new connector
+
+Adding a connector touches both repositories. The connector half is in nimbus-mcp-servers (see its [guide](https://github.com/nimbus-agent/nimbus-mcp-servers/blob/main/docs/adding-a-connector.md)). In this repository:
+
+- The generated bundled registry: `packages/gateway/src/connectors/bundled-connector-registry.ts`, produced by `bun run gen:connector-registry` (`scripts/gen-bundled-connector-registry.ts`); do not hand-edit it.
+- `packages/gateway/src/connectors/connector-catalog.ts`
+- `packages/gateway/src/connectors/connector-secrets-manifest.ts`
+- `packages/gateway/src/connectors/lazy-mesh/first-party-manifests.ts`, and the enumerated list in `first-party-manifests.test.ts` beside it.
+- Spawn wiring in `packages/gateway/src/connectors/lazy-mesh/`: add the connector to a `phase3-*.ts` group and to `phase3-config.ts`. Without it the gateway bundles the connector and never starts it.
+- The docs page `packages/docs/src/content/docs/connectors/<id>.mdx`.
+- Sync/indexing (a `ConnectorSyncHandler`) is an owner decision; raise it, do not build it unasked.
 
 ## Write tools on the gateway side
 
@@ -128,13 +134,12 @@ A connector write tool is never reachable by itself: the gateway classifies ever
 
 - [ ] Package created under `connectors/<name>/` in the connectors repo, by hand from its guide to adding a connector (see § Scaffold).
 - [ ] `nimbus.extension.json` populated with `id`, `displayName`, `version`, `entrypoint`, `runtime: "bun"`, `permissions`, `hitlRequired`, `syncInterval`, `minNimbusVersion`.
-- [ ] Mandatory `list`, `get`, `search` tools exposed.
-- [ ] Every write tool listed in `hitlRequired` and calls `server.assertHitlRequired()` at the top of its handler.
+- [ ] Every write tool registered through `createWriteToolRegistrar` (nimbus-mcp-servers `shared/consent-kit.ts`), and given a row in `CONNECTOR_WRITE_ROWS`.
 - [ ] Credentials read from `process.env` only; no Vault API calls.
-- [ ] `ConnectorSyncHandler` implemented; `SyncResult.nextSyncToken` always populated.
+- [ ] If the owner decided the connector is indexed: `ConnectorSyncHandler` implemented; `SyncResult.nextSyncToken` always populated.
 - [ ] Item IDs follow `"<service>:<native_id>"` — no UUIDs.
 - [ ] `nimbus test` passes (contract tests green).
-- [ ] Connector registered in `packages/gateway/src/connectors/registry.ts`.
+- [ ] Gateway half done (see § Gateway half of a new connector): catalog, secrets manifest, first-party manifests, spawn wiring, regenerated bundled registry, docs page.
 - [ ] Line coverage ≥ 85% and branch coverage ≥ 80%.
 
 ## Signing your extension (T2 PR 2)

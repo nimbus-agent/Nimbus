@@ -116,7 +116,7 @@ Used by the incident engine's remediation (see `nimbus-incident-engine`).
 2. Add the row in the family file with `wave`, `actionType` (a HITL type; new types join the frozen set in `engine/executor.ts`, I2).
 3. Typed `preview` (`withPreview`; `preview.ts`); mark secret-ish fields so `isSensitiveFieldName` hides them.
 4. Wave 4: a `before` reader or `bound` step AND `withConfirm`; otherwise `isModelOfferableRow` is false.
-5. Destinations/free text: extend `model-write-refusals.ts` (and the `*.sync.test.ts` scans) instead of a door-specific check.
+5. Destinations/free text: put a new refusal in a sibling helper module (`model-write-refusals.ts` is locked at its baseline by `audit:file-size`; do not grow it), and extend the `*.sync.test.ts` scans instead of a door-specific check.
 6. Reversibility entry if it can be undone; otherwise declare irreversible with a reason.
 7. Never offered? add to `MODEL_NEVER_OFFERED_REASONS`. Federation never sees it (`isConnectorWriteOrPrepareToolId`, `federation/invoke-gate.ts`).
 8. Tests: `rows.test.ts`, `manifest.sync.test.ts`, the family template test, `confirm-rows.test.ts`, `packages/gateway/src/security-invariants/i53-model-write-door.test.ts` (+ `i54-bound-write.test.ts` for bound).
