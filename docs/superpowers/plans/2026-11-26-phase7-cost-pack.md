@@ -261,10 +261,11 @@ Branch: `dev/asaf/phase7-s3-cost-reports` from `origin/main` (after #2177). Spec
 
 **Interfaces:** `type CostReportScope = Partial<Record<"product" | "env" | "service" | "provider", string>>`; `interface CostReportChannelDef { kind: "slack" | "teams" | "gmail" | "outlook"; to: string | { team: string; channel: string } | readonly string[]; format: "text" | "markdown" | "html"; breakdown: "list" | "csv"; template: { inline: string } | { file: string }; subject: string | null }`; `interface CostReportDef { name: string; scope: CostReportScope; period: string; schedule: string | null; tz: string | null; channels: readonly CostReportChannelDef[] }`.
 
-- [ ] **Step 1:** Tests: the example above parses; a role-pack layer's reports plus owner-layer channels combine; unknown keys in either block refuse the whole cost config naming them; `name` must be `^[a-z0-9][a-z0-9-]{0,63}$` and unique; `scope` keys only the four, values `COST_SET_VALUE_RE`, at least one key; `period` refused outside `week|month|<N>d (1–400)`; `schedule` refused via `scheduleRefusal`; `tz` refused unless `isValidTimeZone`; a channel naming an unknown report, a second channel of the same kind for one report, a format the kind does not support, both or neither of `template`/`template_file`, a missing `subject` on gmail/outlook or one on slack/teams, a `subject` containing a control character or a line break (``, `
+- [x] **Step 1:** Tests: the example above parses; a role-pack layer's reports plus owner-layer channels combine; unknown keys in either block refuse the whole cost config naming them; `name` must be `^[a-z0-9][a-z0-9-]{0,63}$` and unique; `scope` keys only the four, values `COST_SET_VALUE_RE`, at least one key; `period` refused outside `week|month|<N>d (1–400)`; `schedule` refused via `scheduleRefusal`; `tz` refused unless `isValidTimeZone`; a channel naming an unknown report, a second channel of the same kind for one report, a format the kind does not support, both or neither of `template`/`template_file`, a missing `subject` on gmail/outlook or one on slack/teams, a `subject` containing a control character or a line break (`
+`, `
 `) (review fix 3), a bad `to` per kind (Slack id `^[CDG][A-Z0-9]{2,}$`, Teams ids non-empty ≤ 256, addresses a simple `local@domain` check, 1–50 of them; a single string is accepted and normalised to a one-element list (review advisory 7)) each refuse with a reason; the caps 50 reports / 200 channels; `template_file` is a plain file name `^[A-Za-z0-9._-]{1,128}$` with no `/`, `\`, `..` or leading `.` (the read itself is Task 4); `nimbus config explain` shows the section (existing `cost` loader).
-- [ ] **Step 2:** Implement (named steps; each function under the S3776 limit; `cost-toml.ts` stays under 500 lines by keeping report parsing in the new file). Run → PASS.
-- [ ] **Step 3:** Commit `feat(gateway): cost report definitions in the cost config`.
+- [x] **Step 2:** Implement (named steps; each function under the S3776 limit; `cost-toml.ts` stays under 500 lines by keeping report parsing in the new file). Run → PASS.
+- [x] **Step 3:** Commit `feat(gateway): cost report definitions in the cost config`.
 
 ### Task 2: Report periods in a time zone (`finops/cost-report-period.ts`)
 
@@ -272,9 +273,9 @@ Branch: `dev/asaf/phase7-s3-cost-reports` from `origin/main` (after #2177). Spec
 
 **Interfaces:** `reportPeriods(period: string, tz: string, nowMs: number): { range: CostWindow; previous: CostWindow; weekStart: string | null }` (`fromDay`/`toDay` are calendar dates in `tz`; `label` e.g. "week of Monday 2026-11-16"; `weekStart` is the Monday for `week`, else null). `previous` is the week before, the calendar month before (by wall-date math, NOT `finops/cost-why.ts` `previousRange`, which steps back the same number of days), or the N days before (review fix 2).
 
-- [ ] **Step 1:** Tests: `week` on a Wednesday, a Monday 00:30 local and a Sunday 23:30 local in `Europe/Berlin` and `America/Los_Angeles` give the previous full Monday–Sunday; across the DST changes of 2026 (EU 2026-03-29 / 2026-10-25, US 2026-03-08 / 2026-11-01) and across a year boundary (now = 2027-01-03); `month` in January gives the previous December, and its `previous` is the whole November; `month` in March gives February 1–28 with `previous` January 1–31 (never a day-count shift); `7d` ends yesterday local; an invalid zone throws (the config already refused it; defence in depth).
-- [ ] **Step 2:** Implement with `util/zoned-time.ts` `wallOfInstant` (D48-allowed). Run → PASS.
-- [ ] **Step 3:** Commit `feat(gateway): cost report periods in the report's time zone`.
+- [x] **Step 1:** Tests: `week` on a Wednesday, a Monday 00:30 local and a Sunday 23:30 local in `Europe/Berlin` and `America/Los_Angeles` give the previous full Monday–Sunday; across the DST changes of 2026 (EU 2026-03-29 / 2026-10-25, US 2026-03-08 / 2026-11-01) and across a year boundary (now = 2027-01-03); `month` in January gives the previous December, and its `previous` is the whole November; `month` in March gives February 1–28 with `previous` January 1–31 (never a day-count shift); `7d` ends yesterday local; an invalid zone throws (the config already refused it; defence in depth).
+- [x] **Step 2:** Implement with `util/zoned-time.ts` `wallOfInstant` (D48-allowed). Run → PASS.
+- [x] **Step 3:** Commit `feat(gateway): cost report periods in the report's time zone`.
 
 ### Task 3: The report model (`finops/cost-report-model.ts`)
 
@@ -285,28 +286,29 @@ Branch: `dev/asaf/phase7-s3-cost-reports` from `origin/main` (after #2177). Spec
 - `topMovers`: at most 3 per currency by `|change|`; `breakdown`: by (part, provider, env), largest first, the full list (the template shrinks it).
 - `command`: `nimbus cost report <name>`.
 
-- [ ] **Step 1:** Tests: scope by product, by service, by env + provider; two currencies give two blocks and no total anywhere in the model; `changePct` null on a zero previous; unassigned stated beside, not inside, the total; a refused config yields `configError` and nothing in scope; an empty store gives `empty: true`; provisional marking when the range touches the last 3 days.
-- [ ] **Step 2:** Implement (pure). Run → PASS.
-- [ ] **Step 3:** Commit `feat(gateway): the cost report model`.
+- [x] **Step 1:** Tests: scope by product, by service, by env + provider; two currencies give two blocks and no total anywhere in the model; `changePct` null on a zero previous; unassigned stated beside, not inside, the total; a refused config yields `configError` and nothing in scope; an empty store gives `empty: true`; provisional marking when the range touches the last 3 days.
+- [x] **Step 2:** Implement (pure). Run → PASS.
+- [x] **Step 3:** Commit `feat(gateway): the cost report model`.
 
 ### Task 4: The confined template file (`finops/cost-template-file.ts`)
 
 **Interfaces:** `readCostTemplateFile(configDir: string, file: string): string` (throws `CostTemplateError` with the reason). Resolves `join(configDir, "cost-templates", file)`; refuses a name failing Task 1's pattern; `lstat` of the directory and of the file must not be links; the file's real path (`realpathSync`) must be inside the directory's real path (`util/path-overlap.ts` `isSameOrInside`) — never compare a real path to the joined path by string (macOS `/var` → `/private/var`, Windows device prefixes) (review fix 1); opened once with `O_RDONLY | O_NOFOLLOW` (where defined) and `O_NONBLOCK`; `fstat` must be a regular file of ≤ 64 KiB; read through that handle; strict UTF-8 (`TextDecoder` fatal); post-read `lstat` must still not be a link.
 
-- [ ] **Step 1:** Tests (temp dirs, all OSes): a plain file reads; `../x`, an absolute name, `a/b`, a dot-file, a missing file, a directory, a 64 KiB + 1 file, invalid UTF-8, a file that is a link, and a `cost-templates` directory that is a link (junction on Windows) each refuse with a distinct reason; no read happens for an oversize file (size checked on the handle first).
-- [ ] **Step 2:** Implement. Run → PASS.
-- [ ] **Step 3:** Commit `feat(gateway): read cost report templates only from the cost-templates folder`.
+- [x] **Step 1:** Tests (temp dirs, all OSes): a plain file reads; `../x`, an absolute name, `a/b`, a dot-file, a missing file, a directory, a 64 KiB + 1 file, invalid UTF-8, a file that is a link, and a `cost-templates` directory that is a link (junction on Windows) each refuse with a distinct reason; no read happens for an oversize file (size checked on the handle first).
+- [x] **Step 2:** Implement. Run → PASS.
+- [x] **Step 3:** Commit `feat(gateway): read cost report templates only from the cost-templates folder`.
 
 ### Task 5: Templates, escaping and caps (`finops/cost-template.ts`)
 
-**Interfaces:** `COST_TEMPLATE_PLACEHOLDERS` (the closed set of spec § 5: `report_name period_start period_end week_start total currency change change_pct top_movers breakdown unassigned unassigned_pct freshness command`); `parseCostTemplate(text: string): CostTemplate` (throws `CostTemplateError` naming an unknown placeholder or an unbalanced brace; `{{`/`}}` are literal braces); `renderCostTemplate(t: CostTemplate, model: CostReportModel, opts: { kind; format; breakdown: "list" | "csv"; maxChars: number }): { text: string; truncated: { breakdown: number; topMovers: number } }` (throws `CostTemplateError` when over the cap with both lists empty); `renderCostSubject(...)` (plain text: every control character and line break stripped from substituted values, and the result refused if it still holds `` or `
+**Interfaces:** `COST_TEMPLATE_PLACEHOLDERS` (the closed set of spec § 5: `report_name period_start period_end week_start total currency change change_pct top_movers breakdown unassigned unassigned_pct freshness command`); `parseCostTemplate(text: string): CostTemplate` (throws `CostTemplateError` naming an unknown placeholder or an unbalanced brace; `{{`/`}}` are literal braces); `renderCostTemplate(t: CostTemplate, model: CostReportModel, opts: { kind; format; breakdown: "list" | "csv"; maxChars: number }): { text: string; truncated: { breakdown: number; topMovers: number } }` (throws `CostTemplateError` when over the cap with both lists empty); `renderCostSubject(...)` (plain text: every control character and line break stripped from substituted values, and the result refused if it still holds `
+` or `
 `; cap 255) (review fix 3); `COST_REPORT_BODY_MAX` per kind.
 - Value formatting: amounts `1234.50 USD` (2 decimals, currency after); several currencies joined `; ` in code-unit order, for EVERY per-currency placeholder: `{currency}` (`EUR; USD`), `{total}`, `{change}`, `{change_pct}`, `{unassigned}` and `{unassigned_pct}` (review advisory 4); `{week_start}` is empty for a report whose period is not `week`; `change` signed (`+80.00 USD`), `change_pct` signed one decimal or `new`; `{total}` carries ` (provisional from <day>)` when provisional; `{freshness}` one line per source.
 - Lists: `list` = one line per item (markdown/html bullets per format); `csv` = header `part,provider,env,currency,amount` with the `csv-cell` formula guard (`'` before `= + - @ \t \r`), fenced for chat, a table in html.
 
-- [ ] **Step 1:** Tests: every placeholder renders; an unknown placeholder and `{total` refuse naming them; `{{total}}` is literal; per-format escaping of a service named `<!here> *x* _y_ ~z~ `c` & @team` (Slack/Teams inert, HTML escaped, plain text unchanged apart from stripping); a 200-character tag value is capped at 128; two currencies never summed; a body over the cap drops breakdown then mover rows with "… and N more", and refuses when still over; the subject cap; CSV formula guard.
-- [ ] **Step 2:** Implement (pure; named steps). Run → PASS.
-- [ ] **Step 3:** Commit `feat(gateway): cost report templates, per-channel escaping and caps`.
+- [x] **Step 1:** Tests: every placeholder renders; an unknown placeholder and `{total` refuse naming them; `{{total}}` is literal; per-format escaping of a service named `<!here> *x* _y_ ~z~ `c` & @team` (Slack/Teams inert, HTML escaped, plain text unchanged apart from stripping); a 200-character tag value is capped at 128; two currencies never summed; a body over the cap drops breakdown then mover rows with "… and N more", and refuses when still over; the subject cap; CSV formula guard.
+- [x] **Step 2:** Implement (pure; named steps). Run → PASS.
+- [x] **Step 3:** Commit `feat(gateway): cost report templates, per-channel escaping and caps`.
 
 ### Task 6: IPC `cost.reportList` and `cost.reportRender`
 
@@ -316,9 +318,9 @@ Branch: `dev/asaf/phase7-s3-cost-reports` from `origin/main` (after #2177). Spec
 - `cost.reportRender { name, channel?: kind }` → `{ model: CostReportModel; channels: { kind; format; to; subject: string | null; body: string | null; truncated; error: string | null; doorRefusal: string | null }[] }` for every channel, or the named one. The handler computes `reportPeriods`, then runs ONE `gatherCostViewInput` over `[previous.fromDay, range.toDay]` (as `cost.why` does), so both periods use one source rule (review advisory 6). Per channel: read the template (inline or Task 4), parse, render; `error` holds a template or cap refusal; `doorRefusal` holds the broadcast or remote-content finding on the template literal or the rendered body (Slack `text`, Teams `body` as html when `format = "html"`, Outlook `html`).
 - Owner kinds `cli`/`ui` (`requireOwner`); unknown report `-32602` listing the names; reads only: no network, no model, no egress row; LAN-forbidden by the namespace; not on the renderer allowlist.
 
-- [ ] **Step 1:** Tests: both methods served to `cli`/`ui`, refused otherwise; an unknown name lists the known ones; a template literal containing `<!channel>` and one with `<img src="https://x">` (Teams html) report `doorRefusal`; a tag value `<!here>` in the data does NOT trip the door after escaping; a missing template file reports `error` for that channel only; no egress row and a throwing `fetch` stub never reached; LAN refusal.
-- [ ] **Step 2:** Implement. Run → PASS.
-- [ ] **Step 3:** Commit `feat(gateway): cost.reportList and cost.reportRender`.
+- [x] **Step 1:** Tests: both methods served to `cli`/`ui`, refused otherwise; an unknown name lists the known ones; a template literal containing `<!channel>` and one with `<img src="https://x">` (Teams html) report `doorRefusal`; a tag value `<!here>` in the data does NOT trip the door after escaping; a missing template file reports `error` for that channel only; no egress row and a throwing `fetch` stub never reached; LAN refusal.
+- [x] **Step 2:** Implement. Run → PASS.
+- [x] **Step 3:** Commit `feat(gateway): cost.reportList and cost.reportRender`.
 
 ### Task 7: CLI `nimbus cost report`
 
@@ -326,17 +328,19 @@ Branch: `dev/asaf/phase7-s3-cost-reports` from `origin/main` (after #2177). Spec
 
 - `nimbus cost report` (no name): lists the reports (name, scope, period, schedule, channel kinds). `nimbus cost report <name> [--channel <kind>] [--json|--csv]`: default text prints the model (per currency total, change, movers, breakdown, unassigned, freshness, provisional) and then each channel's rendered body exactly as it would be posted (or its `error` / `doorRefusal`); `--channel` prints that one body only (raw, for piping); `--csv` prints the breakdown with the fixed header; `--json` the IPC result. Exit 0 when every requested channel rendered with no refusal; 1 for no cost data, an unknown report, a refused config, any channel `error` or `doorRefusal`, or an IPC error. Text strips control characters (the bodies were already escaped for their channel).
 
-- [ ] **Step 1:** Tests over faked IPC: list, model text, one channel raw, `--csv`, `--json`, each exit code; the runner declares the `cli` kind first (extend the declare-kind test list).
-- [ ] **Step 2:** Implement. Run → PASS.
-- [ ] **Step 3:** Commit `feat(cli): nimbus cost report`.
+- [x] **Step 1:** Tests over faked IPC: list, model text, one channel raw, `--csv`, `--json`, each exit code; the runner declares the `cli` kind first (extend the declare-kind test list).
+- [x] **Step 2:** Implement. Run → PASS.
+- [x] **Step 3:** Commit `feat(cli): nimbus cost report`.
 
 ### Task 8: Demo report, docs, slice close-out
 
 **Files:** Modify `packages/gateway/src/demo/seed-cost.ts` (`DEMO_COST_TOML` gains report `checkout-weekly` with a Slack channel `C0DEMOCOST` in markdown and an Outlook draft channel in html with a subject; `[oncall.push]` stays the last table), `demo/seed-cost.test.ts`; Create `demo/cost-report-demo.test.ts`; docs `docs/cli-reference.md` (`nimbus cost report`, the `[[cost.report]]` / `[[cost.report.channel]]` keys under Configuration), `docs/architecture.md` (Cost lines section: reports and the D48 split for door checks), `docs/roadmap.md` (Phase 7 rows: reports progress; status "slices 1 to 3 of 8"), `docs/CHANGELOG.md`, `CLAUDE.md`/`GEMINI.md` status line, `.claude/commands/nimbus-ipc.md` (the `cost.*` row is stale: list every method), the plan's slice-3 checkboxes on `dev/asaf/phase7-cost-pack`.
 
-- [ ] **Step 1:** Acceptance test: seed the demo; `cost.reportRender { name: "checkout-weekly" }` renders both channels with no `error` and no `doorRefusal`, the Slack body names checkout's total for the previous full week and its top mover, the html body is escaped, no egress row, no `fetch`.
-- [ ] **Step 2:** Docs; `bun run preflight:fast`; the touched suites (`packages/gateway/src/finops`, `packages/gateway/src/config`, `packages/gateway/src/ipc`, `packages/gateway/src/demo`, `packages/cli/src/commands`); the per-file coverage floor on the Linux run before the PR.
+- [x] **Step 1:** Acceptance test: seed the demo; `cost.reportRender { name: "checkout-weekly" }` renders both channels with no `error` and no `doorRefusal`, the Slack body names checkout's total for the previous full week and its top mover, the html body is escaped, no egress row, no `fetch`.
+- [x] **Step 2:** Docs; `bun run preflight:fast`; the touched suites (`packages/gateway/src/finops`, `packages/gateway/src/config`, `packages/gateway/src/ipc`, `packages/gateway/src/demo`, `packages/cli/src/commands`); the per-file coverage floor on the Linux run before the PR.
 - [ ] **Step 3:** PR `feat: nimbus cost report renders configured cost reports for Slack, Teams and email drafts (Phase 7, slice 3)`; `gh pr merge --squash --auto`; resolve review threads.
+
+**As built (branch `dev/asaf/phase7-s3-cost-reports`, 2026-11-26):** Tasks 1 to 8 shipped. Spec corrections recorded by the builder: (a) a template's unknown placeholder or unbalanced brace is refused at RENDER, per channel, not at config load (spec § 5 said "at load"; refusing at load would refuse the whole cost config for one typo) — slice 4's `cost report schedule` must parse the template and subject before embedding them; (b) a bad report or channel refuses only the reports (`reportsError`), not the cost rules; (c) values are NFKC-normalised, then `< > & @` → `‹ › ⅋ (at)` (chat also `* _ ~ [ ]` and backtick look-alikes; html also `" '` entities and `= ( )` → `꞊ ❨ ❩`), because the door detectors decode entities and fold look-alikes; (d) the render runs the door's FULL destination check through `connectors/connector-writes/cost-report-rows.ts` (ChatOps channel first), with the policy from `enforcedPolicy().chatops`; (e) schedules use the workflow cron (numeric days). Slice-4 seams from the final review: send an explicit Teams/Outlook `contentType` (`html` only for `html`), decide whether the embedded step freezes a null `tz`, keep the `{ report }` subject source on the subject field only, and move the render-then-check sequence out of `ipc/` into one shared module.
 
 **Review focus (slice 3):**
 1. A tag or service name such as `<!here>`, `@channel`, `*x*`, `<img src=…>` reaching `{breakdown}` is inert in every channel's output, and the door detectors agree (no `doorRefusal`).
