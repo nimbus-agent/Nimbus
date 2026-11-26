@@ -42,7 +42,7 @@ export interface OrgPolicy {
 }
 
 /**
- * The Phase 14 / Spine S2 capability names an org policy may disable, via
+ * The Phase 13 (formerly Phase 14) / Spine S2 capability names an org policy may disable, via
  * `[policy.capabilities.ai_v2]`. An unrecognised name in that block is ignored rather than carried,
  * so a typo cannot masquerade as a lockoff nobody enforces.
  */

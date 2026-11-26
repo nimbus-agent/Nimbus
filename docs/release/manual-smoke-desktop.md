@@ -2,11 +2,11 @@
 
 Run this end-to-end on **every supported platform** before pushing the future `desktop-v0.1.0` release tag. Anything blocking is a release-stopper for the desktop tag — it does **not** gate the headless `v0.1.0` tag.
 
-This consolidates the three Tauri-only per-workstream checklists (WS5-A app shell + onboarding, WS5-B dashboard + tray + HITL, WS5-C / WS5-D settings panels). It was extracted from [`docs/release/manual-smoke-headless.md`](./manual-smoke-headless.md) when the desktop release vehicle was moved out of `v0.1.0` and into Phase 13 (Desktop Distribution) — see [`docs/roadmap.md` § Phase 13](../roadmap.md#phase-13--desktop-distribution).
+This consolidates the three Tauri-only per-workstream checklists (WS5-A app shell + onboarding, WS5-B dashboard + tray + HITL, WS5-C / WS5-D settings panels). It was extracted from [`docs/release/manual-smoke-headless.md`](./manual-smoke-headless.md) when the desktop release vehicle was moved out of `v0.1.0` and into Phase 18 (Desktop Distribution) — see [`docs/roadmap.md` § Phase 18](../roadmap.md#phase-18--desktop-distribution).
 
 ## Release vehicle
 
-The Tauri desktop UI ships under its own tag (`desktop-v0.1.0`) as the Phase 13 deliverable. The `v0.1.0` tag ships only the headless gateway + CLI binaries and the VS Code extension. A separate release pipeline job (`build-ui` matrix per OS) is required before the desktop tag can be cut; see Phase 13 § "Desktop Release Vehicle".
+The Tauri desktop UI ships under its own tag (`desktop-v0.1.0`) as the Phase 18 deliverable. The `v0.1.0` tag ships only the headless gateway + CLI binaries and the VS Code extension. A separate release pipeline job (`build-ui` matrix per OS) is required before the desktop tag can be cut; see Phase 18 § "Desktop Release Vehicle".
 
 ## Test environment
 
@@ -233,6 +233,6 @@ A platform is **desktop-release-ready** when every section in its row is ✅ or 
 
 ## Release gate
 
-When every row is ✅/⚠ across the matrix, **and** the prerequisite work in Phase 13 § "Desktop Release Vehicle" is complete (build-ui matrix job, code-signing certs procured, signed installer pipeline green), push `desktop-v0.1.0` to publish the Tauri installers.
+When every row is ✅/⚠ across the matrix, **and** the prerequisite work in Phase 18 § "Desktop Release Vehicle" is complete (build-ui matrix job, code-signing certs procured, signed installer pipeline green), push `desktop-v0.1.0` to publish the Tauri installers.
 
 If a regression is found after a tag push, do **not** delete the tag — issue a `desktop-v0.1.1` with the fix and a release note describing the rollback path.

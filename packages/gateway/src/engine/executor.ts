@@ -331,7 +331,7 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   // Phase 6 Slice 8 — outbound share publish is owner-HITL-gated (I27); the share-gate
   // (share/share-gate.ts) redacts → owner HITL → signs → persists → audits.
   "share.publish",
-  // Phase 7 egress-ledger — the sole retention-edit mutation (I29) is owner-HITL-gated;
+  // Phase 7 (now Phase 8) egress-ledger — the sole retention-edit mutation (I29) is owner-HITL-gated;
   // the egress.prune RPC consults the owner consent broker before pruning the ledger.
   "egress.prune",
   // S2 toolgen persistence (I40) — RESERVED, not load-bearing today. Promoting a generated tool
