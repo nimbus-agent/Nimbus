@@ -110,14 +110,16 @@ describe("cost.importRemove", () => {
 });
 
 describe("the Phase 7 cost methods over LAN (I5)", () => {
-  test.each(["cost.import", "cost.importRemove", "cost.products", "cost.internal"])(
-    "%s is refused over LAN regardless of grant-write",
-    (method) => {
-      for (const writeAllowed of [true, false]) {
-        expect(() => checkLanMethodAllowed(method, { peerId: "p", writeAllowed })).toThrow(
-          LanError,
-        );
-      }
-    },
-  );
+  test.each([
+    "cost.import",
+    "cost.importRemove",
+    "cost.products",
+    "cost.internal",
+    "cost.why",
+    "cost.rulesCheck",
+  ])("%s is refused over LAN regardless of grant-write", (method) => {
+    for (const writeAllowed of [true, false]) {
+      expect(() => checkLanMethodAllowed(method, { peerId: "p", writeAllowed })).toThrow(LanError);
+    }
+  });
 });
