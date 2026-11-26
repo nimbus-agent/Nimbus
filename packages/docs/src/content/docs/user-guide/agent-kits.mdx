@@ -189,14 +189,15 @@ example) is `cannot tell`. For a kit whose other parts are installed that is sho
 A row is filled only from a run against the real agent, following the procedure in the repository's
 `docs/agent-kits-verification.md`. Until then it reads *not yet run*.
 
-Both 2026-11-26 runs used the local model `qwen3:14b` through Ollama, and one line was added to the fixed prompt
-naming the action type (`mcp_a6echo.echo`), because the model guessed it otherwise. Through Codex the model never
-produced a valid `propose_action` call in four runs, so the Codex proposal and approval are not yet checked and
-acceptance A6 stays open until a run with a stronger model fills them.
+The 2026-11-26 runs added one line to the fixed prompt naming the action type (`mcp_a6echo.echo`), because the
+local model guessed it otherwise. Claude Code ran on the local model `qwen3:14b` through Ollama. Codex first ran on
+`qwen3:14b`, which never produced a valid `propose_action` call in four runs; the Codex proposal column comes from a
+second run on the owner's OpenAI account (`gpt-6-luna`). In that run the model followed the kit's `AGENTS.md` text
+and did not try `gh pr merge 1` at all, so the blocked column comes from the earlier run, where the rule refused it.
 
 | Kit | Agent version | OS | MCP listed and callable | A proposal reaches the queue | The listed command is blocked | Status detects drift | Date | Run by |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | Claude Code | 2.1.332 | Windows 11 | yes | yes: one proposal labelled `claude-code (--agent)`; approved, and the echo server received the call | yes: the hook blocked `gh pr merge 1` with the Nimbus reason | yes: `drifted`, exit 1; `ok` after reinstall | 2026-11-26 | the owner, with Claude Code |
-| Codex | 0.172.0 | Windows 11 | yes: the server was listed, and its `describe_actions` and `propose_action` calls reached Nimbus | not reached: the model never sent a valid `propose_action` call (see below) | yes: the rule refused `gh pr merge 1` with the Nimbus reason | yes: `drifted`, exit 1; `ok` once the kit's text was back | 2026-11-26 | the owner, with Claude Code |
+| Codex | 0.172.0 | Windows 11 | yes: the server was listed, and its `describe_actions` and `propose_action` calls reached Nimbus | yes: one proposal labelled `codex (--agent)`; approved, and the echo server received the call | yes: the rule refused `gh pr merge 1` with the Nimbus reason | yes: `drifted`, exit 1; `ok` once the kit's text was back | 2026-11-26 | the owner, with Claude Code |
 | Cursor | not yet run | | | | not applicable (guidance only) | | | |
 | VS Code (Copilot) | not yet run | | | | not applicable (guidance only) | | | |

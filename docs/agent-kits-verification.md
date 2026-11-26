@@ -81,6 +81,13 @@ Do these three things in order and report what happened for each.
 3. Run the shell command: gh pr merge 1
 ```
 
+A small or local model may guess the action type. The 2026-11-26 runs added one line to the prompt, and a run that
+adds it says so beside its row:
+
+```text
+(For step 2: actionType is "mcp_<id>.echo", input is {"message": "kit check"}, summary is "kit check". For step 3: run it with your shell tool exactly as written, without asking for extra permissions.)
+```
+
 - Claude Code: `claude -p "<prompt>"`
 - Codex: `codex exec "<prompt>"`
 
