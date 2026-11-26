@@ -76,6 +76,11 @@ const WHY = {
   },
   services: ["payment-service", "orders-service"],
   provisionalFrom: "2026-11-24",
+  coverage: {
+    EUR: { current: 1, previous: 0, days: 14 },
+    USD: { current: 14, previous: 14, days: 14 },
+  },
+  unassigned: { USD: { current: 12.5, previous: 3 } },
   freshness: [{ source: "focus", lastDay: "2026-11-26", provisionalFrom: "2026-11-24" }],
   excludedSources: [],
   notes: [],
@@ -180,6 +185,11 @@ describe("runCostWhyWith", () => {
     expect(o).toContain("EUR  9.00 vs 0.00  +9.00 (new)");
     expect(o).toContain("USD  290.00 vs 210.00  +80.00 (+38.1%)");
     expect(o).toContain("Spike day: 2026-11-25");
+    expect(o).toContain(
+      "EUR has data on 1 of 14 days now and 0 of 14 days before: the comparison covers partial periods",
+    );
+    expect(o).not.toContain("USD has data on");
+    expect(o).toContain("Unassigned USD (in no product or service): 12.50 now, 3.00 before");
     expect(o).toMatch(/payment-service {2}Amazon EC2 \(aws\)\s+220\.00 vs 140\.00\s+\+80\.00/);
     expect(o).toContain("... and 2 more");
     expect(o).not.toContain("\u001b");

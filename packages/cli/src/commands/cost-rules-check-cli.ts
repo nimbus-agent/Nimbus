@@ -48,6 +48,7 @@ type CheckResult = {
     reason: string;
   }[];
   topUnassignedTruncated: number;
+  freshness: { source: string; lastDay: string | null; provisionalFrom: string | null }[];
 };
 
 const clean = (s: string): string => stripControlChars(s).slice(0, 200);
@@ -109,6 +110,11 @@ function renderText(r: CheckResult, sink: CostWhySink): number {
   }
   renderRules(r, sink);
   renderGroups(r, sink);
+  for (const f of r.freshness) {
+    const prov = f.provisionalFrom === null ? "" : ` (provisional from ${f.provisionalFrom})`;
+    sink.out(`Source ${clean(f.source)}: data up to ${f.lastDay ?? "none"}${prov}
+`);
+  }
   return 0;
 }
 

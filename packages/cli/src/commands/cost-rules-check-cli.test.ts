@@ -64,6 +64,7 @@ const CHECK = {
     },
   ],
   topUnassignedTruncated: 4,
+  freshness: [{ source: "focus", lastDay: "2026-11-26", provisionalFrom: "2026-11-24" }],
 };
 
 describe("parseCostRulesCheckArgs", () => {
@@ -104,6 +105,7 @@ describe("runCostRulesCheckWith", () => {
     );
     expect(o).toContain("azure Azure VM, no tags: 1 line (EUR 5.00): no rule matched");
     expect(o).toContain("... and 4 more groups");
+    expect(o).toContain("Source focus: data up to 2026-11-26 (provisional from 2026-11-24)");
   });
 
   test("a refused config, no data and an error exit 1; --json prints the result", async () => {

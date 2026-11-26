@@ -281,4 +281,77 @@ describe("compareCost", () => {
     });
     expect(w.provisionalFrom).toBeNull();
   });
+
+  test("services are ranked by their net rise within a currency, never across currencies", () => {
+    const L = (
+      cost: number,
+      day: string,
+      service: string,
+      part: string,
+      currency = "USD",
+    ): CostLine =>
+      line({
+        chargeDay: day,
+        billedCost: cost,
+        serviceName: part,
+        currency,
+        tags: tagged("p", service),
+      });
+    const lines = [
+      // a: EC2 +100, RDS -95 -> net +5; b: +60; c: +50; y (JPY) +5000; f: falls
+      L(100, "2026-11-20", "a", "EC2"),
+      L(95, "2026-11-01", "a", "RDS"),
+      L(60, "2026-11-20", "b", "S3"),
+      L(50, "2026-11-20", "c", "S3"),
+      L(5000, "2026-11-20", "y", "VM", "JPY"),
+      L(9, "2026-11-01", "f", "S3"),
+    ];
+    const w = compareCost({
+      lines,
+      rules: RULES,
+      target: { kind: "product", name: "p" },
+      range: RANGE,
+      previous: prev,
+      nowMs: NOW,
+    });
+    // Round-robin over currencies (JPY, USD), each ranked by its own net rise; services that fell come last.
+    expect(w.services).toEqual(["y", "b", "c", "a", "f"]);
+  });
+
+  test("each currency says on how many days of each period any line exists", () => {
+    const lines = [
+      ...demoShaped().filter((l) => l.chargeDay >= "2026-11-12"),
+      line({ chargeDay: "2026-11-20", billedCost: 4, currency: "EUR", tags: tagged("checkout") }),
+    ];
+    const w = compareCost({
+      lines,
+      rules: RULES,
+      target: { kind: "product", name: "checkout" },
+      range: RANGE,
+      previous: prev,
+      nowMs: NOW,
+    });
+    expect(w.coverage).toEqual({
+      EUR: { current: 1, previous: 0, days: 14 },
+      USD: { current: 14, previous: 1, days: 14 },
+    });
+  });
+
+  test("the unassigned amount of each currency is stated for both periods", () => {
+    const lines = [
+      ...demoShaped(),
+      line({ chargeDay: "2026-11-20", billedCost: 7 }),
+      line({ chargeDay: "2026-11-02", billedCost: 2 }),
+      line({ chargeDay: "2026-11-03", billedCost: 1, tags: { product: "<!here>" } }),
+    ];
+    const w = compareCost({
+      lines,
+      rules: RULES,
+      target: { kind: "product", name: "checkout" },
+      range: RANGE,
+      previous: prev,
+      nowMs: NOW,
+    });
+    expect(w.unassigned).toEqual({ USD: { current: 7, previous: 3 } });
+  });
 });

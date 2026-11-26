@@ -93,6 +93,8 @@ type WhyResult = {
   byCurrency: Record<string, Currency>;
   services: string[];
   provisionalFrom: string | null;
+  coverage: Record<string, { current: number; previous: number; days: number }>;
+  unassigned: Record<string, { current: number; previous: number }>;
   freshness: { source: string; lastDay: string | null; provisionalFrom: string | null }[];
   excludedSources: { source: string; provider: string; reason: string }[];
   notes: string[];
@@ -110,6 +112,24 @@ function pctText(c: Currency): string {
   if (c.changePct === null) return "new";
   const p = c.changePct.toFixed(1);
   return c.changePct > 0 ? `+${p}%` : `${p}%`;
+}
+
+/** What a currency's comparison leaves out: days with no data, and the cost no rule assigned. */
+function renderCurrencyCaveats(r: WhyResult, code: string, sink: CostWhySink): void {
+  const cov = r.coverage[code];
+  if (cov !== undefined && (cov.current < cov.days || cov.previous < cov.days)) {
+    sink.out(
+      `  ${clean(code)} has data on ${String(cov.current)} of ${String(cov.days)} days now and ${String(cov.previous)} of ${String(cov.days)} days before: the comparison covers partial periods
+`,
+    );
+  }
+  const u = r.unassigned[code];
+  if (u !== undefined && (u.current !== 0 || u.previous !== 0)) {
+    sink.out(
+      `  Unassigned ${clean(code)} (in no product or service): ${money(u.current)} now, ${money(u.previous)} before
+`,
+    );
+  }
 }
 
 function renderCurrency(code: string, c: Currency, sink: CostWhySink): void {
@@ -188,7 +208,10 @@ function renderText(r: WhyResult, sink: CostWhySink): number {
   if (currencies.length > 1) {
     sink.out("Several currencies: each is compared on its own; they are never added together.\n");
   }
-  for (const c of currencies) renderCurrency(c, r.byCurrency[c] as Currency, sink);
+  for (const c of currencies) {
+    renderCurrency(c, r.byCurrency[c] as Currency, sink);
+    renderCurrencyCaveats(r, c, sink);
+  }
   for (const ctx of r.context) renderContext(ctx, sink);
   renderFooter(r, sink);
   return 0;

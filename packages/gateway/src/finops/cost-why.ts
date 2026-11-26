@@ -49,8 +49,16 @@ export interface CostWhy {
   readonly previous: CostWindow;
   readonly byCurrency: Record<string, CostWhyCurrency>;
   /** The target's rule `service` outputs, those that rose first. */
+  /**
+   * The target's rule `service` outputs: round-robin over the currencies, each ranked by that service's NET rise
+   * in that currency (never compared across currencies), then the services that did not rise, by name.
+   */
   readonly services: string[];
   readonly provisionalFrom: string | null;
+  /** Per currency, the days of each period on which ANY line exists (a period with gaps compares partial data). */
+  readonly coverage: Record<string, { current: number; previous: number; days: number }>;
+  /** Per currency, the cost no rule assigned in each period: it is in no product's or service's total. */
+  readonly unassigned: Record<string, { current: number; previous: number }>;
 }
 
 export interface CompareCostInput {
@@ -198,23 +206,58 @@ function rankMovers(acc: CurrencyAcc): { movers: CostMover[]; truncated: number 
   };
 }
 
-/** Step 4: services whose cost rose first (largest rise first), then the rest by name. */
+/** Step 4: round-robin over currencies of each one's risers (largest net rise first), then the rest by name. */
 function orderServices(
   services: ReadonlySet<string>,
   accs: ReadonlyMap<string, CurrencyAcc>,
 ): string[] {
-  const rise = new Map<string, number>();
-  for (const acc of accs.values()) {
-    for (const m of acc.movers.values()) {
-      if (m.service === null) continue;
-      rise.set(m.service, Math.max(rise.get(m.service) ?? 0, m.current - m.previous));
+  const risersByCurrency = [...accs.keys()].sort().map((c) => {
+    const net = new Map<string, number>();
+    for (const m of (accs.get(c) as CurrencyAcc).movers.values()) {
+      if (m.service !== null)
+        net.set(m.service, (net.get(m.service) ?? 0) + m.current - m.previous);
+    }
+    return [...net.entries()]
+      .filter(([, n]) => n > 0)
+      .sort(([a, x], [b, y]) => y - x || a.localeCompare(b))
+      .map(([s]) => s);
+  });
+  const out: string[] = [];
+  const longest = Math.max(0, ...risersByCurrency.map((r) => r.length));
+  for (let i = 0; i < longest; i++) {
+    for (const risers of risersByCurrency) {
+      const s = risers[i];
+      if (s !== undefined && !out.includes(s)) out.push(s);
     }
   }
-  return [...services].sort((a, b) => {
-    const ra = Math.max(0, rise.get(a) ?? 0);
-    const rb = Math.max(0, rise.get(b) ?? 0);
-    return rb - ra || a.localeCompare(b);
-  });
+  return [...out, ...[...services].filter((s) => !out.includes(s)).sort()];
+}
+
+/** Step 5: per currency, the days with any line and the unassigned cost, in each period (all lines, any target). */
+function coverageOf(input: CompareCostInput): Pick<CostWhy, "coverage" | "unassigned"> {
+  const days = new Map<string, { current: Set<string>; previous: Set<string> }>();
+  const unassigned: CostWhy["unassigned"] = {};
+  for (const l of input.lines) {
+    const isCurrent = inRange(l.chargeDay, input.range);
+    if (!isCurrent && !inRange(l.chargeDay, input.previous)) continue;
+    const d = days.get(l.currency) ?? { current: new Set<string>(), previous: new Set<string>() };
+    days.set(l.currency, d);
+    (isCurrent ? d.current : d.previous).add(l.chargeDay);
+    if (allocate(l, input.rules).unassignedReason === null) continue;
+    const u = unassigned[l.currency] ?? { current: 0, previous: 0 };
+    unassigned[l.currency] = u;
+    if (isCurrent) u.current += l.billedCost;
+    else u.previous += l.billedCost;
+  }
+  const coverage: CostWhy["coverage"] = {};
+  for (const c of [...days.keys()].sort()) {
+    const d = days.get(c) as { current: Set<string>; previous: Set<string> };
+    coverage[c] = { current: d.current.size, previous: d.previous.size, days: daysIn(input.range) };
+  }
+  const sortedUnassigned: CostWhy["unassigned"] = {};
+  for (const c of Object.keys(unassigned).sort())
+    sortedUnassigned[c] = unassigned[c] as { current: number; previous: number };
+  return { coverage, unassigned: sortedUnassigned };
 }
 
 function provisionalFromOf(range: CostWindow, nowMs: number): string | null {
@@ -246,5 +289,6 @@ export function compareCost(input: CompareCostInput): CostWhy {
     byCurrency,
     services: orderServices(services, accs),
     provisionalFrom: provisionalFromOf(input.range, input.nowMs),
+    ...coverageOf(input),
   };
 }

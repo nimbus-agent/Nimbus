@@ -104,30 +104,39 @@ export function handleCostWhy(raw: unknown, ctx: CostViewsRpcCtx): CostWhyResult
   const range = windowOf({ period: p["period"] ?? "14d" }, "cost.why", nowMs);
   const previous = previousRange(range);
   const cfg = config(ctx);
-  const current = gatherCostViewInput(ctx.db, cfg, range, nowMs);
-  if (current.empty) return { empty: true, range, previous, context: [] };
-  const before = gatherCostViewInput(ctx.db, cfg, previous, nowMs);
-  const lines = [...before.lines, ...current.lines];
+  // ONE gather over both periods, so one source rule (authoritative, or raw lines over Vantage) applies to both:
+  // two gathers could count Vantage before and FOCUS now and report the switch as a change.
+  const both = gatherCostViewInput(
+    ctx.db,
+    cfg,
+    {
+      fromDay: previous.fromDay,
+      toDay: range.toDay,
+      label: `${previous.label} and ${range.label}`,
+    },
+    nowMs,
+  );
+  if (both.empty) return { empty: true, range, previous, context: [] };
   const rules = rulesInForce(cfg.rules, cfg.error);
-  const target = resolveCostTarget(lines, rules, name);
+  const target = resolveCostTarget(both.lines, rules, name);
   if (target.kind === "unknown") unknownTarget(name, target.known, cfg.error);
-  const why = compareCost({ lines, rules, target, range, previous, nowMs });
+  const why = compareCost({ lines: both.lines, rules, target, range, previous, nowMs });
   const spike = earliestSpike(why);
+  const spikeDayMs = spike === null ? null : dayMs(spike);
   const context = selectCostChangeContext(ctx.db, {
     serviceIds: why.services.slice(0, COST_WHY_MAX_CONTEXT_SERVICES),
     services: serviceConfigs(ctx),
-    fromMs: dayMs(range.fromDay),
+    // A spike on the first day of the period still reaches the deploy the day before it.
+    fromMs: Math.min(dayMs(range.fromDay), spikeDayMs === null ? Infinity : spikeDayMs - DAY_MS),
     toMs: dayMs(range.toDay) + DAY_MS,
-    spikeDayMs: spike === null ? null : dayMs(spike),
+    spikeDayMs,
   });
   return {
     ...why,
     empty: false,
-    freshness: costFreshness(current),
-    excludedSources: [...current.excludedSources, ...before.excludedSources].filter(
-      (e, i, all) => all.findIndex((x) => x.source === e.source && x.provider === e.provider) === i,
-    ),
-    notes: [...current.notes],
+    freshness: costFreshness(both),
+    excludedSources: [...both.excludedSources],
+    notes: [...both.notes],
     context,
   };
 }
@@ -135,11 +144,11 @@ export function handleCostWhy(raw: unknown, ctx: CostViewsRpcCtx): CostWhyResult
 export function handleCostRulesCheck(
   raw: unknown,
   ctx: CostViewsRpcCtx,
-): CostRulesCheck & { readonly empty: boolean } {
+): CostRulesCheck & { readonly empty: boolean; readonly freshness: CostFreshness[] } {
   requireOwner(ctx, "cost.rulesCheck");
   const p = params(raw, "cost.rulesCheck", ["period"]);
   const nowMs = (ctx.now ?? Date.now)();
   const range = windowOf(p, "cost.rulesCheck", nowMs);
   const input = gatherCostViewInput(ctx.db, config(ctx), range, nowMs);
-  return { ...checkCostRules(input), empty: input.empty };
+  return { ...checkCostRules(input), empty: input.empty, freshness: costFreshness(input) };
 }

@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { upsertIndexedItem } from "../index/item-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { CostRpcError, dispatchCostRpc } from "./cost-rpc.ts";
@@ -185,6 +186,82 @@ describe("cost.why", () => {
   });
 });
 
+describe("cost.why across the two periods", () => {
+  async function reimport(rows: string[]): Promise<void> {
+    db.run("DELETE FROM cost_line");
+    writeFileSync(join(dir, "b.csv"), [HEADER, ...rows].join("\n"));
+    await call("cost.import", { path: join(dir, "b.csv") }, "cli");
+  }
+  const dayOf = (offset: number): string =>
+    new Date(Date.UTC(2026, 10, 26) - offset * DAY).toISOString().slice(0, 10);
+
+  test("one source rule applies to both periods: raw lines now exclude Vantage before as well", async () => {
+    const rows: string[] = [];
+    for (let d = 0; d < 12; d++)
+      rows.push(row(20, dayOf(d), "Amazon EC2", { product: "checkout" }));
+    await reimport(rows);
+    for (let d = 14; d < 28; d++) {
+      upsertIndexedItem(db, {
+        service: "vantage",
+        type: "cost_allocation",
+        externalId: `v${String(d)}`,
+        title: "t",
+        bodyPreview: "t",
+        modifiedAt: Date.parse(`${dayOf(d)}T00:00:00Z`),
+        metadata: {
+          scopeSeries: `rep|ws|tag~h${String(d)}`,
+          dimensionKind: "tag",
+          dimensionKey: "product",
+          dimensionValue: "checkout",
+          periodStartMs: Date.parse(`${dayOf(d)}T00:00:00Z`),
+          periodEndMs: Date.parse(`${dayOf(d)}T00:00:00Z`) + DAY,
+          amount: 50,
+          currency: "USD",
+          provider: "aws",
+          cloudService: "Amazon EC2",
+        },
+        syncedAt: NOW,
+      });
+    }
+    const w = (await call("cost.why", { target: "checkout" }, "cli")) as Why & {
+      excludedSources: { source: string }[];
+      coverage: Record<string, { current: number; previous: number }>;
+    };
+    expect(w.byCurrency["USD"]).toMatchObject({ current: 240, previous: 0 });
+    expect(w.excludedSources.map((e) => e.source)).toEqual(["vantage"]);
+    expect(w.coverage["USD"]).toMatchObject({ current: 12, previous: 0 });
+  });
+
+  test("a deploy the day before a spike on the first day of the period is listed, near the spike", async () => {
+    const rows: string[] = [];
+    for (let d = 0; d < 28; d++) {
+      rows.push(
+        row(d < 14 ? 30 : 10, dayOf(d), "Amazon EC2", {
+          product: "checkout",
+          service: "payment-service",
+        }),
+      );
+    }
+    await reimport(rows);
+    const at = Date.parse(`${dayOf(14)}T22:00:00Z`);
+    db.run(
+      `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
+       VALUES ('dep-0', 'github_actions', 'deployment', 'dep-0', 'Deploy', ?, ?)`,
+      [at, NOW],
+    );
+    db.run(
+      `INSERT INTO deployment_items
+         (id, provider, nimbus_service_id, environment, sha, ref, started_at_ms, finished_at_ms,
+          conclusion, workflow_url, ci_run_external_id, created_at)
+       VALUES ('dep-0', 'github-actions', 'payment-service', 'prod', 'sha-0', 'refs/heads/main', ?, ?, 'success', NULL, NULL, ?)`,
+      [at - 600_000, at, NOW],
+    );
+    const w = (await call("cost.why", { target: "checkout" }, "cli")) as Why;
+    expect(w.byCurrency["USD"]?.spikeDay).toBe("2026-11-13");
+    expect(w.context[0]?.deploys[0]).toMatchObject({ sha: "sha-0", nearSpike: true });
+  });
+});
+
 describe("cost.rulesCheck", () => {
   test("defaults to 30 days, serves cli and ui only, writes no egress row", async () => {
     const r = (await call("cost.rulesCheck", undefined, "cli")) as {
@@ -195,6 +272,9 @@ describe("cost.rulesCheck", () => {
     expect(r.range.fromDay).toBe("2026-10-28");
     expect(r.rules.map((x) => x.lines)).toEqual([56, 28]);
     expect(r.unusedRules).toEqual([]);
+    expect(
+      (r as unknown as { freshness: { source: string }[] }).freshness.map((f) => f.source),
+    ).toEqual(["focus"]);
     await call("cost.rulesCheck", { period: "7d" }, "ui");
     expect((await rpcError(call("cost.rulesCheck", {}, "mcp"))).message).toContain(
       "ERR_COST_FORBIDDEN_CLIENT",
