@@ -3,6 +3,7 @@ import type { NimbusItem } from "@nimbus-dev/sdk";
 
 import { dbRun } from "../db/write.ts";
 import { isEmbeddingExcludedType } from "../embedding/embedding-exclusions.ts";
+import { deleteCostLinesBySource } from "../finops/cost-line-store.ts";
 import { type ResolveServiceId, syncGraphFromIndexedItem } from "../graph/graph-populator.ts";
 import { deleteGraphEntitiesForItemKeys } from "../graph/relationship-graph.ts";
 import type { SyncContext } from "../sync/types.ts";
@@ -330,6 +331,7 @@ export function deleteAllItemsForService(db: Database, service: string): void {
     dbRun(db, "DELETE FROM item WHERE service = ?", [service]);
     deleteItemHistoryForService(db, service);
     deleteSchemaHistoryForService(db, service);
+    deleteCostLinesBySource(db, service);
   })();
 }
 

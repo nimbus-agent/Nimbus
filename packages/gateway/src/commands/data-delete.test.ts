@@ -58,6 +58,19 @@ describe("data delete", () => {
     expect(listChatReadMarkers(idx.rawDb, "other")).toHaveLength(1);
   });
 
+  test("deletion removes the source's cost lines (Phase 7); a dry run keeps them", async () => {
+    for (const source of ["github_actions", "focus"]) {
+      idx.rawDb.run(
+        "INSERT INTO cost_line (source, provider, billing_account_id, billing_period, charge_day, service_name, charge_category, billed_cost, currency, tags_json, import_id, grain_hash) VALUES (?, 'aws', '1', '2026-11', '2026-11-01', 'S3', 'usage', 1, 'USD', '{}', 'i', ?)",
+        [source, source],
+      );
+    }
+    await runDataDelete({ service: "github_actions", dryRun: true, vault, index: idx });
+    expect(idx.rawDb.query("SELECT COUNT(*) AS n FROM cost_line").get()).toEqual({ n: 2 });
+    await runDataDelete({ service: "github_actions", dryRun: false, vault, index: idx });
+    expect(idx.rawDb.query("SELECT source FROM cost_line").all()).toEqual([{ source: "focus" }]);
+  });
+
   test("--dry-run reports counts and does not delete", async () => {
     seed(idx, "github", 3);
     seed(idx, "slack", 2);

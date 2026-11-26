@@ -4,6 +4,7 @@ import { dbExec, dbRun } from "../../db/write.ts";
 import { CAPTURE_LABEL_SOURCE_V99_SQL } from "../capture-label-source-v99-sql.ts";
 import { EXTENSION_PROVENANCE_V105_SQL } from "../extension-provenance-v105-sql.ts";
 import { INCIDENT_EXECUTED_AT_V106_SQL } from "../incident-executed-at-v106-sql.ts";
+import { LAN_PEER_PROTO_V95_SQL } from "../lan-peer-proto-v95-sql.ts";
 import { USER_MCP_WRITE_V98_SQL } from "../user-mcp-write-v98-sql.ts";
 
 /**
@@ -86,5 +87,16 @@ export function migrateIndexedV98ToV99(db: Database, now: number): void {
     }
     dbExec(db, "PRAGMA user_version = 99");
     recordMigration(db, 99, "capture label source (Phase 28 AD7a)", now);
+  })();
+}
+
+/** V95 - `lan_peers.proto_version` (Phase 10 FS1). */
+export function migrateIndexedV94ToV95(db: Database, now: number): void {
+  db.transaction(() => {
+    if (!hasColumn(db, "lan_peers", "proto_version")) {
+      dbExec(db, LAN_PEER_PROTO_V95_SQL.trim());
+    }
+    dbExec(db, "PRAGMA user_version = 95");
+    recordMigration(db, 95, "lan peer protocol version (Phase 10 FS1)", now);
   })();
 }

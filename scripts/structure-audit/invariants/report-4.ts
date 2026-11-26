@@ -3,6 +3,7 @@
 
 import { CO_OWNED_ENTITY_TYPES } from "../../../packages/gateway/src/graph/relationship-graph.ts";
 import type { FileEntry, Mode } from "./_shared.ts";
+import { checkCostLineConfinement } from "./cost-line.ts";
 import { checkEpisodicMemoryConfinement } from "./episodic-memory.ts";
 import { checkFreeBusyConfinement } from "./free-busy.ts";
 import {
@@ -108,6 +109,15 @@ export function reportRulesPart4(files: readonly FileEntry[], mode: Mode): numbe
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D24 schema_history written or erased outside its store (rule schema-history-confined) - only index/schema-history.ts writes it, only the upsert transaction records an observation, and a diff is computed at read time (index/schema-diff.ts): ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkCostLineConfinement(files);
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D24 cost_line written or erased outside its store (rule cost-line-confined) - only finops/cost-line-store.ts writes it, only the import replaces a tuple's days, and only the owner erasures and the retention tick delete: ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;

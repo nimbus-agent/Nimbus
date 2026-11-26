@@ -7,6 +7,7 @@
 import type { Database } from "bun:sqlite";
 import { deleteItemByPrimaryKey } from "../index/item-store.ts";
 import { COST_SERVICE_IDS, DAY_MS } from "./cost-item-contract.ts";
+import { pruneCostLinesBefore } from "./cost-line-store.ts";
 
 export const COST_PRUNE_INTERVAL_MS = DAY_MS;
 const BATCH = 1000;
@@ -52,6 +53,21 @@ export function pruneCostRows(db: Database, opts: PruneCostRowsOptions): number 
   }
 }
 
+/**
+ * Delete `cost_line` rows (Phase 7, V109) whose charge day is before the UTC day `retainDays` days ago;
+ * returns how many. The same `[finops] retain_days` as the allocation rows.
+ */
+export function pruneCostLineRows(
+  db: Database,
+  opts: { readonly retainDays: number; readonly nowMs: number },
+): number {
+  if (opts.retainDays <= 0) {
+    return 0;
+  }
+  const cutoffDay = new Date(opts.nowMs - opts.retainDays * DAY_MS).toISOString().slice(0, 10);
+  return pruneCostLinesBefore(db, cutoffDay);
+}
+
 export interface StartFinopsRetentionOptions {
   readonly retainDays: number;
   readonly nowMs?: () => number;
@@ -80,6 +96,11 @@ export function startFinopsRetention(
       prune(db, { retainDays: opts.retainDays, nowMs: clock() });
     } catch {
       // Best-effort maintenance: never crash the gateway.
+    }
+    try {
+      pruneCostLineRows(db, { retainDays: opts.retainDays, nowMs: clock() });
+    } catch {
+      // Same: a failed cost-line prune never stops the next tick.
     }
   };
   tick();

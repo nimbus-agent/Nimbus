@@ -1447,6 +1447,36 @@ CREATE TABLE IF NOT EXISTS incident_record_version (
 
 Why the shape: there is NO foreign key to `item` (an upstream deletion must not erase the record that says the incident existed, as for `item_history`); every list query orders `opened_at_ms DESC, id` and each index ends in `id`, so SQLite sorts NULL last with no temporary B-tree (the migration test asserts the plans); the retention predicate is written as two arms (`opened_at_ms IS NOT NULL AND opened_at_ms < ?` OR `opened_at_ms IS NULL AND assembled_at_ms < ?`), never a `COALESCE`, which defeats the index; the engine's refresh selection reads `incident_record_checked` once per status, since an `IN (...)` of two statuses needs a sort; version N's `record_json` is immutable once written, the version table keeps no Markdown (re-rendered by the same pure renderer), and the store deletes versions itself before the record because `PRAGMA foreign_keys` is set per connection and the cascade is only a backstop. A pushed brief is tied to a record by `pushed_brief.incident_id = incident_record.trigger_item_id` (the V64 primary key), so the push needs no schema change.
 
+## V109 — cost lines (Phase 7, the Cost Pack, 2026-11-26)
+
+Authoritative source: `packages/gateway/src/index/cost-line-v109-sql.ts`. One normalised, FOCUS-shaped DAILY cost line per (source, provider, billing account, charge day, grain); `grain_hash` is SHA-256 of the canonical JSON of (sub-account, service, resource-or-sku, charge category, sorted tags, repo, workflow, model). Written only by `finops/cost-line-store.ts` (static D24 rule `cost-line-confined`): `nimbus cost import` replaces, per (source, provider, billing account, billing period), every stored line on exactly the charge days the file contains, so an identical re-import is a no-op; deleted by `connector remove` and `nimbus data delete` (by source), `nimbus cost import --remove <importId>`, and pruned by `[finops] retain_days`. Not the `item` table, never embedded, never full-text indexed. No foreign key, no trigger, no backfill; re-runnable. Chains after V108.
+
+```sql
+CREATE TABLE IF NOT EXISTS cost_line (
+  id INTEGER PRIMARY KEY,
+  source TEXT NOT NULL,              -- 'focus' for a file import, else the connector service id
+  provider TEXT NOT NULL,            -- aws | azure | gcp | github | openai | anthropic | ...
+  billing_account_id TEXT NOT NULL,
+  billing_period TEXT NOT NULL,      -- YYYY-MM
+  charge_day TEXT NOT NULL,          -- YYYY-MM-DD (UTC day of ChargePeriodStart)
+  sub_account_id TEXT, sub_account_name TEXT,
+  service_name TEXT NOT NULL, service_category TEXT, region_id TEXT,
+  resource_id TEXT, resource_name TEXT, sku_id TEXT,
+  charge_category TEXT NOT NULL,     -- usage | purchase | tax | credit | adjustment
+  billed_cost REAL NOT NULL, effective_cost REAL,
+  currency TEXT NOT NULL,            -- amounts are never summed across currencies
+  tags_json TEXT NOT NULL,           -- sorted string map
+  repo TEXT, workflow TEXT, model TEXT,
+  import_id TEXT NOT NULL,
+  grain_hash TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS cost_line_grain ON cost_line (source, provider, billing_account_id, charge_day, grain_hash);
+CREATE INDEX IF NOT EXISTS cost_line_source_day ON cost_line (source, charge_day);
+CREATE INDEX IF NOT EXISTS cost_line_source_account_day ON cost_line (source, provider, sub_account_id, charge_day);
+```
+
+(The DDL file also carries length and value CHECKs on `source`, `provider`, `billing_period`, `charge_day`, `charge_category`, `currency` and `tags_json`.)
+
 ## V108 — warehouse schema history (Phase 10, the Data Incident Brief's schema diff, 2026-11-25)
 
 Authoritative source: `packages/gateway/src/index/schema-history-v108-sql.ts`. Written only by `index/schema-history.ts` (static D24 rule `schema-history-confined`), inside `upsertIndexedItem`'s transaction for a Snowflake `data_model` or a BigQuery `table`; read by `index/schema-diff.ts`; deleted by `connector remove` and `nimbus data delete` and pruned by `[index] schema_history_retention_days` (the newest row of each table is kept). No foreign key, no trigger, no backfill; re-runnable. Chains after V107.

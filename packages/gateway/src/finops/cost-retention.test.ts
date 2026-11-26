@@ -4,7 +4,7 @@ import { upsertIndexedItem } from "../index/item-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { DAY_MS } from "./cost-item-contract.ts";
-import { pruneCostRows, startFinopsRetention } from "./cost-retention.ts";
+import { pruneCostLineRows, pruneCostRows, startFinopsRetention } from "./cost-retention.ts";
 
 const NOW = Date.UTC(2026, 10, 12);
 const dbs: Database[] = [];
@@ -95,6 +95,44 @@ describe("pruneCostRows", () => {
     seed(db, { id: "old", ageDays: 5000 });
     expect(pruneCostRows(db, { retainDays: 0, nowMs: NOW })).toBe(0);
     expect(ids(db)).toEqual(["vantage:old"]);
+  });
+});
+
+function seedLine(db: Database, day: string): void {
+  db.run(
+    "INSERT INTO cost_line (source, provider, billing_account_id, billing_period, charge_day, service_name, charge_category, billed_cost, currency, tags_json, import_id, grain_hash) VALUES ('focus', 'aws', '1', ?, ?, 'S3', 'usage', 1, 'USD', '{}', 'i', 'g')",
+    [day.slice(0, 7), day],
+  );
+}
+
+const lineDays = (db: Database): string[] =>
+  (
+    db.query("SELECT charge_day FROM cost_line ORDER BY charge_day").all() as {
+      charge_day: string;
+    }[]
+  ).map((r) => r.charge_day);
+
+describe("pruneCostLineRows (Phase 7)", () => {
+  test("deletes cost lines whose day is older than retainDays and keeps the rest", () => {
+    const db = freshDb();
+    // NOW is 2026-11-12; 10 days kept means 2026-11-02 onwards.
+    for (const d of ["2026-10-31", "2026-11-01", "2026-11-02", "2026-11-12"]) seedLine(db, d);
+    expect(pruneCostLineRows(db, { retainDays: 10, nowMs: NOW })).toBe(2);
+    expect(lineDays(db)).toEqual(["2026-11-02", "2026-11-12"]);
+  });
+
+  test("retainDays 0 keeps everything", () => {
+    const db = freshDb();
+    seedLine(db, "2020-01-01");
+    expect(pruneCostLineRows(db, { retainDays: 0, nowMs: NOW })).toBe(0);
+  });
+
+  test("the boot tick prunes cost lines too", () => {
+    const db = freshDb();
+    seedLine(db, "2020-01-01");
+    const handle = startFinopsRetention(db, { retainDays: 400, nowMs: () => NOW });
+    expect(lineDays(db)).toEqual([]);
+    handle.stop();
   });
 });
 
