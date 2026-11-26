@@ -3,10 +3,10 @@
 **Status:** landscape, not a commitment · first drafted 2026-08-02 · extended 2026-08-02 with
 verified defects, the eleven clusters, and the sequencing rules
 
-> **This file has no authority over sequencing** (noted 2026-11-12). The build order is the spine
-> in [`roadmap.md`](./roadmap.md#phase-7-sequencing-spine), and the direction taken on 2026-11-12
+> **This file has no authority over sequencing** (noted 2026-11-12). The build order is the phase number
+> ([`roadmap.md` § Build order](./roadmap.md#build-order)), and the direction taken on 2026-11-12
 > is recorded in [`roadmap.md` § Direction](./roadmap.md#direction). Several clusters below have
-> shipped since this was written; a row under *Carried into S7* there tracks reconciling or
+> shipped since this was written; a row under *Reach* there (moved from the old *Carried into S7*) tracks reconciling or
 > retiring this file. Until then, read each cluster against the tree before relying on it.
 
 This is the fourth roadmap surface, and the only one that looks *outward*:
@@ -565,8 +565,8 @@ merged answer being the minimum of the per-machine answers.
 **Size:** XL. **Depends on:** clusters 7, 2 and 9. Write the cross-chain design down long before
 building it, or cluster 9's receipt envelope will be shaped wrong.
 
-**Now also (2026-11-12):** [`roadmap.md` Phase 29](./roadmap.md#phase-29--the-team-server) gives the
-server half of this cluster a spine slot (S5) and names the rows it was missing. The machine-link
+**Now also (2026-11-12):** [`roadmap.md` Phase 19](./roadmap.md#team-server) (the team server, the old Phase 29) gives the
+server half of this cluster its rows; on 2026-11-26 the spine slot S5 it had been given was removed. The machine-link
 and cross-chain `prove` half stays here until the landscape is reconciled.
 
 ### 11 — Meetings as first-class

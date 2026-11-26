@@ -38,7 +38,7 @@ export function digestEgressWindow(
  * Sign a window digest with the Vault-only Ed25519 share keypair (reused — no new Vault key). The
  * private seed is read inside `ensureShareKeypair` solely to thread into the in-process signing
  * call; it is NEVER returned. The result carries only the detached signature + the public key
- * (safe to surface). This is a LOCAL receipt — not the portable EAF artifact (deferred to Phase 22).
+ * (safe to surface). This is a LOCAL receipt — not the portable EAF artifact (deferred to Phase 25, formerly Phase 22).
  */
 export async function signWindowDigest(
   vault: NimbusVault,

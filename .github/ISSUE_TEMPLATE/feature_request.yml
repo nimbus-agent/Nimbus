@@ -58,16 +58,21 @@ body:
       label: Roadmap Phase
       description: Which phase does this belong to? Features outside the active phase will be deferred.
       options:
-        - "Phase 5 — The Extended Surface (Active)"
+        - "Phase 5 — The Extended Surface"
         - "Phase 6 — Team"
-        - "Phase 7 — Engineering Excellence"
-        - "Phase 8 — Security Engineering"
-        - "Phase 9 — AI Engineering Loop"
+        - "Phase 7 — The Cost Pack"
+        - "Phase 8 — Engineering Excellence"
+        - "Phase 9 — Security Engineering"
         - "Phase 10 — The Autonomous Agent"
-        - "Phase 11 — Sovereign Mesh"
-        - "Phase 12 — Enterprise"
-        - "Phase 13 — Desktop Distribution"
-        - "Phase 14 — Agent Evolution / AI v2"
+        - "Phase 11 — AI Engineering Loop"
+        - "Phase 12 — Compliance Receipts"
+        - "Phase 13 — Agent Evolution / AI v2"
+        - "Phase 14 — Vertical Personas"
+        - "Phase 15 — Sovereign Mesh"
+        - "Phase 16 — Mobile Companion"
+        - "Phase 18 — Desktop Distribution"
+        - "Phase 19 — The Platform Layer"
+        - "Phase 20 — Enterprise"
         - "Unsure / cross-phase"
 
   - type: textarea
