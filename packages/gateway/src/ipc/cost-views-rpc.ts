@@ -17,6 +17,7 @@ import {
   periodWindow,
   productView,
 } from "../finops/cost-views.ts";
+import type { ChatopsPolicy } from "../policy/types.ts";
 import type { ClientKind } from "./server/client-kind.ts";
 
 /**
@@ -40,6 +41,8 @@ export interface CostViewsRpcCtx {
   readonly configDir?: string;
   readonly caller?: { readonly kind: ClientKind };
   readonly now?: () => number;
+  /** The enforced ChatOps policy (the send door's destination check); absent or a throw reads as unreadable. */
+  readonly chatops?: () => ChatopsPolicy | undefined;
 }
 
 export interface ClusterViewResult {

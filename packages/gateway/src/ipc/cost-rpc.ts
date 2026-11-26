@@ -12,8 +12,15 @@ import type { CostRulesCheck } from "../finops/cost-rules-check.ts";
 import type { CostViewResult } from "../finops/cost-views.ts";
 import { isWasteKind, WASTE_KINDS } from "../finops/cost-waste.ts";
 import { type CostWasteResult, queryCostWaste } from "../finops/cost-waste-query.ts";
+import type { ChatopsPolicy } from "../policy/types.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 import { CostImportRpcError, handleCostImport, handleCostImportRemove } from "./cost-import-rpc.ts";
+import {
+  type CostReportListEntry,
+  type CostReportRenderResult,
+  handleCostReportList,
+  handleCostReportRender,
+} from "./cost-report-rpc.ts";
 import {
   type ClusterViewResult,
   CostViewsRpcError,
@@ -48,6 +55,8 @@ export interface CostRpcCtx {
   readonly now?: () => number;
   readonly caller?: { readonly kind: ClientKind };
   readonly demo?: boolean;
+  /** The enforced ChatOps policy (the send door's destination check); absent or a throw reads as unreadable. */
+  readonly chatops?: () => ChatopsPolicy | undefined;
 }
 
 /** Run an import handler, carrying its error as a `CostRpcError` with the same code. */
@@ -173,6 +182,8 @@ export async function dispatchCostRpc(
     | CostWhyResult
     | CostWhyEmpty
     | CostRulesCheck
+    | { reports: CostReportListEntry[]; configError: string | null }
+    | CostReportRenderResult
   >(method, params, ctx, {
     "cost.anomalies": handleAnomalies,
     "cost.waste": handleWaste,
@@ -182,5 +193,7 @@ export async function dispatchCostRpc(
     "cost.internal": viaImport(handleCostInternal),
     "cost.why": viaImport(handleCostWhy),
     "cost.rulesCheck": viaImport(handleCostRulesCheck),
+    "cost.reportList": viaImport(handleCostReportList),
+    "cost.reportRender": viaImport(handleCostReportRender),
   });
 }

@@ -98,6 +98,7 @@ export async function tryDispatchCostRpc(
     const out = await dispatchCostRpc(method, params, {
       db: ctx.options.localIndex.getDatabase(),
       caller: { kind: ctx.getClientKind(clientId) },
+      chatops: () => ctx.options.enforcedPolicy?.()?.chatops,
       ...(ctx.options.demo === true ? { demo: true } : {}),
       ...(ctx.options.configDir === undefined ? {} : { configDir: ctx.options.configDir }),
     });
