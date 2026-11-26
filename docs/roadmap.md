@@ -3075,7 +3075,7 @@ The federation primitive is intentionally general — once two Gateways can shar
 
 ### Phase 28 — The Agent Door
 
-> **Sequencing (2026-11-12):** **Track 1 — spine, slot S4** (owner ruling OR-ECO-8). **Status: ✅ closed 2026-11-26** (AD1 to AD8; acceptance A6, the Claude Code and Codex kits verified against the real agents, was the last row). Numbered 28 because new phases are appended after the last planned phase; in substance it completes [Phase 9.7](#phase-97--connector-write-enablement-the-acting-roster). **Nothing in this section is built.** What it starts from is: the MCP server's read tools ([S1](#spine-s1)) and the act door of the MCP capture sink ([S3](#spine-s3)).
+> **Sequencing (2026-11-12):** **Track 1 — spine, slot S4** (owner ruling OR-ECO-8). **Status: ✅ closed 2026-11-26** (AD1 to AD8; acceptance A6, the Claude Code and Codex kits verified against the real agents, was the last row). Numbered 28 because new phases are appended after the last planned phase; in substance it completes [Phase 9.7](#phase-97--connector-write-enablement-the-acting-roster). It started from the MCP server's read tools ([S1](#spine-s1)) and the act door of the MCP capture sink ([S3](#spine-s3)).
 
 **Goal:** Any MCP client, whether a coding agent, a chat bot or another tool, reaches the same guarded writes as Nimbus's own model, under the same rules, with one approval step. Phase 9.7 opened the write roster to Nimbus's own model. An outside agent reaches only a subset of it through the act door, by way of a separate accept command, and is shown no before-state. This phase closes that gap, because the agents engineers use every day are not Nimbus's own ([§ Direction](#direction)).
 
