@@ -115,6 +115,30 @@ describe("importFocusPath", () => {
     expect(sumAll()).toBe(1);
   });
 
+  test("a directory replay is all or nothing: a refused newer file leaves the older one unapplied", () => {
+    const a = join(dir, "a.csv");
+    const b = join(dir, "b.csv");
+    writeFileSync(a, mtd(1, "1"));
+    writeFileSync(b, mtd(1, "5"));
+    utimesSync(a, new Date(Date.UTC(2026, 10, 1)), new Date(Date.UTC(2026, 10, 1)));
+    utimesSync(b, new Date(Date.UTC(2026, 10, 2)), new Date(Date.UTC(2026, 10, 2)));
+    importFocusPath(db, dir, { dryRun: false, now: NOW });
+    expect(sumAll()).toBe(5);
+    // b's bytes change to invalid UTF-8: a new hash, so the directory replays, and b is refused.
+    writeFileSync(b, Buffer.from([0xff, 0xfe, 0x00]));
+    utimesSync(b, new Date(Date.UTC(2026, 10, 2)), new Date(Date.UTC(2026, 10, 2)));
+    const r = importFocusPath(db, dir, { dryRun: false, now: NOW });
+    expect(sumAll()).toBe(5);
+    expect(r.files.map((f) => [f.name, f.status])).toEqual([
+      ["a.csv", "refused"],
+      ["b.csv", "refused"],
+    ]);
+    expect(r.files[0]?.error).toBe(
+      "not applied: b.csv was refused, so this folder's replay was rolled back",
+    );
+    expect(r.files[1]?.error).toBe("the file is not valid UTF-8");
+  });
+
   test("the ledger records each accepted import with its provider, hash and time", () => {
     const p = join(dir, "a.csv");
     writeFileSync(p, mtd(1));

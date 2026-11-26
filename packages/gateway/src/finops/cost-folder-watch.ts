@@ -33,6 +33,8 @@ export interface CostFolderWatchOptions {
   readonly onFailure?: (err: unknown) => void;
   /** Test seam: the per-file size cap (default {@link COST_IMPORT_MAX_BYTES}). */
   readonly maxBytes?: number;
+  /** Test seam: the importer (default {@link importFocusPath}). */
+  readonly importPath?: typeof importFocusPath;
 }
 
 /** The file's content hash, or (unhashable: above the cap, unreadable) its size and modification time. */
@@ -72,13 +74,14 @@ export function createCostFolderPass(opts: CostFolderWatchOptions): () => Import
       if (!changed) return [];
       // After a restart (empty memory) the ledger decides; after a change in this run, every file replays.
       const replay = seen.size > 0;
-      seen = now;
-      const files = importFocusPath(opts.db, dir, {
+      const files = (opts.importPath ?? importFocusPath)(opts.db, dir, {
         dryRun: false,
         now: opts.now,
         maxBytes,
         replay,
       }).files;
+      // Only a pass whose import returned moves the fingerprints on; a throw leaves them, so the next pass retries.
+      seen = now;
       for (const f of files) {
         // A storage or I/O failure may pass: forget the file so the next pass tries it again.
         if (f.status === "refused" && f.retryable === true) seen.delete(f.path);

@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { createCostFolderPass } from "./cost-folder-watch.ts";
+import { importFocusPath } from "./cost-import.ts";
 
 const HEADER =
   "BilledCost,BillingAccountId,BillingCurrency,BillingPeriodStart,ChargePeriodStart,ProviderName,ServiceName";
@@ -83,6 +84,27 @@ describe("createCostFolderPass", () => {
     writeFileSync(join(dir, "bad.csv"), csv("2"));
     pass();
     expect(seen).toEqual(["refused", "imported"]);
+  });
+
+  test("a pass whose import throws keeps the old fingerprints, so the next pass retries the folder", () => {
+    const failures: unknown[] = [];
+    let calls = 0;
+    const pass = createCostFolderPass({
+      db,
+      dir: () => dir,
+      now: Date.now,
+      onFailure: (e) => failures.push(e),
+      importPath: (d, p, o) => {
+        calls++;
+        if (calls === 1) throw new Error("the folder went away for a moment");
+        return importFocusPath(d, p, o);
+      },
+    });
+    writeFileSync(join(dir, "a.csv"), csv("3"));
+    expect(pass()).toEqual([]);
+    expect(failures).toHaveLength(1);
+    expect(pass().map((f) => f.status)).toEqual(["imported"]);
+    expect(total()).toBe(3);
   });
 
   test("a storage failure is retried on the next pass once storage recovers, with unchanged bytes", () => {

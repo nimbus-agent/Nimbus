@@ -354,6 +354,42 @@ function hasNewFile(db: Database, files: readonly string[], maxBytes: number): b
   });
 }
 
+/**
+ * A replay re-applies every file oldest first, and each replaces the days it covers, so a refused later file
+ * would leave an older file's values over a newer export's. The whole replay is therefore one transaction:
+ * when any file is refused, nothing is applied, every other file says so, and the store keeps its last
+ * consistent state. The refusal stays retryable when any refusal in it was.
+ */
+function replayAllOrNothing(db: Database, run: () => ImportFileReport[]): ImportFileReport[] {
+  let reports: ImportFileReport[] = [];
+  try {
+    db.transaction(() => {
+      reports = run();
+      if (reports.some((r) => r.status === "refused")) throw ROLLBACK;
+    })();
+  } catch (e) {
+    if (e !== ROLLBACK) throw e;
+  }
+  const first = reports.find((r) => r.status === "refused");
+  if (first === undefined) return reports;
+  const retryable = reports.some((r) => r.retryable === true);
+  const error = `not applied: ${first.name} was refused, so this folder's replay was rolled back`;
+  return reports.map((r) =>
+    r.status === "refused" ? r : refused(r.path, error, r.sha256, retryable),
+  );
+}
+
+/** Whether a directory holds a file the ledger has already accepted (one that cannot be hashed is not). */
+function hasAcceptedFile(db: Database, files: readonly string[], maxBytes: number): boolean {
+  return files.some((f) => {
+    try {
+      return isCostImportAccepted(db, importIdOf(hashFileCapped(f, maxBytes)));
+    } catch {
+      return false;
+    }
+  });
+}
+
 /** Every file in order; a dry run inside ONE transaction that is always rolled back. */
 function importFiles(
   db: Database,
@@ -363,6 +399,11 @@ function importFiles(
   at: number,
 ): ImportFileReport[] {
   const run = (): ImportFileReport[] => files.map((f) => importOneFile(db, f, opts, replay, at));
+  // Only a replay that re-applies an ACCEPTED file can overwrite accepted values; a first import stays per file.
+  const maxBytes = opts.maxBytes ?? COST_IMPORT_MAX_BYTES;
+  if (!opts.dryRun && replay && files.length > 1 && hasAcceptedFile(db, files, maxBytes)) {
+    return replayAllOrNothing(db, run);
+  }
   if (!opts.dryRun) return run();
   let reports: ImportFileReport[] = [];
   try {
