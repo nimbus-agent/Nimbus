@@ -11,6 +11,10 @@
 // where the platform has it), checked on that handle to be a regular file of at most 64 KiB, and read through
 // that same handle; after the read the path must still be the same file (same device and inode) and still not
 // a link, so a swap between the checks and the read is refused. The bytes must be valid UTF-8.
+//
+// Stated bound: Node has no directory-handle open (`openat`), so a swap of the folder made AND reversed exactly
+// between the pre-open check and the open cannot be seen from user space. Doing that needs write access to the
+// config directory, which already lets the writer change `nimbus.toml` and the templates themselves.
 import {
   closeSync,
   constants,
