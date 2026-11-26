@@ -67,6 +67,7 @@ type Deploy = {
   finishedAtMs: number | null;
   conclusion: string;
   url: string | null;
+  runId: string | null;
   nearSpike: boolean;
   pr: {
     repo: string | null;
@@ -137,9 +138,10 @@ function renderDeploys(ctx: Context, sink: CostWhySink): void {
   if (ctx.configured && ctx.deploys.length === 0) sink.out("  No deploy in this period.\n");
   if (ctx.deploys.length > 0) sink.out("  Deploys:\n");
   for (const d of ctx.deploys) {
+    const run = d.runId === null ? "" : `  run ${clean(d.runId)}`;
     const near = d.nearSpike ? "  near the spike" : "";
     sink.out(
-      `    ${utcMinute(d.finishedAtMs ?? d.startedAtMs)}  ${clean(d.environment)}  ${clean(d.conclusion)}  ${clean(d.sha).slice(0, 12)}${near}\n`,
+      `    ${utcMinute(d.finishedAtMs ?? d.startedAtMs)}  ${clean(d.environment)}  ${clean(d.conclusion)}  ${clean(d.sha).slice(0, 12)}${run}${near}\n`,
     );
     if (d.pr !== null) sink.out(prLine(d.pr));
   }

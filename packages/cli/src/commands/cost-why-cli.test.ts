@@ -91,6 +91,7 @@ const WHY = {
           finishedAtMs: SPIKE_MS,
           conclusion: "success",
           url: null,
+          runId: "7412",
           nearSpike: true,
           pr: {
             repo: "acme/payments",
@@ -107,6 +108,7 @@ const WHY = {
           finishedAtMs: null,
           conclusion: "failure",
           url: null,
+          runId: null,
           nearSpike: false,
           pr: null,
         },
@@ -183,7 +185,9 @@ describe("runCostWhyWith", () => {
     expect(o).not.toContain("\u001b");
     expect(o).not.toContain("y".repeat(201));
     expect(o).toContain("payment-service");
-    expect(o).toContain("2026-11-25 14:03 UTC  prod  success  4f1c2a9e8b7d  near the spike");
+    expect(o).toContain(
+      "2026-11-25 14:03 UTC  prod  success  4f1c2a9e8b7d  run 7412  near the spike",
+    );
     expect(o).toContain("acme/payments#412 Raise the pool (Dana Diaz)");
     expect(o).toContain("failure  abc");
     expect(o).toContain("... and 1 more deploy");

@@ -30,6 +30,8 @@ export interface CostChangeDeploy {
   readonly finishedAtMs: number | null;
   readonly conclusion: string;
   readonly url: string | null;
+  /** The CI run id: `ci_run_external_id`, else the annotation's `run_id` in the item metadata. */
+  readonly runId: string | null;
   /** On the spike day, the day before or the day after. */
   readonly nearSpike: boolean;
   readonly pr: CostChangePr | null;
@@ -63,6 +65,7 @@ type DeployRow = {
   finished_at_ms: number | null;
   conclusion: string;
   workflow_url: string | null;
+  run_id: string | number | null;
 };
 
 type PrRow = {
@@ -129,7 +132,9 @@ function selectDeploys(db: Database, serviceId: string, fromMs: number, toMs: nu
   return db
     .query(
       `SELECT d.sha AS sha, d.environment AS environment, d.started_at_ms AS started_at_ms,
-              d.finished_at_ms AS finished_at_ms, d.conclusion AS conclusion, d.workflow_url AS workflow_url
+              d.finished_at_ms AS finished_at_ms, d.conclusion AS conclusion, d.workflow_url AS workflow_url,
+              COALESCE(d.ci_run_external_id,
+                CASE WHEN json_valid(i.metadata) THEN json_extract(i.metadata, '$.run_id') END) AS run_id
          FROM deployment_items d
          JOIN item i ON i.id = d.id AND i.type = 'deployment'
         WHERE d.nimbus_service_id = ?
@@ -178,12 +183,15 @@ function contextFor(
     finishedAtMs: r.finished_at_ms,
     conclusion: r.conclusion,
     url: r.workflow_url,
+    runId: r.run_id === null ? null : String(r.run_id),
     nearSpike: near,
     pr: selectPr(db, r.sha, prServices),
   }));
   const entity = findServiceEntity(db, serviceId);
   if (entity === null)
-    gaps.push(`service ${serviceId} has no ownership entry (nimbus owners --refresh derives one for a bound repo root)`);
+    gaps.push(
+      `service ${serviceId} has no ownership entry (nimbus owners --refresh derives one for a bound repo root)`,
+    );
   const owners =
     entity === null
       ? []

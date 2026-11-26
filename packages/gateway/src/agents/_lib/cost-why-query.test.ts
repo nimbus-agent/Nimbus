@@ -81,8 +81,8 @@ function deploy(
     `INSERT INTO deployment_items
        (id, provider, nimbus_service_id, environment, sha, ref, started_at_ms, finished_at_ms,
         conclusion, workflow_url, ci_run_external_id, created_at)
-     VALUES (?, 'github-actions', ?, 'prod', ?, 'refs/heads/main', ?, ?, 'success', ?, NULL, ?)`,
-    [id, serviceId, sha, startedAtMs, finishedAtMs, `https://ci.example/${id}`, FROM],
+     VALUES (?, 'github-actions', ?, 'prod', ?, 'refs/heads/main', ?, ?, 'success', ?, ?, ?)`,
+    [id, serviceId, sha, startedAtMs, finishedAtMs, `https://ci.example/${id}`, `run-${id}`, FROM],
   );
 }
 
@@ -163,6 +163,7 @@ describe("selectCostChangeContext", () => {
       author: "Dana Diaz",
     });
     expect(ctx?.deploys[0]?.url).toBe("https://ci.example/d-near");
+    expect(ctx?.deploys[0]?.runId).toBe("run-d-near");
     // Repo and number fall back to the external id; the author to `metadata.user`.
     expect(ctx?.deploys[2]?.pr).toMatchObject({ repo: "acme/payments", number: 9, author: "sam" });
     expect(ctx?.deploys[1]?.pr).toBeNull();
@@ -208,6 +209,19 @@ describe("selectCostChangeContext", () => {
     expect(ctx?.deploysTruncated).toBe(4);
     // A deploy with no finish time is placed by its start.
     expect(ctx?.deploys[1]?.finishedAtMs).toBeNull();
+  });
+
+  test("an annotated deploy's run id comes from its item metadata", () => {
+    item({ id: "ann-1", type: "deployment", service: "nimbus", meta: { run_id: "7412" } });
+    db.run(
+      `INSERT INTO deployment_items
+         (id, provider, nimbus_service_id, environment, sha, ref, started_at_ms, finished_at_ms,
+          conclusion, workflow_url, ci_run_external_id, created_at)
+       VALUES ('ann-1', 'github-actions', 'payment-service', 'prod', 'sha-a', 'main', ?, ?, 'success', NULL, NULL, ?)`,
+      [SPIKE, SPIKE + HOUR, FROM],
+    );
+    const [ctx] = selectCostChangeContext(db, { ...baseInput, serviceIds: ["payment-service"] });
+    expect(ctx?.deploys[0]?.runId).toBe("7412");
   });
 
   test("no spike day means no deploy is near it", () => {
