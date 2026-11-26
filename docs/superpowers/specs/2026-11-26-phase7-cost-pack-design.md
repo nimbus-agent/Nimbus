@@ -244,3 +244,42 @@ template_file = "cost-templates/s3-weekly.html"   # under <configDir>/, read thr
 
 - Exact aggregation grouping and caps; the Parquet decision; vendor endpoint verification (recorded as
   documentation-verified); channel size caps; the exact placeholder formatting (currency, percent).
+
+## Resolved after the builder check (builder's calls)
+
+1. **What a standing rule binds.** The report definition is EMBEDDED in the workflow, not referenced:
+   `nimbus cost report schedule <name>` generates (or regenerates) a saved workflow from the
+   `[[cost.report]]` entry, copying its scope, period, timezone, the channel's destination and the
+   template TEXT (the file's content, read once) into the canonical `report` step. The workflow content
+   hash therefore covers scope, template and destination together; editing the TOML or the template
+   changes nothing until the owner regenerates, and regenerating changes the hash, so the standing rule
+   stops matching until re-approved. A resume re-renders with current data (the SA4 stated bound
+   "a resume acts on the current matches" applies).
+2. **Signed imports (I59).** A `report` step is refused in a workflow bundle; I59 is unchanged.
+3. **Storage and scale.** Cost lines get a dedicated table `cost_line` (a new migration, V109), not the
+   `item` table and not the FTS index: no embedding, no full-text, indexed by (source, day),
+   (source, provider, sub_account, day). Imported lines are NEVER folded into `__other__`; the grain is
+   the export's own row grouped by (day, sub_account, service, resource_id-or-sku, tags-hash, charge
+   category), so totals reconcile exactly. A new static D24 rule `cost-line-confined` limits write verbs
+   on `cost_line` to its store and DDL.
+4. **Ownership and erasure.** File imports belong to the source id `focus`; connector sources to their
+   service id. `nimbus data delete <source>` and `connector remove` delete that source's lines; `nimbus
+   cost import --remove <importId>` removes one import. Retention: `[finops] retain_days` as today.
+5. **Restatements and currency.** An import REPLACES the lines of the same (source, provider,
+   billing account, billing period) it covers (a FOCUS export is cumulative per billing period); the
+   import reports how many lines it replaced. Amounts are never summed across currencies: every total
+   is per currency, and a report with more than one currency shows one line per currency.
+6. **Overlap with Vantage/OpenCost/Kubecost.** `[cost] authoritative = { aws = "focus" }` (per
+   provider) picks the source used for a provider; default: when raw lines (FOCUS or a direct API) exist
+   for a provider, they win and that provider's Vantage rows are excluded from the views, and the
+   output says so. Kubecost/OpenCost stay as cluster-level detail beside cloud lines and are not added
+   to cloud totals (they re-describe the same machines).
+7. **Provisional days.** A report covers its period as configured (default the previous full
+   Monday–Sunday week) and LABELS provisional days (`{freshness}` and a marker on `{total}`); it never
+   waits and never silently excludes.
+8. **Workflow granularity.** One saved workflow PER CHANNEL of a report (`cost-<report>-<channel>`), so
+   one channel without a rule blocks only itself; there is no partial-delivery state to resume.
+9. **Content in the body.** Rule outputs (product/env/service) are charset-validated (section 3);
+   every other substituted value (service names, tag values in `{breakdown}`) is escaped per channel and
+   capped at 128 characters; the shared door refusals then run on the final text. That is the whole
+   bound, stated in I55's text.
