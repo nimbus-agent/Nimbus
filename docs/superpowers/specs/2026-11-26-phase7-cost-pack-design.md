@@ -174,8 +174,9 @@ template = "Summary of cost of S3 storage for the week starting Monday {week_sta
 [cost.report.channel.email]
 to = ["cfo@example.com"]
 provider = "gmail"                     # gmail | outlook — becomes a DRAFT (owner)
+subject = "Weekly cost: S3 storage, week of {week_start}"   # required for email
 format = "html"
-template_file = "cost-templates/s3-weekly.html"   # under <configDir>/, read through one handle, capped
+template_file = "s3-weekly.html"     # resolved inside <configDir>/cost-templates/ only; no '..', no absolute path, no link; 64 KiB cap
 ```
 
 - Placeholders (closed set): `{report_name}`, `{period_start}`, `{period_end}`, `{week_start}`,
@@ -200,9 +201,7 @@ template_file = "cost-templates/s3-weekly.html"   # under <configDir>/, read thr
 - **I55 extension (text + wiring + test in one commit):** a third allowed value source beside
   `constant` and `query`: `{ report: <step index> }`, the body of a declared `report` step of the same
   workflow, rendered by the gateway from the owner's template and the local index, with no model and
-  no tool output. `accountedStep` and `scopeStep` accept it; the rule's scope names the report step and
-  the template's content hash (a changed template or report definition makes the rule not match until
-  re-approved). The shared door refusals still run on the actual rendered input. Static D44 gains a
+  no tool output. `accountedStep` and `scopeStep` accept it; the template text, scope, subject and destination are embedded in the workflow's canonical `report` step, so the rule's existing `workflowSha256` binding covers them (Resolved 1); the rule's scope holds no template hash. A `{ report }` source is allowed ONLY for the body (and a templated subject) of the four rows; every destination and routing field (channel id, team id, `to`, `cc`, `bcc`, thread) must be a `constant`; the referenced step must be an EARLIER `report` step of the same workflow (Fixes 1). The shared door refusals still run on the actual rendered input. Static D44 gains a
   clause pinning that only `automation/workflow-report-step.ts` produces a `report` value.
 - The owner approves the step once with the existing `nimbus approve add --workflow <name> --step <n>`
   (human answer, CLI only). Without a rule each scheduled post blocks and notifies, as today (SA4).
@@ -283,3 +282,38 @@ template_file = "cost-templates/s3-weekly.html"   # under <configDir>/, read thr
    every other substituted value (service names, tag values in `{breakdown}`) is escaped per channel and
    capped at 128 characters; the shared door refusals then run on the final text. That is the whole
    bound, stated in I55's text.
+
+## Fixes from the Antigravity review (2026-11-26)
+
+1. **Field-level source restriction (binding).** In the I55 extension, a `{ report: <step> }` source is
+   allowed ONLY for the body field of the four rows (`slack_message_post`, `teams_message_post`,
+   `gmail_draft_create`, `outlook_draft_create`) and for the draft subject when the owner's subject
+   contains a placeholder, declared per row in one table (`REPORT_BODY_FIELDS`, next to the write rows).
+   Every destination and routing field (channel id, team id, `to`, `cc`, `bcc`, thread) must be a
+   `constant`. `workflow.save` validation AND `accountedStep` refuse any other placement, and `<step>`
+   must be an EARLIER step of the same workflow whose type is `report`. Pinned by tests on both paths.
+2. **No template hash in the rule scope (binding).** Section 6 corrected: binding is by the rule's
+   existing `workflowSha256` over the embedded report step.
+3. **Template path confinement (binding).** `template_file` is resolved against
+   `<configDir>/cost-templates/` only: absolute paths, `..` segments and any path that is or passes
+   through a link are refused; the resolved real path must lie inside that directory; read through one
+   handle, capped at 64 KiB, UTF-8 only (the runbook-file rule).
+4. **Email subject (binding).** `[cost.report.channel.email]` requires `subject` (Section 5 example).
+   With no placeholder it is a `constant` source on the draft row; with placeholders it is rendered by
+   the report step like the body (same closed set, escaped as plain text) and is a `{ report }` source.
+5. **Re-import contract (binding).** Per (source, provider, billing account, billing period), an import
+   computes the exact set of charge days the file contains and REPLACES every stored line of that tuple
+   on those days (a month-to-date file replaces days 1..N; a daily file replaces its day); other days are
+   kept; no fixed restatement window. A unique key on (source, provider, billing account, charge day,
+   grain hash) makes a repeated identical import a no-op.
+6. **D48 boundary (advisory, taken).** `cost why`'s join reads deployments, pull requests and owners
+   through a pure query module OUTSIDE `finops/`, handed to `finops/` as plain data.
+7. **Currency (advisory, taken).** Every table groups by currency; a multi-currency window shows one
+   subtotal per currency and no grand total.
+8. **Kubecost/OpenCost (advisory, taken).** Excluded from cloud totals by default; `--allocation
+   cluster` shows them as their own view.
+9. **CSV parsing (advisory, taken).** Strips a UTF-8 BOM, accepts CRLF and LF, quoted fields with
+   embedded newlines, no native dependency; tested on all three OSes.
+10. **Step schema (advisory, taken).** `automation/workflow-steps.ts` gains the `report` step type,
+   validated at save and run, with output `{ body, subject? }` reaching later steps only through the
+   declared value source.
