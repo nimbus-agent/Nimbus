@@ -110,8 +110,12 @@ instructions. Codex documents its rules as experimental.
 | `user` (default, the only one) | `~/.codex/config.toml` (a `[mcp_servers.nimbus]` table in a Nimbus block), `~/.codex/rules/nimbus.rules`, and a Nimbus block in `~/.codex/AGENTS.md` |
 
 Project scope is refused: a project `.codex/` applies only after Codex trusts the project, which Nimbus cannot see.
-The MCP table's format was read from a documentation summary and has not yet been checked against a real Codex;
-install and status say so until it has.
+Codex reads `$CODEX_HOME` instead of `~/.codex` when that is set, and so does the kit. The MCP table's format was
+checked against Codex 0.172.0 on 2026-11-26.
+
+Codex checks every `match` example in a rules file when it starts. If a hand edit inside the Nimbus block breaks
+one, Codex 0.172.0 stops with `Error loading rules` and runs nothing. `nimbus agent status` reports the file
+`drifted`, and `nimbus agent install codex` puts it right.
 
 To remove: delete the Nimbus block from `config.toml`, from `AGENTS.md` and from `rules/nimbus.rules`. Delete
 `rules/nimbus.rules` itself only if nothing of yours is left in it.
@@ -185,9 +189,14 @@ example) is `cannot tell`. For a kit whose other parts are installed that is sho
 A row is filled only from a run against the real agent, following the procedure in the repository's
 `docs/agent-kits-verification.md`. Until then it reads *not yet run*.
 
+Both 2026-11-26 runs used the local model `qwen3:14b` through Ollama, and one line was added to the fixed prompt
+naming the action type (`mcp_a6echo.echo`), because the model guessed it otherwise. Through Codex the model never
+produced a valid `propose_action` call in four runs, so the Codex proposal and approval are not yet checked and
+acceptance A6 stays open until a run with a stronger model fills them.
+
 | Kit | Agent version | OS | MCP listed and callable | A proposal reaches the queue | The listed command is blocked | Status detects drift | Date | Run by |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Claude Code | not yet run | | | | | | | |
-| Codex | not yet run | | | | | | | |
+| Claude Code | 2.1.332 | Windows 11 | yes | yes: one proposal labelled `claude-code (--agent)`; approved, and the echo server received the call | yes: the hook blocked `gh pr merge 1` with the Nimbus reason | yes: `drifted`, exit 1; `ok` after reinstall | 2026-11-26 | the owner, with Claude Code |
+| Codex | 0.172.0 | Windows 11 | yes: the server was listed, and its `describe_actions` and `propose_action` calls reached Nimbus | not reached: the model never sent a valid `propose_action` call (see below) | yes: the rule refused `gh pr merge 1` with the Nimbus reason | yes: `drifted`, exit 1; `ok` once the kit's text was back | 2026-11-26 | the owner, with Claude Code |
 | Cursor | not yet run | | | | not applicable (guidance only) | | | |
 | VS Code (Copilot) | not yet run | | | | not applicable (guidance only) | | | |

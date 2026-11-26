@@ -5,8 +5,9 @@
  *  - rules (verbatim): `~/.codex/rules/*.rules`, Starlark
  *    `prefix_rule(pattern=[...], decision="forbidden"|"prompt"|"allow", justification=..., match=[...])`,
  *    the most restrictive match wins, "experimental and may change";
- *  - MCP (from a page SUMMARY, not verbatim): `[mcp_servers.<name>]` with `command` and `args` in
- *    `~/.codex/config.toml`. The kit says so at install and in status until a real run confirms it.
+ *  - MCP (first read from a page summary): `[mcp_servers.<name>]` with `command` and `args` in
+ *    `~/.codex/config.toml` (or `$CODEX_HOME/config.toml`). Confirmed against Codex 0.172.0 on
+ *    Windows on 2026-11-26 (acceptance A6): Codex listed the server and its calls reached Nimbus.
  *
  * User scope only: a project `.codex/` applies only after Codex trusts the project, which Nimbus
  * cannot see, so a project install could silently do nothing.
@@ -32,9 +33,6 @@ import {
 } from "../steer-table.ts";
 
 const KIT = "codex";
-
-export const CODEX_MCP_UNVERIFIED =
-  "MCP entry format not yet verified against a real Codex (read from a documentation summary)";
 
 /** A TOML basic string and a Starlark string literal share JSON's escapes for these values. */
 function quoted(text: string): string {
@@ -199,6 +197,6 @@ export function planCodex(env: KitEnv, scope: KitScope): KitPlan {
     ],
     manual: [],
     enforcement: "rules",
-    notes: [CODEX_MCP_UNVERIFIED],
+    notes: [],
   };
 }

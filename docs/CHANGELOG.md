@@ -18,6 +18,10 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
 
 ## Post-Phase-6 deliveries
 
+- **2026-11-26: Agent kits checked against the real Claude Code and Codex (acceptance A6, partly; CLI text only: no gateway change, migration, invariant, HITL type or IPC method).**
+  What you can do now: the docs site's Agent kits page records two runs on Windows 11 with v11.14.0. Claude Code 2.1.332 passed every check: its proposal reached `nimbus approvals` labelled `claude-code (--agent)` and, once approved, the echo server received it; the hook blocked `gh pr merge 1` with the Nimbus reason; `nimbus agent status` reported an edit as `drifted` and exited 1. Codex 0.172.0 listed and called the Nimbus server and its rule refused `gh pr merge 1` with the Nimbus reason, so `nimbus agent install codex` and `status` no longer say the `[mcp_servers.nimbus]` format is unverified. The Codex section now says that Codex follows `$CODEX_HOME` (as the kit does) and that a broken `match` example in a hand-edited rules file makes Codex 0.172.0 refuse to start (`Error loading rules`) until `nimbus agent install codex` restores it.
+  Stated bounds: both runs used the local model `qwen3:14b` through Ollama with one line added to the fixed prompt naming the action type; through Codex that model never produced a valid `propose_action` call, so the Codex proposal and approval are not checked and A6 and the roadmap row stay open.
+
 - **2026-11-26: Vantage cost sync works without a cost report token (pins `@nimbus-dev/connectors` 0.17.3; no gateway code, migration, invariant, HITL type, egress class or IPC method).**
   What you can do now: with only `vantage.api_token` (and no `vantage.cost_report_token`) the cost sync no longer fails with Vantage's 400 `cost_report_token, filter are missing`; the connector sends the filter `()`, which returned all of one live account's costs (the same rows as its All Resources report). Stated bounds: verified against one live account with a single provider; with a cost report token set, nothing changes.
 
