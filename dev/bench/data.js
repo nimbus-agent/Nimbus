@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795714485561,
+  "lastUpdate": 1795716214883,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "e1d16b119a40364bd436773966672434de283077",
-          "message": "fix(connectors): gcloud spawns authenticate as the configured GCP service-account key (#1553)\n\n## Summary\n\nThe gcloud CLI does not read `GOOGLE_APPLICATION_CREDENTIALS` for its\nown authentication — that\nvariable is Application Default Credentials, read only by Google's\nclient **libraries**. gcloud's\nown override is `CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE`\n(https://docs.cloud.google.com/sdk/docs/authenticate). Every `gcloud`\nspawn in this repo set only\n`GOOGLE_APPLICATION_CREDENTIALS`, so `gcp.credentials_json_path` was\n**required and inert**: the\n`gcp`/`bigquery`/`cloud_logging`/`vertex_ai` syncs and their four\nlazy-mesh MCP servers ran as\nwhatever account `gcloud auth login` had last activated — or failed when\nthere was none — while a\nuser who configured a service account believed they ran as it.\n\nBoth variables are now set together, from one place:\n`connectors/_lib/gcp-auth.ts`'s\n`gcloudKeyFileEnv(credPath)` returns both\n`GOOGLE_APPLICATION_CREDENTIALS` (still needed for any\nclient library a spawned connector loads) and\n`CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE` (the one\ngcloud itself reads), so a future spawn site cannot set one and forget\nthe other.\n\n**Eight sites changed**, all switched to `gcloudKeyFileEnv()`:\n- `connectors/_lib/gcloud-runner.ts` — the shared gcloud CLI runner\n- `connectors/gcp-sync.ts`\n- `connectors/bigquery-sync.ts`\n- `connectors/lazy-mesh/phase3-cloud.ts` — the four lazy-mesh MCP spawn\nsites\n(`phase3AddGcpMcp`, `phase3AddBigqueryMcp`, `phase3AddCloudLoggingMcp`,\n`phase3AddVertexAiMcp`)\n\nPlus comment-only corrections in `cloud-logging-sync.ts` and\n`vertex-ai-sync.ts` (both already\ndelegate to the shared runner; only their comments referenced the old\nsingle-variable behaviour).\n\n## Behaviour change (not breaking)\n\nWith a service-account key configured, syncs and MCP servers now run\n**as that service account**.\nOne that lacks a permission the personal `gcloud auth login` session had\nwill now show it — but\nnot loudly: `runGcloudCommand` discards stderr, and `gcp-sync.ts` turns\nthe failure into a\n`logger.warn({serviceId}, \"gcp sync: projects describe failed\")`,\nreturning a successful, empty\n`SyncResult`. So the visible symptom is a green connector with a\nsilently empty GCP index, not an\nerror — the identity was silently wrong before, and now the sync is\nsilently empty instead. Nothing\nan existing, correctly-scoped setup needs to change, so this carries no\n`!` / `BREAKING CHANGE:`\nmarker.\n\n## `nimbus-mcp-servers` needs no change\n\nThat package's gcloud spawns merge `process.env` into the child's\nenvironment, so they inherit\nwhatever the gateway sets in `phase3-cloud.ts` — no pin bump needed\nthere. That package isn't\ninstalled in this worktree, so nothing here pins that behaviour: a\nfuture `nimbus-mcp-servers`\nrelease that scoped its child env instead of inheriting `process.env`\nwould silently re-open the\nMCP leg of this same bug.\n\n## Pre-existing sandbox bound (not introduced here)\n\nAll four GCP MCP manifests already declare `filesystem: { read: [],\nwrite: [] }`, so under an\nenforcing sandbox the confined MCP server cannot read a key file at all\nregardless of which env\nvar names it. The four in-process syncs\n(`gcp`/`bigquery`/`cloud_logging`/`vertex_ai`) get the\nfull benefit of this fix; the MCP leg only does where the sandbox is\ndegraded or absent. This\npredates this branch and is unrelated to the env-var fix itself.\n\n## Local gate note\n\n`bun run preflight:fast` passes clean (33/33 gates). `bun run test:ci`\nfails the same **2 of\n23936** tests on this branch **and on unmodified `main`**, when the\nWindows sandbox helper\n(`nimbus-sandbox-helper.exe`) is built locally:\n`packages/gateway/src/platform/sandbox/win32.test.ts` —\n`createWin32SandboxRunner > reports\nitself as not fully active when the default helper path has nothing at\nit` and `> explains the\ndegradation instead of returning null`. 23846 pass. The failures are\norder-dependent in the\nsingle-process whole-repo `bun test` run — two other files\n(`test/integration/platform/sandbox/exec-sandbox.test.ts`,\n`test/e2e/exec-e2e.test.ts`) set\n`NIMBUS_SANDBOX_HELPER_PATH` at module load time, and `win32.test.ts`'s\nown\n`beforeEach`/`afterEach` isolation against that doesn't fully hold\nacross the full 1593-file run;\nthe file passes cleanly in isolation (10/10). This predates this branch\nand is unrelated to this\ndiff — confirmed by running the identical full suite against a clean\n`main` checkout with the\nsame locally-built helper, which reproduces the same two failures. Not\nclaiming the full\n`preflight` was green; it fails only on this pre-existing,\nenvironment-specific gap.\n\nAlso included: a one-line, type-only fix to `test/helpers/mock-spawn.ts`\n(`Stub.argvMatch` widened\nto accept `| undefined`), required because this branch's own\n`bigquery-sync.test.ts` change newly\nimports that helper from a file `tsc --noEmit` already checks, exposing\na latent\n`exactOptionalPropertyTypes` violation that had no prior import path\ninto the checked set.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* GCP, BigQuery, Cloud Logging, and Vertex AI integrations now\nconsistently use configured service-account credentials for both client\nlibraries and `gcloud` commands.\n* Insufficient service-account permissions now produce a warning and an\notherwise successful empty sync; the connector remains operational,\nthough the GCP index may appear empty.\n\n* **Documentation**\n* Updated authentication guidance to describe service-account key usage\nand credential handling across supported GCP integrations.\n\n* **Tests**\n* Added coverage for credential propagation across GCP-backed connectors\nand command execution.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-20T09:02:57Z",
-          "tree_id": "f97994a8c17eb29c2844a7f683e426af7c5dbdee",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/e1d16b119a40364bd436773966672434de283077"
-        },
-        "date": 1789895683269,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 321.76568470000313,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 328.0389577999969,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 216.82608130000116,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "309f5fe3e657151e92948eb74020e9cfed64efbe",
+          "message": "chore: release main (#2175)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>11.16.0</summary>\n\n##\n[11.16.0](https://github.com/nimbus-agent/Nimbus/compare/v11.15.0...v11.16.0)\n(2026-11-26)\n\n\n### Features\n\n* cost lines from FOCUS exports, allocation rules and cost views (Phase\n7, slice 1)\n([#2168](https://github.com/nimbus-agent/Nimbus/issues/2168))\n([bcfeb8a](https://github.com/nimbus-agent/Nimbus/commit/bcfeb8a0c870c7b8135137a7df9cab69302e17ff))\n* nimbus cost why joins a cost change to its deploys, pull requests and\nowners (Phase 7, slice 2)\n([#2177](https://github.com/nimbus-agent/Nimbus/issues/2177))\n([b248cca](https://github.com/nimbus-agent/Nimbus/commit/b248ccad047f5e7b39e8688eb8800e386c8d28fe))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-26T19:55:49+02:00",
+          "tree_id": "f1cdfa0c29c544cbd72fef31c8309f53f945ef3a",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/309f5fe3e657151e92948eb74020e9cfed64efbe"
+        },
+        "date": 1795716210703,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 183.19122739999912,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 182.39110270000145,
             "unit": "ms"
           }
         ]
