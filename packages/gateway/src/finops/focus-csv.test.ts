@@ -214,3 +214,58 @@ describe("parseFocusCsv", () => {
     expect(r.lines[0]).toMatchObject({ billingPeriod: "2026-10", chargeDay: "2026-10-31" });
   });
 });
+
+describe("parseFocusCsv: adversarial input stays linear (S8786)", () => {
+  const billed = (amount: string): number | string => {
+    const r = parseFocusCsv([HEADER, row({ ...BASE, BilledCost: amount })].join("\n"), {
+      importId: "i",
+    });
+    return r.lines[0]?.billedCost ?? (r.skipped[0]?.reason ?? "").slice(0, 30);
+  };
+  const provider = (name: string): string | undefined =>
+    parseFocusCsv([HEADER, row({ ...BASE, ProviderName: name })].join("\n"), { importId: "i" })
+      .lines[0]?.provider;
+
+  test("the amount grammar is unchanged", () => {
+    for (const [text, want] of [
+      ["1", 1],
+      ["1.", 1],
+      ["1.5", 1.5],
+      [".5", 0.5],
+      ["-2", -2],
+      ["+2.5E-2", 0.025],
+      ["3e2", 300],
+      [" 4 ", 4],
+    ] as const) {
+      expect(billed(text)).toBe(want);
+    }
+    for (const bad of ["", ".", "1.2.3", "e3", "1e", "--1", "1x", "0x10", "Infinity"]) {
+      expect(String(billed(bad))).toStartWith("BilledCost is not a number");
+    }
+  });
+
+  test("100 000 digits followed by a non-digit (the backtracking shape) is refused quickly", () => {
+    const started = performance.now();
+    expect(String(billed(`${"1".repeat(100_000)}x`))).toStartWith("BilledCost is not a number");
+    expect(String(billed(`${"1".repeat(50_000)}.${"1".repeat(50_000)}x`))).toStartWith(
+      "BilledCost is not a number",
+    );
+    expect(performance.now() - started).toBeLessThan(2000);
+  });
+
+  test("the provider slug collapses and trims separators exactly as before", () => {
+    expect(provider("Oracle Cloud")).toBe("oracle-cloud");
+    expect(provider("  --Oracle__Cloud!!  ")).toBe("oracle-cloud");
+    expect(provider("a.b/c")).toBe("a-b-c");
+    expect(provider("!!!")).toBeUndefined();
+    expect(provider(`x${"y".repeat(100)}`)).toBe(`x${"y".repeat(63)}`);
+  });
+
+  test("100 000 separator characters around a name slug quickly", () => {
+    const started = performance.now();
+    const pad = "!".repeat(100_000);
+    expect(provider(`${pad}acme${pad}`)).toBe("acme");
+    expect(provider(`${pad}a`)).toBe("a");
+    expect(performance.now() - started).toBeLessThan(2000);
+  });
+});

@@ -133,8 +133,9 @@ const PROVIDER_ALIASES: Readonly<Record<string, FocusProvider>> = {
 function providerSlug(name: string): string {
   return name
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
+    .split(/[^a-z0-9]+/)
+    .filter((part) => part !== "")
+    .join("-")
     .slice(0, 64);
 }
 
@@ -170,7 +171,7 @@ function parseInstant(text: string): number | null {
 
 function parseAmount(text: string): number | null {
   const t = text.trim();
-  if (t === "" || !/^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(t)) return null;
+  if (t === "" || !/^[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?$/.test(t)) return null;
   const n = Number(t);
   return Number.isFinite(n) ? n : null;
 }

@@ -129,7 +129,8 @@ function readPlainSection(s: EffectiveSection & { header: string }, draft: Draft
   else if (s.header === "cost.focus" && !s.isArray) {
     draft.focusDir = readFocusTable(parseSection(s, "[cost.focus]"));
   } else {
-    throw new CostConfigError(`unknown section ${s.isArray ? `[[${s.header}]]` : `[${s.header}]`}`);
+    const shown = s.isArray ? `[[${s.header}]]` : `[${s.header}]`;
+    throw new CostConfigError(`unknown section ${shown}`);
   }
 }
 

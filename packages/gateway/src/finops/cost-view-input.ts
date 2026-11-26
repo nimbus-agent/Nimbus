@@ -9,7 +9,7 @@
 import type { Database } from "bun:sqlite";
 
 import { adaptCostAllocationItems, VANTAGE_SOURCE } from "./cost-allocation-adapter.ts";
-import type { CostLine } from "./cost-line.ts";
+import { type CostLine, compareCodeUnits } from "./cost-line.ts";
 import { readCostLineCurrencies, readCostLineFreshness, readCostLines } from "./cost-line-store.ts";
 import type { CostRule } from "./cost-rules.ts";
 import type { CostViewInput, CostViewResult, CostWindow } from "./cost-views.ts";
@@ -40,7 +40,7 @@ function chooseSources(
 ): { keep: ((source: string) => boolean) | null; excluded: Excluded[] } {
   if (chosen !== undefined) {
     const excluded = [...sources]
-      .sort()
+      .sort(compareCodeUnits)
       .filter((s) => s !== chosen)
       .map((source) => ({
         source,
@@ -97,7 +97,7 @@ export function gatherCostViewInput(
     nowMs,
     empty: lastDays.length === 0,
     lastDays,
-    knownCurrencies: [...currencies].sort(),
+    knownCurrencies: [...currencies].sort(compareCodeUnits),
     excludedSources: excluded,
     notes,
     configError: cfg.error,

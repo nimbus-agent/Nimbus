@@ -58,9 +58,20 @@ export function tagOf(tags: Readonly<Record<string, string>>, key: string): stri
   return typeof v === "string" ? v : undefined;
 }
 
+/**
+ * Order two strings by UTF-16 code unit — the order a bare `.sort()` gives, written out so it is explicit.
+ * Never `localeCompare`: the tag order feeds the grain hash and canonical storage, so it must be identical
+ * on every machine and locale.
+ */
+export function compareCodeUnits(a: string, b: string): number {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
 export function sortedTags(tags: Readonly<Record<string, string>>): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const k of Object.keys(tags).sort()) {
+  for (const k of Object.keys(tags).sort(compareCodeUnits)) {
     const v = tagOf(tags, k);
     if (v !== undefined) setTag(out, k, v);
   }

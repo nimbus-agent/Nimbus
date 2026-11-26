@@ -111,7 +111,7 @@ const money = (n: number): string => n.toFixed(2);
 
 export function csvCell(value: string): string {
   const v = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
-  return /[",\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+  return /[",\n\r]/.test(v) ? `"${v.replaceAll('"', '""')}"` : v;
 }
 
 function pct(part: number, total: number): string {
@@ -131,9 +131,8 @@ function renderBlockText(r: ViewResult, currency: string, b: Block, sink: CostVi
       sink.out(`  ${clean(row.key).padEnd(32)} ${money(subtotal(row.key)).padStart(14)}\n`);
     }
     const second = row.secondary === null ? "-" : clean(row.secondary);
-    sink.out(
-      `    ${`${second}  ${clean(row.part)} (${clean(row.provider)})`.padEnd(46)} ${money(row.amount).padStart(14)}\n`,
-    );
+    const label = `${second}  ${clean(row.part)} (${clean(row.provider)})`;
+    sink.out(`    ${label.padEnd(46)} ${money(row.amount).padStart(14)}\n`);
   }
   if (r.view === "internal" && b.outside !== 0) {
     sink.out(`  ${"other envs (not internal)".padEnd(32)} ${money(b.outside).padStart(14)}\n`);
@@ -232,9 +231,8 @@ function renderCluster(
     `Cluster allocation (Kubecost/OpenCost, not part of cloud totals), ${r.range.fromDay} to ${r.range.toDay}\n`,
   );
   for (const x of r.rows) {
-    sink.out(
-      `  ${`${clean(x.service)} ${clean(x.dimension)} ${clean(x.name)}`.padEnd(46)} ${money(x.amount).padStart(14)} ${clean(x.currency)}\n`,
-    );
+    const label = `${clean(x.service)} ${clean(x.dimension)} ${clean(x.name)}`;
+    sink.out(`  ${label.padEnd(46)} ${money(x.amount).padStart(14)} ${clean(x.currency)}\n`);
   }
   return 0;
 }

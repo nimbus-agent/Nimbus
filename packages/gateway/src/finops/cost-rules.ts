@@ -60,14 +60,18 @@ export function isSafeSetValue(v: string): boolean {
   return COST_SET_VALUE_RE.test(v) && !v.includes("..") && !v.startsWith("/") && !v.startsWith("@");
 }
 
+/** One glob character as regex source: `*` any run, `?` any one character, anything else literal. */
+function globCharSource(c: string): string {
+  if (c === "*") return ".*";
+  if (c === "?") return ".";
+  return c.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+}
+
 const globCache = new Map<string, RegExp>();
 export function globMatches(glob: string, value: string): boolean {
   let re = globCache.get(glob);
   if (re === undefined) {
-    const body = glob
-      .split("")
-      .map((c) => (c === "*" ? ".*" : c === "?" ? "." : c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
-      .join("");
+    const body = glob.split("").map(globCharSource).join("");
     re = new RegExp(`^${body}$`, "is");
     if (globCache.size > 1000) globCache.clear();
     globCache.set(glob, re);

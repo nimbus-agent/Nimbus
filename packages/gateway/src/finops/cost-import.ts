@@ -18,7 +18,7 @@ import { createHash } from "node:crypto";
 import { closeSync, fstatSync, lstatSync, openSync, readdirSync, readSync } from "node:fs";
 import { basename, isAbsolute, join } from "node:path";
 
-import type { CostLine } from "./cost-line.ts";
+import { type CostLine, compareCodeUnits } from "./cost-line.ts";
 import {
   type CostImportRecord,
   deleteCostImport,
@@ -253,7 +253,9 @@ function ledgerRow(
   sha256: string,
   at: number,
 ): CostImportRecord {
-  const providers = [...new Set(parsed.lines.map((l) => l.provider))].sort().join(",");
+  const providers = [...new Set(parsed.lines.map((l) => l.provider))]
+    .sort(compareCodeUnits)
+    .join(",");
   return {
     importId,
     source: FOCUS_SOURCE,
