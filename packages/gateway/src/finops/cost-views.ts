@@ -138,7 +138,7 @@ const newAcc = (): Acc => ({
 });
 
 /** Each source's newest day and, when it falls in the provisional days, where they start. */
-export function costFreshness(input: CostViewInput): CostFreshness[] {
+export function costFreshness(input: Pick<CostViewInput, "lastDays" | "nowMs">): CostFreshness[] {
   const provisionalFrom = dayText(
     dayMs(dayText(input.nowMs)) - (COST_PROVISIONAL_DAYS - 1) * DAY_MS,
   );
