@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795716214883,
+  "lastUpdate": 1795724437889,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "33edfed3897a5856ef85f73aab820aff65e10029",
-          "message": "chore: release main (#1556)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.28.0</summary>\n\n##\n[7.28.0](https://github.com/nimbus-agent/Nimbus/compare/v7.27.1...v7.28.0)\n(2026-09-20)\n\n\n### Features\n\n* **connectors:** nimbus connector detect — reuse existing gh, aws and\nkubectl logins\n([#1554](https://github.com/nimbus-agent/Nimbus/issues/1554))\n([44a57ad](https://github.com/nimbus-agent/Nimbus/commit/44a57ad2ebc442bcaee6c5cd69736a136de14d4f))\n\n\n### Bug Fixes\n\n* **connectors:** gcloud spawns authenticate as the configured GCP\nservice-account key\n([#1553](https://github.com/nimbus-agent/Nimbus/issues/1553))\n([e1d16b1](https://github.com/nimbus-agent/Nimbus/commit/e1d16b119a40364bd436773966672434de283077))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-09-20T09:44:46Z",
-          "tree_id": "5d3b97f9b725b05b8d5e18f301ed74a043e0abc1",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/33edfed3897a5856ef85f73aab820aff65e10029"
-        },
-        "date": 1789898334939,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 329.0338960499994,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 328.8724181999984,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 182.39110270000145,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6a977c0e97dd94cff6652fb8d45972bc5ab35363",
+          "message": "feat(connectors): bitbucket_pr_comment_create write row and connectors 0.18.0 (#2179)\n\n## Summary\n\nBumps `@nimbus-dev/connectors` to **0.18.0** and adds the gateway write\nrow for its new tool, `bitbucket_pr_comment_create`\n(nimbus-agent/nimbus-mcp-servers#106, released in #107).\n\n**This unblocks every branch.** Since 0.18.0 was published,\n`audit:connector-version-skew` fails on `main` (\"pinned at 0.17.3 but\n0.18.0 is published\"). A pin bump alone would not pass, because\n`manifest.sync.test.ts` needs the new tool's row. This PR carries both.\n\n**The row** (owner rulings: wave 2, offered to the model behind a typed\npreview, irreversible):\n- It lives in a new sibling module,\n`connector-writes/bitbucket-comment-rows.ts`, because `vcs-ci.ts` is\nlocked at its `audit:file-size` baseline.\n- **Before-state:** the prompt shows the pull request's title, state and\nbranches, read with `bitbucket_pr_get` (the merge row's reader). It\nnever shows the description. This matches `gitlab_mr_note_create` and\n`github_issue_comment_create`.\n- **Remote-content scan:** the comment body is scanned as forge\nMarkdown, as the GitHub and GitLab comment bodies are.\n- **Null optionals:** a `null` `path` or `line` is refused before the\nprompt (`NULL_REFUSED_OPTIONAL_KEYS`).\n- **Bounds:**\n- Bitbucket has no `BroadcastService` rule, so mentions are not scanned.\nThat bound is stated in the test and the docs.\n- A `line` without a `path` is refused by the connector only after\napproval, and nothing is sent.\n- **Executor:** it is added to the HITL frozen set in\n`engine/executor.ts`.\n- **Reversibility:** irreversible, with a reason.\n\n**Moved, unchanged:** the null-optional refusal block, out of\n`model-write-refusals.ts` into `null-optional-refusals.ts`\n(re-exported), so the locked file stays under its baseline. The baseline\nwas updated where files shrank.\n\n**Counts:** 127 write rows (`rows.test.ts`, `CLAUDE.md`/`GEMINI.md`,\n`docs/SECURITY-INVARIANTS.md`). Tests that pinned \"no offerable\nBitbucket row\" (`c0-reclassify`, `d1-door`, the model-write-source door\nlist, the remote-content fixtures, the agent-door offerable count) were\nupdated for the one new row. One assertion was tightened in the same\nchange: `connector-rpc-model-writes.test.ts` now checks that the\napproved set holds the comment and not the merge.\n\n**Generated files:** regenerated against the real 0.18.0 package.\n`manifest.generated.ts` and `bundled-connector-registry.ts` are\nunchanged from the row commit.\n\n## Related Issue\n\nPhase 9.7 connector follow-ups, \"Code review and issue writes\"\n(Bitbucket PR comment).\n\n## Type of Change\n\n- [x] New feature\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors (`bun run\npreflight:fast` PASSED)\n- [x] `bun run lint` passes\n- [x] All existing tests pass. The connectors, security-invariants,\nengine, ipc and share suites give 17253 pass, 5 fail. The 5 (the I15\nuser-MCP write-grant test and 4 in `mesh-user-mcp-write-grant.test.ts`)\nfail identically on unmodified `main` in a worktree under `.claude/`,\nwhose path segment the marker-folder rule refuses.\n- [x] New behaviour is covered by tests\n(`bitbucket-comment-rows.test.ts`: golden lines, drift keys against the\ninstalled schema, offer, before-reader, reversibility, refusals)\n- [x] No `any` types introduced\n- [x] No credentials, tokens, or secret values appear\n- [x] Platform-specific code is behind `PlatformServices` (n/a)\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable (the row adds a HITL type, and nothing is removed)\n- [x] Does not touch `docs/README.md`\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-26T20:12:22Z",
+          "tree_id": "8799fdacd9a82ea8ec8202737425945f409bdfae",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/6a977c0e97dd94cff6652fb8d45972bc5ab35363"
+        },
+        "date": 1795724433080,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 204.79708375000226,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 201.77428914999692,
             "unit": "ms"
           }
         ]
