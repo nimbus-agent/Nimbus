@@ -171,18 +171,38 @@ describe("readCostTemplateFile: a swap between the checks and the read is refuse
     });
   });
 
-  /** lstat answers truly for the folder and file checks, then `after` for the check after the read. */
+  /**
+   * lstat answers truly until the file has been OPENED (every check before the read is done by then), then
+   * `after` for the check after the read. Keyed on the open, not on a call count: other code in the process
+   * (realpath, other test files) may call lstat too.
+   */
   function afterRead(after: (real: Stats) => Stats): { mockRestore(): void } {
-    const real = fs.lstatSync;
-    let calls = 0;
-    return spyOn(fs, "lstatSync").mockImplementation(((p: string) => {
-      calls += 1;
-      const st = real(p);
-      return calls <= 2 ? st : after(st);
+    const realLstat = fs.lstatSync;
+    const realOpen = fs.openSync;
+    let opened = false;
+    const openSpy = spyOn(fs, "openSync").mockImplementation(((
+      ...args: Parameters<typeof fs.openSync>
+    ) => {
+      opened = true;
+      return realOpen(...args);
+    }) as typeof fs.openSync);
+    const lstatSpy = spyOn(fs, "lstatSync").mockImplementation(((p: string) => {
+      const st = realLstat(p);
+      return opened ? after(st) : st;
     }) as typeof fs.lstatSync);
+    return {
+      mockRestore: () => {
+        lstatSpy.mockRestore();
+        openSpy.mockRestore();
+      },
+    };
   }
   const variant = (st: Stats, over: Partial<Stats>): Stats =>
     Object.assign(Object.create(Object.getPrototypeOf(st) as object) as Stats, st, over);
+  /**
+   * A value certainly different from `n`: a Windows file id is above 2^53, where `n + 1` can round back to `n`.
+   */
+  const otherThan = (n: number): number => (n === 0 ? 1 : 0);
   const CHANGED = "the template file weekly.md changed while it was read";
 
   test("the file was removed, became a link, or is another file after the read", () => {
@@ -197,11 +217,11 @@ describe("readCostTemplateFile: a swap between the checks and the read is refuse
       () => expect(reason("weekly.md")).toBe(CHANGED),
     );
     withSpy(
-      afterRead((st) => variant(st, { ino: st.ino + 1 })),
+      afterRead((st) => variant(st, { ino: otherThan(st.ino) })),
       () => expect(reason("weekly.md")).toBe(CHANGED),
     );
     withSpy(
-      afterRead((st) => variant(st, { dev: st.dev + 1 })),
+      afterRead((st) => variant(st, { dev: otherThan(st.dev) })),
       () => expect(reason("weekly.md")).toBe(CHANGED),
     );
     // Unchanged: the same reader with a truthful lstat reads the file.
