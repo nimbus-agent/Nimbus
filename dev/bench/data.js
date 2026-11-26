@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795650658479,
+  "lastUpdate": 1795653542553,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "4a91ede4c06f43968192d9074a800f3066e481ef",
-          "message": "chore: release main (#1543)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.26.0</summary>\n\n##\n[7.26.0](https://github.com/nimbus-agent/Nimbus/compare/v7.25.0...v7.26.0)\n(2026-09-18)\n\n\n### Features\n\n* **fleet:** subject enumeration — sweep a corpus instead of naming one\nsubject ([#1541](https://github.com/nimbus-agent/Nimbus/issues/1541))\n([c1bab10](https://github.com/nimbus-agent/Nimbus/commit/c1bab1081af5eb45d13eb0f21a6ee6d441745cc9))\n\n\n### Bug Fixes\n\n* **connectors:** let Jira, Confluence, GitLab, dbt and the Teams bot\nreach their configured host from the sandbox\n([#1536](https://github.com/nimbus-agent/Nimbus/issues/1536))\n([d4465f9](https://github.com/nimbus-agent/Nimbus/commit/d4465f9c3c784532a056cfef0bc63433d2936af2))\n* **connectors:** make connector auth refuse vault-key services with the\nexact vault set commands\n([#1537](https://github.com/nimbus-agent/Nimbus/issues/1537))\n([02011df](https://github.com/nimbus-agent/Nimbus/commit/02011dfa35ceaee8231863de7d43ffb405beb0ef))\n* **embedding:** cancel timed-out query embedding work, not just abandon\nit ([#1542](https://github.com/nimbus-agent/Nimbus/issues/1542))\n([35b0aa8](https://github.com/nimbus-agent/Nimbus/commit/35b0aa86cf38bdb5fdf74dc3b506f4a8b7f8cf52))\n* **embedding:** report the backfill pass from the hybrid and openai\nruntimes ([#1538](https://github.com/nimbus-agent/Nimbus/issues/1538))\n([5d31dab](https://github.com/nimbus-agent/Nimbus/commit/5d31dabfbfda1cd7e0f576c98ca36a4e032d78bc))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-09-18T13:54:50+03:00",
-          "tree_id": "eba3b3341c2367a7de603449e810d6893da7bed8",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/4a91ede4c06f43968192d9074a800f3066e481ef"
-        },
-        "date": 1789729717292,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 337.05271419999883,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 333.41755519999714,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 186.2027612500013,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ddc8e334c0d13628bee8b837979ff12b8cf83fcc",
+          "message": "refactor(gateway): clear the S3776 findings in the IPC handlers (#2163)\n\nClears the 7 open typescript:S3776 findings in packages/gateway/src/ipc,\nsplitting by phase so each gate stays one ordered list at its call site.\nNo behaviour change.\n\n- capture-rpc `buildActDeps` (24): `execute` is numbered phases (route,\ndoor runtime, credential, user-MCP facts, support tools, veto channel,\nexecutor, outcome); the veto channel and `buildAgentWriteExecutor` stay\ninline (static D49(e)).\n- agent-writes-user-mcp enable (24), agent-writes `statusOfService`\n(19), model-writes enable (19): phase helpers; model-writes shrank below\nthe size cap (iac/k8s grants moved to `model-writes-grants.ts`).\n- inline-handlers `dispatchAgentInvoke` (16) and `rpcIndexSearchRanked`\n(20): moved to `agent-invoke-params.ts` and `index-search-ranked.ts`\n(baseline 697 -> 512).\n- platform-rpcs `tryDispatchConnectorRpc` (16): optional deps and the\nOAuth/user-MCP selections extracted; the humanOnly wrap stays inline.\n\nPins changed (same order, same checks, new step names): i42 act-wiring\npin (step `userMcpCallFor` precedes the executor build; facts read in\nthat step; routing key now in `capture-act-steps.ts`) and i28 routing\npin (reads rpc + steps, payload `route.toolId`). doc-refs lines updated\nin SECURITY-INVARIANTS.md.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Sonnet 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-26T00:30:57Z",
+          "tree_id": "3ac719c05bb4bcee820fba338dae6427cbaadf90",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/ddc8e334c0d13628bee8b837979ff12b8cf83fcc"
+        },
+        "date": 1795653537687,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 182.37853204999973,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 183.11595839999936,
             "unit": "ms"
           }
         ]
