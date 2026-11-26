@@ -17,6 +17,7 @@ import {
   rulesInForce,
 } from "../finops/cost-why.ts";
 import type { ServiceConfig } from "../metrics/dora-config.ts";
+import { codeUnitCompare } from "../util/code-unit-compare.ts";
 import {
   type CostViewsRpcCtx,
   CostViewsRpcError,
@@ -79,7 +80,7 @@ function earliestSpike(why: CostWhy): string | null {
   const days = Object.values(why.byCurrency)
     .map((c) => c.spikeDay)
     .filter((d): d is string => d !== null)
-    .sort();
+    .sort(codeUnitCompare);
   return days[0] ?? null;
 }
 

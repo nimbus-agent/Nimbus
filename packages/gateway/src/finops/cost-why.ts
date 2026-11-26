@@ -5,6 +5,8 @@
 // Confined by static rule D48 (no network, no connector, no model). Pure: lines and rules in, a comparison out.
 // It never sees a deploy, a pull request or an owner: the IPC layer joins those (`agents/_lib/cost-why-query.ts`)
 // to the `services` this returns. Amounts are NEVER summed across currencies.
+
+import { codeUnitCompare } from "../util/code-unit-compare.ts";
 import { DAY_MS } from "./cost-item-contract.ts";
 import type { CostLine } from "./cost-line.ts";
 import { allocate, type CostAllocation, type CostRule } from "./cost-rules.ts";
@@ -113,7 +115,10 @@ export function resolveCostTarget(
   if (services.has(name)) return { kind: "service", name };
   return {
     kind: "unknown",
-    known: { products: [...products].sort(), services: [...services].sort() },
+    known: {
+      products: [...products].sort(codeUnitCompare),
+      services: [...services].sort(codeUnitCompare),
+    },
   };
 }
 
@@ -183,7 +188,7 @@ function accumulate(input: CompareCostInput): {
 function spikeDayOf(acc: CurrencyAcc, previous: CostWindow): string | null {
   const mean = acc.previous / daysIn(previous);
   let best: { day: string; over: number } | null = null;
-  for (const day of [...acc.daily.keys()].sort()) {
+  for (const day of [...acc.daily.keys()].sort(codeUnitCompare)) {
     const over = (acc.daily.get(day) ?? 0) - mean;
     if (over > 0 && (best === null || over > best.over)) best = { day, over };
   }
@@ -211,7 +216,7 @@ function orderServices(
   services: ReadonlySet<string>,
   accs: ReadonlyMap<string, CurrencyAcc>,
 ): string[] {
-  const risersByCurrency = [...accs.keys()].sort().map((c) => {
+  const risersByCurrency = [...accs.keys()].sort(codeUnitCompare).map((c) => {
     const net = new Map<string, number>();
     for (const m of (accs.get(c) as CurrencyAcc).movers.values()) {
       if (m.service !== null)
@@ -230,7 +235,7 @@ function orderServices(
       if (s !== undefined && !out.includes(s)) out.push(s);
     }
   }
-  return [...out, ...[...services].filter((s) => !out.includes(s)).sort()];
+  return [...out, ...[...services].filter((s) => !out.includes(s)).sort(codeUnitCompare)];
 }
 
 /** Step 5: per currency, the days with any line and the unassigned cost, in each period (all lines, any target). */
@@ -250,12 +255,12 @@ function coverageOf(input: CompareCostInput): Pick<CostWhy, "coverage" | "unassi
     else u.previous += l.billedCost;
   }
   const coverage: CostWhy["coverage"] = {};
-  for (const c of [...days.keys()].sort()) {
+  for (const c of [...days.keys()].sort(codeUnitCompare)) {
     const d = days.get(c) as { current: Set<string>; previous: Set<string> };
     coverage[c] = { current: d.current.size, previous: d.previous.size, days: daysIn(input.range) };
   }
   const sortedUnassigned: CostWhy["unassigned"] = {};
-  for (const c of Object.keys(unassigned).sort())
+  for (const c of Object.keys(unassigned).sort(codeUnitCompare))
     sortedUnassigned[c] = unassigned[c] as { current: number; previous: number };
   return { coverage, unassigned: sortedUnassigned };
 }
@@ -268,7 +273,7 @@ function provisionalFromOf(range: CostWindow, nowMs: number): string | null {
 export function compareCost(input: CompareCostInput): CostWhy {
   const { accs, services } = accumulate(input);
   const byCurrency: Record<string, CostWhyCurrency> = {};
-  for (const c of [...accs.keys()].sort()) {
+  for (const c of [...accs.keys()].sort(codeUnitCompare)) {
     const acc = accs.get(c) as CurrencyAcc;
     const change = acc.current - acc.previous;
     const { movers, truncated } = rankMovers(acc);

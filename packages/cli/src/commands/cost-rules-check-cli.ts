@@ -56,7 +56,7 @@ const money = (n: number): string => n.toFixed(2);
 const plural = (n: number, word: string): string => `${String(n)} ${word}${n === 1 ? "" : "s"}`;
 const amounts = (m: Amounts): string =>
   Object.keys(m)
-    .sort()
+    .sort((a, b) => a.localeCompare(b))
     .map((c) => `${clean(c)} ${money(m[c] ?? 0)}`)
     .join(", ");
 

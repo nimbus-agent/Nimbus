@@ -5,6 +5,8 @@
 //
 // Confined by static rule D48 (no network, no connector, no model). Pure. Amounts are per currency, never summed
 // across currencies.
+
+import { codeUnitCompare } from "../util/code-unit-compare.ts";
 import type { CostLine } from "./cost-line.ts";
 import { allocate, type CostAllocation } from "./cost-rules.ts";
 import type { CostViewInput, CostWindow } from "./cost-views.ts";
@@ -51,7 +53,7 @@ const addAmount = (m: Record<string, number>, currency: string, amount: number):
 };
 
 function groupOf(groups: Map<string, GroupAcc>, l: CostLine, reason: string): GroupAcc {
-  const tagKeys = Object.keys(l.tags).sort();
+  const tagKeys = Object.keys(l.tags).sort(codeUnitCompare);
   const key = JSON.stringify([l.provider, l.serviceName, l.subAccountId, tagKeys, reason]);
   const g = groups.get(key) ?? {
     provider: l.provider,
@@ -121,7 +123,7 @@ export function checkCostRules(input: CostViewInput): CostRulesCheck {
   }
   const { ruleAccs, totals, groups } = acc;
   const byCurrency: CostRulesCheck["byCurrency"] = {};
-  for (const c of [...totals.keys()].sort()) {
+  for (const c of [...totals.keys()].sort(codeUnitCompare)) {
     const t = totals.get(c) as Totals;
     byCurrency[c] = { ...t, unassignedPct: t.total === 0 ? null : (t.unassigned / t.total) * 100 };
   }
