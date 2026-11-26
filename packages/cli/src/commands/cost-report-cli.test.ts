@@ -410,3 +410,26 @@ describe("runCostReportWith: --channel honours the documented exit codes", () =>
     expect(refused.s.out).toBe("");
   });
 });
+
+describe("runCostReportWith: --csv honours the channel results", () => {
+  test("a channel error or door refusal exits 1 after the rows are printed; a clean report exits 0", async () => {
+    const csv = {
+      mode: "render" as const,
+      name: "checkout-weekly",
+      channel: null,
+      format: "csv" as const,
+    };
+    for (const bad of [
+      { body: null, error: "unknown placeholder {x}" },
+      { doorRefusal: "the body notifies a whole channel" },
+    ]) {
+      const s = sink();
+      expect(
+        await runCostReportWith(fake({ ...RENDER, channels: [channel(bad)] }), csv, s.sink),
+      ).toBe(1);
+      expect(s.s.out).toStartWith("currency,part,provider,env,amount\n");
+    }
+    const ok = sink();
+    expect(await runCostReportWith(fake(RENDER), csv, ok.sink)).toBe(0);
+  });
+});

@@ -231,3 +231,70 @@ describe("readCostTemplateFile: a swap between the checks and the read is refuse
     );
   });
 });
+
+// The folder itself is re-checked by identity (device + inode, not a link) just before the open and after the
+// read, so a swap of `cost-templates` for a link or another folder between the first check and the read is
+// refused. As above, a swap cannot be timed on a real disk, so lstat is driven per path.
+describe("readCostTemplateFile: the cost-templates folder is pinned through the read", () => {
+  const errno = (code: string): NodeJS.ErrnoException => {
+    const e = new Error(code) as NodeJS.ErrnoException;
+    e.code = code;
+    return e;
+  };
+  const variant = (st: Stats, over: Partial<Stats>): Stats =>
+    Object.assign(Object.create(Object.getPrototypeOf(st) as object) as Stats, st, over);
+  const otherThan = (n: number): number => (n === 0 ? 1 : 0);
+  beforeEach(() => {
+    writeFileSync(join(templates, "weekly.md"), "Checkout: {total}");
+  });
+
+  /** The folder's lstat answers truly the first time, then `later` on every later call. */
+  function folderLater(later: (real: Stats) => Stats): { mockRestore(): void } {
+    const real = fs.lstatSync;
+    let seen = 0;
+    return spyOn(fs, "lstatSync").mockImplementation(((p: string) => {
+      const st = real(p);
+      if (p !== templates) return st;
+      seen += 1;
+      return seen === 1 ? st : later(st);
+    }) as typeof fs.lstatSync);
+  }
+  const FOLDER_CHANGED = "the cost-templates folder changed while the template was read";
+
+  test("a folder that became a link, or another folder, after the first check is refused", () => {
+    for (const later of [
+      (st: Stats) => variant(st, { isSymbolicLink: () => true }),
+      (st: Stats) => variant(st, { ino: otherThan(st.ino) }),
+      (st: Stats) => variant(st, { dev: otherThan(st.dev) }),
+      () => {
+        throw errno("ENOENT");
+      },
+    ]) {
+      const spy = folderLater(later);
+      try {
+        expect(reason("weekly.md")).toBe(FOLDER_CHANGED);
+      } finally {
+        spy.mockRestore();
+      }
+    }
+  });
+
+  test("an ordinary filesystem error is a refusal of this file, not an internal error", () => {
+    const rp = spyOn(fs, "realpathSync").mockImplementation((() => {
+      throw errno("EIO");
+    }) as unknown as typeof fs.realpathSync);
+    try {
+      expect(reason("weekly.md")).toBe("could not read the template file weekly.md: EIO");
+    } finally {
+      rp.mockRestore();
+    }
+    const rd = spyOn(fs, "readSync").mockImplementation((() => {
+      throw errno("EIO");
+    }) as unknown as typeof fs.readSync);
+    try {
+      expect(reason("weekly.md")).toBe("could not read the template file weekly.md: EIO");
+    } finally {
+      rd.mockRestore();
+    }
+  });
+});

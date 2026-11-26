@@ -246,9 +246,10 @@ function renderCsv(r: RenderResult, sink: CostWhySink): number {
       sink.out(`${cells.join(",")},${money(b.amount)}\n`);
     }
   }
-  return r.model.empty || r.model.configError !== null ? 1 : 0;
+  return exitOfJson(r);
 }
 
+/** 1 for no data, a refused config, or any channel that did not render cleanly; else 0. */
 function exitOfJson(r: RenderResult): number {
   if (r.model.empty || r.model.configError !== null) return 1;
   return r.channels.every((c) => c.error === null && c.doorRefusal === null) ? 0 : 1;

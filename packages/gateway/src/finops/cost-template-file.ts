@@ -1,10 +1,12 @@
 // Phase 7 (the Cost Pack, slice 3): a cost report's `template_file`, read ONLY from
 // `<configDir>/cost-templates/` (spec, Fixes 3).
 //
-// Confined by static rule D48 (no network, no connector, no model).
+// Static rule D48 keeps this module free of network, connector and model imports; the confinement below is
+// this module's own contract, pinned by its tests.
 //
 // The checks, in order: the name is a plain file name (no path, no `..`, not hidden); the folder and the file
-// are not links (`lstat`); the file's REAL path lies inside the folder's real path (never a string compare of a
+// are not links (`lstat`), and the folder's identity (device + inode) is pinned and re-checked just before the
+// open and after the read, so a swap of the folder for a link or another folder in between is refused; the file's REAL path lies inside the folder's real path (never a string compare of a
 // real path with the joined path: macOS `/var` is `/private/var`); the file is opened once (with `O_NOFOLLOW`
 // where the platform has it), checked on that handle to be a regular file of at most 64 KiB, and read through
 // that same handle; after the read the path must still be the same file (same device and inode) and still not
@@ -44,11 +46,27 @@ function lstatOrNull(path: string): Stats | null {
 }
 
 /** Step 1: the folder exists, is a real folder and is not a link. */
-function checkFolder(dir: string): void {
+function checkFolder(dir: string): Stats {
   const st = lstatOrNull(dir);
-  if (st === null) refuse(`no ${COST_TEMPLATE_DIR} folder in the config directory`);
-  if (st?.isSymbolicLink() === true) refuse(`the ${COST_TEMPLATE_DIR} folder is a link`);
-  if (st?.isDirectory() !== true) refuse(`${COST_TEMPLATE_DIR} is not a folder`);
+  if (st === null) return refuse(`no ${COST_TEMPLATE_DIR} folder in the config directory`);
+  if (st.isSymbolicLink()) refuse(`the ${COST_TEMPLATE_DIR} folder is a link`);
+  if (!st.isDirectory()) refuse(`${COST_TEMPLATE_DIR} is not a folder`);
+  return st;
+}
+
+/** The folder is still the one first checked: same device and inode, still not a link. */
+function checkFolderSame(dir: string, first: Stats): void {
+  const now = lstatOrNull(dir);
+  if (now === null || now.isSymbolicLink() || now.dev !== first.dev || now.ino !== first.ino) {
+    refuse(`the ${COST_TEMPLATE_DIR} folder changed while the template was read`);
+  }
+}
+
+/** An ordinary filesystem failure, reported as a refusal of this file (never an internal error). */
+function fsFailure(e: unknown, file: string): never {
+  if (e instanceof CostTemplateFileError) throw e;
+  const code = (e as NodeJS.ErrnoException).code ?? String(e);
+  return refuse(`could not read the template file ${file}: ${code}`);
 }
 
 /** Step 2: the file exists, is not a link, is a regular file and resolves inside the folder. */
@@ -57,7 +75,13 @@ function checkFile(dir: string, path: string, file: string, platform: NodeJS.Pla
   if (st === null) return refuse(`no template file ${file} in ${COST_TEMPLATE_DIR}/`);
   if (st.isSymbolicLink()) refuse(`the template file ${file} is a link`);
   if (!st.isFile()) refuse(`the template file ${file} is not a regular file`);
-  if (!isSameOrInside(platform, realpathSync(path), realpathSync(dir))) {
+  let inside: boolean;
+  try {
+    inside = isSameOrInside(platform, realpathSync(path), realpathSync(dir));
+  } catch (e) {
+    return fsFailure(e, file);
+  }
+  if (!inside) {
     refuse(`the template file ${file} resolves outside ${COST_TEMPLATE_DIR}/`);
   }
   return st;
@@ -87,7 +111,12 @@ function readThroughHandle(path: string, file: string): { bytes: Buffer; st: Sta
     const bytes = Buffer.alloc(st.size);
     let off = 0;
     while (off < st.size) {
-      const n = readSync(fd, bytes, off, st.size - off, off);
+      let n: number;
+      try {
+        n = readSync(fd, bytes, off, st.size - off, off);
+      } catch (e) {
+        return fsFailure(e, file);
+      }
       if (n === 0) break;
       off += n;
     }
@@ -120,11 +149,13 @@ export function readCostTemplateFile(
     refuse(`template_file ${JSON.stringify(file.slice(0, 64))} is not a plain file name`);
   }
   const dir = join(configDir, COST_TEMPLATE_DIR);
-  checkFolder(dir);
+  const folder = checkFolder(dir);
   const path = join(dir, file);
   checkFile(dir, path, file, platform);
+  checkFolderSame(dir, folder);
   const { bytes, st } = readThroughHandle(path, file);
   checkUnchanged(path, file, st);
+  checkFolderSame(dir, folder);
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch {
