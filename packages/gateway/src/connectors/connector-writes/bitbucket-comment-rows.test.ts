@@ -1,6 +1,6 @@
 // The Bitbucket pull request comment row (`@nimbus-dev/connectors` PR 106): its typed preview, its
 // drift keys against the installed connector's schema, its offer (Wave 2, like the GitHub and
-// GitLab comments), its reversibility and its door refusals.
+// GitLab comments), its before-state reader, its reversibility and its door refusals.
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -10,11 +10,15 @@ import { serviceOf } from "../../engine/service-of.ts";
 import type { ChatopsPolicy } from "../../policy/types.ts";
 import { mcpClientToolKey } from "../lazy-mesh/tool-map.ts";
 import { installedConnectorsPackageRoot } from "../testing/connector-write-registrations.ts";
+import { beforeReaderProblems } from "./before-reader.ts";
+import { selectBitbucketPrIdentity } from "./bitbucket-comment-rows.ts";
 import { CONNECTOR_WRITE_ROWS } from "./index.ts";
 import { isModelOfferableRow, MODEL_NEVER_OFFERED_TOOL_IDS } from "./model-offerable.ts";
 import {
   messagingDestinationRefusal,
   modelWriteRefusal,
+  nullOptionalFieldRefusal,
+  nullRefusedOptionalKeys,
   REMOTE_CONTENT_REFUSAL,
   remoteContentScannedKeys,
   scannedTextKeys,
@@ -154,5 +158,58 @@ describe("bitbucket_pr_comment_create: door refusals (mirroring the GitHub and G
   test("not scanned for broadcast mentions or quick actions (stated bound)", () => {
     expect(scannedTextKeys(ID)).toEqual([]);
     expect(onBothDoors({ ...CLEAN, body: "@all /merge" })).toBeUndefined();
+  });
+
+  test("a null path or line is refused before the prompt, naming the key, not shown as unset", () => {
+    expect(nullRefusedOptionalKeys(ID)).toEqual(["path", "line"]);
+    for (const key of ["path", "line"]) {
+      expect(onBothDoors({ ...CLEAN, [key]: null }), key).toBe(nullOptionalFieldRefusal(key));
+      expect(onBothDoors({ ...CLEAN, [key]: undefined }), key).toBeUndefined();
+    }
+    // The body is required, so a null body stays the remote-content refusal, not this one.
+    expect(onBothDoors({ ...CLEAN, body: null })).toBe(REMOTE_CONTENT_REFUSAL);
+  });
+});
+
+describe("bitbucket_pr_comment_create: the before-state reader (like the GitLab MR comment)", () => {
+  const PR = {
+    title: "Add cache",
+    state: "OPEN",
+    source: { branch: { name: "feat/cache" }, commit: { hash: "abc123" } },
+    destination: { branch: { name: "main" } },
+    description: "DESCRIPTION-MUST-NOT-SHOW",
+  };
+  const mcp = (data: unknown) => ({ content: [{ type: "text", text: JSON.stringify(data) }] });
+
+  test("reads bitbucket_pr_get with exactly the repository and the id (the merge row's reader)", () => {
+    const r = rowOf();
+    expect(beforeReaderProblems(r)).toEqual([]);
+    expect(r.before?.tool).toBe("bitbucket_pr_get");
+    expect(r.before?.args).toBe(
+      CONNECTOR_WRITE_ROWS.find((x) => x.toolId === "bitbucket_pr_merge")?.before?.args,
+    );
+    expect(r.before?.args({ ...CLEAN, path: "a.ts", line: 3 })).toEqual({
+      repoFull: "ws/app",
+      pullRequestId: 9,
+    });
+    expect(r.before?.args({ repoFull: "ws/app", pullRequestId: 0, body: "x" })).toBeUndefined();
+    expect(r.before?.select).toBe(selectBitbucketPrIdentity);
+  });
+
+  test("shows the title, the state and the branches, never the description", () => {
+    const fields = selectBitbucketPrIdentity(mcp(PR));
+    expect(fields).toEqual([
+      { label: "Title", value: "Add cache" },
+      { label: "State", value: "OPEN" },
+      { label: "Branches", value: "feat/cache -> main" },
+    ]);
+    expect(JSON.stringify(fields)).not.toContain("DESCRIPTION-MUST-NOT-SHOW");
+  });
+
+  test("absent optional fields are omitted; a reply without a title throws (unavailable)", () => {
+    expect(selectBitbucketPrIdentity(mcp({ title: "t", source: PR.source }))).toEqual([
+      { label: "Title", value: "t" },
+    ]);
+    expect(() => selectBitbucketPrIdentity(mcp({ state: "OPEN" }))).toThrow();
   });
 });

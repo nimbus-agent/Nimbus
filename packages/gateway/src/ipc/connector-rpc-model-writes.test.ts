@@ -236,8 +236,7 @@ describe("connector.writesDisable and writesStatus", () => {
       maxWave: 2,
     });
     expect(s.services.find((x) => x.service === "kubernetes")?.enabled).toBe(false);
-    // Since D1 argocd's two wave-4 writes have a reader and a confirm text: offerable, but a
-    // service that is not enabled has nothing approved, so both await approval.
+    // Since D1 argocd's two wave-4 writes are offerable, but not enabled: both await approval.
     expect(s.services.find((x) => x.service === "argocd")).toMatchObject({
       enabled: false,
       writes: 2,
@@ -674,9 +673,8 @@ describe("re-consent on the real B1 and B2 rows (V84; B1 and B2 Task 5)", () => 
     expect((await doorTools()).filter((n) => n.startsWith("obsidian__"))).toEqual([
       "obsidian__obsidian_append_to_daily_note",
     ]);
-    // Review finding 7: the accessor the Obsidian spawn reads is now true...
+    // Review finding 7: the Obsidian spawn's accessor is now true; a declined re-enable keeps it, a disable clears it.
     expect(isObsidianWriteGrantApproved(db)).toBe(true);
-    // ...and a declined re-enable cannot turn it off by accident, while a disable does.
     await refusal(
       call("connector.writesEnable", { service: "obsidian", wave: 2 }, { exec: executor(false) }),
     );
@@ -930,7 +928,9 @@ describe("D1: the Wave 4 writes are new to an earlier opt-in until it is re-run 
       state: "not_offerable",
     });
     expect(bb.find((w) => w.toolId === "bitbucket_pr_comment_create")?.offerable).toBe(true);
-    expect(getModelWriteEnablement(db, "bitbucket")?.approvedToolIds.size).toBe(1);
+    const approved = getModelWriteEnablement(db, "bitbucket")?.approvedToolIds;
+    expect(approved?.has("bitbucket_pr_comment_create")).toBe(true);
+    expect(approved?.has("bitbucket_pr_merge")).toBe(false);
   });
 
   test("status counts: Jenkins at wave 3 has 0 offerable and 2 awaiting; at wave 4, approved, 2 offerable", async () => {
