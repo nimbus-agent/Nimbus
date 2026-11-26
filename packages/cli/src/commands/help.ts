@@ -127,6 +127,8 @@ PRIVACY & AUDIT
                               Orphaned or idle resources among the FinOps vendor's recommendations (read-only)
   nimbus cost import <file|dir> [--provider aws|azure|gcp] [--dry-run] [--json]
                               Import FOCUS CSV cost exports (AWS, Azure, Google Cloud) into the local index
+  nimbus cost products|internal [--period <N>d|week|month] [--json|--csv]
+                              Cost per product, or CI and dev/test cost, from your [[cost.rule]] rules
   nimbus data export|import|delete   Encrypted bundle export/import; per-service deletion
   nimbus vault set|get|delete|list   Secrets (OS keyring only — never config, never logs)
   nimbus telemetry show | disable

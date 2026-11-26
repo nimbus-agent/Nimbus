@@ -253,3 +253,12 @@ export function deleteCostImport(db: Database, importId: string): number {
 export function pruneCostLinesBefore(db: Database, cutoffDay: string): number {
   return dbRun(db, "DELETE FROM cost_line WHERE charge_day < ?", [cutoffDay]).changes;
 }
+
+/** Every currency the stored lines use (a zero-cost window is shown in these). */
+export function readCostLineCurrencies(db: Database): string[] {
+  return (
+    db.query("SELECT DISTINCT currency FROM cost_line ORDER BY currency").all() as {
+      currency: string;
+    }[]
+  ).map((r) => r.currency);
+}

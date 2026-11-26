@@ -8,10 +8,17 @@ import {
 } from "../finops/cost-anomaly-query.ts";
 import type { ImportReport } from "../finops/cost-import.ts";
 import { isCostServiceId } from "../finops/cost-item-contract.ts";
+import type { CostViewResult } from "../finops/cost-views.ts";
 import { isWasteKind, WASTE_KINDS } from "../finops/cost-waste.ts";
 import { type CostWasteResult, queryCostWaste } from "../finops/cost-waste-query.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 import { CostImportRpcError, handleCostImport, handleCostImportRemove } from "./cost-import-rpc.ts";
+import {
+  type ClusterViewResult,
+  CostViewsRpcError,
+  handleCostInternal,
+  handleCostProducts,
+} from "./cost-views-rpc.ts";
 import type { ClientKind } from "./server/client-kind.ts";
 
 export class CostRpcError extends Error {
@@ -44,7 +51,9 @@ function viaImport<T>(
     try {
       return fn(params, ctx);
     } catch (e) {
-      if (e instanceof CostImportRpcError) throw new CostRpcError(e.rpcCode, e.message);
+      if (e instanceof CostImportRpcError || e instanceof CostViewsRpcError) {
+        throw new CostRpcError(e.rpcCode, e.message);
+      }
       throw e;
     }
   };
@@ -148,11 +157,18 @@ export async function dispatchCostRpc(
 ): Promise<RpcMissOrHit> {
   return dispatchByMethod<
     CostRpcCtx,
-    CostAnomalyResult | CostWasteResult | ImportReport | { importId: string; removed: number }
+    | CostAnomalyResult
+    | CostWasteResult
+    | ImportReport
+    | { importId: string; removed: number }
+    | CostViewResult
+    | ClusterViewResult
   >(method, params, ctx, {
     "cost.anomalies": handleAnomalies,
     "cost.waste": handleWaste,
     "cost.import": viaImport(handleCostImport),
     "cost.importRemove": viaImport(handleCostImportRemove),
+    "cost.products": viaImport(handleCostProducts),
+    "cost.internal": viaImport(handleCostInternal),
   });
 }

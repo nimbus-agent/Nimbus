@@ -1314,6 +1314,28 @@ nimbus cost import --remove focus:0123456789abcdef
 
 **Exit codes.** 0 when every file imported (or would, with `--dry-run`); 1 when any file was refused or the call failed. The IPC methods are `cost.import` and `cost.importRemove`; both serve only a connection that declared the `cli` kind, refuse on the demo gateway, are LAN-forbidden (the whole `cost` namespace) and are not on the desktop allowlist.
 
+### `nimbus cost products` and `nimbus cost internal`
+
+Cost per product (with its parts: the service and provider, and the env), and the internal cost (CI and the dev and test environments), computed from the local cost lines (`nimbus cost import`), the indexed Vantage rows for a provider with no raw lines, and your `[[cost.rule]]` allocation rules. Local index only: **no network call, no model, no egress row**.
+
+```bash
+nimbus cost products
+nimbus cost products --period month --csv > november.csv
+nimbus cost internal --period week
+nimbus cost products --allocation cluster
+```
+
+| Flag | Description |
+|---|---|
+| `--period <N>d\|week\|month` | `<N>d` is the last N days including today (1 to 400; default `30d`), `week` is this Monday to today, `month` is the first of the month to today (UTC days). |
+| `--allocation cluster` | (`products` only) Kubecost and OpenCost allocations, as their own view: they re-describe the cluster machines a cloud bill already holds, so they are never added to cloud totals. |
+| `--json` | Print the view object (`window`, `byCurrency`, `freshness`, `empty`, `excludedSources`, `notes`, `configError`). |
+| `--csv` | One row per currency and group. Header `currency,product,env,service,provider,amount,unassigned_reason` (`internal`: `currency,env,product,service,provider,amount,unassigned_reason`); unassigned rows have an empty product (or env) and the reason. A text cell that starts with `=`, `+`, `-`, `@`, a tab or a carriage return is prefixed with `'`, so a spreadsheet never runs it as a formula. |
+
+**Allocation.** Each line goes to the first `[[cost.rule]]` whose every given match key matches (see the `[cost]` keys under Configuration). A line no rule matches, a rule that sets no product (or, for `internal`, no env), and a rule whose substituted value is not a safe name (letters, digits and `. _ : / @ + -`, 1 to 64 characters, no `..`, not starting with `/` or `@`) land in **unassigned**, with the reason and the amount per reason. Rules are applied when you read, so editing one re-applies it to the past at once. `internal` shows only lines whose env is in `[cost] internal_envs` (default `ci, dev, test, staging`); lines of other envs are one "other envs" line.
+
+**Currencies, freshness and sources.** Amounts are grouped by currency and never added across currencies: two currencies give two totals and no grand total. Each source shows its newest day, and the last three days of a source are marked provisional. When raw lines exist for a provider, its Vantage rows are excluded and the output says so; `[cost] authoritative = { aws = "vantage" }` picks the source per provider instead. On a day where Vantage rows come from two report configurations (an older `group_by`), only the newest synced one is used and a note counts those days. **"No cost data imported"** (exit 1) means nothing is stored at all; a period with no lines prints `0.00` in each currency seen before (exit 0). A refused `[cost]` config allocates nothing and exits 1, naming the error. The IPC methods are `cost.products` and `cost.internal`; they serve only a connection that declared the `cli` or `ui` kind, are LAN-forbidden (the whole `cost` namespace) and are not on the desktop allowlist yet.
+
 ### `nimbus briefing`
 
 Your morning briefing, built from the local index. It makes **no provider call** and **uses no model**: the text is rendered deterministically, and nothing leaves the machine except a local notification.
@@ -3442,6 +3464,10 @@ Limits for the FinOps cost data the Vantage, OpenCost and Kubecost syncs index (
 | `[finops] anomaly_min_amount` | `10` | 0 to 1000000000 (a plain decimal): ... and only when it also exceeds the baseline by this much, in the series' currency |
 | `[finops] notify` | `false` | `true` shows ONE local OS notice when `nimbus cost anomalies` would list a new anomaly (counts and the service id only: `2 unusual cost jumps on vantage`; never a series name or an amount). Checked every 15 minutes, never on a demo gateway, a bad value falls back to `false` |
 | `[finops] notify_min_interval_minutes` | `360` | 5 to 1440: at most one such notice in this many minutes; an anomaly held back by the limit is announced after it. The memory of what was announced is in the gateway process, so a restart can announce a still-open anomaly once more |
+| `[cost] internal_envs` | `["ci", "dev", "test", "staging"]` | The envs `nimbus cost internal` shows (1 to 32 names). |
+| `[cost] authoritative` | `{}` | Per provider, the source the cost views use, for example `{ aws = "vantage" }`; without it, raw lines win over Vantage rows for a provider. |
+| `[cost.focus] dir` | unset | An absolute path. A minute after boot and then once a day the gateway imports its new or changed `*.csv` FOCUS exports (never on a demo gateway; a link is not followed). |
+| `[[cost.rule]]` | none | Ordered allocation rules, first match wins: `match = { … }` with any of `source`, `provider`, `sub_account` (id or name), `service`, `region`, `resource` (id or name), `repo`, `workflow` (globs with `*` and `?`, case-insensitive) and `tag = { key = "glob" }`; `set = { product, env, service }`, each a literal or a literal with one placeholder `{tag.<key>}`, `{repo}` or `{sub_account}`. Each key on one line. As for every array block, the highest layer with rules supplies all of them, so a role pack's rules apply until you write your own. An unknown key or placeholder refuses the whole cost config (the views say so) rather than dropping a rule. |
 
 The data comes from `vantage.api_token` (set with `nimbus vault set vantage.api_token`; every 6 hours the sync reads 45 days on the first run, then from three days before the last success). `vantage.group_by` is a comma-separated grouping (default `provider,service,account_id`); a `tag:<key>` entry (for example `provider,service,tag:team`) makes each tag value its own series, with cost that lacks the tag as `__untagged__` (verified against one live account's reply). Name the tag keys here: a saved report's own tag groupings are read as a single `tag` value. `vantage.cost_report_token` is optional: without it the connector (0.17.3 and later) asks for all costs with the filter `()`. `nimbus connector auth vantage` prints the keys.
 

@@ -4,6 +4,7 @@ import { stripControlChars } from "../lib/strip-control-chars.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 import { parseCostImportArgs, runCostImportWith } from "./cost-import-cli.ts";
+import { parseCostViewsArgs, runCostViewsWith } from "./cost-views-cli.ts";
 import { parseCostWasteArgs, runCostWasteWith } from "./cost-waste.ts";
 
 /**
@@ -27,7 +28,9 @@ export const COST_USAGE =
   "Usage: nimbus cost anomalies [--service <id>] [--days <1-30>] [--json]\n" +
   "       nimbus cost waste [--service <id>] [--kind <unattached|idle|orphaned_snapshot|empty_environment>] [--json]\n" +
   "       nimbus cost import <file|dir> [--provider aws|azure|gcp] [--dry-run] [--json]\n" +
-  "       nimbus cost import --remove <importId> [--json]";
+  "       nimbus cost import --remove <importId> [--json]\n" +
+  "       nimbus cost products [--period <N>d|week|month] [--allocation cluster] [--json|--csv]\n" +
+  "       nimbus cost internal [--period <N>d|week|month] [--json|--csv]";
 
 export interface CostAnomaliesArgs {
   readonly json: boolean;
@@ -230,6 +233,10 @@ export function costRunner(
   if (args[0] === "anomalies") {
     const a = parseCostAnomaliesArgs(args.slice(1));
     return a === undefined ? undefined : (c) => runCostAnomaliesWith(c, a, sink);
+  }
+  if (args[0] === "products" || args[0] === "internal") {
+    const v = parseCostViewsArgs(args[0], args.slice(1));
+    return v === undefined ? undefined : (c) => runCostViewsWith(c, v, sink);
   }
   if (args[0] === "import") {
     const i = parseCostImportArgs(args.slice(1));
