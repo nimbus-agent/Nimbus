@@ -1,5 +1,5 @@
-// Phase 7 (the Cost Pack): the ONLY module with a write verb on `cost_line` (schema V109, static D24 rule
-// `cost-line-confined`). Callers: the FOCUS import (`finops/cost-import.ts`), the owner erasures
+// Phase 7 (the Cost Pack): the ONLY module with a write verb on `cost_line` and its import ledger
+// `cost_import` (schema V109, static D24 rule `cost-line-confined`). Callers: the FOCUS import (`finops/cost-import.ts`), the owner erasures
 // (`LocalIndex.removeConnectorIndexData`, `runDataDelete`) and the FinOps retention tick.
 //
 // Confined by static rule D48 (no network, no connector, no model).
@@ -12,6 +12,7 @@ import {
   type CostLine,
   type CostLineKey,
   costLineGrainHash,
+  setTag,
   sortedTags,
 } from "./cost-line.ts";
 
@@ -61,7 +62,7 @@ function parseTags(text: string): Record<string, string> {
     if (v === null || typeof v !== "object" || Array.isArray(v)) return {};
     const out: Record<string, string> = {};
     for (const [k, val] of Object.entries(v)) {
-      if (typeof val === "string") out[k] = val;
+      if (typeof val === "string") setTag(out, k, val);
     }
     return out;
   } catch {
@@ -102,10 +103,34 @@ function rowToLine(r: Row): CostLine {
   };
 }
 
-/** The stored value of a line, without the import that produced it (an identical re-import is unchanged). */
+/**
+ * The stored value of a line in an explicit field order, without the import that produced it (an identical
+ * re-import is unchanged however the line object was built).
+ */
 function storedValue(l: CostLine): string {
-  const { importId: _importId, ...rest } = l;
-  return JSON.stringify({ ...rest, tags: sortedTags(l.tags) });
+  return JSON.stringify([
+    l.source,
+    l.provider,
+    l.billingAccountId,
+    l.billingPeriod,
+    l.chargeDay,
+    l.subAccountId,
+    l.subAccountName,
+    l.serviceName,
+    l.serviceCategory,
+    l.regionId,
+    l.resourceId,
+    l.resourceName,
+    l.skuId,
+    l.chargeCategory,
+    l.billedCost,
+    l.effectiveCost,
+    l.currency,
+    Object.entries(sortedTags(l.tags)),
+    l.repo,
+    l.workflow,
+    l.model,
+  ]);
 }
 
 function checkLine(key: CostLineKey, days: ReadonlySet<string>, l: CostLine): void {
@@ -239,17 +264,50 @@ export function readCostLineFreshness(db: Database): { source: string; lastDay: 
     .all() as { source: string; lastDay: string }[];
 }
 
-/** An owner erasure of one source (`connector remove`, `nimbus data delete`). */
+/** An owner erasure of one source (`connector remove`, `nimbus data delete`): its lines and its ledger rows. */
 export function deleteCostLinesBySource(db: Database, source: string): number {
-  return dbRun(db, "DELETE FROM cost_line WHERE source = ?", [source]).changes;
+  return db.transaction((): number => {
+    dbRun(db, "DELETE FROM cost_import WHERE source = ?", [source]);
+    return dbRun(db, "DELETE FROM cost_line WHERE source = ?", [source]).changes;
+  })();
 }
 
-/** `nimbus cost import --remove <importId>`. */
+/** `nimbus cost import --remove <importId>`: its lines and its ledger row, so it can be imported again. */
 export function deleteCostImport(db: Database, importId: string): number {
-  return dbRun(db, "DELETE FROM cost_line WHERE import_id = ?", [importId]).changes;
+  return db.transaction((): number => {
+    dbRun(db, "DELETE FROM cost_import WHERE import_id = ?", [importId]);
+    return dbRun(db, "DELETE FROM cost_line WHERE import_id = ?", [importId]).changes;
+  })();
 }
 
-/** Retention: delete lines whose charge day is before `cutoffDay` (`YYYY-MM-DD`). */
+export interface CostImportRecord {
+  readonly importId: string;
+  readonly source: string;
+  /** The providers of the accepted lines, sorted and comma-joined (empty when the file had none). */
+  readonly provider: string;
+  readonly fileSha256: string;
+  readonly importedAtMs: number;
+}
+
+/** Whether the import ledger holds this import id (an accepted import, not removed since). */
+export function isCostImportAccepted(db: Database, importId: string): boolean {
+  return db.query("SELECT 1 FROM cost_import WHERE import_id = ?").get(importId) !== null;
+}
+
+/** Record an accepted import; call it in the import's own transaction. A replay refreshes `imported_at`. */
+export function recordCostImport(db: Database, r: CostImportRecord): void {
+  dbRun(
+    db,
+    `INSERT INTO cost_import (import_id, source, provider, file_sha256, imported_at) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT (import_id) DO UPDATE SET imported_at = excluded.imported_at`,
+    [r.importId, r.source, r.provider, r.fileSha256, r.importedAtMs],
+  );
+}
+
+/**
+ * Retention: delete lines whose charge day is before `cutoffDay` (`YYYY-MM-DD`). The import ledger is KEPT: a
+ * pruned export stays accepted, so replaying it later is still a no-op.
+ */
 export function pruneCostLinesBefore(db: Database, cutoffDay: string): number {
   return dbRun(db, "DELETE FROM cost_line WHERE charge_day < ?", [cutoffDay]).changes;
 }

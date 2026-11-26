@@ -1449,7 +1449,7 @@ Why the shape: there is NO foreign key to `item` (an upstream deletion must not 
 
 ## V109 — cost lines (Phase 7, the Cost Pack, 2026-11-26)
 
-Authoritative source: `packages/gateway/src/index/cost-line-v109-sql.ts`. One normalised, FOCUS-shaped DAILY cost line per (source, provider, billing account, charge day, grain); `grain_hash` is SHA-256 of the canonical JSON of (sub-account, service, region, resource-or-sku, charge category, sorted tags, repo, workflow, model). Written only by `finops/cost-line-store.ts` (static D24 rule `cost-line-confined`): `nimbus cost import` replaces, per (source, provider, billing account, billing period), every stored line on exactly the charge days the file contains, so an identical re-import is a no-op; deleted by `connector remove` and `nimbus data delete` (by source), `nimbus cost import --remove <importId>`, and pruned by `[finops] retain_days`. Not the `item` table, never embedded, never full-text indexed. No foreign key, no trigger, no backfill; re-runnable. Chains after V108.
+Authoritative source: `packages/gateway/src/index/cost-line-v109-sql.ts`. One normalised, FOCUS-shaped DAILY cost line per (source, provider, billing account, billing period, charge day, grain); `grain_hash` is SHA-256 of the canonical JSON of (sub-account, service, region, resource-or-sku, charge category, currency, sorted tags, repo, workflow, model). Both tables are written only by `finops/cost-line-store.ts` (static D24 rule `cost-line-confined`): `nimbus cost import` replaces, per (source, provider, billing account, billing period), every stored line on exactly the charge days the file contains, and records the accepted import in `cost_import` in the same transaction; an import whose id `cost_import` already holds writes nothing (so replaying an older export never overwrites a later restatement). Lines are deleted by `connector remove` and `nimbus data delete` (by source, with that source's `cost_import` rows), `nimbus cost import --remove <importId>` (its lines and its `cost_import` row, so it can be imported again), and pruned by `[finops] retain_days` (the prune keeps the `cost_import` rows, so a replay of a pruned export stays a no-op). Not the `item` table, never embedded, never full-text indexed. No foreign key, no trigger, no backfill; re-runnable. Chains after V108.
 
 ```sql
 CREATE TABLE IF NOT EXISTS cost_line (
@@ -1470,12 +1470,21 @@ CREATE TABLE IF NOT EXISTS cost_line (
   import_id TEXT NOT NULL,
   grain_hash TEXT NOT NULL
 );
-CREATE UNIQUE INDEX IF NOT EXISTS cost_line_grain ON cost_line (source, provider, billing_account_id, charge_day, grain_hash);
+CREATE UNIQUE INDEX IF NOT EXISTS cost_line_grain ON cost_line (source, provider, billing_account_id, billing_period, charge_day, grain_hash);
 CREATE INDEX IF NOT EXISTS cost_line_source_day ON cost_line (source, charge_day);
 CREATE INDEX IF NOT EXISTS cost_line_source_account_day ON cost_line (source, provider, sub_account_id, charge_day);
+
+-- The import ledger: one row per accepted import.
+CREATE TABLE IF NOT EXISTS cost_import (
+  import_id TEXT PRIMARY KEY,        -- focus:<16 hex>, the file's content hash
+  source TEXT NOT NULL,              -- 'focus'
+  provider TEXT NOT NULL,            -- the accepted lines' providers, sorted and comma-joined
+  file_sha256 TEXT NOT NULL,         -- 64 hex
+  imported_at INTEGER NOT NULL       -- epoch ms of the (last) accepted import
+);
 ```
 
-(The DDL file also carries length and value CHECKs on `source`, `provider`, `billing_period`, `charge_day`, `charge_category`, `currency` and `tags_json`.)
+(The DDL file also carries length and value CHECKs on `source`, `provider`, `billing_period`, `charge_day`, `charge_category`, `currency`, `tags_json`, `import_id` and `file_sha256`.)
 
 ## V108 — warehouse schema history (Phase 10, the Data Incident Brief's schema diff, 2026-11-25)
 

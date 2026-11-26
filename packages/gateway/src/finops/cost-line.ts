@@ -44,18 +44,33 @@ export interface CostLineKey {
   readonly billingPeriod: string;
 }
 
+/**
+ * Set one tag as an OWN property: a plain assignment of `__proto__` would set the prototype instead and drop
+ * the tag (a vendor's tag key is external data).
+ */
+export function setTag(out: Record<string, string>, key: string, value: string): void {
+  Object.defineProperty(out, key, { value, enumerable: true, writable: true, configurable: true });
+}
+
+/** One tag's value, read as an OWN property only (never from the prototype). */
+export function tagOf(tags: Readonly<Record<string, string>>, key: string): string | undefined {
+  const v = Object.getOwnPropertyDescriptor(tags, key)?.value as unknown;
+  return typeof v === "string" ? v : undefined;
+}
+
 export function sortedTags(tags: Readonly<Record<string, string>>): Record<string, string> {
   const out: Record<string, string> = {};
   for (const k of Object.keys(tags).sort()) {
-    const v = tags[k];
-    if (v !== undefined) out[k] = v;
+    const v = tagOf(tags, k);
+    if (v !== undefined) setTag(out, k, v);
   }
   return out;
 }
 
 /**
  * SHA-256 hex of the canonical JSON of the grain: (subAccountId, serviceName, regionId, resourceId ?? skuId,
- * chargeCategory, sorted tags, repo, workflow, model). Two raw rows with one grain on one day are one line.
+ * chargeCategory, currency, sorted tags, repo, workflow, model). Two raw rows with one grain on one day are one
+ * line; amounts in two currencies are never one line.
  */
 export function costLineGrainHash(line: CostLine): string {
   const canonical = JSON.stringify([
@@ -64,6 +79,7 @@ export function costLineGrainHash(line: CostLine): string {
     line.regionId,
     line.resourceId ?? line.skuId,
     line.chargeCategory,
+    line.currency,
     Object.entries(sortedTags(line.tags)),
     line.repo,
     line.workflow,

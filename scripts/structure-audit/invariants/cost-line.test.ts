@@ -11,13 +11,16 @@ const RULE = "cost-line-confined";
 const GOOD: FileEntry[] = [
   file(
     STORE,
-    'export function replaceCostLines() { dbRun(db, "DELETE FROM cost_line WHERE source = ?"); dbRun(db, "INSERT INTO cost_line (a) VALUES (1)"); }\nexport function deleteCostImport() {}\nexport function deleteCostLinesBySource() {}\nexport function pruneCostLinesBefore() {}\n',
+    'export function replaceCostLines() { dbRun(db, "DELETE FROM cost_line WHERE source = ?"); dbRun(db, "INSERT INTO cost_line (a) VALUES (1)"); }\nexport function deleteCostImport() {}\nexport function deleteCostLinesBySource() {}\nexport function pruneCostLinesBefore() {}\nexport function recordCostImport() { dbRun(db, "INSERT INTO cost_import (a) VALUES (1)"); }\n',
   ),
   file(
     `${SRC}index/cost-line-v109-sql.ts`,
     'export const X = ["CREATE TABLE IF NOT EXISTS cost_line (a)"];\n',
   ),
-  file(`${SRC}finops/cost-import.ts`, "replaceCostLines(db, k, d, l); deleteCostImport(db, id);\n"),
+  file(
+    `${SRC}finops/cost-import.ts`,
+    "replaceCostLines(db, k, d, l); deleteCostImport(db, id); recordCostImport(db, r);\n",
+  ),
   file(`${SRC}index/item-store.ts`, "deleteCostLinesBySource(db, service);\n"),
   file(`${SRC}commands/data-delete.ts`, "deleteCostLinesBySource(db, service);\n"),
   file(`${SRC}finops/cost-retention.ts`, "pruneCostLinesBefore(db, day);\n"),
@@ -47,6 +50,11 @@ describe("D24 - cost_line is written only by its store (schema V109)", () => {
     ["INSERT OR REPLACE", 'dbRun(db, "INSERT OR REPLACE INTO cost_line (a) VALUES (1)")'],
     ["REPLACE INTO", 'dbRun(db, "REPLACE INTO cost_line (a) VALUES (1)")'],
     ["DROP", 'dbRun(db, "DROP TABLE cost_line")'],
+    ["DROP IF EXISTS", 'dbRun(db, "DROP TABLE IF EXISTS cost_line")'],
+    ["DROP IF EXISTS, schema-qualified", 'dbRun(db, "DROP TABLE IF EXISTS main.cost_line")'],
+    ["an INSERT into the import ledger", 'dbRun(db, "INSERT INTO cost_import (a) VALUES (1)")'],
+    ["a DELETE from the import ledger", 'dbRun(db, "DELETE FROM cost_import")'],
+    ["a DROP of the import ledger", 'dbRun(db, "DROP TABLE IF EXISTS cost_import")'],
     ["ALTER", 'dbRun(db, "ALTER TABLE cost_line ADD COLUMN x")'],
     ["a quoted name", "dbRun(db, 'INSERT INTO \"cost_line\" (a) VALUES (1)')"],
     ["a bracketed name", "dbRun(db, 'INSERT INTO [cost_line] (a) VALUES (1)')"],
@@ -79,6 +87,7 @@ describe("D24 - cost_line is written only by its store (schema V109)", () => {
     expect(rules(withBad(`${SRC}ipc/x-rpc.ts`, 'pruneCostLinesBefore(db, "d");\n'))).toEqual([
       RULE,
     ]);
+    expect(rules(withBad(`${SRC}ipc/x-rpc.ts`, "recordCostImport(db, r);\n"))).toEqual([RULE]);
     // each mutator is allowed in ITS files only
     const swapped = [...GOOD.filter((f) => f.relPath !== `${SRC}commands/data-delete.ts`)];
     swapped.push(file(`${SRC}commands/data-delete.ts`, "replaceCostLines(db, k, d, l);\n"));
@@ -90,7 +99,7 @@ describe("D24 - cost_line is written only by its store (schema V109)", () => {
       rules(
         withBad(
           `${SRC}connectors/ok-sync.ts`,
-          '// INSERT INTO cost_line\nconst q = "SELECT * FROM cost_line";\n',
+          '// INSERT INTO cost_line\nconst q = "SELECT * FROM cost_line";\nconst r = "SELECT 1 FROM cost_import";\nconst s = "INSERT INTO cost_imports (a) VALUES (1)";\n',
         ),
       ),
     ).toEqual([]);

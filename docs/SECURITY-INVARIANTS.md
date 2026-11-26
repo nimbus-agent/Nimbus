@@ -1281,11 +1281,13 @@ The store is in `RULE_ANCHORS`. Stated bounds: a text scan, so a dynamically com
 is added or retired.
 
 **Phase 7 Cost Pack extension, rule `cost-line-confined`** (`checkCostLineConfinement`). The normalised
-cost lines `cost_line` (V109) are written only by `finops/cost-line-store.ts` (and its DDL file
-`index/cost-line-v109-sql.ts`): a write verb on the table (the same verbs, quoting and line-break forms as
-`work-snapshot-confined`) anywhere else is a violation. Its four mutators are named only where they belong:
-`replaceCostLines` and `deleteCostImport` by the store and `finops/cost-import.ts` (the owner's import,
-which replaces a tuple's lines on exactly the days a file covers and reports the file's totals),
+cost lines `cost_line` and their import ledger `cost_import` (V109) are written only by
+`finops/cost-line-store.ts` (and its DDL file `index/cost-line-v109-sql.ts`): a write verb on either table
+(the same verbs, quoting and line-break forms as `work-snapshot-confined`, plus `DROP TABLE IF EXISTS`)
+anywhere else is a violation. Its five mutators are named only where they belong: `replaceCostLines`,
+`deleteCostImport` and `recordCostImport` by the store and `finops/cost-import.ts` (the owner's import,
+which replaces a tuple's lines on exactly the days a file covers, records the import and reports the
+file's totals),
 `deleteCostLinesBySource` by the store, `index/item-store.ts` (`deleteAllItemsForService`, reached by `connector remove`) and `commands/data-delete.ts` (the two owner
 erasures), and `pruneCostLinesBefore` by the store and `finops/cost-retention.ts`. Reads are unrestricted.
 The point is reconciliation: every stored line came from an import or sync whose totals were reported, so

@@ -7,7 +7,7 @@
 //
 // Matchers live in one registry (`COST_MATCHERS`) keyed by match field; a new kind (a service-catalog or an
 // ownership lookup) is one entry there. Globs know `*` and `?` only and match case-insensitively.
-import type { CostLine } from "./cost-line.ts";
+import { type CostLine, setTag, tagOf } from "./cost-line.ts";
 
 export const COST_MATCH_KEYS = [
   "source",
@@ -98,7 +98,7 @@ function ruleMatches(line: CostLine, rule: CostRule): boolean {
     if (glob !== undefined && !COST_MATCHERS[key](line, glob)) return false;
   }
   for (const [k, glob] of Object.entries(rule.match.tag ?? {})) {
-    const v = line.tags[k];
+    const v = tagOf(line.tags, k);
     if (v === undefined || !globMatches(glob, v)) return false;
   }
   return true;
@@ -108,7 +108,7 @@ function placeholderValue(line: CostLine, name: string): string | null {
   if (name === "repo") return line.repo;
   if (name === "sub_account") return line.subAccountId;
   const m = TAG_KEY_RE.exec(name);
-  return m?.[1] === undefined ? null : (line.tags[m[1]] ?? null);
+  return m?.[1] === undefined ? null : (tagOf(line.tags, m[1]) ?? null);
 }
 
 /** Substitute one set value; a string result, or the unassigned reason. */
@@ -207,7 +207,7 @@ export function compileCostRule(
     if (k === "tag") {
       const tags: Record<string, string> = {};
       for (const [tk, tv] of Object.entries(asRecord(v, `${at}: match.tag`))) {
-        tags[tk] = asString(tv, `${at}: match.tag.${tk}`);
+        setTag(tags, tk, asString(tv, `${at}: match.tag.${tk}`));
       }
       match["tag"] = tags;
     } else if ((COST_MATCH_KEYS as readonly string[]).includes(k)) {

@@ -4,10 +4,11 @@
 import { stripComments } from "../lib.ts";
 import type { FileEntry, Violation } from "./_shared.ts";
 
-// Rule `cost-line-confined`. A WRITE verb on `cost_line` may appear only in the store
-// (`finops/cost-line-store.ts`) and the V109 DDL file. The store's four mutators are named only where they
-// belong: `replaceCostLines` and `deleteCostImport` in the store and `finops/cost-import.ts` (the owner's
-// import, which reconciles a file's totals before it replaces a tuple's days); `deleteCostLinesBySource` in
+// Rule `cost-line-confined`. A WRITE verb (`DROP TABLE IF EXISTS` included) on `cost_line` or its import
+// ledger `cost_import` may appear only in the store (`finops/cost-line-store.ts`) and the V109 DDL file. The
+// store's five mutators are named only where they belong: `replaceCostLines`, `deleteCostImport` and
+// `recordCostImport` in the store and `finops/cost-import.ts` (the owner's import, which reconciles a file's
+// totals before it replaces a tuple's days and records the import); `deleteCostLinesBySource` in
 // the store, `index/item-store.ts` (`deleteAllItemsForService`, which `connector remove` reaches through
 // `LocalIndex.removeConnectorIndexData`) and `commands/data-delete.ts` (the two owner erasures);
 // `pruneCostLinesBefore` in the store and `finops/cost-retention.ts`. Reads are unrestricted, so
@@ -23,11 +24,12 @@ const IMPORT = `${SRC}finops/cost-import.ts`;
 const RULE = "cost-line-confined";
 
 const WRITE_RE =
-  /\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO|DELETE\s+FROM|UPDATE(?:\s+OR\s+\w+)?|DROP\s+TABLE|ALTER\s+TABLE)\s+(?:["'`[]?\w+["'`\]]?\s*\.\s*)?["'`[]?cost_line\b/gi;
+  /\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO|DELETE\s+FROM|UPDATE(?:\s+OR\s+\w+)?|DROP\s+TABLE(?:\s+IF\s+EXISTS)?|ALTER\s+TABLE)\s+(?:["'`[]?\w+["'`\]]?\s*\.\s*)?["'`[]?(?:cost_line|cost_import)\b/gi;
 
 const NAME_RULES: ReadonlyArray<{ re: RegExp; allowed: readonly string[] }> = [
   { re: /\breplaceCostLines\b/g, allowed: [STORE, IMPORT] },
   { re: /\bdeleteCostImport\b/g, allowed: [STORE, IMPORT] },
+  { re: /\brecordCostImport\b/g, allowed: [STORE, IMPORT] },
   {
     re: /\bdeleteCostLinesBySource\b/g,
     allowed: [STORE, `${SRC}index/item-store.ts`, `${SRC}commands/data-delete.ts`],

@@ -60,6 +60,7 @@ describe("V109 cost lines (Phase 7)", () => {
       "source",
       "provider",
       "billing_account_id",
+      "billing_period",
       "charge_day",
       "grain_hash",
     ]);
@@ -84,10 +85,53 @@ describe("V109 cost lines (Phase 7)", () => {
     db.close();
   });
 
+  test("the same grain and charge day in two billing periods are two rows", () => {
+    const db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+    const insert = (period: string) =>
+      db.run(`INSERT INTO cost_line (source, provider, billing_account_id, billing_period, charge_day,
+        service_name, charge_category, billed_cost, currency, tags_json, import_id, grain_hash)
+        VALUES ('focus','aws','111','${period}','2026-11-30','S3','usage',1.5,'USD','{}','imp1','g1')`);
+    insert("2026-11");
+    expect(() => insert("2026-12")).not.toThrow();
+    expect(() => insert("2026-12")).toThrow();
+    db.close();
+  });
+
+  test("the import ledger: one row per import id, no foreign key, no trigger", () => {
+    const db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+    const cols = db.query("PRAGMA table_info(cost_import)").all() as Array<{
+      name: string;
+      pk: number;
+    }>;
+    expect(cols.map((c) => c.name).sort()).toEqual([
+      "file_sha256",
+      "import_id",
+      "imported_at",
+      "provider",
+      "source",
+    ]);
+    expect(cols.find((c) => c.pk === 1)?.name).toBe("import_id");
+    const insert = `INSERT INTO cost_import (import_id, source, provider, file_sha256, imported_at)
+      VALUES ('focus:0123456789abcdef', 'focus', 'aws', '${"a".repeat(64)}', 1)`;
+    db.run(insert);
+    expect(() => db.run(insert)).toThrow();
+    expect(db.query("PRAGMA foreign_key_list(cost_import)").all()).toEqual([]);
+    expect(
+      db
+        .query("SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'cost_import'")
+        .all(),
+    ).toEqual([]);
+    db.close();
+  });
+
   test("an upgrade from V108 keeps data and is re-runnable", () => {
     const db = new Database(":memory:");
     runIndexedSchemaMigrations(db, 108);
-    expect(db.query("SELECT name FROM sqlite_master WHERE name = 'cost_line'").all()).toEqual([]);
+    expect(
+      db.query("SELECT name FROM sqlite_master WHERE name IN ('cost_line', 'cost_import')").all(),
+    ).toEqual([]);
     runIndexedSchemaMigrations(db, 109);
     db.run(
       `INSERT INTO cost_line (source, provider, billing_account_id, billing_period, charge_day,

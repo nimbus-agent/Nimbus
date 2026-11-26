@@ -11,6 +11,7 @@ import {
   type CostLine,
   type CostLineKey,
   costLineGrainHash,
+  setTag,
 } from "./cost-line.ts";
 
 export class FocusCsvError extends Error {
@@ -226,7 +227,7 @@ function parseTags(text: string, row: number, warnings: FocusRowIssue[]): Record
     if ("reason" in r) warnings.push({ row, reason: r.reason });
     else if (kept >= FOCUS_MAX_TAGS) beyond++;
     else {
-      out[k] = r.value;
+      setTag(out, k, r.value);
       kept++;
     }
   }

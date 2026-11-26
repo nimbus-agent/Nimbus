@@ -7,8 +7,10 @@ import type { CostLine, CostLineKey } from "./cost-line.ts";
 import {
   deleteCostImport,
   deleteCostLinesBySource,
+  isCostImportAccepted,
   pruneCostLinesBefore,
   readCostLines,
+  recordCostImport,
   replaceCostLines,
 } from "./cost-line-store.ts";
 
@@ -213,5 +215,85 @@ describe("cost-line store", () => {
     expect(readCostLines(db, { fromDay: day(1), toDay: day(1) }).map((l) => l.source)).toEqual([
       "focus",
     ]);
+  });
+
+  test("an identical line built in another property order is unchanged, not replaced", () => {
+    replaceCostLines(db, KEY, [day(1)], [line(1)]);
+    const { billedCost, ...rest } = line(1);
+    const reordered = { billedCost, ...rest } as CostLine;
+    expect(Object.keys(reordered)[0]).toBe("billedCost");
+    expect(replaceCostLines(db, KEY, [day(1)], [reordered])).toEqual({
+      inserted: 0,
+      replaced: 0,
+      unchanged: 1,
+      removed: 0,
+    });
+  });
+
+  test("a __proto__ tag is kept as an own tag through the store and the read", () => {
+    const tags = JSON.parse('{"__proto__":"finance","team":"web"}') as Record<string, string>;
+    replaceCostLines(db, KEY, [day(1)], [line(1, { tags })]);
+    replaceCostLines(db, KEY, [day(1)], [line(1, { tags }), line(1, { tags: { team: "web" } })]);
+    const back = readCostLines(db, { fromDay: day(1), toDay: day(1) });
+    expect(back).toHaveLength(2);
+    const tagged = back.find((l) => Object.keys(l.tags).length === 2);
+    expect(Object.hasOwn(tagged?.tags ?? {}, "__proto__")).toBe(true);
+    expect(Object.getOwnPropertyDescriptor(tagged?.tags, "__proto__")?.value).toBe("finance");
+  });
+
+  test("the same grain in two currencies on one day is two lines", () => {
+    const r = replaceCostLines(
+      db,
+      KEY,
+      [day(1)],
+      [line(1, { billedCost: 10 }), line(1, { currency: "EUR", billedCost: 20 })],
+    );
+    expect(r.inserted).toBe(2);
+    expect(count(db)).toBe(2);
+  });
+
+  test("the same grain and charge day billed in two periods are kept apart", () => {
+    replaceCostLines(db, KEY, [day(30)], [line(30)]);
+    const dec = { ...KEY, billingPeriod: "2026-12" };
+    const r = replaceCostLines(db, dec, [day(30)], [line(30, { billingPeriod: "2026-12" })]);
+    expect(r).toEqual({ inserted: 1, replaced: 0, unchanged: 0, removed: 0 });
+    expect(count(db)).toBe(2);
+  });
+
+  test("the import ledger: an accepted import is recorded once; removal clears its row and lines", () => {
+    const rec = {
+      importId: "focus:0123456789abcdef",
+      source: "focus",
+      provider: "aws",
+      fileSha256: "a".repeat(64),
+      importedAtMs: 1,
+    };
+    expect(isCostImportAccepted(db, rec.importId)).toBe(false);
+    recordCostImport(db, rec);
+    recordCostImport(db, { ...rec, importedAtMs: 2 });
+    expect(isCostImportAccepted(db, rec.importId)).toBe(true);
+    expect(db.query("SELECT imported_at FROM cost_import").all()).toEqual([{ imported_at: 2 }]);
+    replaceCostLines(db, KEY, [day(1)], [line(1, { importId: rec.importId })]);
+    expect(deleteCostImport(db, rec.importId)).toBe(1);
+    expect(isCostImportAccepted(db, rec.importId)).toBe(false);
+    expect(count(db)).toBe(0);
+  });
+
+  test("a source erasure deletes its ledger rows; the retention prune keeps them", () => {
+    const rec = (importId: string, source: string) => ({
+      importId,
+      source,
+      provider: "aws",
+      fileSha256: "b".repeat(64),
+      importedAtMs: 1,
+    });
+    recordCostImport(db, rec("focus:1111111111111111", "focus"));
+    recordCostImport(db, rec("other:1", "other"));
+    replaceCostLines(db, KEY, [day(1)], [line(1)]);
+    expect(pruneCostLinesBefore(db, day(5))).toBe(1);
+    expect(isCostImportAccepted(db, "focus:1111111111111111")).toBe(true);
+    deleteCostLinesBySource(db, "focus");
+    expect(isCostImportAccepted(db, "focus:1111111111111111")).toBe(false);
+    expect(isCostImportAccepted(db, "other:1")).toBe(true);
   });
 });

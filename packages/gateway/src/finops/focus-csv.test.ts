@@ -178,6 +178,12 @@ describe("parseFocusCsv", () => {
     ]);
   });
 
+  test("a __proto__ tag is kept as an own tag, not dropped", () => {
+    const tags = `"${'{"__proto__":"finance"}'.replace(/"/g, '""')}"`;
+    const r = parseFocusCsv([HEADER, row({ ...BASE, Tags: tags })].join("\n"), { importId: "i" });
+    expect(Object.getOwnPropertyDescriptor(r.lines[0]?.tags, "__proto__")?.value).toBe("finance");
+  });
+
   test("tags that are not a JSON object are a warning and the row keeps no tags", () => {
     const r = parseFocusCsv([HEADER, row({ ...BASE, Tags: "not-json" })].join("\n"), {
       importId: "i",

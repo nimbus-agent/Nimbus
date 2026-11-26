@@ -31,6 +31,12 @@ function line(over: Partial<CostLine> = {}): CostLine {
 }
 
 describe("sortedTags", () => {
+  test("keeps a __proto__ key as an own property", () => {
+    const out = sortedTags(JSON.parse('{"z":"1","__proto__":"finance"}') as Record<string, string>);
+    expect(Object.keys(out)).toEqual(["__proto__", "z"]);
+    expect(Object.getOwnPropertyDescriptor(out, "__proto__")?.value).toBe("finance");
+  });
+
   test("orders the keys and drops a key whose value is missing", () => {
     // External data can carry an explicit `undefined`; the type cannot rule it out at runtime.
     const raw = { b: "2", a: "1", c: undefined } as unknown as Record<string, string>;
@@ -61,13 +67,19 @@ describe("costLineGrainHash", () => {
     expect(costLineGrainHash(line({ resourceId: "sku-1" }))).toBe(costLineGrainHash(bySku));
   });
 
-  test("a different charge category, repo, workflow or model is a different grain", () => {
+  test("a __proto__ tag is part of the grain", () => {
+    const tagged = line({ tags: JSON.parse('{"__proto__":"finance"}') as Record<string, string> });
+    expect(costLineGrainHash(tagged)).not.toBe(costLineGrainHash(line()));
+  });
+
+  test("a different charge category, repo, workflow, model or currency is a different grain", () => {
     const base = costLineGrainHash(line());
     for (const over of [
       { chargeCategory: "credit" as const },
       { repo: "acme/web" },
       { workflow: "ci" },
       { model: "gpt-x" },
+      { currency: "EUR" },
     ]) {
       expect(costLineGrainHash(line(over))).not.toBe(base);
     }

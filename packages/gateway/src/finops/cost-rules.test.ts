@@ -75,6 +75,15 @@ describe("allocate", () => {
     expect(allocate(line({ tags: {} }), r).unassignedReason).toBe("no rule matched");
   });
 
+  test("a tag is read as an own property only, never from the prototype", () => {
+    const byMatch = [rule({ tag: { constructor: "*" } }, { product: "p" })];
+    expect(allocate(line(), byMatch).unassignedReason).toBe("no rule matched");
+    const byPlaceholder = [rule({}, { product: "{tag.constructor}" })];
+    expect(allocate(line(), byPlaceholder).product).toBeNull();
+    const own = line({ tags: JSON.parse('{"__proto__":"finance"}') as Record<string, string> });
+    expect(allocate(own, [rule({}, { product: "{tag.__proto__}" })]).product).toBe("finance");
+  });
+
   test("placeholders substitute from the line", () => {
     const r = [
       rule({}, { product: "{tag.product}", env: "{tag.env}", service: "svc-{sub_account}" }),
