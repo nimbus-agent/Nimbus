@@ -2,6 +2,14 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [11.17.0](https://github.com/nimbus-agent/Nimbus/compare/v11.16.0...v11.17.0) (2026-11-26)
+
+
+### Features
+
+* **connectors:** bitbucket_pr_comment_create write row and connectors 0.18.0 ([#2179](https://github.com/nimbus-agent/Nimbus/issues/2179)) ([6a977c0](https://github.com/nimbus-agent/Nimbus/commit/6a977c0e97dd94cff6652fb8d45972bc5ab35363))
+* nimbus cost report renders configured cost reports for Slack, Teams and email drafts (Phase 7, slice 3) ([#2178](https://github.com/nimbus-agent/Nimbus/issues/2178)) ([34cbeb4](https://github.com/nimbus-agent/Nimbus/commit/34cbeb41926417585abd54dcb27cc90f64482e87))
+
 ## [11.16.0](https://github.com/nimbus-agent/Nimbus/compare/v11.15.0...v11.16.0) (2026-11-26)
 
 
