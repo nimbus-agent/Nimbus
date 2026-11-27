@@ -231,20 +231,28 @@ describe("pushedProposalOf re-validates what it reads", () => {
     ["a bad confidence", JSON.stringify({ proposal: { ...good, confidence: "high" } })],
     ["a bad expiry", JSON.stringify({ proposal: { ...good, expiresAtMs: 1.5 } })],
     ["an array", JSON.stringify({ proposal: [] })],
-    ["a condition that is not text", JSON.stringify({ proposal: { ...good, reversibleIf: 1 } })],
-    [
-      "a condition with control text",
-      JSON.stringify({ proposal: { ...good, reversibleIf: "x\u001b[31m" } }),
-    ],
   ])("%s is no proposal", (_why, json) => {
     expect(pushedProposalOf(json)).toBeNull();
   });
-  test("a well-formed condition passes through; none stays absent", () => {
-    const reversibleIf = "the environment already has an active strategy";
+  test("the condition comes from the row table by tool id, never from the stored value", () => {
+    const condition = "the environment already has an active strategy";
+    const unleash = { ...good, kind: "repeat_last", toolId: "unleash_feature_toggle" };
+    for (const stored of [
+      {},
+      { reversibleIf: "anything at all" },
+      { reversibleIf: 1 },
+      { reversibleIf: "x\u001b[31m" },
+    ]) {
+      const read = pushedProposalOf(JSON.stringify({ proposal: { ...unleash, ...stored } }));
+      expect(read?.reversibleIf, JSON.stringify(stored)).toBe(condition);
+    }
+    // An unconditional row, or a class that is not reversible, carries none whatever was stored.
     expect(
-      pushedProposalOf(JSON.stringify({ proposal: { ...good, reversibleIf } }))?.reversibleIf,
-    ).toBe(reversibleIf);
-    expect(pushedProposalOf(JSON.stringify({ proposal: good }))).not.toHaveProperty("reversibleIf");
+      pushedProposalOf(JSON.stringify({ proposal: { ...good, reversibleIf: condition } })),
+    ).not.toHaveProperty("reversibleIf");
+    expect(
+      pushedProposalOf(JSON.stringify({ proposal: { ...unleash, reversibility: "unknown" } })),
+    ).not.toHaveProperty("reversibleIf");
   });
   test("a null confidence is allowed", () => {
     expect(

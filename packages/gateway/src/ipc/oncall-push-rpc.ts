@@ -1,3 +1,4 @@
+import { reversibleIfOf } from "../connectors/connector-writes/reversibility.ts";
 import { ENGINE_PROPOSAL_ID_RE } from "../engine/incident-link.ts";
 import { parseHeadlineBrief, resolvePushService } from "../oncall-push/push-headline.ts";
 import { PushRetryRefusedError } from "../oncall-push/push-runner.ts";
@@ -47,8 +48,6 @@ export type PushedBriefDetail = PushedBriefSummary & {
 const LABEL_RE = /^[a-z0-9_]{1,64}$/;
 const RECORD_ID_RE = /^inc_[0-9a-f]{16}$/;
 const REVERSIBILITY = new Set(["reversible", "irreversible", "unknown"]);
-/** A gateway-set condition: plain lower-case words, so a damaged row cannot put control text on a terminal. */
-const REVERSIBLE_IF_RE = /^[a-z0-9][a-z0-9 ,.'-]{0,199}$/;
 
 /**
  * The proposal a stored brief carries, re-validated on every read: an id of the engine's own shape, a record id
@@ -65,19 +64,12 @@ export function pushedProposalOf(briefJson: string | null): PushedBriefProposal 
   }
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
   const p = raw as Record<string, unknown>;
-  const { recordId, id, kind, toolId, reversibility, reversibleIf, confidence, expiresAtMs } = p;
+  const { recordId, id, kind, toolId, reversibility, confidence, expiresAtMs } = p;
   if (typeof id !== "string" || !ENGINE_PROPOSAL_ID_RE.test(id)) return null;
   if (typeof recordId !== "string" || !RECORD_ID_RE.test(recordId)) return null;
   if (typeof kind !== "string" || !LABEL_RE.test(kind)) return null;
   if (typeof toolId !== "string" || !LABEL_RE.test(toolId)) return null;
   if (typeof reversibility !== "string" || !REVERSIBILITY.has(reversibility)) return null;
-  // A malformed condition drops the proposal rather than the condition: it must never read plain "reversible".
-  if (
-    reversibleIf !== undefined &&
-    (typeof reversibleIf !== "string" || !REVERSIBLE_IF_RE.test(reversibleIf))
-  ) {
-    return null;
-  }
   if (confidence !== null && (typeof confidence !== "number" || !Number.isFinite(confidence))) {
     return null;
   }
@@ -88,7 +80,8 @@ export function pushedProposalOf(briefJson: string | null): PushedBriefProposal 
     kind,
     toolId,
     reversibility: reversibility as PushedBriefProposal["reversibility"],
-    ...(reversibleIf === undefined ? {} : { reversibleIf }),
+    // From the row table by the tool id, never the stored value: a damaged row cannot drop or reword it.
+    ...(reversibility === "reversible" ? reversibleIfOf(toolId) : {}),
     confidence,
     expiresAtMs,
   };

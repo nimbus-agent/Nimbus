@@ -295,7 +295,7 @@
     "packages/gateway/src/incident/incident-engine.test.ts": 573,
     "packages/gateway/src/incident/proposals.test.ts": 521,
     "packages/gateway/src/incident/remediation.test.ts": 967,
-    "packages/gateway/src/incident/remediation.ts": 712,
+    "packages/gateway/src/incident/remediation.ts": 730,
     "packages/gateway/src/index/local-index.test.ts": 2246,
     "packages/gateway/src/index/local-index.ts": 1082,
     "packages/gateway/src/index/migrations/runner.test.ts": 1122,

@@ -419,7 +419,7 @@ export async function main(): Promise<void> {
   // that takes a human answer only (`--yes`, a script and an old client become a decline). Built per call, so the
   // capture observer is that call's own. A demo-rooted gateway never binds it (I41): remediate and undo refuse.
   if (platform.paths.demo !== true) {
-    platform.bindIncidentExecutor(({ clientId, onCaptured, onNonHuman, dryRun }) =>
+    platform.bindIncidentExecutor(({ clientId, onNonHuman, dryRun, ...observers }) =>
       buildRemediationExecutor({
         clientId,
         consentCoordinator: humanOnlyConsent(platform.ipc.consent, onNonHuman),
@@ -432,7 +432,7 @@ export async function main(): Promise<void> {
           platform.connectorMesh,
         ),
         getTribalKbConfig: () => platform.tribalKbConfig(),
-        onCaptured,
+        ...observers,
         dryRun: dryRun === true,
       }),
     );

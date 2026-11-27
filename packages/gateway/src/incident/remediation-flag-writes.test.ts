@@ -37,10 +37,16 @@ const PLAIN_LINE = "Reversibility: reversible - nimbus incident undo can reverse
 const inputOf = (a: PlannedAction | undefined): unknown =>
   (a?.payload as { input?: unknown } | undefined)?.input;
 
+type FlagState = { killed: boolean; enabled: boolean; strategies: unknown[]; readsFail?: boolean };
+/** The current fake flag service's state: a test changes it between a run and its undo. */
+let flags: FlagState = { killed: false, enabled: false, strategies: [] };
+
 /** A fake flag service: the before reads answer the current state, and each write changes it. */
-function flagService(start: { killed: boolean; enabled: boolean; strategies: unknown[] }) {
-  const state = { ...start };
+function flagService(state: FlagState) {
   return (action: PlannedAction): unknown => {
+    if (state.readsFail === true && action.type.endsWith(".before.read")) {
+      throw new Error("the flag service is unreachable");
+    }
     if (action.type === "split.before.read") {
       return {
         killed: state.killed,
@@ -64,12 +70,13 @@ function flagService(start: { killed: boolean; enabled: boolean; strategies: unk
 
 function harnessWith(start: { killed?: boolean; enabled?: boolean; strategies?: unknown[] }) {
   let clock = NOW;
+  flags = {
+    killed: start.killed ?? false,
+    enabled: start.enabled ?? false,
+    strategies: start.strategies ?? ACTIVE,
+  };
   return makeRemediationHarness(db, localIndex, {
-    beforeReply: flagService({
-      killed: start.killed ?? false,
-      enabled: start.enabled ?? false,
-      strategies: start.strategies ?? ACTIVE,
-    }),
+    beforeReply: flagService(flags),
     // Every call moves the clock, so a later run has a later executed time.
     now: () => {
       clock += 1;
@@ -180,6 +187,60 @@ describe("the Unleash toggle: undoable only when the environment already had an 
     });
     expect(h.dispatched).toHaveLength(before);
     expect(getProposalByAction(db, out.actionId)?.undo_status).toBeNull();
+  });
+});
+
+describe("an Unleash undo is judged on a FRESH read, never only on the capture recorded when it ran", () => {
+  async function toggledOff(): Promise<{ h: Harness; actionId: string }> {
+    seedPriorRun(db, {
+      n: 1,
+      toolId: "unleash_feature_toggle",
+      input: { ...UNLEASH, enabled: false },
+    });
+    const h = harnessWith({ enabled: true, strategies: ACTIVE });
+    const out = await run(h, "unleash_feature_toggle");
+    expect(out).toMatchObject({ status: "executed", undoable: true });
+    return { h, actionId: out.actionId };
+  }
+
+  test("the strategy removed since the run: undo is refused with the reason, before any prompt, nothing sent", async () => {
+    const { h, actionId } = await toggledOff();
+    flags.strategies = [{ name: "flexibleRollout", disabled: true }];
+    const prompts = h.prompts.length;
+    await expect(h.svc.undo({ actionId, clientId: "cli-1" })).rejects.toMatchObject({
+      code: "ERR_UNDO_REFUSED",
+      message: `irreversible now: it is reversible only if ${CONDITION}, and a fresh read of the target does not show that (Unleash adds a default strategy that serves everyone when it enables an environment with no active strategy, and turning it off does not remove it)`,
+    });
+    expect(h.prompts).toHaveLength(prompts);
+    expect(writes(h, "unleash.feature.toggle")).toEqual([{ ...UNLEASH, enabled: false }]);
+    // Refused, not spent: once the strategy is back, the undo can run.
+    expect(getProposalByAction(db, actionId)?.undo_status).toBeNull();
+    flags.strategies = ACTIVE;
+    expect((await h.svc.undo({ actionId, clientId: "cli-1" })).status).toBe("undone");
+    expect(writes(h, "unleash.feature.toggle")).toEqual([
+      { ...UNLEASH, enabled: false },
+      { ...UNLEASH, enabled: true },
+    ]);
+  });
+
+  test("the target cannot be read again: refused (fail closed), nothing sent", async () => {
+    const { h, actionId } = await toggledOff();
+    flags.readsFail = true;
+    await expect(h.svc.undo({ actionId, clientId: "cli-1" })).rejects.toMatchObject({
+      code: "ERR_UNDO_REFUSED",
+      message: `irreversible now: it is reversible only if ${CONDITION}, and the target could not be read again to check; nothing was run`,
+    });
+    expect(writes(h, "unleash.feature.toggle")).toHaveLength(1);
+    expect(getProposalByAction(db, actionId)?.undo_status).toBeNull();
+  });
+
+  test("a Split undo is not re-judged: it runs even when its fresh read is unavailable", async () => {
+    seedPriorRun(db, { n: 1, toolId: "split_kill", input: SPLIT });
+    const h = harnessWith({ killed: false });
+    const out = await run(h, "split_kill");
+    flags.readsFail = true;
+    expect((await h.svc.undo({ actionId: out.actionId, clientId: "cli-1" })).status).toBe("undone");
+    expect(writes(h, "split.flag.restore")).toEqual([SPLIT]);
   });
 });
 

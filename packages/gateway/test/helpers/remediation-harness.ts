@@ -104,7 +104,7 @@ export function makeRemediationHarness(
       return { status: "requested" };
     },
   };
-  const makeExecutor: MakeExecutor = ({ clientId, onCaptured, onNonHuman, dryRun }) => {
+  const makeExecutor: MakeExecutor = ({ clientId, onCaptured, onNonHuman, dryRun, vetCapture }) => {
     makes += 1;
     const wrapped: ConsentCoordinator = {
       ...coordinator,
@@ -133,6 +133,7 @@ export function makeRemediationHarness(
       egressSink: { append: (e) => egress.push(e) },
       getTribalKbConfig: () => undefined,
       onCaptured,
+      ...(vetCapture === undefined ? {} : { vetCapture }),
       dryRun: dryRun === true,
     });
   };

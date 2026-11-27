@@ -13,10 +13,13 @@ import {
   callIsReversible,
   reversibilityClassOf,
   reversibleIfOf,
+  undoFreshRefusal,
+  undoNeedsFreshRead,
   undoRefusalReason,
 } from "../connectors/connector-writes/reversibility.ts";
 import type { ConnectorWriteRow } from "../connectors/connector-writes/types.ts";
 import { mcpClientToolKey } from "../connectors/lazy-mesh/tool-map.ts";
+import type { CaptureVet } from "../engine/before-state-vet.ts";
 import type { BeforeOnlyOutcome } from "../engine/executor.ts";
 import { ENGINE_PROPOSAL_ID_RE } from "../engine/incident-link.ts";
 import { serviceOf } from "../engine/service-of.ts";
@@ -97,6 +100,8 @@ export type MakeExecutor = (opts: {
   readonly onCaptured: (action: PlannedAction, captured: Readonly<Record<string, string>>) => void;
   /** Told when an approval was refused because it did not come from a person. */
   readonly onNonHuman: () => void;
+  /** An undo of a conditionally reversible row: may refuse the write from its FRESH capture, before any prompt. */
+  readonly vetCapture?: CaptureVet;
   /** Phase 17: build it for a dry run (it may then run `readBeforeOnly`); absent for every real run. */
   readonly dryRun?: boolean;
 }) => ExecutorLike;
@@ -658,9 +663,16 @@ export function createRemediation(deps: RemediationDeps) {
       throw new RemediationError("ERR_PROPOSAL_BUSY", "an undo of that action is already running");
     }
     let nonHuman = false;
+    let vetoed: string | undefined;
+    const inverseId = proposalIdFor(stored.record_id, "undo", inverseRow.toolId, inverseInput);
+    // A conditionally reversible row is judged again on the inverse's FRESH read: the condition may no longer hold.
+    const vetCapture: CaptureVet = (a, c) => {
+      if (a.engineProposal?.proposalId === inverseId)
+        vetoed = undoFreshRefusal(inverseRow.toolId, inverseInput, c);
+      return vetoed;
+    };
     inFlight.add(stored.id);
     try {
-      const inverseId = proposalIdFor(stored.record_id, "undo", inverseRow.toolId, inverseInput);
       const action = buildRemediationAction(
         stored.record_id,
         inverseId,
@@ -674,8 +686,13 @@ export function createRemediation(deps: RemediationDeps) {
         onNonHuman: () => {
           nonHuman = true;
         },
+        ...(undoNeedsFreshRead(inverseRow.toolId) ? { vetCapture } : {}),
       });
       const result = await executor.execute(action);
+      if (vetoed !== undefined) {
+        finishUndo(db, p.actionId, "retry", now());
+        throw refusal(vetoed);
+      }
       if (result.status === "ok") {
         finishUndo(db, p.actionId, "undone", now());
         return { actionId: p.actionId, status: "undone", nonHuman };
@@ -688,6 +705,7 @@ export function createRemediation(deps: RemediationDeps) {
         nonHuman,
       };
     } catch (err) {
+      if (err instanceof RemediationError) throw err;
       finishUndo(db, p.actionId, "retry", now());
       return { actionId: p.actionId, status: "failed", reason: failText(err), nonHuman };
     } finally {
