@@ -294,7 +294,7 @@
     "packages/gateway/src/graph/regraph.test.ts": 700,
     "packages/gateway/src/incident/incident-engine.test.ts": 573,
     "packages/gateway/src/incident/proposals.test.ts": 521,
-    "packages/gateway/src/incident/remediation.test.ts": 1100,
+    "packages/gateway/src/incident/remediation.test.ts": 968,
     "packages/gateway/src/incident/remediation.ts": 739,
     "packages/gateway/src/index/local-index.test.ts": 2246,
     "packages/gateway/src/index/local-index.ts": 1082,
