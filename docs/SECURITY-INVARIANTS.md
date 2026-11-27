@@ -1292,6 +1292,13 @@ anywhere else is a violation. Its five mutators are named only where they belong
 `deleteCostImport` and `recordCostImport` by the store and `finops/cost-import.ts` (the owner's import,
 which replaces a tuple's lines on exactly the days a file covers, records the import and reports the
 file's totals),
+and, since Phase 7 slice 5, `replaceCostLines` also by `finops/cost-sync-intake.ts`, whose
+`ingestSyncedCostLines` is named only there and in `sync/sync-capabilities.ts`: a syncable writes cost lines
+only through the `replaceCostLinesForMonth` capability, which binds the line `source` to the syncable's own
+service id (never a parameter), is granted only to the cost-sync services (`github_billing`), refuses a line of
+any other source, provider, billing account or month, and replaces exactly that month's UTC days (to today for
+the current month), so a sync can neither write nor clear another source's lines; it writes no `cost_import`
+row (that ledger is the owner's file imports);
 `deleteCostLinesBySource` by the store, `index/item-store.ts` (`deleteAllItemsForService`, reached by `connector remove`) and `commands/data-delete.ts` (the two owner
 erasures), and `pruneCostLinesBefore` by the store and `finops/cost-retention.ts`. Reads are unrestricted.
 The point is reconciliation: every stored line came from an import or sync whose totals were reported, so

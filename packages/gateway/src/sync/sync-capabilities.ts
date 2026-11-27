@@ -4,6 +4,9 @@ import type { ConnectorServiceId } from "../connectors/connector-catalog.ts";
 import { type ConnectorSecretKeyOf, readConnectorSecret } from "../connectors/connector-vault.ts";
 import { type FallbackPrCandidate, selectPrEnrichCandidates } from "../connectors/github-sync.ts";
 import { createServiceScopedVaultView } from "../connectors/service-scoped-vault-view.ts";
+import type { CostLine } from "../finops/cost-line.ts";
+import type { ReplaceCostLinesResult } from "../finops/cost-line-store.ts";
+import { type CostSyncTarget, ingestSyncedCostLines } from "../finops/cost-sync-intake.ts";
 import type { ResolveServiceId } from "../graph/graph-populator.ts";
 import { type ApiEndpointWrite, writeApiEndpointsForSpec } from "../index/api-endpoint-store.ts";
 import {
@@ -59,6 +62,9 @@ import { resolveAccessTokenForService } from "./access-token-registry.ts";
  * blanket vault handle would have un-done the narrowing. This is the third option: a named,
  * checked grant, so a NEW cross-service read is a deliberate edit here rather than an accident.
  */
+/** The services that may write cost lines through `replaceCostLinesForMonth` (Phase 7 slice 5). */
+const COST_SYNC_SERVICES: ReadonlySet<string> = new Set(["github_billing"]);
+
 export const SHARED_CREDENTIAL_GRANTS = {
   bigquery: ["gcp"],
   cloud_logging: ["gcp"],
@@ -192,6 +198,16 @@ export interface SyncCapabilities<S extends ConnectorServiceId = ConnectorServic
     relation: WorkSnapshotRelation,
     externalIds: readonly string[],
   ): { stored: number; dropped: number };
+  /**
+   * Replaces THIS service's cost lines of one (provider, billing account, month) (Phase 7 slice 5, static
+   * D24 `cost-line-confined`). Scoped to the bound service: the line `source` is the service and is never a
+   * parameter, and only a cost-sync service (`github_billing`) may call it. One transaction; a line of any
+   * other source, provider, account or month refuses the whole call.
+   */
+  replaceCostLinesForMonth(
+    target: CostSyncTarget,
+    lines: readonly CostLine[],
+  ): ReplaceCostLinesResult;
   /**
    * Stores THIS service's Slack read markers (V92, Phase 10 MB4): the owner's `last_read` per
    * channel, DM and group DM. Scoped to the bound service: the service is never a parameter and only
@@ -329,6 +345,12 @@ export function buildSyncCapabilities<S extends ConnectorServiceId>(
       }
       return replaceWorkSnapshotRows(deps.db, serviceId, relation, externalIds, Date.now());
     },
+    replaceCostLinesForMonth: (target, lines) => {
+      if (!COST_SYNC_SERVICES.has(serviceId)) {
+        throw new Error(`replaceCostLinesForMonth is not available to "${serviceId}".`);
+      }
+      return ingestSyncedCostLines(deps.db, serviceId, target, lines, Date.now());
+    },
     replaceItemSet: (type, keepExternalIds, opts) =>
       replaceItemSetRows(deps.db, serviceId, type, keepExternalIds, opts),
     setChatReadMarkers: (markers, opts) => {
@@ -379,6 +401,7 @@ export function buildLocalOnlySyncCapabilities(
     accessToken: () => noCredentials("accessToken"),
     // The db members above are bound to "github"; a local-only syncable must not inherit its snapshot.
     replaceWorkSnapshot: () => noCredentials("replaceWorkSnapshot"),
+    replaceCostLinesForMonth: () => noCredentials("replaceCostLinesForMonth"),
     replaceItemSet: () => noCredentials("replaceItemSet"),
     setChatReadMarkers: () => noCredentials("setChatReadMarkers"),
   };
@@ -412,6 +435,7 @@ export function unboundSyncCapabilities(): SyncCapabilities {
     upsertBlameLines: () => refuse("upsertBlameLines"),
     pruneBlameForFile: () => refuse("pruneBlameForFile"),
     replaceWorkSnapshot: () => refuse("replaceWorkSnapshot"),
+    replaceCostLinesForMonth: () => refuse("replaceCostLinesForMonth"),
     replaceItemSet: () => refuse("replaceItemSet"),
     setChatReadMarkers: () => refuse("setChatReadMarkers"),
     upsertItem: () => refuse("upsertItem"),

@@ -21,6 +21,14 @@ const GOOD: FileEntry[] = [
     `${SRC}finops/cost-import.ts`,
     "replaceCostLines(db, k, d, l); deleteCostImport(db, id); recordCostImport(db, r);\n",
   ),
+  file(
+    `${SRC}finops/cost-sync-intake.ts`,
+    "export function ingestSyncedCostLines() { return replaceCostLines(db, k, d, l); }\n",
+  ),
+  file(
+    `${SRC}sync/sync-capabilities.ts`,
+    "ingestSyncedCostLines(deps.db, serviceId, t, l, now);\n",
+  ),
   file(`${SRC}index/item-store.ts`, "deleteCostLinesBySource(db, service);\n"),
   file(`${SRC}commands/data-delete.ts`, "deleteCostLinesBySource(db, service);\n"),
   file(`${SRC}finops/cost-retention.ts`, "pruneCostLinesBefore(db, day);\n"),
@@ -113,5 +121,25 @@ describe("D24 - cost_line is written only by its store (schema V109)", () => {
     expect(checkCostLineConfinement(files)).toEqual([]);
     // the scan must actually see the store, or the rule passes over nothing
     expect(files.some((f) => f.relPath === STORE)).toBe(true);
+  });
+
+  test("slice 5: a syncable reaches cost lines only through the bound capability", () => {
+    for (const [path, body] of [
+      [`${SRC}connectors/github-billing-cost-sync.ts`, "replaceCostLines(db, k, d, l);"],
+      [
+        `${SRC}connectors/github-billing-cost-sync.ts`,
+        "ingestSyncedCostLines(db, 'focus', t, l, 0);",
+      ],
+      [`${SRC}sync/sync-capabilities.ts`, "replaceCostLines(deps.db, k, d, l);"],
+      [`${SRC}finops/cost-sync-intake.ts`, "recordCostImport(db, r);"],
+    ] as const) {
+      const files = [...GOOD.filter((f) => f.relPath !== path), file(path, `${body}\n`)];
+      expect(rules(files), `${path}: ${body}`).toContain(RULE);
+    }
+    const ok = withBad(
+      `${SRC}connectors/github-billing-cost-sync.ts`,
+      "ctx.replaceCostLinesForMonth(t, l);\n",
+    );
+    expect(rules(ok)).toEqual([]);
   });
 });
