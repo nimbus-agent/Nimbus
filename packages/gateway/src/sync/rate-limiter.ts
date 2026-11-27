@@ -34,6 +34,8 @@ export type Provider =
   | "wiz"
   | "launchdarkly"
   | "flagsmith"
+  | "unleash"
+  | "split"
   | "argocd"
   | "flux"
   | "dbt"
@@ -131,6 +133,8 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   wiz: { requestsPerMinute: 60, burstSize: 10 },
   launchdarkly: { requestsPerMinute: 60, burstSize: 10 },
   flagsmith: { requestsPerMinute: 60, burstSize: 10 },
+  unleash: { requestsPerMinute: 60, burstSize: 10 },
+  split: { requestsPerMinute: 60, burstSize: 10 },
   argocd: { requestsPerMinute: 60, burstSize: 10 },
   flux: { requestsPerMinute: 60, burstSize: 10 },
   dbt: { requestsPerMinute: 60, burstSize: 10 },

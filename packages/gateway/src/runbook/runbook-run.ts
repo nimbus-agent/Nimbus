@@ -2,7 +2,10 @@ import type { Database } from "bun:sqlite";
 import { randomBytes } from "node:crypto";
 
 import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
-import { reversibilityClassOf } from "../connectors/connector-writes/reversibility.ts";
+import {
+  reversibilityClassOf,
+  reversibilityConditionOf,
+} from "../connectors/connector-writes/reversibility.ts";
 import type { ConnectorWriteRow } from "../connectors/connector-writes/types.ts";
 import { mcpClientToolKey } from "../connectors/lazy-mesh/tool-map.ts";
 import { RUNBOOK_NAME_RE } from "../engine/incident-link.ts";
@@ -25,6 +28,12 @@ import {
 import { interpolateParams, type RunbookBindings } from "./runbook-interpolate.ts";
 import { loadRunbooks } from "./runbook-loader.ts";
 import type { Runbook, RunbookLoadError, RunbookParams, RunbookStep } from "./runbook-types.ts";
+
+/** `{ reversibleIf }` for a conditionally reversible row, else nothing (the listing shows the class). */
+function conditionOf(row: ConnectorWriteRow | undefined): { reversibleIf?: string } {
+  const c = row === undefined ? undefined : reversibilityConditionOf(row.toolId);
+  return c === undefined ? {} : { reversibleIf: c.condition };
+}
 
 /**
  * Running an owner-authored runbook against an incident record (Phase 10 IC6, incident-engine spec § 5.6,
@@ -104,6 +113,8 @@ export type StepView =
       readonly params: RunbookParams;
       readonly wave: number | null;
       readonly reversibility: string;
+      /** Set when the row is reversible only for some calls: the condition, shown in place of "reversible". */
+      readonly reversibleIf?: string;
       readonly status: string | null;
       readonly actionId: string | null;
     };
@@ -251,6 +262,7 @@ export function createRunbooks(deps: RunbooksDeps) {
       params: s.params,
       wave: row?.wave ?? null,
       reversibility: reversibilityClassOf(row),
+      ...conditionOf(row),
       status,
       actionId,
     };

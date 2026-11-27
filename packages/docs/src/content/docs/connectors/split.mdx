@@ -1,0 +1,48 @@
+---
+title: Split
+description: Index Split feature-flag definitions per workspace, read a split's state in one environment, and kill or restore it behind HITL.
+---
+
+The Split connector (Harness Feature Management & Experimentation) indexes split definitions from your Split workspaces into the local SQLite index and exposes read tools for workspaces, environments, splits and one split's definition in one environment. It also has two writes, a kill and a restore, behind the Gateway HITL gate. Authentication is a Split Admin API key.
+
+---
+
+## What's indexed
+
+- **Service id:** `split`
+- **Item types:** `feature_flag`
+
+The sync walks `GET /workspaces`, then each workspace's `GET /splits/ws/{id}`, 50 splits a page, every 10 minutes. It indexes the split DEFINITION only: name, description, traffic type, tags, rollout status and creation time. At most 50 workspaces and 20 pages (1,000 splits) per workspace are indexed in a pass. The per-environment state (killed or not, treatments, targeting rules) is not indexed; read it live with `split_definition_get`.
+
+## Authenticate
+
+```bash
+nimbus vault set split.api_key
+```
+
+Split has no `nimbus connector auth` flow (that command prints this line); the `vault set` asks for your approval. Stored in the Vault as `split.api_key` and injected at spawn as `SPLIT_ADMIN_API_KEY`. The MCP server sends `Authorization: Bearer <key>` to the fixed host `api.split.io` (`/internal/api/v2`); there is no override. The writes need a key with `API_ALL_GRANTED` or `API_FEATURE_FLAG_EDITOR`.
+
+## Read tools (no HITL)
+
+| Tool | Purpose |
+|---|---|
+| `split_list` | List workspaces, one page of a workspace's splits, or (`collection: "environments"`) its environments. |
+| `split_get` | One split's definition: name, description, traffic type, tags, rollout status (bounded). |
+| `split_search` | Substring search over a workspace's splits (walks at most 1,000). |
+| `split_definition_get` | One split in ONE environment: `killed`, the default treatment, treatments and targeting rules (bounded). |
+
+## Write tools (HITL-gated)
+
+Every tool below requires interactive consent through the Gateway HITL gate before it executes.
+
+| Tool | Purpose |
+|---|---|
+| `split_kill` | Kill a split in ONE environment: every evaluation then serves its default treatment. |
+| `split_restore` | Restore a killed split in ONE environment: its targeting rules apply again. |
+
+Both are Wave 3 writes, offered to the model after `nimbus connector writes enable split` and your approval by name. Their prompts name the environment first (`Production EU: ws-1234/new_checkout`) and show, under `Before:`, whether the split is killed now, the change the call makes, the default treatment, the treatments and the targeting rules. Each is declared the other's inverse (a call that changed nothing has none), but `nimbus incident undo` does not reach these writes yet.
+
+## See also
+
+- [Connectors overview](/connectors/overview/)
+- [HITL and safety](/user-guide/hitl-and-safety/)

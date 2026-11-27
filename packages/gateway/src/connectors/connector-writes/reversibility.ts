@@ -12,6 +12,15 @@ import type {
   ReversibilityClass,
   ReversibilityDecl,
 } from "./types.ts";
+import {
+  SPLIT_CAPTURES,
+  splitDecl,
+  UNLEASH_CAPTURES,
+  UNLEASH_OTHERWISE,
+  UNLEASH_REVERSIBLE_IF,
+  unleashToggleDecl,
+  unleashToggleWhyNot,
+} from "./unleash-split-reversibility.ts";
 
 const asText = (v: unknown): string | undefined =>
   typeof v === "string" || typeof v === "number" || typeof v === "boolean" ? String(v) : undefined;
@@ -115,6 +124,20 @@ function ec2Decl(inverse: string, wasState: string): ReversibilityDecl {
 export type ReversibilityEntry = {
   readonly decl: ReversibilityDecl;
   readonly captures?: BeforeCaptures;
+  /**
+   * A reversible row whose inverse holds only for some calls: `condition` is what a label shows before any
+   * before-read ("reversible only if ..."), `whyNot` the reason THIS call cannot be undone, from its
+   * input and captured before-state (`undefined`: nothing about the service prevents it).
+   */
+  readonly conditional?: {
+    readonly condition: string;
+    /** Why a call outside the condition cannot be undone, for a label shown before any before-read. */
+    readonly otherwise: string;
+    whyNot(
+      input: Readonly<Record<string, unknown>>,
+      captured: Readonly<Record<string, string>>,
+    ): string | undefined;
+  };
 };
 
 const irreversible = (reason: string): ReversibilityEntry => ({
@@ -124,7 +147,8 @@ const irreversible = (reason: string): ReversibilityEntry => ({
 const NO_UNDO = "it cannot be undone through Nimbus";
 
 /**
- * The classification. Reversible: the six rows whose before reader supplies what the inverse needs.
+ * The classification. Reversible: the nine rows whose before reader supplies what the inverse needs
+ * (the Unleash toggle only conditionally, see `unleash-split-reversibility.ts`).
  * Irreversible: a write whose effect Nimbus cannot reverse (a resolve, a merge, a delete, a trigger, an
  * invoke). Every other row is `unknown` (no entry).
  */
@@ -177,6 +201,17 @@ export const REVERSIBILITY_TABLE: Readonly<Record<string, ReversibilityEntry>> =
       },
     },
   },
+  unleash_feature_toggle: {
+    captures: UNLEASH_CAPTURES,
+    decl: unleashToggleDecl(),
+    conditional: {
+      condition: UNLEASH_REVERSIBLE_IF,
+      otherwise: UNLEASH_OTHERWISE,
+      whyNot: unleashToggleWhyNot,
+    },
+  },
+  split_kill: { captures: SPLIT_CAPTURES, decl: splitDecl("split_restore", "false") },
+  split_restore: { captures: SPLIT_CAPTURES, decl: splitDecl("split_kill", "true") },
   aws_ec2_instance_stop: {
     captures: EC2_CAPTURES,
     decl: ec2Decl("aws_ec2_instance_start", "running"),
@@ -315,6 +350,9 @@ export function checkReversibilityTable(
     const d = entry.decl;
     if (d.class !== "reversible") {
       if (entry.captures !== undefined) problems.push(`${toolId}: captures on an irreversible row`);
+      if (entry.conditional !== undefined) {
+        problems.push(`${toolId}: a condition on an irreversible row`);
+      }
       continue;
     }
     problems.push(...reversibleEntryProblems(toolId, d, entry, row, byId));
@@ -349,4 +387,53 @@ export function applyReversibility(
 /** The label of a row: the declared class, or `unknown` (nothing is inferred). */
 export function reversibilityClassOf(row: ConnectorWriteRow | undefined): ReversibilityClass {
   return row?.reversibility?.class ?? "unknown";
+}
+
+const entryOf = (toolId: string): ReversibilityEntry | undefined =>
+  Object.hasOwn(REVERSIBILITY_TABLE, toolId) ? REVERSIBILITY_TABLE[toolId] : undefined;
+
+/** The condition a conditionally reversible row's label names before any before-read, else `undefined`. */
+export function reversibleOnlyIf(toolId: string): string | undefined {
+  return entryOf(toolId)?.conditional?.condition;
+}
+
+/** Why THIS call of a conditionally reversible row cannot be undone, else `undefined`. */
+export function notReversibleBecause(
+  toolId: string,
+  input: Readonly<Record<string, unknown>>,
+  captured: Readonly<Record<string, string>>,
+): string | undefined {
+  return entryOf(toolId)?.conditional?.whyNot(input, captured);
+}
+
+/** Whether THIS call can be undone: a reversible row whose inverse builds from the captured before-state. */
+export function callIsReversible(
+  row: ConnectorWriteRow | undefined,
+  input: unknown,
+  captured: Readonly<Record<string, string>> | undefined,
+): boolean {
+  const d = row?.reversibility;
+  if (d?.class !== "reversible" || captured === undefined) return false;
+  if (typeof input !== "object" || input === null) return false;
+  return d.invert(input as Record<string, unknown>, captured) !== undefined;
+}
+
+/** The condition and the reason behind it, for a label shown before any before-read, else `undefined`. */
+export function reversibilityConditionOf(
+  toolId: string,
+): { readonly condition: string; readonly otherwise: string } | undefined {
+  const c = entryOf(toolId)?.conditional;
+  return c === undefined ? undefined : { condition: c.condition, otherwise: c.otherwise };
+}
+
+/** The undo refusal for a call whose inverse cannot be built: the service's reason when there is one. */
+export function undoRefusalReason(toolId: string, inputJson: string, capturedJson: string): string {
+  const why = notReversibleBecause(
+    toolId,
+    JSON.parse(inputJson) as Record<string, unknown>,
+    JSON.parse(capturedJson) as Record<string, string>,
+  );
+  return why === undefined
+    ? "that call changed nothing, or cannot be reversed from what was recorded"
+    : `irreversible: ${why}`;
 }

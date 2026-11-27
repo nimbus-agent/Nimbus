@@ -106,6 +106,8 @@ type StepLike =
       params: unknown;
       wave: number | null;
       reversibility: string;
+      /** The condition of a row reversible only for some calls (shown in place of "reversible"). */
+      reversibleIf?: string;
       status: string | null;
     };
 
@@ -144,9 +146,10 @@ function paramsText(p: unknown): string {
     .join(" ");
 }
 
-function reversibilityLabel(r: string): string {
+function reversibilityLabel(r: string, reversibleIf: string | undefined): string {
   if (r === "irreversible") return "IRREVERSIBLE";
-  return r === "reversible" ? "reversible" : "reversibility unknown";
+  if (r !== "reversible") return "reversibility unknown";
+  return reversibleIf === undefined ? "reversible" : `reversible only if ${clean(reversibleIf)}`;
 }
 
 function stepLine(s: StepLike): string {
@@ -156,7 +159,7 @@ function stepLine(s: StepLike): string {
     return `${String(s.n)}. read ${clean(s.service)} ${clean(s.tool)} ${paramsText(s.params)}${state}`;
   }
   const wave = s.wave === null ? "" : `, wave ${String(s.wave)}`;
-  return `${String(s.n)}. action [${reversibilityLabel(s.reversibility)}${wave}] ${clean(s.tool)} ${paramsText(s.params)}${state}`;
+  return `${String(s.n)}. action [${reversibilityLabel(s.reversibility, s.reversibleIf)}${wave}] ${clean(s.tool)} ${paramsText(s.params)}${state}`;
 }
 
 /** The runbooks of one record as the owner reads them. Every text the gateway returns is stripped. */

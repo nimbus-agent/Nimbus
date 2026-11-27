@@ -2,7 +2,7 @@
 // Re-run: bun run gen:connector-registry
 //
 // Every first-party connector entrypoint, as a lazy dynamic import. The imports are static enough
-// for the bundler to retain all 97 in the compiled gateway binary, and lazy enough that
+// for the bundler to retain all 99 in the compiled gateway binary, and lazy enough that
 // only the requested connector is ever evaluated.
 
 export const BUNDLED_CONNECTORS: Readonly<Record<string, () => Promise<unknown>>> = {
@@ -88,6 +88,7 @@ export const BUNDLED_CONNECTORS: Readonly<Record<string, () => Promise<unknown>>
   snowflake: () => import("@nimbus-dev/connectors/snowflake"),
   snyk: () => import("@nimbus-dev/connectors/snyk"),
   sonarqube: () => import("@nimbus-dev/connectors/sonarqube"),
+  split: () => import("@nimbus-dev/connectors/split"),
   stackoverflow: () => import("@nimbus-dev/connectors/stackoverflow"),
   storybook: () => import("@nimbus-dev/connectors/storybook"),
   stripe: () => import("@nimbus-dev/connectors/stripe"),
@@ -95,6 +96,7 @@ export const BUNDLED_CONNECTORS: Readonly<Record<string, () => Promise<unknown>>
   tableau: () => import("@nimbus-dev/connectors/tableau"),
   teams: () => import("@nimbus-dev/connectors/teams"),
   testflight: () => import("@nimbus-dev/connectors/testflight"),
+  unleash: () => import("@nimbus-dev/connectors/unleash"),
   vantage: () => import("@nimbus-dev/connectors/vantage"),
   vercel: () => import("@nimbus-dev/connectors/vercel"),
   "vertex-ai": () => import("@nimbus-dev/connectors/vertex-ai"),

@@ -207,6 +207,8 @@ describe("oauthProfileForService — unsupported providers throw structured erro
     "wiz",
     "launchdarkly",
     "flagsmith",
+    "unleash",
+    "split",
     "argocd",
     "flux",
     "dbt",

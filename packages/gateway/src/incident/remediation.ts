@@ -9,7 +9,11 @@ import {
 } from "../connectors/connector-writes/dry-run-predict.ts";
 import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
 import { REMEDIATION_CATALOG } from "../connectors/connector-writes/remediation-catalog.ts";
-import { reversibilityClassOf } from "../connectors/connector-writes/reversibility.ts";
+import {
+  callIsReversible,
+  reversibilityClassOf,
+  undoRefusalReason,
+} from "../connectors/connector-writes/reversibility.ts";
 import type { ConnectorWriteRow } from "../connectors/connector-writes/types.ts";
 import { mcpClientToolKey } from "../connectors/lazy-mesh/tool-map.ts";
 import type { BeforeOnlyOutcome } from "../engine/executor.ts";
@@ -242,8 +246,7 @@ export function createRemediation(deps: RemediationDeps) {
   const mintActionId = deps.newActionId ?? (() => `act_${randomBytes(8).toString("hex")}`);
   const rowOf = (toolId: string): ConnectorWriteRow | undefined =>
     rows.find((r) => r.toolId === toolId);
-  // Proposals this process is running or undoing right now. The store's stale sweeps are for a CRASHED gateway, so
-  // these are excluded however long the owner takes to answer the prompt (a push or a listing runs the sweep too).
+  // Proposals this process is running or undoing now: never swept as a crashed run, however long the prompt waits.
   const inFlight = new Set<string>();
 
   function requireReady(): void {
@@ -313,7 +316,7 @@ export function createRemediation(deps: RemediationDeps) {
         p.status === "executed" &&
         p.undo_status === null &&
         p.captured_json !== null &&
-        decl?.class === "reversible",
+        callIsReversible(row, JSON.parse(p.input_json), JSON.parse(p.captured_json)),
       dryRun: dryRunKindOf(p.tool_id, row?.before !== undefined),
     };
   }
@@ -464,8 +467,7 @@ export function createRemediation(deps: RemediationDeps) {
     try {
       const row = rowOf(stored.tool_id);
       if (row === undefined) throw new Error("the write row for this proposal no longer exists");
-      // The blast radius comes from the derivation that just proved the proposal still offered, not from the
-      // stored row: the owner's `depends_on` may have changed since the proposal was first listed.
+      // The blast radius from the derivation that just proved the proposal offered (depends_on may have changed).
       const action = buildRemediationAction(
         rec.recordId,
         stored.id,
@@ -485,10 +487,8 @@ export function createRemediation(deps: RemediationDeps) {
       const result = await executor.execute(action);
       if (result.status === "ok") {
         const recorded = finishProposal(db, stored.id, "executed", now(), captured);
-        const decl = row.reversibility;
         if (!recorded) {
-          // The write WAS dispatched, so it is reported as executed (never as failed, which would invite a second
-          // run), but the stored row no longer says so: nothing was captured, so it cannot be undone from here.
+          // Dispatched, so reported as executed (never failed: that invites a rerun), but unrecorded: no undo here.
           return {
             proposalId: stored.id,
             actionId,
@@ -504,7 +504,7 @@ export function createRemediation(deps: RemediationDeps) {
           actionId,
           status: "executed",
           nonHuman,
-          undoable: captured !== undefined && decl?.class === "reversible",
+          undoable: callIsReversible(row, JSON.parse(stored.input_json), captured),
         };
       }
       finishProposal(db, stored.id, "denied", now());
@@ -679,7 +679,7 @@ export function createRemediation(deps: RemediationDeps) {
     );
     const inverseRow = rowOf(decl.inverse);
     if (inverseInput === undefined || inverseRow === undefined) {
-      throw refusal("that call changed nothing, or cannot be reversed from what was recorded");
+      throw refusal(undoRefusalReason(stored.tool_id, stored.input_json, stored.captured_json));
     }
     if (!claimUndo(db, p.actionId, now())) {
       throw new RemediationError("ERR_PROPOSAL_BUSY", "an undo of that action is already running");

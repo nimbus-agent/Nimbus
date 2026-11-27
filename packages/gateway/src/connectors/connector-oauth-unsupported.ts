@@ -40,6 +40,8 @@ export const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, strin
   wiz: "uses OAuth client_credentials",
   launchdarkly: "uses an API token",
   flagsmith: "uses an admin API token",
+  unleash: "uses an admin or personal access token",
+  split: "uses an Admin API key",
   argocd: "uses a bearer API token",
   flux: "uses a Kubernetes ServiceAccount token",
   dbt: "uses a dbt Cloud API token",

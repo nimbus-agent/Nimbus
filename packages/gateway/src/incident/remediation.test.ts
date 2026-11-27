@@ -3,32 +3,26 @@
 // `audit replay` reads them back. Advisory mode refuses before any claim, read or prompt.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-
+import {
+  ARGO_REPLY,
+  DEPLOYMENT,
+  type Harness,
+  makeRemediationHarness,
+  NOW,
+  OPENED,
+  pick,
+} from "../../test/helpers/remediation-harness.ts";
 import { chainVerifiers, replayIncident } from "../audit/incident-replay.ts";
-import type { EgressEntry } from "../egress/egress-record.ts";
-import { buildRemediationExecutor } from "../engine/run-ask.ts";
-import type { ConnectorDispatcher, PlannedAction } from "../engine/types.ts";
 import { LocalIndex } from "../index/local-index.ts";
-import type { ConsentCoordinator } from "../ipc/consent.ts";
 import { buildRecord } from "./__fixtures__/record-builder.ts";
-import type { DeploymentView } from "./incident-record-types.ts";
 import { upsertIncidentRecord } from "./incident-store.ts";
 import { getProposal, getProposalByAction, setAdvisory } from "./proposal-store.ts";
-import {
-  blastForPrompt,
-  createRemediation,
-  type MakeExecutor,
-  RemediationError,
-} from "./remediation.ts";
+import { blastForPrompt, createRemediation, RemediationError } from "./remediation.ts";
 
 function must<T>(x: T | undefined): T {
   if (x === undefined) throw new Error("expected a value");
   return x;
 }
-
-const SHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
-const NOW = 5_000_000;
-const OPENED = NOW - 60_000;
 
 let db: Database;
 let localIndex: LocalIndex;
@@ -39,169 +33,8 @@ beforeEach(() => {
 });
 afterEach(() => db.close());
 
-const DEPLOYMENT: DeploymentView = {
-  id: "deployment:d1",
-  title: "Deploy",
-  url: null,
-  provider: "github_actions",
-  environment: "prod",
-  sha: SHA,
-  ref: "main",
-  startedAtMs: OPENED - 1000,
-  finishedAtMs: null,
-  conclusion: "success",
-  minutesBeforeOpen: 1,
-  rule: "last_deployment_before_open",
-};
-
-const ARGO_REPLY = {
-  metadata: { name: "pay-app" },
-  spec: { destination: { server: "https://k", namespace: "pay" } },
-  status: {
-    sync: { status: "Synced", revision: SHA },
-    health: { status: "Healthy" },
-    history: [
-      { id: 7, revision: SHA, deployedAt: "2026-11-10T10:00:00Z" },
-      { id: 6, revision: "b".repeat(40), deployedAt: "2026-11-09T10:00:00Z" },
-      { id: 5, revision: "c".repeat(40) },
-    ],
-  },
-};
-
-type Harness = {
-  readonly svc: ReturnType<typeof createRemediation>;
-  readonly prompts: string[];
-  readonly confirms: string[];
-  readonly dispatched: PlannedAction[];
-  readonly egress: EgressEntry[];
-  readonly recordId: string;
-  setAnswer(a: { approved: boolean; source?: string }): void;
-  makeCalls(): number;
-};
-
-function harness(
-  opts: {
-    deployment?: boolean;
-    now?: () => number;
-    onPrompt?: () => void;
-    dependsOn?: () => ReadonlyMap<string, readonly string[]>;
-  } = {},
-): Harness {
-  const prompts: string[] = [];
-  const confirms: string[] = [];
-  const dispatched: PlannedAction[] = [];
-  const egress: EgressEntry[] = [];
-  let answer: { approved: boolean; source: string } = { approved: true, source: "human" };
-  let makes = 0;
-  const coordinator: ConsentCoordinator = {
-    requestConsent: async (_c, p) => {
-      prompts.push(p.prompt);
-      opts.onPrompt?.();
-      return { approved: answer.approved, answerSource: answer.source as "human" };
-    },
-    requestConfirmedConsent: async (_c, p) => {
-      prompts.push(p.prompt);
-      confirms.push(p.confirmText);
-      opts.onPrompt?.();
-      return {
-        approved: answer.approved,
-        typed: p.confirmText,
-        answerSource: answer.source as "human",
-      };
-    },
-    rejectAllPending(): void {},
-    pendingCount: () => 0,
-  };
-  const dispatcher: ConnectorDispatcher = {
-    async dispatch(action) {
-      dispatched.push(action);
-      if (action.type === "argocd.before.read") return ARGO_REPLY;
-      return { status: "requested" };
-    },
-  };
-  const makeExecutor: MakeExecutor = ({ clientId, onCaptured, onNonHuman, dryRun }) => {
-    makes += 1;
-    const wrapped: ConsentCoordinator = {
-      ...coordinator,
-      requestConsent: async (c, p) => {
-        const a = await coordinator.requestConsent(c, p);
-        if (a.approved && a.answerSource !== "human") {
-          onNonHuman();
-          return { approved: false, answerSource: a.answerSource };
-        }
-        return a;
-      },
-      requestConfirmedConsent: async (c, p) => {
-        const a = await coordinator.requestConfirmedConsent(c, p);
-        if (a.approved && a.answerSource !== "human") {
-          onNonHuman();
-          return { approved: false, typed: "", answerSource: a.answerSource };
-        }
-        return a;
-      },
-    };
-    return buildRemediationExecutor({
-      clientId,
-      consentCoordinator: wrapped,
-      localIndex,
-      dispatcher,
-      egressSink: { append: (e) => egress.push(e) },
-      getTribalKbConfig: () => undefined,
-      onCaptured,
-      dryRun: dryRun === true,
-    });
-  };
-  const base = buildRecord({ boundService: "payments", openedAtMs: OPENED });
-  const record =
-    opts.deployment === false
-      ? base
-      : { ...base, change: { ...base.change, deployment: DEPLOYMENT } };
-  const up = upsertIncidentRecord(db, {
-    record,
-    markdown: "m",
-    recordSha256: "h",
-    citedServices: [],
-    nowMs: 1,
-  });
-  db.run(
-    `INSERT INTO item (id, service, type, external_id, title, modified_at, metadata, synced_at)
-     VALUES ('argocd:pay-app', 'argocd', 'application', 'pay-app', 'pay-app', 1, ?, 1)`,
-    [
-      JSON.stringify({
-        history: ARGO_REPLY.status.history.map((h) => ({ id: h.id, revision: h.revision })),
-      }),
-    ],
-  );
-  const svc = createRemediation({
-    db,
-    makeExecutor,
-    bindingsFor: () => ({ argocdApps: ["pay-app"], deployEnvironments: ["prod"] }),
-    dependsOn: opts.dependsOn ?? (() => new Map([["checkout", ["payments"]]])),
-    now: opts.now ?? (() => NOW),
-    newActionId: (() => {
-      let n = 0;
-      return () => `act_${String(++n).padStart(16, "0")}`;
-    })(),
-  });
-  return {
-    svc,
-    prompts,
-    confirms,
-    dispatched,
-    egress,
-    recordId: up.recordId,
-    setAnswer: (a) => {
-      answer = { approved: a.approved, source: a.source ?? "human" };
-    },
-    makeCalls: () => makes,
-  };
-}
-
-const pick = (h: Harness, kind: string): string => {
-  const p = h.svc.proposals(h.recordId).proposals.find((x) => x.kind === kind);
-  if (p === undefined) throw new Error(`no ${kind} proposal`);
-  return p.id;
-};
+const harness = (opts: Parameters<typeof makeRemediationHarness>[2] = {}): Harness =>
+  makeRemediationHarness(db, localIndex, opts);
 
 describe("the bad-deploy rollback, end to end through the real gate", () => {
   test("lists the rollback with its label, confidence and the fixed dry-run line", () => {
@@ -1096,5 +929,39 @@ describe("blastForPrompt (the names a prompt may carry)", () => {
     for (const b of bad) {
       expect(blastForPrompt(b, false)).toEqual({ unverified: true, recorded: false });
     }
+  });
+});
+
+describe("undoable is judged per call, from the stored capture", () => {
+  const rollbackView = (h: Harness, id: string) =>
+    h.svc.proposals(h.recordId).proposals.find((p) => p.id === id);
+
+  test("a rollback whose capture already shows the target id builds no inverse: not undoable on either path", async () => {
+    // The application is already at history id 6, the id the rollback asks for.
+    const history = ARGO_REPLY.status.history.slice(1);
+    const h = harness({ argoReply: { ...ARGO_REPLY, status: { ...ARGO_REPLY.status, history } } });
+    const id = pick(h, "rollback_deploy");
+    const out = await h.svc.remediate({ ref: h.recordId, proposalId: id, clientId: "cli-1" });
+    expect(out).toMatchObject({ status: "executed", undoable: false });
+    expect(JSON.parse(getProposal(db, id)?.captured_json ?? "{}")["currentHistoryId"]).toBe("6");
+    expect(rollbackView(h, id)).toMatchObject({ status: "executed", undoable: false });
+  });
+
+  test("an executed rollback read back through proposals() is undoable, and stays so with the older capture shape", async () => {
+    const h = harness();
+    const id = pick(h, "rollback_deploy");
+    await h.svc.remediate({ ref: h.recordId, proposalId: id, clientId: "cli-1" });
+    expect(rollbackView(h, id)).toMatchObject({ status: "executed", undoable: true });
+    // A row recorded before the dry-run keys existed holds only what the inverse needs.
+    db.run("UPDATE incident_proposal SET captured_json = ? WHERE id = ?", [
+      JSON.stringify({ currentHistoryId: "7" }),
+      id,
+    ]);
+    expect(rollbackView(h, id)).toMatchObject({ status: "executed", undoable: true });
+    db.run("UPDATE incident_proposal SET captured_json = ? WHERE id = ?", [
+      JSON.stringify({ currentHistoryId: "6" }),
+      id,
+    ]);
+    expect(rollbackView(h, id)?.undoable).toBe(false);
   });
 });

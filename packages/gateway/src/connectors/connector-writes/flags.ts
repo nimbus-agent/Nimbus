@@ -39,7 +39,7 @@ function jsonText(v: unknown): string | undefined {
 const pct = (n: number): string => `${String(n)}%`;
 
 /** The `Change` line for a boolean switch: what the write does against the current state. */
-function switchChange(now: boolean | undefined, wanted: unknown): string | undefined {
+export function switchChange(now: boolean | undefined, wanted: unknown): string | undefined {
   if (now === undefined || typeof wanted !== "boolean") return undefined;
   if (wanted === now) return `no change (already ${now ? "on" : "off"})`;
   return wanted ? "turns it ON (it is off now)" : "turns it OFF (it is on now)";

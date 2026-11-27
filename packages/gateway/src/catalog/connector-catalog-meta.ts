@@ -132,6 +132,8 @@ export const CONNECTOR_CATALOG_META = Object.freeze({
     "feature-flags",
     "An open-source feature flag and remote config service",
   ),
+  unleash: m("Unleash", "feature-flags", "An open-source, self-hosted feature flag service"),
+  split: m("Split", "feature-flags", "A feature flag and experimentation service"),
   argocd: m("Argo CD", "gitops", "A GitOps continuous delivery tool for Kubernetes"),
   flux: m("Flux", "gitops", "A GitOps toolkit that syncs Kubernetes clusters from Git"),
   dbt: m("dbt", "data", "A tool for transforming data in a warehouse with SQL models"),

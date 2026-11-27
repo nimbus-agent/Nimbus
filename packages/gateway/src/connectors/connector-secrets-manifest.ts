@@ -57,6 +57,10 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   wiz: ["wiz.client_id", "wiz.client_secret", "wiz.api_url", "wiz.auth_url"],
   launchdarkly: ["launchdarkly.token", "launchdarkly.base_url", "launchdarkly.project_key"],
   flagsmith: ["flagsmith.token", "flagsmith.api_base"],
+  // Unleash is self-hosted: the instance URL is required (no default), beside the admin or personal
+  // access token. Split is SaaS only (api.split.io): its Admin API key alone.
+  unleash: ["unleash.api_url", "unleash.token"],
+  split: ["split.api_key"],
   argocd: ["argocd.url", "argocd.token"],
   flux: ["flux.api_url", "flux.token"],
   dbt: ["dbt.token", "dbt.api_base", "dbt.account_id"],

@@ -1,12 +1,12 @@
 // I53: the census of the production rows with a before-state reader, split by wave. Moved out of
 // `i53-model-write-door.test.ts` (whose size is locked by `audit:file-size`), unchanged except
-// for the connectors 0.19.0 and 0.20.0 rows.
+// for the connectors 0.19.0, 0.20.0 and 0.22.0 rows.
 import { describe, expect, test } from "bun:test";
 
 import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
 
 describe("I53 — the production before-state readers (census)", () => {
-  test("the production rows with a before reader are B1's seven comment rows, B2's nine issue writes, B3's five page writes, B4a's Drive create, B4b's Obsidian append (all wave 2), C1's eight wave-3 file, pull request and incident writes, C2's four wave-3 branch, pull request and merge request writes and C3's five wave-3 flag and alert writes, D1's 28 wave-4 rows (27 offered, plus the never-offered Bitbucket merge) and D3b's seven deploy and mobile-release rows and D3c's two Kubernetes rows and SA2's Gmail thread archive, and the wave-2 Bitbucket pull request comment, and the ten wave-2 writes of connectors 0.19.0, and the Google Calendar update (wave 2) and delete (wave 4) of connectors 0.20.0", () => {
+  test("the production rows with a before reader are B1's seven comment rows, B2's nine issue writes, B3's five page writes, B4a's Drive create, B4b's Obsidian append (all wave 2), C1's eight wave-3 file, pull request and incident writes, C2's four wave-3 branch, pull request and merge request writes and C3's five wave-3 flag and alert writes and the three wave-3 Unleash and Split writes of connectors 0.22.0, D1's 28 wave-4 rows (27 offered, plus the never-offered Bitbucket merge) and D3b's seven deploy and mobile-release rows and D3c's two Kubernetes rows and SA2's Gmail thread archive, and the wave-2 Bitbucket pull request comment, and the ten wave-2 writes of connectors 0.19.0, and the Google Calendar update (wave 2) and delete (wave 4) of connectors 0.20.0", () => {
     const withReader = CONNECTOR_WRITE_ROWS.filter((r) => r.before !== undefined);
     const D1_WAVE4 = [
       "apple_calendar_event_delete",
@@ -115,6 +115,9 @@ describe("I53 — the production before-state readers (census)", () => {
       "pd_incident_acknowledge",
       "pd_incident_escalate",
       "pd_incident_resolve",
+      "split_kill",
+      "split_restore",
+      "unleash_feature_toggle",
     ]);
     expect(
       withReader
@@ -139,6 +142,9 @@ describe("I53 — the production before-state readers (census)", () => {
       "pd_incident_acknowledge",
       "pd_incident_escalate",
       "pd_incident_resolve",
+      "split_kill",
+      "split_restore",
+      "unleash_feature_toggle",
     ]);
   });
 });

@@ -155,11 +155,13 @@ describe("listFirstPartyServerTools", () => {
     expect(ensures()).toBe(1);
   });
 
-  // C3: LaunchDarkly and Flagsmith run in the phase-3 bundle, so they list through the spawner's
-  // own credential check (`phase3AddLaunchdarklyMcp` / `phase3AddFlagsmithMcp`: a token).
-  for (const [service, secret, tool] of [
-    ["launchdarkly", "launchdarkly.token", "launchdarkly_flag_toggle"],
-    ["flagsmith", "flagsmith.token", "flagsmith_feature_state_set"],
+  // The flag services run in the phase-3 bundle: listed through the spawner's own credential check.
+  const UNLEASH = { "unleash.api_url": "https://u.example.com", "unleash.token": "v" };
+  for (const [service, secrets, tool] of [
+    ["launchdarkly", { "launchdarkly.token": "v" }, "launchdarkly_flag_toggle"],
+    ["flagsmith", { "flagsmith.token": "v" }, "flagsmith_feature_state_set"],
+    ["unleash", UNLEASH, "unleash_feature_toggle"],
+    ["split", { "split.api_key": "v" }, "split_kill"],
   ] as const) {
     test(`${service}: configured lists its phase-3 slot and ensures the bundle; unconfigured lists nothing`, async () => {
       const slots = {
@@ -167,7 +169,7 @@ describe("listFirstPartyServerTools", () => {
           [tool]: { description: "w", inputSchema: SCHEMA, execute: async () => ({}) },
         },
       };
-      const on = await build({ secrets: { [secret]: "v" }, slots });
+      const on = await build({ secrets, slots });
       const out = await on.m.listFirstPartyServerTools(service);
       expect(Object.keys(out ?? {})).toEqual([tool]);
       expect(on.calls).toEqual(["ensurePhase3BundleRunning"]);
@@ -207,8 +209,7 @@ describe("listFirstPartyServerTools", () => {
   });
 
   test("a service with write rows but no map entry fails closed, even inside a running bundle", async () => {
-    // A service outside the listing map is never listed, even with a configured slot (the map is
-    // the only way in). `datadog` has no write rows and no map entry.
+    // Outside the listing map (the only way in) nothing is listed: `datadog` has no write rows, no entry.
     const { m, ensures } = await build({
       secrets: { "datadog.api_key": "u" },
       slots: {
@@ -446,8 +447,7 @@ describe("listFirstPartyServerTools: wave-2 services on their own slots", () => 
     });
   }
 
-  // D3b: the deploy triggers and mobile release run in the phase-3 bundle, so each lists through
-  // the spawner's own credential check (no predicate in service-credential.ts is needed).
+  // D3b: the deploy and mobile-release services list through the phase-3 spawner's own check.
   const D3B_SERVICES = [
     {
       service: "vercel",

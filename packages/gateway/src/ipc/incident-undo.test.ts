@@ -24,7 +24,20 @@ const rowWith = (toolId: string, cls: "reversible" | "irreversible"): ConnectorW
         ? { class: "reversible", inverse: "x", invert: () => ({}) }
         : { class: "irreversible", reason: "r" },
   }) as unknown as ConnectorWriteRow;
-const ROWS = [rowWith("rev_tool", "reversible"), rowWith("irrev_tool", "irreversible")];
+/** A reversible row whose inverse builds only from a capture of `{ k: "v" }` (anything else: a no-op call). */
+const CONDITIONAL = {
+  toolId: "cond_tool",
+  reversibility: {
+    class: "reversible",
+    inverse: "cond_tool",
+    invert: (_i: unknown, c: Record<string, string>) => (c["k"] === "v" ? {} : undefined),
+  },
+} as unknown as ConnectorWriteRow;
+const ROWS = [
+  rowWith("rev_tool", "reversible"),
+  rowWith("irrev_tool", "irreversible"),
+  CONDITIONAL,
+];
 
 function freshDb(): Database {
   const db = new Database(":memory:");
@@ -32,7 +45,13 @@ function freshDb(): Database {
   return db;
 }
 
-function run(db: Database, n: number, toolId: string, at: number, captured: boolean): string {
+function run(
+  db: Database,
+  n: number,
+  toolId: string,
+  at: number,
+  captured: boolean | Record<string, string>,
+): string {
   const id = `prp_${String(n).padStart(16, "0")}`;
   const draft: ProposalDraft = {
     id,
@@ -46,7 +65,8 @@ function run(db: Database, n: number, toolId: string, at: number, captured: bool
   syncProposals(db, { recordId: REC, version: 1, drafts: [draft], nowMs: 1, revive: false });
   const actionId = `act_${String(n).padStart(16, "0")}`;
   expect(claimProposal(db, id, actionId, 2)).toEqual({ ok: true });
-  finishProposal(db, id, "executed", at, captured ? { k: "v" } : undefined);
+  const capture = captured === true ? { k: "v" } : captured === false ? undefined : captured;
+  finishProposal(db, id, "executed", at, capture);
   return actionId;
 }
 
@@ -80,6 +100,17 @@ describe("latestUndoableActionId", () => {
     claimUndo(db, retry, 510);
     finishUndo(db, retry, "retry", 520);
     expect(latestUndoableActionId(db, ROWS)).toBe(retry);
+  });
+
+  test("skips a newer call whose capture builds no inverse (a no-op), choosing the older undoable one", () => {
+    const db = freshDb();
+    const older = run(db, 1, "cond_tool", 100, true);
+    run(db, 2, "cond_tool", 200, { k: "no-op" });
+    expect(latestUndoableActionId(db, ROWS)).toBe(older);
+    // A stored capture or input that is not JSON is not undoable either.
+    const bad = run(db, 3, "cond_tool", 300, true);
+    db.run("UPDATE incident_proposal SET captured_json = ? WHERE action_id = ?", ["{", bad]);
+    expect(latestUndoableActionId(db, ROWS)).toBe(older);
   });
 
   test("only an executed run stamps executed_at_ms", () => {

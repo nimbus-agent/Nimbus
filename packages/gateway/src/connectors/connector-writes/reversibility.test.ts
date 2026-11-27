@@ -45,7 +45,7 @@ function invert(
   return d.invert(input, captured);
 }
 
-describe("reversibility: the six reversible rows, each proven by a recorded before-state (D-IC-4)", () => {
+describe("reversibility: six reversible rows, each proven by a recorded before-state (D-IC-4; the 0.22.0 flag rows in unleash-split-rows.test.ts)", () => {
   const ld = {
     on: true,
     variations: [{ id: "v1", name: "On" }],
@@ -262,7 +262,7 @@ describe("reversibility: the irreversible rows and the default", () => {
     expect(d?.class === "irreversible" && d.reason.length > 0).toBe(true);
   });
 
-  test("the table holds exactly the six reversible and these irreversible rows (a census)", () => {
+  test("the table holds exactly the nine reversible and these irreversible rows (a census)", () => {
     const reversible = Object.entries(REVERSIBILITY_TABLE)
       .filter(([, e]) => e.decl.class === "reversible")
       .map(([id]) => id)
@@ -274,6 +274,9 @@ describe("reversibility: the irreversible rows and the default", () => {
       "aws_ecs_service_update",
       "flagsmith_feature_state_set",
       "launchdarkly_flag_toggle",
+      "split_kill",
+      "split_restore",
+      "unleash_feature_toggle",
     ]);
     const irr = Object.entries(REVERSIBILITY_TABLE)
       .filter(([, e]) => e.decl.class === "irreversible")

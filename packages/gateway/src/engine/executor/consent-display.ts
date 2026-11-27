@@ -5,6 +5,7 @@ import {
   type PreviewPlan,
   renderConnectorWritePreviewLines,
 } from "../../connectors/connector-writes/preview.ts";
+import { reversibilityConditionForType } from "../../connectors/connector-writes/reversibility-label.ts";
 import type { PreviewCredentialResolver } from "../../connectors/connector-writes/types.ts";
 import { isAgentOrigin, isModelOrigin } from "../outside-origin.ts";
 import {
@@ -213,12 +214,21 @@ export function formatConsentPrompt(
   return [body, "", ...formatProposerBlock(action.proposer)].join("\n");
 }
 
-function reversibilityPromptLine(p: EngineProposal): string {
+/** A conditionally reversible row's label: never plain "reversible" before the call's own before-state. */
+function conditionalLine(actionType: string, tail: string): string | undefined {
+  const c = reversibilityConditionForType(actionType);
+  return c === undefined
+    ? undefined
+    : `Reversibility: reversible only if ${c.condition}${tail}; otherwise IRREVERSIBLE - ${c.otherwise}`;
+}
+
+function reversibilityPromptLine(p: EngineProposal, actionType: string): string {
   if (p.reversibility === "irreversible") {
     return "Reversibility: IRREVERSIBLE - this cannot be undone through Nimbus";
   }
   return p.reversibility === "reversible"
-    ? "Reversibility: reversible - nimbus incident undo can reverse it"
+    ? (conditionalLine(actionType, " (nimbus incident undo can reverse it then)") ??
+        "Reversibility: reversible - nimbus incident undo can reverse it")
     : "Reversibility: unknown - Nimbus does not know whether this can be undone";
 }
 
@@ -255,7 +265,7 @@ function blastPromptLines(p: EngineProposal): string[] {
   return [first, `Depends on it: ${b.dependents.join(", ")}${more}`];
 }
 
-function runbookStepPromptLines(r: RunbookStepRef): string[] {
+function runbookStepPromptLines(r: RunbookStepRef, actionType: string): string[] {
   const first = `Proposed by: runbook ${r.runbook}, step ${String(r.step)}`;
   if (r.kind === "read") return [first];
   if (r.reversibility === "irreversible") {
@@ -264,7 +274,7 @@ function runbookStepPromptLines(r: RunbookStepRef): string[] {
   return [
     first,
     r.reversibility === "reversible"
-      ? "Reversibility: reversible (declared); nimbus incident undo does not reverse a runbook step"
+      ? `${conditionalLine(actionType, " (declared)") ?? "Reversibility: reversible (declared)"}; nimbus incident undo does not reverse a runbook step`
       : "Reversibility: unknown - Nimbus does not know whether this can be undone",
   ];
 }
@@ -283,13 +293,15 @@ function consentPromptHeaderLines(action: PlannedAction): string[] {
   if (action.engineProposal !== undefined) {
     lines.push(
       "Proposed by: the incident engine",
-      reversibilityPromptLine(action.engineProposal),
+      reversibilityPromptLine(action.engineProposal, action.type),
       ...blastPromptLines(action.engineProposal),
     );
   }
   // IC6 (I57 (c)): a step of an owner-authored runbook names the runbook and the step (the name is checked
   // against `RUNBOOK_NAME_RE` by the gate's link check, so it carries no control text). Gateway-set.
-  if (action.runbookStep !== undefined) lines.push(...runbookStepPromptLines(action.runbookStep));
+  if (action.runbookStep !== undefined) {
+    lines.push(...runbookStepPromptLines(action.runbookStep, action.type));
+  }
   return lines;
 }
 

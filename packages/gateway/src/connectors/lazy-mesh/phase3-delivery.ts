@@ -260,3 +260,44 @@ export async function phase3AddFluxMcp(
     sandboxCwd,
   );
 }
+
+/**
+ * Unleash is self-hosted: both the instance URL and the token are required, and the URL's host is
+ * the connector's only network entry, labelled as the owner's (the first-party manifest lists none).
+ * The connector itself refuses a URL that is not https (plain http only to a loopback host).
+ */
+export async function phase3AddUnleashMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  const apiUrl = (await readConnectorSecret(vault, "unleash", "api_url"))?.trim() ?? "";
+  const tok = (await readConnectorSecret(vault, "unleash", "token"))?.trim() ?? "";
+  if (apiUrl === "" || tok === "") {
+    return;
+  }
+  const hosts = storedUrlHosts("unleash", apiUrl);
+  const manifest = manifestWithExtraNetworkHosts("unleash", hosts, { ownerConfigured: hosts });
+  servers["unleash"] = wrapServerSpec(
+    {
+      ...connectorSpawn("unleash"),
+      env: extensionProcessEnv({ UNLEASH_API_URL: apiUrl, UNLEASH_API_TOKEN: tok }),
+    },
+    manifest,
+    sandboxCwd,
+  );
+}
+
+/** Split is SaaS only: the Admin API key, against the fixed host api.split.io (no override). */
+export async function phase3AddSplitMcp(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+): Promise<void> {
+  await addSimpleTokenServer(vault, servers, sandboxCwd, {
+    serviceId: "split",
+    script: "split",
+    secretKey: "api_key",
+    envKey: "SPLIT_ADMIN_API_KEY",
+  });
+}
