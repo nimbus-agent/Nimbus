@@ -2,6 +2,14 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [11.20.0](https://github.com/nimbus-agent/Nimbus/compare/v11.19.0...v11.20.0) (2026-11-27)
+
+
+### Features
+
+* **connectors:** iac_terraform_init, the new infra reads and connectors 0.21.0 ([#2188](https://github.com/nimbus-agent/Nimbus/issues/2188)) ([46d701b](https://github.com/nimbus-agent/Nimbus/commit/46d701bf29ab3049636d1e6961b08d99b3d5b4aa))
+* OpenAI and Anthropic costs as cost lines (Phase 7, slice 6) ([#2189](https://github.com/nimbus-agent/Nimbus/issues/2189)) ([3c59481](https://github.com/nimbus-agent/Nimbus/commit/3c5948103d7218ff89fefdc69e4b8d15b46aa551))
+
 ## [11.19.0](https://github.com/nimbus-agent/Nimbus/compare/v11.18.0...v11.19.0) (2026-11-27)
 
 > **Never published — superseded by 11.20.0.** This tag's release gate failed on connector
