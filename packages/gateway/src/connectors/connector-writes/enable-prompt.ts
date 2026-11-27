@@ -67,7 +67,7 @@ function obsidianScopeLines(scope: unknown): string[] | undefined {
 export const IAC_CODE_LINE =
   "Terraform runs the code in these directories (providers, provisioners, external data sources) with the credential below and write access to them; Nimbus does not read or police it. A directory with a Git repository in or beneath it is refused: point Terraform at a subdirectory without one.";
 export const IAC_NO_DOWNLOAD_LINE =
-  "Plans and applies download nothing. Only the Terraform init, never offered to the model, may download providers and modules, from registry.terraform.io, releases.hashicorp.com and the extra hosts you list.";
+  "Plans and applies download nothing. Only the Terraform init, never offered to the model, may download providers and modules; where hosts are enforced it reaches registry.terraform.io, releases.hashicorp.com, the granted clouds' hosts (storage included) and the extra hosts you list, and elsewhere as the posture above says.";
 export const IAC_EACH_APPLY_LINE =
   "Each apply will still show the plan and ask you to type the target.";
 const IAC_HOST_SCOPE_LINES: Readonly<Record<string, string>> = {
