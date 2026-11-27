@@ -8,8 +8,9 @@
 //
 // UNVERIFIED (OR-D2 stated bound): the host lists are drawn from the vendors' documented endpoints.
 // No credentialed plan was run against a real account, so a provider that needs another host fails
-// closed on Linux (the forwarder refuses it) and the owner adds it with `--net`. The registry hosts
-// are granted to the `init` child alone (connectors 0.21.0); no other child downloads code.
+// closed on Linux (the forwarder refuses it) and the owner adds it with `--net`. Only the `init`
+// child (connectors 0.21.0) adds the registry hosts automatically; plan and apply get them only
+// through an owner's explicit `--net`.
 import type { IacCloud } from "./iac-grants.ts";
 
 /** The names (never the values) of the variables each cloud's credential reaches the child in. */
