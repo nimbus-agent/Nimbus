@@ -14,7 +14,7 @@ export function nullOptionalFieldRefusal(key: string): string {
   return `the field \`${key}\` cannot be null; omit it or give a value`;
 }
 
-/** The optional input keys of each B4a row, the Flagsmith state set (C3), three D3b rows and the Bitbucket comment, whose `null` the doors refuse. */
+/** The optional input keys of each B4a row, the Flagsmith state set (C3), three D3b rows, the Bitbucket comment and three 0.19.0 rows, whose `null` the doors refuse. */
 const NULL_REFUSED_OPTIONAL_KEYS: Readonly<Record<string, readonly string[]>> = {
   outlook_calendar_create: ["timeZone", "attendees", "body"],
   apple_calendar_event_create: ["calendar", "attendees", "location", "description", "uid"],
@@ -26,6 +26,12 @@ const NULL_REFUSED_OPTIONAL_KEYS: Readonly<Record<string, readonly string[]>> = 
   firebase_app_distribution_distribute: ["groupAliases", "testerEmails"],
   // Connectors PR 106: a null file or line would render "(not set: ...)" yet fail the schema.
   bitbucket_pr_comment_create: ["path", "line"],
+  // Connectors 0.19.0: a null title, body or description would render "(not set: unchanged)" yet
+  // fail the schema; a null comments or commitId likewise. Not `jira_issue_assign`'s `accountId`,
+  // which is required and whose `null` means "unassign" (the preview says so).
+  github_issue_update: ["title", "body"],
+  gitlab_issue_update: ["title", "description"],
+  github_pr_review_create: ["comments", "commitId"],
 };
 
 /** The optional keys whose `null` is refused for `toolId` (read-only, for its drift test). */

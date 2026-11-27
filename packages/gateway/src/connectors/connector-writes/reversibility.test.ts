@@ -237,6 +237,7 @@ describe("reversibility: the irreversible rows and the default", () => {
     "gitlab_mr_merge",
     "bitbucket_pr_merge",
     "bitbucket_pr_comment_create",
+    "github_pr_review_create",
     "github_branch_delete",
     "onedrive_item_delete",
     "outlook_calendar_delete",

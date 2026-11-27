@@ -118,10 +118,7 @@ function serverCtx(
 
 const NOTE = { kind: "note", payload: { title: "t", body: "b" } };
 
-/**
- * A dispatcher for the act door's per-type tests: a before-read FAILS (so a row with a reader shows
- * `Before: unavailable (failed)`, deterministically) and every write answers `reply`.
- */
+/** The act door's per-type dispatcher: a before-read FAILS (`Before: unavailable (failed)`), a write answers `reply`. */
 function failingReads(dispatched: PlannedAction[], reply: unknown): ConnectorDispatcher {
   return {
     dispatch: (a) => {
@@ -1972,10 +1969,7 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
         .get() as { n: number }
     ).n;
 
-  /**
-   * A fixture whose proposal is larger than the capture payload cap: the act door rejects it as
-   * invalid before any destination check (B3w's 1,000,000-character send is one).
-   */
+  /** A proposal over the capture payload cap, rejected as invalid before any destination check (B3w's big send). */
   const overCap = (k: RemoteContentDoorCase): boolean =>
     new TextEncoder().encode(
       JSON.stringify({ actionType: typeOf(k), input: k.input, summary: "why" }),
@@ -1992,10 +1986,13 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
       "confluence.page.update",
       "github.issue.comment.create",
       "github.issue.create",
+      "github.issue.update",
       "github.pr.create",
+      "github.pr.review.create",
       "github.pr.update",
       "gitlab.issue.create",
       "gitlab.issue.note.create",
+      "gitlab.issue.update",
       "gitlab.mr.create",
       "gitlab.mr.note.create",
       "gitlab.mr.update",
