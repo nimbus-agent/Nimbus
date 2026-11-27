@@ -39,14 +39,23 @@ function utcDay(v: unknown): string | null {
   if (typeof v !== "string") return null;
   const m = DAY_RE.exec(v);
   if (m === null) return null;
-  const day = v.length === 10 ? `${v}T00:00:00Z` : v;
-  const t = Date.parse(day);
+  // A date, or a date-time with no zone, is the date as written (never read in the machine's zone).
+  if (v.length === 10 || !/(?:Z|[+-]\d{2}:?\d{2})$/i.test(v)) {
+    const d = v.slice(0, 10);
+    return Number.isFinite(Date.parse(`${d}T00:00:00Z`)) ? d : null;
+  }
+  const t = Date.parse(v);
   return Number.isFinite(t) ? new Date(t).toISOString().slice(0, 10) : null;
 }
 
 type Parsed = { day: string; line: CostLine };
 
-function parseItem(raw: unknown, org: string, month: string): Parsed | GithubBillingDropReason {
+function parseItem(
+  raw: unknown,
+  org: string,
+  month: string,
+  lastDay: string,
+): Parsed | GithubBillingDropReason {
   if (!isRecord(raw)) return "malformed";
   const day = utcDay(raw["date"]);
   const product = text(raw["product"]);
@@ -56,7 +65,7 @@ function parseItem(raw: unknown, org: string, month: string): Parsed | GithubBil
   if (day === null || product === null || sku === null || net === null) return "malformed";
   const named = raw["organizationName"];
   if (typeof named === "string" && named.toLowerCase() !== org) return "other_org";
-  if (day.slice(0, 7) !== month) return "outside_month";
+  if (day.slice(0, 7) !== month || day > lastDay) return "outside_month";
   const repo = raw["repositoryName"];
   const line: CostLine = {
     source: GITHUB_BILLING_SOURCE,
@@ -86,11 +95,15 @@ function parseItem(raw: unknown, org: string, month: string): Parsed | GithubBil
   return { day, line };
 }
 
-/** The cost lines of one organization's usage report for `month` (`YYYY-MM`). */
+/**
+ * The cost lines of one organization's usage report for `month` (`YYYY-MM`). A row dated after `lastDay`
+ * (`YYYY-MM-DD`, default: no limit) is dropped as outside the month: the sync replaces days up to today only.
+ */
 export function githubBillingLines(
   org: string,
   month: string,
   usageItems: unknown,
+  lastDay = "9999-12-31",
 ): GithubBillingMapResult {
   const account = org.toLowerCase();
   const dropped: Record<GithubBillingDropReason, number> = {
@@ -100,7 +113,7 @@ export function githubBillingLines(
   };
   const merged = new Map<string, CostLine>();
   for (const raw of Array.isArray(usageItems) ? (usageItems as unknown[]) : []) {
-    const p = parseItem(raw, account, month);
+    const p = parseItem(raw, account, month, lastDay);
     if (typeof p === "string") {
       dropped[p]++;
       continue;

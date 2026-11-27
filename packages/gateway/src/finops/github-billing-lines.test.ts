@@ -103,4 +103,22 @@ describe("githubBillingLines", () => {
     expect(githubBillingLines("acme", "2026-11", { usageItems: [] }).lines).toEqual([]);
     expect(githubBillingLines("acme", "2026-11", undefined).lines).toEqual([]);
   });
+
+  test("a date-time with no zone is the date as written; a day after lastDay is outside the month", () => {
+    const { lines, dropped } = githubBillingLines(
+      "acme",
+      "2026-11",
+      [
+        row({ date: "2026-11-01T00:00:00" }),
+        row({ date: "2026-11-20T23:30:00-05:00", repositoryName: "acme/web" }),
+        row({ date: "2026-11-28", repositoryName: "acme/late" }),
+      ],
+      "2026-11-27",
+    );
+    expect(lines.map((l) => [l.chargeDay, l.repo])).toEqual([
+      ["2026-11-01", "acme/checkout"],
+      ["2026-11-21", "acme/web"],
+    ]);
+    expect(dropped.outside_month).toBe(1);
+  });
 });

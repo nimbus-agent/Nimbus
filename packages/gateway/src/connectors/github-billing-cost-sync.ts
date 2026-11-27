@@ -11,7 +11,7 @@
 // (`finops/github-billing-lines.ts`) and are written only through `replaceCostLinesForMonth` (D24), which
 // binds the source to this service. The cursor codec lives in `finops/cost-source-gaps.ts`, which also
 // reads the gaps for the cost views. A 403 without rate-limit headers or a 404 is a GAP for that org (kept in
-// the cursor, shown by the cost views and `connector status`), never a retry loop; a rate-limit 403 penalises
+// the cursor and shown in every cost view's freshness), never a retry loop; a rate-limit 403 penalises
 // the shared `github` limiter; a 5xx writes nothing and the next daily run tries again.
 import {
   decodeGithubBillingCursor,
@@ -19,7 +19,7 @@ import {
 } from "../finops/cost-source-gaps.ts";
 import { githubBillingLines } from "../finops/github-billing-lines.ts";
 import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
-import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
 import { readGithubCredentialPair } from "./github-api-base.ts";
 import { fetchSameOriginOnly } from "./same-origin-fetch.ts";
 
@@ -30,6 +30,8 @@ const RESTATEMENT_DAYS = 5;
 export const GITHUB_BILLING_GAPS = {
   enterpriseServer:
     "GitHub's billing usage API is on github.com only; this gateway's GitHub is an Enterprise Server",
+  refused: (org: string): string =>
+    `GitHub refused the billing usage request for ${org} (400 Bad Request)`,
   access: (org: string): string =>
     `cannot read billing for ${org}: the token needs org owner or billing-manager access, and the org must be on GitHub's enhanced billing platform`,
 } as const;
@@ -69,22 +71,29 @@ function penalise(ctx: SyncContext, res: Response): void {
 async function syncOrgMonth(
   ctx: SyncContext,
   fetchFn: typeof fetchSameOriginOnly,
-  args: { org: string; month: string; headers: Record<string, string>; restRoot: string },
+  args: {
+    org: string;
+    month: string;
+    today: string;
+    headers: Record<string, string>;
+    restRoot: string;
+  },
 ): Promise<OrgOutcome> {
-  const { org, month, headers, restRoot } = args;
+  const { org, month, today, headers, restRoot } = args;
   await ctx.rateLimiter.acquire("github");
   const u = new URL(`${restRoot}/organizations/${encodeURIComponent(org)}/settings/billing/usage`);
   u.searchParams.set("year", month.slice(0, 4));
   u.searchParams.set("month", String(Number(month.slice(5, 7))));
   const res = await fetchFn(u.toString(), { headers });
   const text = await res.text();
-  if (res.status === 403 && isRateLimited(res)) {
+  if (res.status === 429 || (res.status === 403 && isRateLimited(res))) {
     penalise(ctx, res);
     return { kind: "retry" };
   }
   if (res.status === 403 || res.status === 404) {
     return { kind: "gap", reason: GITHUB_BILLING_GAPS.access(org) };
   }
+  if (res.status === 400) return { kind: "gap", reason: GITHUB_BILLING_GAPS.refused(org) };
   if (!res.ok) return { kind: "retry" };
   let body: unknown;
   try {
@@ -96,7 +105,7 @@ async function syncOrgMonth(
     body !== null && typeof body === "object"
       ? (body as Record<string, unknown>)["usageItems"]
       : null;
-  const mapped = githubBillingLines(org, month, items);
+  const mapped = githubBillingLines(org, month, items, today);
   const dropped =
     mapped.dropped.malformed + mapped.dropped.outside_month + mapped.dropped.other_org;
   if (dropped > 0) {
@@ -105,10 +114,23 @@ async function syncOrgMonth(
       "github_billing sync: dropped usage rows",
     );
   }
-  ctx.replaceCostLinesForMonth(
-    { provider: "github", billingAccountId: org.toLowerCase(), month },
-    mapped.lines,
-  );
+  try {
+    ctx.replaceCostLinesForMonth(
+      { provider: "github", billingAccountId: org.toLowerCase(), month },
+      mapped.lines,
+    );
+  } catch (e) {
+    ctx.logger.warn(
+      {
+        serviceId: GITHUB_BILLING_SERVICE_ID,
+        org,
+        month,
+        err: e instanceof Error ? e.message : String(e),
+      },
+      "github_billing sync: the lines were refused; retrying next run",
+    );
+    return { kind: "retry" };
+  }
   return { kind: "ok", lines: mapped.lines.length, bytes: text.length };
 }
 
@@ -121,17 +143,20 @@ export function createGithubBillingCostSyncable(options: GithubBillingSyncableOp
     async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
       const t0 = performance.now();
       const orgs = options.githubOrgs();
-      if (orgs.length === 0) return syncNoopResult(cursor, t0);
-      const pair = await readGithubCredentialPair((k) => ctx.getSharedSecret("github", k));
-      if (pair.kind !== "ok" || pair.pat === null || pair.pat.trim() === "") {
-        return syncNoopResult(cursor, t0);
-      }
       const prev = decodeGithubBillingCursor(cursor);
       const gaps: Record<string, string> = {};
-      const synced: Record<string, string> = { ...prev.synced };
+      // Only configured orgs are kept, so an org removed and added back is a first sync again.
+      const synced: Record<string, string> = {};
+      for (const org of orgs) if (prev.synced[org] !== undefined) synced[org] = prev.synced[org];
+      const idle = (): SyncResult =>
+        syncPassCursorSuccess(t0, 0, encodeGithubBillingCursor({ gaps, synced }), 0);
+      // Nothing to sync: no gap is left behind for an org that is no longer listed or readable.
+      if (orgs.length === 0) return idle();
+      const pair = await readGithubCredentialPair((k) => ctx.getSharedSecret("github", k));
+      if (pair.kind !== "ok" || pair.pat === null || pair.pat.trim() === "") return idle();
       if (pair.base.host !== null) {
         for (const org of orgs) gaps[org] = GITHUB_BILLING_GAPS.enterpriseServer;
-        return syncPassCursorSuccess(t0, 0, encodeGithubBillingCursor({ gaps, synced }), 0);
+        return idle();
       }
       const headers: Record<string, string> = {
         Accept: "application/vnd.github+json",
@@ -139,6 +164,7 @@ export function createGithubBillingCostSyncable(options: GithubBillingSyncableOp
         Authorization: `Bearer ${pair.pat.trim()}`,
       };
       const nowMs = (options.now ?? Date.now)();
+      const today = new Date(nowMs).toISOString().slice(0, 10);
       let lines = 0;
       let bytes = 0;
       for (const org of orgs) {
@@ -148,6 +174,7 @@ export function createGithubBillingCostSyncable(options: GithubBillingSyncableOp
           const r = await syncOrgMonth(ctx, fetchFn, {
             org,
             month,
+            today,
             headers,
             restRoot: pair.base.restRoot,
           }); // NOSONAR S9382: one request at a time through the shared GitHub rate limiter
@@ -164,7 +191,7 @@ export function createGithubBillingCostSyncable(options: GithubBillingSyncableOp
           lines += r.lines;
           bytes += r.bytes;
         }
-        if (complete) synced[org] = new Date(nowMs).toISOString().slice(0, 10);
+        if (complete) synced[org] = today;
       }
       return syncPassCursorSuccess(t0, bytes, encodeGithubBillingCursor({ gaps, synced }), lines);
     },

@@ -240,4 +240,45 @@ describe("the GitHub billing sync", () => {
     await run(["acme"], second, out.cursor);
     expect(lines()).toEqual([["acme", "2026-11-19", "acme/checkout", 4]]);
   });
+
+  test("emptying the org list or losing the PAT clears old gaps; removed orgs leave `synced`", async () => {
+    const stale = encodeGithubBillingCursor({
+      gaps: { acme: "old gap" },
+      synced: { acme: "2026-11-19", gone: "2026-11-19" },
+    });
+    const none = fakeGithub(() => ({ status: 200, body: { usageItems: [] } }));
+    expect(decodeGithubBillingCursor((await run([], none, stale)).cursor)).toEqual({
+      gaps: {},
+      synced: {},
+    });
+    // No PAT stored: no request, and no gap is kept for the listed org.
+    expect(decodeGithubBillingCursor((await run(["acme"], none, stale)).cursor)).toEqual({
+      gaps: {},
+      synced: { acme: "2026-11-19" },
+    });
+    expect(none.calls).toEqual([]);
+    // A removed org is dropped from `synced`, so adding it back is a first sync (two months).
+    await fx.vault.set("github.pat", "tok");
+    const out = await run(["acme"], none, stale);
+    expect(decodeGithubBillingCursor(out.cursor).synced).toEqual({ acme: "2026-11-20" });
+    const back = fakeGithub(() => ({ status: 200, body: { usageItems: [] } }));
+    await run(["acme", "gone"], back, out.cursor);
+    expect(back.calls.filter((c) => c.url.includes("/gone/"))).toHaveLength(2);
+  });
+
+  test("a 429 waits on the github limiter; a 400 is a stated gap", async () => {
+    await fx.vault.set("github.pat", "tok");
+    const penalised: string[] = [];
+    const orig = fx.rateLimiter.penalise.bind(fx.rateLimiter);
+    fx.rateLimiter.penalise = (p: string, ms: number) => {
+      penalised.push(p);
+      orig(p as never, ms);
+    };
+    const gh = fakeGithub((u) =>
+      u.pathname.includes("/busy/") ? { status: 429 } : { status: 400, body: { message: "Bad" } },
+    );
+    const cur = decodeGithubBillingCursor((await run(["acme", "busy"], gh)).cursor);
+    expect(penalised).toEqual(["github"]);
+    expect(cur.gaps).toEqual({ acme: GITHUB_BILLING_GAPS.refused("acme") });
+  });
 });
