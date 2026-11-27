@@ -17,6 +17,7 @@ import { MESSAGING_ROWS } from "./messaging.ts";
 import { applyReversibility } from "./reversibility.ts";
 import { TICKETS_ROWS } from "./tickets.ts";
 import type { ConnectorWriteRow } from "./types.ts";
+import { UNLEASH_SPLIT_ROWS } from "./unleash-split-rows.ts";
 import { VCS_CI_ROWS } from "./vcs-ci.ts";
 import { WAREHOUSE_BI_ROWS } from "./warehouse-bi.ts";
 
@@ -33,6 +34,7 @@ export const CONNECTOR_WRITE_ROWS: readonly ConnectorWriteRow[] = applyReversibi
   ...GITHUB_PR_REVIEW_ROWS,
   ...INCIDENT_ROWS,
   ...FLAGS_ROWS,
+  ...UNLEASH_SPLIT_ROWS,
   ...CLOUD_INFRA_ROWS,
   ...DEPLOY_MOBILE_ROWS,
   ...WAREHOUSE_BI_ROWS,

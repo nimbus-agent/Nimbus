@@ -110,9 +110,9 @@ const REFUSED_BEFORE_A1: readonly string[] = [
 ];
 
 describe("connector write rows", () => {
-  test("141 rows, unique tool ids", () => {
-    expect(CONNECTOR_WRITE_ROWS).toHaveLength(141);
-    expect(new Set(CONNECTOR_WRITE_ROWS.map((r) => r.toolId)).size).toBe(141);
+  test("144 rows, unique tool ids", () => {
+    expect(CONNECTOR_WRITE_ROWS).toHaveLength(144);
+    expect(new Set(CONNECTOR_WRITE_ROWS.map((r) => r.toolId)).size).toBe(144);
   });
 
   test("every row's action type is in the HITL frozen set", () => {
@@ -285,8 +285,8 @@ describe("connectors 0.4.0 writes (B-X)", () => {
   });
 });
 
-/** Wave-3 rows: 25, then 36 with the 11 writes of connectors 0.6.0, then 37 with 0.21.0's init. */
-const WAVE3_COUNT = 37;
+/** Wave-3 rows: 25, then 36 with 0.6.0's 11 writes, 37 with 0.21.0's init, 40 with 0.22.0's flags. */
+const WAVE3_COUNT = 40;
 
 /**
  * The 11 writes `@nimbus-dev/connectors` 0.6.0 added (Phase 9.7 C1), spelled out with the

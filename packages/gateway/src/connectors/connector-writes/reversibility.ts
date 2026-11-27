@@ -12,6 +12,12 @@ import type {
   ReversibilityClass,
   ReversibilityDecl,
 } from "./types.ts";
+import {
+  SPLIT_CAPTURES,
+  splitDecl,
+  UNLEASH_CAPTURES,
+  unleashToggleDecl,
+} from "./unleash-split-reversibility.ts";
 
 const asText = (v: unknown): string | undefined =>
   typeof v === "string" || typeof v === "number" || typeof v === "boolean" ? String(v) : undefined;
@@ -124,7 +130,8 @@ const irreversible = (reason: string): ReversibilityEntry => ({
 const NO_UNDO = "it cannot be undone through Nimbus";
 
 /**
- * The classification. Reversible: the six rows whose before reader supplies what the inverse needs.
+ * The classification. Reversible: the nine rows whose before reader supplies what the inverse needs
+ * (the Unleash toggle only conditionally, see `unleash-split-reversibility.ts`).
  * Irreversible: a write whose effect Nimbus cannot reverse (a resolve, a merge, a delete, a trigger, an
  * invoke). Every other row is `unknown` (no entry).
  */
@@ -177,6 +184,9 @@ export const REVERSIBILITY_TABLE: Readonly<Record<string, ReversibilityEntry>> =
       },
     },
   },
+  unleash_feature_toggle: { captures: UNLEASH_CAPTURES, decl: unleashToggleDecl() },
+  split_kill: { captures: SPLIT_CAPTURES, decl: splitDecl("split_restore", "false") },
+  split_restore: { captures: SPLIT_CAPTURES, decl: splitDecl("split_kill", "true") },
   aws_ec2_instance_stop: {
     captures: EC2_CAPTURES,
     decl: ec2Decl("aws_ec2_instance_start", "running"),

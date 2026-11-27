@@ -163,8 +163,7 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   "outlook.draft.create",
   "discord.message.post",
   "confluence.page.append",
-  // @nimbus-dev/connectors 0.6.0 — the Wave-3 writes it added (Phase 9.7 C1). Hand-written on
-  // purpose (I2): never derived from the row table.
+  // Wave-3 writes from connectors 0.6.0 (9.7 C1) and 0.22.0: hand-written (I2), never derived from the rows.
   "github.branch.create",
   "github.pr.create",
   "github.pr.update",
@@ -174,6 +173,9 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   "launchdarkly.flag.toggle",
   "launchdarkly.flag.rollout.set",
   "flagsmith.feature.state.set",
+  "unleash.feature.toggle",
+  "split.flag.kill",
+  "split.flag.restore",
   "jira.ops.alert.acknowledge",
   "jira.ops.alert.close",
   // Wave 7 — files + cloud.
@@ -273,8 +275,7 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   "extension.autoUpdate",
   "extension.downgrade",
   "extension.install",
-  // Extension runtime § 4.4: approving an installed extension to RUN, unattended, with resolved
-  // grants. A separate consent from install. Gate site: extensions/approve-run.ts.
+  // Extension runtime § 4.4: consent to RUN unattended, apart from install. Gate site: extensions/approve-run.ts.
   "extension.run",
   // connector-unbundling spec § 7.2: the ONE owner decision that moves a bundled connector to its
   // signed extension — install + run grant + credential grant together. Gate site:
@@ -295,8 +296,7 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   // no delegation (I20), and refused unless the owner's own prompt answered (`answerSource`).
   "standing.rule.create",
   "standing.rule.resume",
-  // Signed workflow import (I59) into the saved-workflow store. Gate site: ipc/workflow-import-rpc.ts
-  // through `engine/owner-only-approval.ts` (no delegation, a human answer only; I20).
+  // Signed workflow import (I59). Gate site: ipc/workflow-import-rpc.ts via owner-only-approval.ts (I20).
   "workflow.import",
   // Model access to a saved generated tool (S4, I60), approved by a person over the verbatim input.
   // Gate site: toolgen/toolgen-model-door.ts through `engine/owner-only-approval.ts` (I20).

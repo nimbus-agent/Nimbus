@@ -610,6 +610,15 @@
         "dynamicUrls": []
       }
     },
+    "unleash": {
+      "reaches": "UNLEASH_API_URL only (self-hosted, no default).",
+      "decision": "phase3AddUnleashMcp adds the stored URL's host, labelled the owner's. The static network list is empty by design.",
+      "covers": {
+        "env": ["UNLEASH_API_URL"],
+        "cli": [],
+        "dynamicUrls": []
+      }
+    },
     "vertex-ai": {
       "reaches": "gcloud ai to <region>-aiplatform.googleapis.com; oauth2.googleapis.com for tokens.",
       "decision": "phase3AddVertexAiMcp adds the spawn region's host. A tool argument naming another region is a Linux wildcard (*-aiplatform.googleapis.com); macOS enforces only ports, so 443 reaches it there.",

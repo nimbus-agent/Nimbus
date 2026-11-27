@@ -4,6 +4,7 @@ import pino from "pino";
 
 import type { ExtensionManifest } from "../../extensions/manifest.ts";
 import { FINOPS_FIRST_PARTY_MANIFESTS } from "./finops-manifests.ts";
+import { FLAG_FIRST_PARTY_MANIFESTS } from "./flag-manifests.ts";
 
 // To stderr: a stdout line in a process with an MCP stdio channel corrupts it. See sandbox/linux.ts.
 const log = pino(
@@ -279,15 +280,7 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
-  launchdarkly: baseManifest("com.nimbus.launchdarkly", {
-    network: ["app.launchdarkly.com"],
-    filesystem: { read: [], write: [] },
-  }),
-
-  flagsmith: baseManifest("com.nimbus.flagsmith", {
-    network: ["api.flagsmith.com"],
-    filesystem: { read: [], write: [] },
-  }),
+  ...FLAG_FIRST_PARTY_MANIFESTS,
 
   argocd: baseManifest("com.nimbus.argocd", {
     network: [],

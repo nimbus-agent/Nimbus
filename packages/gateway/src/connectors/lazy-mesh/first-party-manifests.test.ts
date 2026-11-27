@@ -126,6 +126,8 @@ describe("manifestForFirstParty", () => {
       "wiz",
       "launchdarkly",
       "flagsmith",
+      "unleash",
+      "split",
       "argocd",
       "flux",
       "dbt",
@@ -660,17 +662,7 @@ describe("C3: the Operations alert and flag writes need no new network host (I15
     expect(withSite.firstPartyWildcardHosts ?? []).toEqual([]);
   });
 
-  test("launchdarkly and flagsmith: their fixed API host, no wildcard", () => {
-    for (const [id, host] of [
-      ["launchdarkly", "app.launchdarkly.com"],
-      ["flagsmith", "api.flagsmith.com"],
-    ] as const) {
-      const m = manifestForFirstParty(id);
-      expect(m.permissions.network, id).toContain(host);
-      expect(wildcards(m.permissions.network), id).toEqual([]);
-      expect(m.firstPartyWildcardHosts ?? [], id).toEqual([]);
-    }
-  });
+  // The flag connectors' host tests are in flag-manifests.test.ts.
 });
 
 describe("google_calendar manifest", () => {

@@ -1,6 +1,6 @@
 // Phase-3 lazy-mesh spawn configuration.
 //
-// The 63 `phase3Add<Service>Mcp` functions live in `phase3-<group>.ts` siblings; this file
+// The 65 `phase3Add<Service>Mcp` functions live in `phase3-<group>.ts` siblings; this file
 // keeps the composition root and re-exports them so the spawn surface has one name to import.
 
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
@@ -44,8 +44,10 @@ import {
   phase3AddIacMcp,
   phase3AddLaunchdarklyMcp,
   phase3AddNetlifyMcp,
+  phase3AddSplitMcp,
   phase3AddStorybookMcp,
   phase3AddTestflightMcp,
+  phase3AddUnleashMcp,
   phase3AddVercelMcp,
 } from "./phase3-delivery.ts";
 import {
@@ -139,12 +141,14 @@ export {
   phase3AddSnowflakeMcp,
   phase3AddSnykMcp,
   phase3AddSonarqubeMcp,
+  phase3AddSplitMcp,
   phase3AddStackoverflowMcp,
   phase3AddStorybookMcp,
   phase3AddStripeMcp,
   phase3AddSupersetMcp,
   phase3AddTableauMcp,
   phase3AddTestflightMcp,
+  phase3AddUnleashMcp,
   phase3AddVantageMcp,
   phase3AddVercelMcp,
   phase3AddVertexAiMcp,
@@ -182,6 +186,8 @@ export async function buildPhase3Servers(
   await phase3AddWizMcp(vault, servers, sandboxCwd);
   await phase3AddLaunchdarklyMcp(vault, servers, sandboxCwd);
   await phase3AddFlagsmithMcp(vault, servers, sandboxCwd);
+  await phase3AddUnleashMcp(vault, servers, sandboxCwd);
+  await phase3AddSplitMcp(vault, servers, sandboxCwd);
   await phase3AddArgocdMcp(vault, servers, sandboxCwd);
   await phase3AddFluxMcp(vault, servers, sandboxCwd);
   await phase3AddDbtMcp(vault, servers, sandboxCwd);

@@ -29,7 +29,7 @@ import { createFastmailSyncable } from "../connectors/fastmail-sync.ts";
 import { createFigmaSyncable } from "../connectors/figma-sync.ts";
 import { type FinopsSyncOptions, registerFinopsSyncables } from "../connectors/finops-syncables.ts";
 import { createFirebaseSyncable } from "../connectors/firebase-sync.ts";
-import { createFlagsmithSyncable } from "../connectors/flagsmith-sync.ts";
+import { registerFlagSyncables } from "../connectors/flag-syncables.ts";
 import { createFluxSyncable } from "../connectors/flux-sync.ts";
 import { createGcpSyncable } from "../connectors/gcp-sync.ts";
 import { createGithubActionsSyncable } from "../connectors/github-actions-sync.ts";
@@ -50,7 +50,6 @@ import { createIntercomSyncable } from "../connectors/intercom-sync.ts";
 import { createJenkinsSyncable } from "../connectors/jenkins-sync.ts";
 import { createJiraSyncable } from "../connectors/jira-sync.ts";
 import { createKubernetesSyncable } from "../connectors/kubernetes-sync.ts";
-import { createLaunchdarklySyncable } from "../connectors/launchdarkly-sync.ts";
 import type { LazyConnectorMesh } from "../connectors/lazy-mesh/index.ts";
 import { createLeverSyncable } from "../connectors/lever-sync.ts";
 import { createLinearSyncable } from "../connectors/linear-sync.ts";
@@ -349,16 +348,7 @@ export function registerConnectorMeshSyncables(
       ensureWizMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
-  syncScheduler.register(
-    createLaunchdarklySyncable({
-      ensureLaunchdarklyMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
-    }),
-  );
-  syncScheduler.register(
-    createFlagsmithSyncable({
-      ensureFlagsmithMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
-    }),
-  );
+  registerFlagSyncables(syncScheduler, () => connectorMesh.ensurePhase3BundleRunning());
   syncScheduler.register(
     createArgocdSyncable({
       ensureArgocdMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
