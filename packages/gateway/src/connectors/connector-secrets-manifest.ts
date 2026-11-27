@@ -16,6 +16,10 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   github_actions: [],
   // Phase 7 slice 5: the billing usage sync reads `github.pat` through its shared-credential grant.
   github_billing: [],
+  // Phase 7 slice 6: dedicated organization admin keys, used only for the cost read (never the
+  // embeddings key `openai.api_key`).
+  openai_billing: ["openai_billing.admin_key"],
+  anthropic_billing: ["anthropic_billing.admin_key"],
   gitlab: ["gitlab.pat", "gitlab.api_base"],
   bitbucket: ["bitbucket.username", "bitbucket.app_password"],
   linear: ["linear.api_key"],

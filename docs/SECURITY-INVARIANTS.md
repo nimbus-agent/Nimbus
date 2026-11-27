@@ -1299,7 +1299,7 @@ file's totals),
 and, since Phase 7 slice 5, `replaceCostLines` also by `finops/cost-sync-intake.ts`, whose
 `ingestSyncedCostLines` is named only there and in `sync/sync-capabilities.ts`: a syncable writes cost lines
 only through the `replaceCostLinesForMonth` capability, which binds the line `source` to the syncable's own
-service id (never a parameter), is granted only to the cost-sync services (`github_billing`), refuses a line of
+service id (never a parameter), is granted only to the cost-sync services (`github_billing`; since slice 6 `openai_billing` and `anthropic_billing`), refuses a line of
 any other source, provider, billing account or month, and replaces exactly that month's UTC days (to today for
 the current month), so a sync can neither write nor clear another source's lines; it writes no `cost_import`
 row (that ledger is the owner's file imports);

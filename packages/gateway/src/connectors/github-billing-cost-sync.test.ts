@@ -11,6 +11,7 @@ import {
 } from "../finops/cost-source-gaps.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
+import { upsertSchedulerRegistration } from "../sync/scheduler-store.ts";
 import { buildSyncCapabilities } from "../sync/sync-capabilities.ts";
 import type { SyncContext } from "../sync/types.ts";
 import { createMockVault } from "../vault/mock.ts";
@@ -41,13 +42,15 @@ beforeEach(() => {
     db,
     vault,
     rateLimiter,
-    createSyncContext: (serviceId) =>
-      ({
+    createSyncContext: (serviceId) => {
+      upsertSchedulerRegistration(db, serviceId, 86_400_000, Date.now(), false);
+      return {
         ...buildSyncCapabilities({ vault, db, depth: "full" }, serviceId),
         logger,
         rateLimiter,
         depth: "full",
-      }) as SyncContext,
+      } as SyncContext;
+    },
   };
 });
 afterEach(() => fx.db.close());

@@ -66,6 +66,7 @@ function githubFake() {
 async function syncOnce(cursor: string | null): Promise<string | null> {
   const vault = createMockVault();
   await vault.set("github.pat", "tok");
+  upsertSchedulerRegistration(db, "github_billing", DAY, Date.now(), false);
   const ctx = {
     ...buildSyncCapabilities({ vault, db, depth: "full" }, "github_billing"),
     logger: pino({ level: "silent" }),
