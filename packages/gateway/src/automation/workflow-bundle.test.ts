@@ -181,6 +181,13 @@ describe("verifyBundle: steps", () => {
       expect(code(verify(signFixture(body)))).toBe("ERR_WORKFLOW_BUNDLE_MODEL_STEP");
     }
   });
+  test("a report step (Phase 7 slice 4) is refused by name: a bundle never carries scheduled delivery", () => {
+    const report = { kind: "report", label: "render", report: { name: "r" } };
+    const body = { ...fixtureBody(), steps: [...FIXTURE_STEPS, report] };
+    const r = refusal(verify(signFixture(body)));
+    expect(r.code).toBe("ERR_WORKFLOW_BUNDLE_STEPS");
+    expect(r.message).toContain("a report step is not allowed");
+  });
   test("the fixpoint: a step the parser would change (a padded label) is refused as not canonical", () => {
     const steps = FIXTURE_STEPS.map((s) =>
       (s as { kind: string }).kind === "write" ? { ...(s as object), label: " archive " } : s,

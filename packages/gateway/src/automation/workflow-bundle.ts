@@ -186,6 +186,14 @@ export function canonicalBundleSteps(steps: unknown): {
     throw new BundleError(E.STEPS, `a bundle holds at most ${String(BUNDLE_MAX_STEPS)} steps`);
   }
   for (const row of steps as unknown[]) {
+    // Phase 7 slice 4: a report step is scheduled, unattended delivery the owner builds locally
+    // (`nimbus cost report schedule`); a signed bundle never carries one (I59).
+    if (isRecord(row) && row["kind"] === "report") {
+      throw new BundleError(
+        E.STEPS,
+        "a bundle holds query and write steps only: a report step is not allowed",
+      );
+    }
     if (!isRecord(row) || (row["kind"] !== "query" && row["kind"] !== "write")) {
       throw new BundleError(
         E.MODEL_STEP,

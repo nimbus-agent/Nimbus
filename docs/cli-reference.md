@@ -1359,7 +1359,7 @@ nimbus cost rules check --period month
 
 ### `nimbus cost report`
 
-Renders a configured cost report for each of its channels exactly as it would be posted, so you can check the text, the escaping and the size before anything is scheduled. **Nothing is sent**: scheduled delivery through a saved workflow and a standing rule is a later change. Read from the local index and your template files only: no network call, no model, no egress row.
+Renders a configured cost report for each of its channels exactly as it would be posted, so you can check the text, the escaping and the size before anything is scheduled. **Nothing is sent** by this command; to deliver a report, see [`nimbus cost report schedule`](#nimbus-cost-report-schedule). Read from the local index and your template files only: no network call, no model, no egress row.
 
 ```bash
 nimbus cost report                              # list the [[cost.report]] definitions
@@ -1382,6 +1382,26 @@ nimbus cost report checkout-weekly --json
 **Size caps.** A body is at most 12 000 characters for Slack and Teams and 100 000 for a Gmail or Outlook draft. A longer body first shortens `{breakdown}` and then `{top_movers}`, each ending in `… and N more`; a body that still does not fit is refused, never cut.
 
 **Exit codes.** 0 when every channel rendered with no refusal (and for the list); 1 for no cost data, an unknown report, a refused `[cost]` config, any channel error or door refusal, or an error. The IPC methods are `cost.reportList` and `cost.reportRender`; they serve only a connection that declared the `cli` or `ui` kind, are LAN-forbidden (the whole `cost` namespace) and are not on the desktop allowlist.
+
+### `nimbus cost report schedule`
+
+Saves one scheduled workflow per channel of a report, named `cost-<report>-<kind>`, so the report is delivered on its schedule. Nothing is sent by this command.
+
+```bash
+nimbus cost report schedule checkout-weekly                    # every channel of the report
+nimbus cost report schedule checkout-weekly --channel slack    # one channel
+nimbus approve add --workflow cost-checkout-weekly-slack --step 2   # let it post without asking each time
+```
+
+**What is saved.** Step 1 is a `report` step holding the whole report: its scope, period, kind, format and the template TEXT (a `template_file` is read once, now), so a later edit of the file or the config does not change what the workflow posts until you run `schedule` again. Step 2 is the channel's write: the destination (`channel`, the Teams team and channel, the draft's `to`, and an explicit `contentType` for Teams and Outlook) is fixed in the workflow; only the body and a draft's subject come from step 1. The schedule is the report's `schedule`, or Mondays at 08:00 (`0 8 * * 1`), in the report's `tz`; a report with no `tz` is fixed to the gateway's zone at the moment you run `schedule`.
+
+**When it runs.** Each run renders the report from the local cost index and your current `[[cost.rule]]` rules, with no model and no network, then posts it (a Gmail or Outlook channel creates a draft; nothing is sent from your mailbox). A scheduled run never asks anyone: without a standing rule for step 2 it stops before posting, records the run as waiting and shows a notification (`nimbus workflow resume <run id>` continues it, asking you). With the rule printed by `schedule` it posts with no prompt, recorded `standing_approved` in the audit log and in the egress ledger. The send door's checks still run on the final text (a ChatOps destination, a broadcast mention, remote content), and a refusal stops the post. A period with no cost line of any source is skipped: nothing is posted, the run is recorded `skipped` with the reason, and you get a notification.
+
+**Refused channels.** Before saving, each channel is rendered once and checked by the send door. A channel the door would refuse (for example a Slack destination that is a ChatOps channel, `<!channel>` in the template, or remote content in an html body), or whose template cannot be read or rendered, is not saved, with the reason; the report's other channels are.
+
+**Running it again** replaces each workflow in place (same id). If the content changed, the output says `replaced`: the workflow has a new content hash, so a standing rule approved for the old version no longer applies and the command prints the `nimbus approve add` line again.
+
+**Exit codes.** 0 when every requested channel was saved; 1 when any was skipped, and for an error. The IPC method is `cost.reportSchedule`; it serves only a connection that declared the `cli` kind, is refused on a demo gateway (it has no scheduler), is LAN-forbidden (the whole `cost` namespace) and is not on the desktop allowlist. A signed workflow bundle can never carry a `report` step (`nimbus workflow import` refuses it).
 
 ### `nimbus briefing`
 
