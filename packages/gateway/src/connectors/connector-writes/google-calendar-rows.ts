@@ -236,6 +236,9 @@ export const GOOGLE_CALENDAR_ROWS: readonly ConnectorWriteRow[] = [
     },
   ),
   // Wave 4 (OR-W34-3: calendar deletes are irreversible): typed confirm and the event beside it.
+  // The WHOLE id is typed, not its last 8 characters: an occurrence id is
+  // `<seriesId>_<YYYYMMDDTHHMMSSZ>`, so its tail is only the time of day, the same for every
+  // 09:00 occurrence of every series. An id too long or untypable to confirm is refused.
   withConfirm(
     withBefore(
       withPreview(row("gcal_event_delete", "google_calendar.event.delete", "mesh", 4), {
@@ -254,6 +257,6 @@ export const GOOGLE_CALENDAR_ROWS: readonly ConnectorWriteRow[] = [
         select: selectGoogleEventDelete,
       },
     ),
-    { template: "delete {eventId:tail8}" },
+    { template: "delete {eventId}" },
   ),
 ];
