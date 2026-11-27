@@ -1,11 +1,10 @@
 // packages/gateway/src/connectors/testing/remote-content-fixtures.ts
-// Test fixtures for the B3r and B3w remote-content refusal on the REAL doors: every structural
-// bypass form of the reviews in the scanned field of a real row (Outlook draft and send,
-// Confluence, Notion, Obsidian, a Drive create; since B3w Teams posts and GitHub, GitLab, Linear
-// and Bitbucket Markdown), beside allowed cases, for the door tests (`model-write-refusals`, the
-// act door, the injection suite); the detector unit tests live in `remote-content.test.ts`.
-//
+// Test fixtures for the B3r and B3w remote-content refusal on the REAL doors: every bypass form of
+// the reviews in the scanned field of a real row (Outlook, Confluence, Notion, Obsidian, Drive, Teams,
+// forge Markdown; the 0.19.0 rows in `remote-content-forge-rows.ts`), beside allowed cases, for the
+// door tests and the injection suite; the detector unit tests live in `remote-content.test.ts`.
 // Invisible, bidi and fullwidth characters are built from code points, never written literally.
+import { FORGE_ROWS_0_19 } from "./remote-content-forge-rows.ts";
 
 /** One door input: the real row and the exact input the model or an MCP client proposes. */
 export interface RemoteContentDoorCase {
@@ -524,6 +523,7 @@ const FORGE_ROWS: readonly ((label: string, body: string) => RemoteContentDoorCa
     row("linear issue create", "linear_issue_create", { teamId: "t1", title: "T", description })(l),
   (l, description) =>
     row("linear issue update", "linear_issue_update", { issueId: "i1", description })(l),
+  ...FORGE_ROWS_0_19,
 ];
 
 const TEAMS_REFUSED: ReadonlyArray<readonly [string, string]> = [

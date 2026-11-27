@@ -186,7 +186,7 @@ export function selectJiraTransition(
 }
 
 /** One read of `github_issue_get` for a change to issue `#issueNumber`. */
-const GITHUB_ISSUE_STATE_READER: BeforeStateReader = {
+export const GITHUB_ISSUE_STATE_READER: BeforeStateReader = {
   tool: "github_issue_get",
   argKeys: ["owner", "repo", "issueNumber"],
   args: (input) => ({
@@ -198,7 +198,7 @@ const GITHUB_ISSUE_STATE_READER: BeforeStateReader = {
 };
 
 /** One read of `gitlab_issue_get` for a change to issue `#issueIid`. */
-const GITLAB_ISSUE_STATE_READER: BeforeStateReader = {
+export const GITLAB_ISSUE_STATE_READER: BeforeStateReader = {
   tool: "gitlab_issue_get",
   argKeys: ["projectPath", "issueIid"],
   args: (input) => ({ projectPath: input["projectPath"], issueIid: input["issueIid"] }),

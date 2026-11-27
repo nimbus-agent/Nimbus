@@ -243,7 +243,7 @@ export function selectGitlabMrUpdate(
 }
 
 /** A before guard for an update the connector would throw on: none of `keys` is set. */
-function emptyUpdateGuard(keys: readonly string[], reason: string) {
+export function emptyUpdateGuard(keys: readonly string[], reason: string) {
   return {
     reason,
     appliesTo: (picked: Readonly<Record<string, unknown>>) =>

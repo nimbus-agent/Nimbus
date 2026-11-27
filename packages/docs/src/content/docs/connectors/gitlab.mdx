@@ -41,6 +41,9 @@ Every tool below requires interactive consent through the Gateway HITL gate befo
 
 | Tool | Purpose |
 |---|---|
+| `gitlab_issue_assignees_remove` | Remove the named assignees (usernames) from an issue in one atomic call; `projectPath` must be the full path. Offered to the model at wave 2. |
+| `gitlab_issue_labels_remove` | Remove the named labels from an issue; never deletes a label from the project. Offered to the model at wave 2. |
+| `gitlab_issue_update` | Edit an issue's title or description; a description line that starts with a quick action is refused. Offered to the model at wave 2. |
 | `gitlab_mr_merge` | Merge a merge request. |
 | `gitlab_pipeline_cancel` | Cancel a pipeline. |
 | `gitlab_pipeline_retry` | Retry failed jobs in a pipeline. |
