@@ -17,6 +17,23 @@ import { createHash } from "node:crypto";
 import { connectorWriteRowByToolId } from "../connectors/connector-write-registry.ts";
 import { MODEL_NEVER_OFFERED_TOOL_IDS } from "../connectors/connector-writes/model-offerable.ts";
 import { canonicalJson } from "../util/canonical-json.ts";
+import {
+  isPlainRecord,
+  onlyKeys,
+  parseLabel,
+  refuse,
+  WorkflowStepsError,
+} from "./workflow-step-base.ts";
+import {
+  parseReportRow,
+  parseReportValue,
+  type ReportValue,
+  type ReportWorkflowStep,
+  validateReportReferences,
+} from "./workflow-step-report.ts";
+
+export type { EmbeddedReport, ReportValue, ReportWorkflowStep } from "./workflow-step-report.ts";
+export { WorkflowStepsError };
 
 export type JsonValue =
   | string
@@ -26,10 +43,11 @@ export type JsonValue =
   | readonly JsonValue[]
   | { readonly [key: string]: JsonValue };
 
-/** One value of a write step's input: a constant, or one id a query step selected. */
+/** One value of a write step's input: a constant, one id a query step selected, or a report's rendered text. */
 export type WriteValue =
   | { readonly const: JsonValue }
-  | { readonly from: string; readonly column: string };
+  | { readonly from: string; readonly column: string }
+  | ReportValue;
 
 export type DeclaredPredicate =
   | { readonly metadata: string; readonly contains: string }
@@ -82,10 +100,11 @@ export type WriteWorkflowStep = {
   when?: readonly WorkflowGuard[];
 };
 
-export type WorkflowStep = RunWorkflowStep | QueryWorkflowStep | WriteWorkflowStep;
-
-/** A strict-kind row (query / write) that broke a rule, or a malformed array. */
-export class WorkflowStepsError extends Error {}
+export type WorkflowStep =
+  | RunWorkflowStep
+  | QueryWorkflowStep
+  | WriteWorkflowStep
+  | ReportWorkflowStep;
 
 /** A query limit is required and at most this many. */
 export const QUERY_LIMIT_MAX = 500;
@@ -106,36 +125,6 @@ export const METADATA_KEY_PATTERN = /^[A-Za-z]\w{0,63}$/;
 const FIELD_KEY_PATTERN = /^[A-Za-z]\w{0,63}$/;
 const SERVICE_TYPE_PATTERN = /^[A-Za-z0-9_.:-]{1,64}$/;
 const FORBIDDEN_KEYS: ReadonlySet<string> = new Set(["__proto__", "constructor", "prototype"]);
-
-function isPlainRecord(v: unknown): v is Record<string, unknown> {
-  return v !== null && typeof v === "object" && !Array.isArray(v);
-}
-
-function refuse(message: string): never {
-  throw new WorkflowStepsError(message);
-}
-
-/** Refuses any key of `rec` that is not in `allowed`. */
-function onlyKeys(rec: Record<string, unknown>, allowed: readonly string[], where: string): void {
-  for (const k of Object.keys(rec)) {
-    if (!allowed.includes(k)) refuse(`${where}: unknown key "${k}"`);
-  }
-}
-
-function parseLabel(
-  rec: Record<string, unknown>,
-  where: string,
-  required: boolean,
-): string | undefined {
-  const raw = rec["label"];
-  if (raw === undefined) {
-    if (required) refuse(`${where}: a label is required`);
-    return undefined;
-  }
-  if (typeof raw !== "string" || raw.trim() === "")
-    refuse(`${where}: label must be a non-empty string`);
-  return raw.trim();
-}
 
 /** The `when` of a row: one comparison object or a non-empty list of at most four (AND). */
 function parseGuard(raw: unknown, where: string): readonly WorkflowGuard[] {
@@ -335,6 +324,7 @@ function parseWriteValue(field: string, raw: unknown, where: string): WriteValue
     }
     return { const: value };
   }
+  if (Object.hasOwn(raw, "report")) return parseReportValue(field, raw, where);
   onlyKeys(raw, ["from", "column"], `${where} input.${field}`);
   const from = raw["from"];
   const column = raw["column"];
@@ -474,7 +464,7 @@ function validateGuards(steps: readonly WorkflowStep[]): void {
   });
   let guarded = 0;
   steps.forEach((s, i) => {
-    if (s.kind === "query" || s.when === undefined) return;
+    if (s.kind === "query" || s.kind === "report" || s.when === undefined) return;
     guarded++;
     const where = `step ${String(i + 1)} (${s.kind})`;
     for (const g of s.when) {
@@ -527,14 +517,17 @@ export function parseWorkflowSteps(stepsJson: string): WorkflowStep[] {
       out.push(parseQueryRow(row, index));
     } else if (kind === "write") {
       out.push(parseWriteRow(row, index));
+    } else if (kind === "report") {
+      out.push(parseReportRow(row, index));
     } else {
-      refuse(`step ${String(index + 1)}: kind must be run, query or write`);
+      refuse(`step ${String(index + 1)}: kind must be run, query, write or report`);
     }
   });
   if (out.length === 0) {
     throw new Error("workflow has no executable steps (need objects with non-empty run string)");
   }
   validateReferences(out);
+  validateReportReferences(out);
   validateGuards(out);
   return out;
 }

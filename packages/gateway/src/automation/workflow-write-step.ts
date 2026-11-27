@@ -59,6 +59,7 @@ function fieldSourcesOf(
 ): WorkflowProvenance["fieldSources"] {
   const out: Record<string, "constant" | { query: number; column: string }> = {};
   for (const [field, v] of Object.entries(step.input)) {
+    if ("report" in v) throw new Error("a report value has no field source yet");
     if ("from" in v) {
       const q = run.queries.get(v.from);
       out[field] = { query: q?.index ?? -1, column: v.column };
@@ -75,6 +76,7 @@ function inputFor(
 ): Record<string, JsonValue> {
   const input: Record<string, JsonValue> = {};
   for (const [field, v] of Object.entries(step.input) as [string, WriteValue][]) {
+    if ("report" in v) throw new Error("a report value is not filled yet");
     if ("from" in v) {
       // buildActions only reaches here with a selected value for a step that has a `from`.
       input[field] = selected as string;

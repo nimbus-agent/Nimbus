@@ -41,7 +41,7 @@ function refusal(steps: unknown[]): string {
   throw new Error("expected a refusal");
 }
 const whenOf = (s: WorkflowStep | undefined): readonly WorkflowGuard[] =>
-  s !== undefined && s.kind !== "query" ? (s.when ?? []) : [];
+  s !== undefined && s.kind !== "query" && s.kind !== "report" ? (s.when ?? []) : [];
 const guarded = (when: unknown, limit = 200): unknown[] => [qStep("q", limit), wStep({ when })];
 
 describe("when guard: shape", () => {

@@ -355,6 +355,7 @@ async function executeWorkflowStep(
     startedAt: Date.now(),
   });
   if (step.kind === "query") return executeQueryStep(p, runId, stepIndex, step, state);
+  if (step.kind === "report") throw new Error("a report step cannot run yet");
   // The guard is decided HERE, before anything is built: a step that is not taken never reaches the
   // model, the executor, the standing-rule check or the learner (I55: a guard only removes runs).
   const decided = decideGuard(p, runId, stepIndex, step, state);

@@ -97,6 +97,7 @@ export function scopeOfStep(
 ): StandingScope {
   const out: Record<string, ScopeEntry> = {};
   for (const [field, v] of Object.entries(step.input)) {
+    if ("report" in v) throw new Error("a report value has no rule scope yet");
     if ("from" in v) {
       const at = steps.findIndex((s) => s.kind === "query" && s.label === v.from);
       out[field] = { query: at, column: v.column };

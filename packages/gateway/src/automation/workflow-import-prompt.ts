@@ -63,6 +63,7 @@ function renderGuard(g: WorkflowGuard): string {
 
 function renderWriteValue(v: WriteValue): string {
   if ("const" in v) return `const ${renderConst(v.const)}`;
+  if ("report" in v) return `report ${q(v.report)} part ${v.part}`;
   return `from ${q(v.from)} column ${q(v.column)}`;
 }
 

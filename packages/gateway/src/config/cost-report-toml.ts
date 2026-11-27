@@ -125,7 +125,7 @@ function optionalString(t: Record<string, unknown>, key: string, what: string): 
 
 // ---- reports -------------------------------------------------------------------------------------
 
-function readScope(v: unknown, what: string): CostReportScope {
+export function readScope(v: unknown, what: string): CostReportScope {
   const keys = COST_REPORT_SCOPE_KEYS.join(", ");
   if (!isTable(v) || Object.keys(v).length === 0) {
     throw new CostReportConfigError(`${what}: scope must name at least one of ${keys}`);
@@ -145,7 +145,7 @@ function readScope(v: unknown, what: string): CostReportScope {
   return out;
 }
 
-function readPeriod(v: unknown, what: string): string {
+export function readPeriod(v: unknown, what: string): string {
   const m = typeof v === "string" ? PERIOD_RE.exec(v) : null;
   const days = m?.[1] === undefined ? null : Number(m[1]);
   if (m === null || (days !== null && (days < 1 || days > COST_PERIOD_DAYS_MAX))) {
@@ -200,7 +200,7 @@ function readReport(
 
 // ---- channels ------------------------------------------------------------------------------------
 
-function readKind(v: unknown, what: string): CostReportKind {
+export function readKind(v: unknown, what: string): CostReportKind {
   if (typeof v !== "string" || !(COST_REPORT_KINDS as readonly string[]).includes(v)) {
     throw new CostReportConfigError(`${what}: kind must be one of ${COST_REPORT_KINDS.join(", ")}`);
   }
@@ -239,7 +239,7 @@ function readDestination(kind: CostReportKind, v: unknown, what: string): CostRe
   return v;
 }
 
-function readFormat(kind: CostReportKind, v: unknown, what: string): CostReportFormat {
+export function readFormat(kind: CostReportKind, v: unknown, what: string): CostReportFormat {
   const allowed = COST_REPORT_FORMATS[kind];
   if (typeof v !== "string" || !(allowed as readonly string[]).includes(v)) {
     throw new CostReportConfigError(
@@ -263,6 +263,11 @@ function readTemplate(t: Record<string, unknown>, what: string): CostReportChann
     }
     return { file };
   }
+  return { inline: readInlineTemplate(inline, what) };
+}
+
+/** An inline template's text: 1 to 65 536 characters, no control character but TAB and LF. */
+export function readInlineTemplate(inline: unknown, what: string): string {
   if (
     typeof inline !== "string" ||
     inline.length === 0 ||
@@ -273,10 +278,14 @@ function readTemplate(t: Record<string, unknown>, what: string): CostReportChann
   if (TEMPLATE_CONTROL_RE.test(inline)) {
     throw new CostReportConfigError(`${what}: template holds a control character`);
   }
-  return { inline };
+  return inline;
 }
 
-function readSubject(kind: CostReportKind, v: unknown, what: string): string | null {
+/** A report name: lowercase letters, digits and `-`, 1 to 64, starting with a letter or digit. */
+export const isCostReportName = (v: unknown): v is string =>
+  typeof v === "string" && NAME_RE.test(v);
+
+export function readSubject(kind: CostReportKind, v: unknown, what: string): string | null {
   const isMail = kind === "gmail" || kind === "outlook";
   if (!isMail) {
     if (v !== undefined)
@@ -296,7 +305,7 @@ function readSubject(kind: CostReportKind, v: unknown, what: string): string | n
   return v;
 }
 
-function readBreakdown(v: unknown, what: string): "list" | "csv" {
+export function readBreakdown(v: unknown, what: string): "list" | "csv" {
   if (v === undefined) return "list";
   if (v !== "list" && v !== "csv")
     throw new CostReportConfigError(`${what}: breakdown must be list or csv`);
