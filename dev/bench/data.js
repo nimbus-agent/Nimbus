@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795810847839,
+  "lastUpdate": 1795816637772,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "beec82653ff9b0be85c073112b35b58a01754436",
-          "message": "fix(deps): override past five new moderate advisories (ip-address, nodemailer, undici, markdown-it) (#1577)\n\n## Why\n\n`Dependency audit` (a required check) went red repo-wide on 2026-09-29\non newly published advisories — every open Dependabot PR (#1573–#1576)\ninherited it without causing it:\n\n| Package | Advisory | Affected | Pinned before | Now |\n| --- | --- | --- | --- | --- |\n| ip-address | GHSA-rpw4-54j3-4h4q, GHSA-2vr4-cq9g-pvrc | <=10.5.0 |\n10.3.1 | 10.7.2 |\n| nodemailer | GHSA-6vj9-mwq6-2f5v | >=5.0.0 <10.0.2 | 9.1.1 | 10.0.12 |\n| undici | GHSA-3wwx-pv8p-q78v | >=7.28.0 <7.29.1 | 7.29.0 | 7.29.1 |\n| markdown-it | GHSA-253c-mchw-3w2r | <14.3.1 | 14.3.0 (via\nmarkdownlint-cli2 exact pin) | 14.3.1 (new override) |\n\nAll fixed by upgrading via root `overrides` (step 1 of\n`accepted-advisories.ts`'s preference order) — no acceptance rows added.\n\n**nodemailer 9 → 10** is a major, but its only breaking change is\n\"Node.js 20+ required\" (irrelevant under Bun). It's an optional\ndependency of `@nimbus-dev/connectors` (apple / imap / protonmail SMTP);\nsmoke-tested that `import { createTransport } from \"nodemailer\"`\nresolves and a `jsonTransport` send succeeds under Bun 1.3.\n\n## Verification\n\n- `bun audit` → No vulnerabilities found\n- `bun run audit:advisories` → OK (0 live advisories)\n- `bun run audit:js-licenses` → all under the allowlist\n- `bun run preflight:fast` → PASSED (incl. `audit:override-drift`)\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Chores**\n* Updated internal package configuration. No user-facing changes to\nfeatures or behavior.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5.5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-29T21:34:38Z",
-          "tree_id": "6a2489ba13cb7a466125ead5ed29410429fe18fb",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/beec82653ff9b0be85c073112b35b58a01754436"
-        },
-        "date": 1790718686473,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 318.9864755499999,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 320.190248699997,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 185.33268025000143,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0586051dc6c5271b0daaf4f25337d23239db20d2",
+          "message": "feat: the bundled FinOps role pack and the Phase 7 close-out (Phase 7, slice 7) (#2196)\n\n## Summary\n\n**Phase 7, slice 7: the bundled `finops` role pack, plus the Phase 7\nroadmap close-out.** `nimbus pack install finops` installs `finops`\n1.0.0 beside `pm`, `devops` and `developer`.\n\n**Owner rulings (2026-11-27):**\n- **Bundled, not in the official registry.** Registry-published packs\nare not built: nothing installs a pack from the signed index's `packs`\nmap, `nimbus registry maintain` cannot add one, and pack entries have no\npublisher or trust rule. That stays its own unbuilt item.\n- **The I47 pack allowlist is widened to exactly three cost defaults:**\n`[cost] internal_envs`, `[[cost.rule]]` and `[[cost.report]]`.\n- **Phase 7 stays open.** Every later cost source (slice 8 on) is built\nin Phase 7, and the phase closes only after the owner releases the\nagent-door launch copy.\n\n**What the pack sets:**\n- `internal_envs` = `ci`, `dev`, `test`, `staging`;\n- two rules for `product` and `env` tags;\n- one `prod-weekly` report (`env = \"prod\"`, per week, `0 8 * * 1`).\n\n**What it cannot do:**\n- **Choose a destination.** `[[cost.report.channel]]` is not\npack-settable, so the pack's report sends nothing until the owner adds a\nchannel in their own file and approves the workflow `nimbus cost report\nschedule` generates (I55, I29). The allowlist stays local-only, and the\nI47 test pins it.\n- **Set anything the owner's own file could not.** The pack's cost\nsections are checked by the real cost compiler\n(`config/pack-cost-check.ts` runs `resolveCostConfig` over the\nalready-parsed sections), so a bad rule, a report with no scope, or a\nchannel key written inline in a report is refused before the prompt.\n- **Collide with another cost pack.** Only one installed pack may set\ncost defaults, so a second is `ERR_PACK_CONFLICT`. Otherwise \"the\nhighest pack layer's rules win whole\" would decide silently. An update\nof the same pack is not a conflict.\n- **Override the owner.** The owner's own `[[cost.rule]]`,\n`[[cost.report]]` or `internal_envs` replaces the pack's, as for every\narray. The docs say how to keep `prod-weekly` beside the owner's own\nreports.\n\n**Prompt:** install, update and show list a `Cost defaults:` section\n(the envs, the rule count, and each report with \"it sends nothing until\nyou add a [[cost.report.channel]]\") beside the full text. An update that\nchanges only the cost tables says so, and a comment edit does not.\n\n**Roadmap close-out:**\n- ticked: the role pack, the `nimbus cost` briefs and cost in the demo;\n- the acceptance criteria are replaced by the spec's five;\n- moved out, per the spec's owner ruling of 2026-11-26: data FinOps\nattribution, further FinOps and sustainability connectors and cost in\nthe approval to Phase 8, and the deletion half of cost clean-up to Phase\n13;\n- added: the Phase 14 revenue row (Stripe first, sources pluggable).\n\n`CLAUDE.md`/`GEMINI.md` correct the line that still placed cost deletion\nand data FinOps in Phase 7.\n\nPlan reviewed by Antigravity (approved with changes, all applied: reuse\nthe parsed sections, keep the fleet-job check for fleet jobs only, the\nprompt's cost section, the self-update test, the owner-report caveat in\nthe docs).\n\n## Tests\n\n- `config/pack-cost-check.test.ts` (new):\n  - accepted: the bundled fragment, and each default alone;\n- refused: a channel, a channel's keys inline in a report, `[cost]\nauthoritative`, `[cost.focus]`, `[cost.github]`, an unknown placeholder,\na report with no scope, a bad or over-long env list, a non `key = value`\nline;\n  - the prompt summary.\n- `packs/pack-cost-defaults.test.ts` (new):\n- the pack through the real store and layered reader (two rules, a\nchannel-less report, the envs);\n- owner rules and envs replacing the pack's, an owner channel joining\nthe pack's report, and an owner report making that channel refused;\n- a second cost pack conflicting while the self-update and a non-cost\npack do not;\n  - the install and update prompts.\n- `security-invariants/i47-role-pack-layer.test.ts`: a pack can never\nset a report channel, and no bundled pack does.\n- The pinned lists are updated: the allowlist, the bundled ids,\n`pack.list` available (unit and e2e).\n- `bun run preflight:fast` passes in full, as do the config, packs,\npack-rpc, security-invariant, demo and CLI pack/init suites (2262 pass).\n- **Known local failure, not from this change:** one I15 case (`a user\nMCP write grant … grants a clean one`) fails on this Windows machine\nwith the change stashed too, on clean `main` code.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-27T21:47:25Z",
+          "tree_id": "be0bdcc15bfe716911cd62338016d4d1510b789e",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/0586051dc6c5271b0daaf4f25337d23239db20d2"
+        },
+        "date": 1795816632124,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 252.26973774999496,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 250.69056465000176,
             "unit": "ms"
           }
         ]
