@@ -301,4 +301,23 @@ describe("the Anthropic cost sync", () => {
     }).sync(ctxFor("anthropic_billing"), null);
     expect(lines("openai_billing")).toHaveLength(1);
   });
+
+  test("Anthropic pages follow next_page; both syncables build with their defaults", async () => {
+    await vault.set("anthropic_billing.admin_key", "k");
+    const v = fakeVendor((u) =>
+      u.searchParams.get("page") === "p2"
+        ? { status: 200, body: anthropicPage("50") }
+        : { status: 200, body: { ...anthropicPage("100"), has_more: true, next_page: "p2" } },
+    );
+    await createAnthropicCostSyncable({ now: () => NOW, fetch: v.fetch }).sync(
+      ctxFor("anthropic_billing"),
+      null,
+    );
+    expect(v.calls.slice(0, 2).map((c) => c.url.searchParams.get("page"))).toEqual([null, "p2"]);
+    expect(lines("anthropic_billing")).toEqual([
+      ["2026-11-19", "wrkspc_checkout", "claude-opus-5-5", 1.5],
+    ]);
+    expect(createOpenaiCostSyncable().serviceId).toBe("openai_billing");
+    expect(createAnthropicCostSyncable().serviceId).toBe("anthropic_billing");
+  });
 });

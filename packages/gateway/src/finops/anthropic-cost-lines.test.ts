@@ -132,4 +132,25 @@ describe("anthropicCostLines", () => {
     expect(rows).toBe(9);
     expect(dropped).toEqual({ malformed: 7, outside_month: 2 });
   });
+
+  test("a negative amount is a credit; a row with no cost type or tier carries no such tag", () => {
+    const { lines } = anthropicCostLines(
+      [
+        bucket("2026-11-20", [
+          result({
+            amount: "-300",
+            description: "Credit",
+            model: null,
+            cost_type: null,
+            service_tier: null,
+            currency: "usd",
+          }),
+        ]),
+      ],
+      "2026-11",
+    );
+    expect(lines.map((l) => [l.chargeCategory, l.billedCost, l.tags, l.currency])).toEqual([
+      ["credit", -3, {}, "USD"],
+    ]);
+  });
 });

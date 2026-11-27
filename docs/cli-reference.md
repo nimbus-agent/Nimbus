@@ -1332,6 +1332,26 @@ What is and is not available (from GitHub's documentation; no live response was 
 - **Who may read it.** The token must belong to an organization owner or billing manager. GitHub's pages disagree on the token kind (the [tutorial](https://docs.github.com/en/billing/tutorials/automate-usage-reporting) says a classic personal access token; the reference says a fine-grained token with the "Administration" organization permission (read) works); if one kind is refused, try the other.
 - **When it cannot read an organization** (403 or 404, or an Enterprise Server base) it records why once per run and moves on, and every cost view's freshness shows it under `Source github_billing` as `Not synced: cannot read billing for <org>: …`. A rate-limited response waits for GitHub's limiter; a server error is retried on the next day's run. `connector remove github` deletes these lines too.
 
+### OpenAI and Anthropic costs (`openai_billing`, `anthropic_billing`)
+
+Store an organization **admin key** for either vendor and the gateway reads that organization's daily cost report once a day, keeping it as cost lines per day, model, line item and project (OpenAI) or workspace (Anthropic), in US dollars:
+
+```bash
+nimbus vault set openai_billing.admin_key       # an OpenAI organization admin key (sk-admin-...)
+nimbus vault set anthropic_billing.admin_key    # an Anthropic Admin API key (sk-ant-admin01-...)
+```
+
+These are dedicated keys, kept only in the Vault and never the `openai.api_key` the embeddings use (an ordinary API key cannot read costs). **An admin key can do far more than read costs**: an OpenAI admin key can also create and delete API keys and manage members, and an Anthropic admin key can manage workspaces and keys. Nimbus uses it only for the one cost request, sent with `fetchSameOriginOnly` to `api.openai.com` or `api.anthropic.com` alone (a redirect to any other host is refused), and never shows it anywhere. `nimbus connector auth openai_billing` prints the key's name and how to set it, never its value.
+
+What is read (from each vendor's documentation; no live response was checked when this was written):
+
+- **OpenAI**: `GET /v1/organization/costs`, daily buckets grouped by project and line item. The project is the cost line's sub-account (`null` when the cost has no project) and the model is taken from the line item (`"gpt-…, input"`).
+- **Anthropic**: the stable cost report `GET /v1/organizations/cost_report`, daily buckets grouped by workspace and description, its cent amounts converted to dollars exactly. The workspace is the sub-account (`null` is the default workspace). Priority Tier costs are not in this report, and it is not available to individual Console accounts, the claude.ai Team plan or Claude Platform on AWS (the vendor's documentation says so). The newer Analytics cost endpoint is a beta and is not used.
+- **One organization per key.** There is no per-API-key or per-user detail, by design.
+- A `[[cost.rule]]` on `sub_account` (for example `match = { sub_account = "proj_checkout" }`) puts a project's or workspace's AI spend under its product.
+
+When a key cannot read its organization (an ordinary or workspace key, a missing report, a refused request) the reason appears in every cost view's freshness as `Not synced: …`; a rate-limited or failed response is retried the next day, and a month is never cleared by a bad answer. `connector remove openai_billing` (or `anthropic_billing`) deletes that source's lines.
+
 ### `nimbus cost products` and `nimbus cost internal`
 
 Cost per product (with its parts: the service and provider, and the env), and the internal cost (CI and the dev and test environments), computed from the local cost lines (`nimbus cost import`), the indexed Vantage rows for a provider with no raw lines, and your `[[cost.rule]]` allocation rules. Local index only: **no network call, no model, no egress row**.
@@ -3652,6 +3672,8 @@ nimbus connector auth zoom           # OAuth 3-legged PKCE — opens browser
 | `superset` | `superset.url`, `superset.username`, `superset.password` |
 | `databricks` | `databricks.host`, `databricks.token` |
 | `mlflow` | `mlflow.host`, `mlflow.token` |
+| `openai_billing` | `openai_billing.admin_key` (an OpenAI organization admin key; see [OpenAI and Anthropic costs](#openai-and-anthropic-costs-openai_billing-anthropic_billing)) |
+| `anthropic_billing` | `anthropic_billing.admin_key` (an Anthropic Admin API key of a Claude Console organization) |
 | `vantage` | `vantage.api_token` (required; a Read-scope token is enough), `vantage.cost_report_token`, `vantage.workspace_token`, `vantage.group_by` (optional; see `[finops]`) |
 | `opencost` | `opencost.url` (required), `opencost.token`, `opencost.cluster`, `opencost.aggregate` (optional; see `[finops]`) |
 | `kubecost` | `kubecost.url` (required), `kubecost.token`, `kubecost.cluster`, `kubecost.aggregate` (optional; see `[finops]`) |
