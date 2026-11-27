@@ -65,6 +65,11 @@ export const IAC_TOOL_TIMEOUTS_MS: Readonly<Record<string, number>> = Object.fre
   iac_terraform_apply_refresh_only: 30 * 60_000,
   iac_cloudformation_deploy: 60_000,
   iac_cloudformation_changeset_discard: 60_000,
+  // The three CloudFormation reads run in a `cfn` child too: listed so the dispatcher's race
+  // outlasts the runner's budget (as for the kubernetes reads below).
+  iac_cloudformation_stack_get: 60_000,
+  iac_cloudformation_changesets_list: 60_000,
+  iac_cloudformation_changeset_get: 60_000,
   // D3a: the nine kubernetes tools (the plan is a dry run, a read and a diff on a cold sandbox).
   k8s_manifest_plan: 120_000,
   k8s_manifest_apply: 300_000,

@@ -27,8 +27,9 @@ The connector inherits the ambient process environment, so cloud credentials com
 
 | Tool | Purpose |
 |---|---|
-| `iac_cloudformation_changeset_get` | One CloudFormation change set of a stack: its status and the resource changes it would make. Parameter names only, never their values; a change set of another stack is refused. From the gateway this read runs in the iac listing slot, which has no network, so it cannot reach AWS there today (a known limit, as for the stack read). |
-| `iac_cloudformation_changesets_list` | The change sets of a CloudFormation stack (one page, at most 100). From the gateway this read runs in the iac listing slot, which has no network, so it cannot reach AWS there today (a known limit, as for the stack read). |
+| `iac_cloudformation_changeset_get` | One CloudFormation change set of a stack: its status and the resource changes it would make. Parameter names only, never their values; a change set of another stack is refused. From the gateway this read runs in its own sandboxed child that reaches only the approved region's CloudFormation and STS hosts and writes nothing, so it needs `enable iac --cloud aws` with that region approved. |
+| `iac_cloudformation_changesets_list` | The change sets of a CloudFormation stack (one page, at most 100). Runs from the gateway like the change-set read above. |
+| `iac_cloudformation_stack_get` | A CloudFormation stack's status, status reason and last update time. Runs from the gateway like the change-set read above. |
 | `iac_pulumi_preview` | Run `pulumi preview` in a stack directory. |
 | `iac_terraform_plan` | Run `terraform plan` in a directory. |
 
