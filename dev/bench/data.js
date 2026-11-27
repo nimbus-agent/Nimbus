@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795775477110,
+  "lastUpdate": 1795778368309,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "38209d308efd714baa8d8b5d9c5fbe56c6521f9e",
-          "message": "docs(clipper): the browser extension is now Nimbus Companion (#1564)\n\n## Why\n\nThe browser extension was renamed **Nimbus Web Clipper → Nimbus\nCompanion** (nimbus-agent/nimbus-web-clipper#119, cut as its 0.10.0 in\nnimbus-agent/nimbus-web-clipper#120). The old name collided in every\nstore search with Nimbus Web Inc's unrelated \"Web Clipper (Nimbus)\".\nThese pages are what the store listings link to, so they should carry\nthe new name.\n\n## What\n\n- `user-guide/web-clipper.mdx`, `user-guide/web-clipper-privacy.mdx` —\ntitle, intro and cross-links renamed, each noting the former name once.\n- `astro.config.mjs` — sidebar label.\n- `docs/README.md` — satellite-repo table row.\n- Install notes corrected: they still said `v0.1.0` and that the store\nlistings \"await their one-time store bootstrap\". Both stores are live;\nthe page now links them and keeps sideloading as the alternative.\n\n## Deliberately unchanged\n\n- **Page URLs** (`/user-guide/web-clipper/`,\n`/user-guide/web-clipper-privacy/`) — the store listings, the\nextension's `package.json` homepage and its privacy-policy link all\npoint at them.\n- Repo slug and store URL slugs — identifiers, not branding.\n- Gateway code comments and historical roadmap/changelog entries — \"web\nclipper\" there names the feature (`/v1/clips`, `nimbus clip pair`), not\nthe product.\n\n## Not in this PR\n\nThe guide's \"What it does\" still describes only clipping + related\nitems; the extension has since grown page recognition, agent lanes,\nbriefs and the egress ledger. Refreshing that is a content job of its\nown.\n\n## Verification\n\n`bun run lint:markdown` (0 issues) and `bun run docs:build` (56 pages)\ngreen locally.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Fable 5.1 <noreply@anthropic.com>",
-          "timestamp": "2026-09-21T13:44:31Z",
-          "tree_id": "2e6640da30ca98032656c78558d69c0ff630089f",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/38209d308efd714baa8d8b5d9c5fbe56c6521f9e"
-        },
-        "date": 1789999012332,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 331.534213099999,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 331.03746030000036,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 256.9692456499888,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3cd662db331bbff9630c0a91e4a400ed70152860",
+          "message": "feat: GitHub billing usage as cost lines (Phase 7, slice 5) (#2184)\n\n## Summary\n\nPhase 7 (the Cost Pack), slice 5 of 8: **GitHub billing usage as cost\nlines.** List organizations in `[cost.github] orgs` and the gateway\nreads each one's [billing usage\nreport](https://docs.github.com/en/rest/billing/usage) daily with the\nstored `github.pat`, keeping every GitHub product as cost lines per day,\nSKU and repository. A `[[cost.rule]]` on `repo` puts a repository's\nActions spend under its product in `nimbus cost products`, `why` and\n`report`.\n\n**Owner rulings (2026-11-27):**\n- Lines carry `repo` and the SKU, never a `workflow`, because the API\nhas none.\n- Every product becomes lines (Actions, Packages, storage, Codespaces,\nCopilot…).\n- The sync reuses `github.pat`; a 403 or 404 is a stated gap, never a\nretry loop.\n- Orgs come from a configured list, and nothing is fetched until it is\nset.\n\nThe plan was approved by Antigravity with fixes, all applied.\n\n- **Config** `[cost.github] orgs`: 0 to 20 GitHub org names, unique\ncase-insensitively. A bad list refuses the `[cost]` config like any\nother `[cost]` error.\n- **Mapper** (`finops/github-billing-lines.ts`, pure, D48):\n- Fields: source `github_billing`, provider `github`, billed and\neffective cost = `netAmount`, USD.\n- Rows of the same day and grain are summed, so the `cost_line_grain`\nunique index never collides.\n- A malformed row, one outside the month or after today, or one naming\nanother org is dropped and counted, never thrown.\n  - The org comes from the request, never from `organizationName`.\n  - A date-time with no zone is taken as the date written.\n- **Intake door** (`finops/cost-sync-intake.ts`):\n- Replaces one (source, provider, account, month) through\n`replaceCostLines`: day 1 to today for the current UTC month, the whole\nmonth for an earlier one; a future month is refused.\n- A syncable reaches it only through the new `replaceCostLinesForMonth`\ncapability. That capability is bound to the syncable's own service id,\ngranted only to `github_billing`, and refused in local-only and unbound\ncontexts.\n- **D24 `cost-line-confined` widened** in the same commit, covering\nrule, docs and fixtures.\n- No `cost_import` row is written (V109 has no kind column); a re-sync\nis idempotent.\n- **Syncable** (`connectors/github-billing-cost-sync.ts`, companion\nservice `github_billing`, registered by `finops-syncables.ts`):\n- Runs daily. Fetches the current month, plus the previous month until\nthe 5th and on an org's first sync.\n  - GitHub Enterprise Server base: a gap, and no request is made.\n- 403/404 is an access gap; 400 is a stated gap. A rate-limit 403 or a\n429 penalises the `github` limiter. A 5xx or a non-JSON body retries the\nnext day and keeps the earlier gap.\n  - An empty org list or a missing PAT clears old gaps.\n- **Gaps** live in the syncable's cursor (`scheduler_state.cursor`).\n`finops/cost-source-gaps.ts` owns its codec, and every view's freshness\nshows `Not synced: <reason>`. A shared CLI line replaces four copies of\nthe freshness renderer.\n- **Companion wiring:**\n- catalog, secrets manifest, `SHARED_CREDENTIAL_GRANTS`,\n`DERIVED_CONFIGURED_CHECKS`;\n- auth, which registers and clears cursors for the whole GitHub family;\n  - `connector remove github`, which erases the lines;\n  - the status instance line, and boot registration (insert-only).\n- The OAuth-detail table moved to `connector-oauth-unsupported.ts` so\nthe size-baselined catalog shrinks (533 → 444).\n\n**Deferred, by builder finding:**\n- The connectors-repo read tool the spec named. Every GitHub index path\nhere is a gateway sync; a model-facing tool would be its own row.\n- Demo GitHub lines. The demo gateway runs no syncs, and seeding through\nthe capability would add a second capability builder.\n\n## Tests\n\n- `connectors/github-billing-cost.acceptance.test.ts`: a fake GitHub\nreturns two days of Actions rows for `acme/checkout`.\n  - `cost.products` shows 8.00 USD under `checkout`.\n  - `cost.why` names GitHub.\n  - A re-sync changes nothing.\n  - A denied org's gap is in the freshness.\n- Unit tests for the config, mapper, intake and capability (positive\npath and every refusal), the syncable (every status path, months, cursor\npruning), the gaps and the freshness rows, and the D24 fixtures.\n- Updated pins: the capability-list pin, the configured-check pin, the\nGHES credential-pair pin, the GitHub auth registration pin, and the\nreadwise unbundling allow-list.\n- `bun run preflight:fast`: green except `audit:connector-version-skew`.\n`@nimbus-dev/connectors` 0.20.0 is published and `main` still pins\n0.19.0; that bump is not part of this change. Every later fast gate and\n`jscpd` were run by hand and pass. The scoped Istanbul coverage of every\nnew or changed file is above the floor.\n\n## Stated bounds\n\n- Documentation-verified only: no live response was checked.\n- No per-workflow cost.\n- Only organizations on GitHub's enhanced billing platform, read by an\norg owner or billing manager.\n- Personal accounts and GitHub Enterprise Server are not supported.\n- Amounts are in US dollars.\n- GitHub's docs disagree on classic versus fine-grained tokens, and the\nCLI reference says so.\n- `nimbus connector status` does not show the gaps; the cost views do.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added GitHub organization billing usage as a cost source, with daily\nUSD cost lines that can be allocated and viewed in cost reports.\n* Configure organizations in cost settings to sync eligible billing\nreports. Cost status and CLI reports now show sync gaps, including when\nno cost data is available.\n* GitHub billing sync uses the existing GitHub connection. Reports are\nlimited to supported organization billing data; personal accounts,\nEnterprise Server, and per-workflow costs aren’t included.\n* **Documentation**\n* Updated the CLI reference, changelog, roadmap, and product guides with\nsetup details, coverage, and limitations.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-27T11:11:44Z",
+          "tree_id": "76b5eed74a7c2450220de8f862ec63b60502031c",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/3cd662db331bbff9630c0a91e4a400ed70152860"
+        },
+        "date": 1795778363693,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 186.4744706999996,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 186.00478285000207,
             "unit": "ms"
           }
         ]
