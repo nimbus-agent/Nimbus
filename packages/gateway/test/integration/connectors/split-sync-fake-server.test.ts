@@ -20,11 +20,15 @@ interface RecordedReq {
 }
 
 interface FakeConfig {
-  workspaces: Array<{ id: string; name: string }>;
+  workspaces: unknown[];
   splitsByWorkspace: Record<string, unknown[]>;
   /** Report a totalCount (the default) or leave it out. */
   withTotal?: boolean;
   workspacesStatus?: number;
+  /** Answer the workspace list with exactly this body text (malformed or non-JSON replies). */
+  workspacesRaw?: string;
+  /** Answer a workspace's split pages with this HTTP status. */
+  splitsStatusFor?: Record<string, number>;
 }
 
 interface Harness {
@@ -50,6 +54,11 @@ function startHarness(config: FakeConfig): Harness {
         if (config.workspacesStatus !== undefined) {
           return new Response("error", { status: config.workspacesStatus });
         }
+        if (config.workspacesRaw !== undefined) {
+          return new Response(config.workspacesRaw, {
+            headers: { "content-type": "application/json" },
+          });
+        }
         // As the v2 API: `limit` defaults to 20 when the request names none.
         const limit = Number(u.searchParams.get("limit") ?? "20");
         return Response.json({
@@ -61,7 +70,10 @@ function startHarness(config: FakeConfig): Harness {
       }
       const m = /^\/internal\/api\/v2\/splits\/ws\/([^/]+)$/.exec(u.pathname);
       if (m !== null) {
-        const all = config.splitsByWorkspace[decodeURIComponent(m[1] ?? "")] ?? [];
+        const wsId = decodeURIComponent(m[1] ?? "");
+        const status = config.splitsStatusFor?.[wsId];
+        if (status !== undefined) return new Response("error", { status });
+        const all = config.splitsByWorkspace[wsId] ?? [];
         const offset = Number(u.searchParams.get("offset") ?? "0");
         const limit = Number(u.searchParams.get("limit") ?? "50");
         return Response.json({
@@ -192,6 +204,65 @@ describe("split-sync against a Bun.serve fake Admin API", () => {
     expect((await syncable().sync(h.ctx, null)).itemsUpserted).toBe(
       50 * SPLIT_MAX_PAGES_PER_WORKSPACE,
     );
+  });
+
+  test("skips malformed workspace entries, names a workspace by its id when it has no name, and caps the list", async () => {
+    const extra = Array.from({ length: SPLIT_MAX_WORKSPACES + 5 }, (_, i) => ({
+      id: `cap-${String(i)}`,
+      name: `C${String(i)}`,
+    }));
+    // The fake honours `limit`, so a raw body hands over the whole list to show the sync's own cap.
+    const body = { objects: [null, "x", {}, { id: "" }, { id: "ws-a" }, ...extra] };
+    h = startHarness({
+      workspaces: [],
+      workspacesRaw: JSON.stringify(body),
+      splitsByWorkspace: {
+        "ws-a": [split("a")],
+        [`cap-${String(SPLIT_MAX_WORKSPACES)}`]: [split("over")],
+      },
+    });
+    await h.vault.set("split.api_key", "fake-split-key");
+    expect((await syncable().sync(h.ctx, null)).itemsUpserted).toBe(1);
+    const synced = new Set(
+      h.requests
+        .filter((r) => r.path.startsWith("/internal/api/v2/splits/ws/"))
+        .map((r) => r.path.slice("/internal/api/v2/splits/ws/".length)),
+    );
+    expect(synced.size).toBe(SPLIT_MAX_WORKSPACES);
+    expect(synced.has("ws-a")).toBe(true);
+    expect(synced.has(`cap-${String(SPLIT_MAX_WORKSPACES)}`)).toBe(false);
+    const meta = h.db
+      .query<{ metadata: string }, []>("SELECT metadata FROM item WHERE service = 'split'")
+      .all()
+      .map((r) => JSON.parse(r.metadata) as Record<string, unknown>);
+    expect(meta[0]?.["workspace_name"]).toBe("ws-a");
+  });
+
+  test("a workspace list that is not JSON, or has no objects, upserts nothing and asks for no splits", async () => {
+    for (const raw of ["<html>not json</html>", JSON.stringify({ items: [] })]) {
+      h?.cleanup();
+      h = startHarness({ workspaces: [], workspacesRaw: raw, splitsByWorkspace: {} });
+      await h.vault.set("split.api_key", "fake-split-key");
+      const result = await syncable().sync(h.ctx, null);
+      expect(result.itemsUpserted).toBe(0);
+      expect(result.cursor?.startsWith("nimbus-split1:")).toBe(true);
+      expect(h.requests.some((r) => r.path.startsWith("/internal/api/v2/splits/"))).toBe(false);
+    }
+  });
+
+  test("a failing split page stops that workspace only; the next one is still synced", async () => {
+    h = startHarness({
+      workspaces: [
+        { id: "ws-bad", name: "Bad" },
+        { id: "ws-ok", name: "Ok" },
+      ],
+      splitsByWorkspace: { "ws-ok": [split("fine")] },
+      splitsStatusFor: { "ws-bad": 500 },
+    });
+    await h.vault.set("split.api_key", "fake-split-key");
+    expect((await syncable().sync(h.ctx, null)).itemsUpserted).toBe(1);
+    const bad = h.requests.filter((r) => r.path.endsWith("/ws-bad"));
+    expect(bad).toHaveLength(1);
   });
 
   test("an error on the workspace list upserts nothing; no key sends no request", async () => {
