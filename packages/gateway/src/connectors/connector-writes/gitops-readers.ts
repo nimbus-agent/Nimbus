@@ -322,6 +322,17 @@ function entryTag(t: unknown): {
   return { segs: identifierSegments(name ?? ""), identified: false };
 }
 
+/** A stored name Snowflake would accept unquoted (it folds unquoted names to upper case). */
+const PLAIN_IDENTIFIER = /^[A-Z_][A-Z0-9_$]*$/;
+
+/**
+ * One stored segment as a Snowflake identifier, for display only: as it is when plain, otherwise
+ * quoted with any `"` doubled, so `DB."S.X".PII` and `DB.S."X.PII"` never read alike.
+ */
+function shownSegment(segment: string): string {
+  return PLAIN_IDENTIFIER.test(segment) ? segment : `"${segment.replaceAll('"', '""')}"`;
+}
+
 /**
  * The tag's value now. A value is shown only when the reply names the SAME fully-qualified tag
  * (database, schema and tag, quoted case respected). A reply entry that shares only the tag's
@@ -382,7 +393,7 @@ export function selectSnowflakeTag(
         if (n === undefined) return [];
         // Shown qualified when the reply identifies the tag (display only, never matched on).
         const { segs, identified } = entryTag(t);
-        const shown = identified && segs !== undefined ? segs.join(".") : n;
+        const shown = identified && segs !== undefined ? segs.map(shownSegment).join(".") : n;
         return [`${shown}=${stringAt(t, ["value"]) ?? ""}`];
       }),
     },

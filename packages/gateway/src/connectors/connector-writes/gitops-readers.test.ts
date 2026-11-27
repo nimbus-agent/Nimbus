@@ -123,6 +123,26 @@ describe("selectSnowflakeTag: the identified reply (database, schema, name)", ()
     );
   });
 
+  test("a stored segment that is not a plain identifier is shown quoted, so two tags never read alike", () => {
+    const allTags = (tags: readonly TagEntry[]): string | undefined =>
+      selectSnowflakeTag({ object: "DB.S.T", tags }, { tag: "DB.S.PII" }).find(
+        (f) => f.label === "All tags on the table",
+      )?.value;
+    expect(
+      allTags([
+        { database: "DB", schema: "S.X", name: "PII", value: "a" },
+        { database: "DB", schema: "S", name: "X.PII", value: "b" },
+      ]),
+    ).toBe('DB."S.X".PII=a, DB.S."X.PII"=b');
+    // Lower case, a leading digit and an embedded quote (doubled) are quoted; plain names are not.
+    expect(allTags([{ database: "DB_1", schema: "s", name: 'Say "hi"', value: "v" }])).toBe(
+      'DB_1."s"."Say ""hi"""=v',
+    );
+    expect(allTags([{ database: "DB", schema: "9S", name: "A$B", value: "v" }])).toBe(
+      'DB."9S".A$B=v',
+    );
+  });
+
   test("an entry missing its schema falls back to parsing its name", () => {
     expect(tagNow([{ database: "DB", name: "DB.S.PII", value: "v" }], "DB.S.PII")).toContain("v");
   });
