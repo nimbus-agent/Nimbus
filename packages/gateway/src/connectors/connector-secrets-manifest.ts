@@ -14,6 +14,8 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   // `github.api_base` is OPTIONAL: a GitHub Enterprise Server API root (see github-api-base.ts).
   github: ["github.pat", "github.api_base"],
   github_actions: [],
+  // Phase 7 slice 5: the billing usage sync reads `github.pat` through its shared-credential grant.
+  github_billing: [],
   gitlab: ["gitlab.pat", "gitlab.api_base"],
   bitbucket: ["bitbucket.username", "bitbucket.app_password"],
   linear: ["linear.api_key"],

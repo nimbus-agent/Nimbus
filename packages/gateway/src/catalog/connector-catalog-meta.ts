@@ -73,6 +73,11 @@ export const CONNECTOR_CATALOG_META = Object.freeze({
     "ci-cd",
     "GitHub's built-in workflow automation and CI service",
   ),
+  github_billing: m(
+    "GitHub billing",
+    "cloud",
+    "GitHub's metered usage report for an organization (Actions, Packages, Copilot and more)",
+  ),
   gitlab: m("GitLab", "code", "A code hosting and DevOps platform built on Git"),
   bitbucket: m("Bitbucket", "code", "Atlassian's Git code hosting service"),
   linear: m("Linear", "issues", "An issue and project tracker for software teams"),

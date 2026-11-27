@@ -57,9 +57,8 @@ describe("getSecret is scoped to the calling service", () => {
 describe("the capability set exposes no raw handle", () => {
   test("neither vault nor db is reachable from the returned object", () => {
     const caps = buildSyncCapabilities(deps({}), "jira");
-    // Pinned deliberately: adding a capability should be a considered act, so this list is the
-    // review surface. `getSharedSecret` was added for the four connectors that authenticate with a
-    // shared gcp.*/github.* credential, and this assertion is what made that visible.
+    // Pinned: adding a capability is a considered act, so this list is the review surface (`getSharedSecret`
+    // for shared gcp/github credentials; `replaceCostLinesForMonth` for the Phase 7 cost sync, D24).
     expect(Object.keys(caps).sort()).toEqual([
       "accessToken",
       "bodyFetchState",
@@ -75,6 +74,7 @@ describe("the capability set exposes no raw handle", () => {
       "prFileCandidates",
       "pruneBlameForFile",
       "recordPrChangedFiles",
+      "replaceCostLinesForMonth",
       "replaceItemSet",
       "replaceWorkSnapshot",
       "resolvePerson",

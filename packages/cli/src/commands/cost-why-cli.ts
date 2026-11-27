@@ -1,4 +1,5 @@
 import { stripControlChars } from "../lib/strip-control-chars.ts";
+import { type CostFreshnessRow, costFreshnessLine } from "./cost-freshness-line.ts";
 
 /**
  * `nimbus cost why <product|service> [--period <N>d|week|month] [--json]` (Phase 7, the Cost Pack): compares a
@@ -95,7 +96,7 @@ type WhyResult = {
   provisionalFrom: string | null;
   coverage: Record<string, { current: number; previous: number; days: number }>;
   unassigned: Record<string, { current: number; previous: number }>;
-  freshness: { source: string; lastDay: string | null; provisionalFrom: string | null }[];
+  freshness: CostFreshnessRow[];
   excludedSources: { source: string; provider: string; reason: string }[];
   notes: string[];
   context: Context[];
@@ -187,10 +188,7 @@ function renderFooter(r: WhyResult, sink: CostWhySink): void {
       `The days from ${r.provisionalFrom} are provisional (the provider may still restate them).\n`,
     );
   }
-  for (const f of r.freshness) {
-    const prov = f.provisionalFrom === null ? "" : ` (provisional from ${f.provisionalFrom})`;
-    sink.out(`Source ${clean(f.source)}: data up to ${f.lastDay ?? "none"}${prov}\n`);
-  }
+  for (const f of r.freshness) sink.out(costFreshnessLine(f));
   for (const e of r.excludedSources) {
     sink.out(
       `Note: ${clean(e.source)} lines for ${clean(e.provider)} are not counted: ${clean(e.reason)}\n`,

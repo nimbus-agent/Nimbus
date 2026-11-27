@@ -82,6 +82,7 @@ function unregisterConnectorFromSyncScheduler(
   }
   if (id === "github") {
     syncScheduler.unregister("github_actions");
+    syncScheduler.unregister("github_billing");
   }
   syncScheduler.unregister(id);
 }
@@ -90,6 +91,8 @@ function removeConnectorIndexEntries(localIndex: LocalIndex, id: string): number
   let itemsDeleted = 0;
   if (id === "github") {
     itemsDeleted += localIndex.removeConnectorIndexData("github_actions");
+    // Phase 7 slice 5: the GitHub billing cost lines (`deleteCostLinesBySource("github_billing")`).
+    itemsDeleted += localIndex.removeConnectorIndexData("github_billing");
   }
   itemsDeleted += localIndex.removeConnectorIndexData(id);
   return itemsDeleted;

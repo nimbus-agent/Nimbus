@@ -1,5 +1,5 @@
 /**
- * `[cost]`, `[cost.focus]` and `[[cost.rule]]` - the Cost Pack's owner config (Phase 7).
+ * `[cost]`, `[cost.focus]`, `[cost.github]` and `[[cost.rule]]` - the Cost Pack's owner config (Phase 7).
  *
  * ```toml
  * [cost]
@@ -8,6 +8,9 @@
  *
  * [cost.focus]
  * dir = "/abs/path/to/exports"                       # imported once a day (new or changed files)
+ *
+ * [cost.github]
+ * orgs = ["acme"]                                    # synced daily from GitHub's billing usage API
  *
  * [[cost.rule]]                                      # ordered, first match wins
  * match = { provider = "aws", tag = { product = "*" } }
@@ -45,6 +48,8 @@ export interface NimbusCostConfig {
   /** Per provider, the source id the views use for it (e.g. `{ aws: "vantage" }`). */
   readonly authoritative: Readonly<Record<string, string>>;
   readonly focusDir: string | null;
+  /** `[cost.github] orgs`: the organizations whose billing usage is synced (slice 5); empty = none. */
+  readonly githubOrgs: readonly string[];
   /** `[[cost.report]]` with their `[[cost.report.channel]]` blocks (slice 3; see `cost-report-toml.ts`). */
   readonly reports: readonly CostReportDef[];
   /** Non-null: the report definitions are refused (`reports` is empty); the rules still apply. */
@@ -66,6 +71,7 @@ export const DEFAULT_COST_CONFIG: NimbusCostConfig = Object.freeze({
   internalEnvs: DEFAULT_COST_INTERNAL_ENVS,
   authoritative: Object.freeze({}),
   focusDir: null,
+  githubOrgs: Object.freeze([]) as readonly string[],
   reports: Object.freeze([]) as readonly CostReportDef[],
   reportsError: null,
   error: null,
@@ -139,6 +145,33 @@ function readFocusTable(t: Record<string, unknown>): string | null {
   return dir;
 }
 
+/** At most this many `[cost.github] orgs`. */
+export const COST_GITHUB_MAX_ORGS = 20;
+/** A GitHub organization login: letters, digits and single inner hyphens, 1 to 39 characters. */
+const GITHUB_ORG_RE = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
+
+function readGithubTable(t: Record<string, unknown>): readonly string[] {
+  only(t, ["orgs"], "[cost.github]");
+  const v = t["orgs"];
+  if (v === undefined) return Object.freeze([]);
+  if (!Array.isArray(v)) throw new CostConfigError("[cost.github].orgs must be a list of names");
+  if (v.length > COST_GITHUB_MAX_ORGS) {
+    throw new CostConfigError(`[cost.github].orgs: at most ${String(COST_GITHUB_MAX_ORGS)}`);
+  }
+  const seen = new Set<string>();
+  for (const o of v as unknown[]) {
+    if (typeof o !== "string" || !GITHUB_ORG_RE.test(o)) {
+      throw new CostConfigError(
+        `[cost.github].orgs: ${JSON.stringify(o).slice(0, 48)} is not a GitHub organization name`,
+      );
+    }
+    const key = o.toLowerCase();
+    if (seen.has(key)) throw new CostConfigError(`[cost.github].orgs: ${o} is listed twice`);
+    seen.add(key);
+  }
+  return Object.freeze([...(v as string[])]);
+}
+
 type Draft = { -readonly [K in keyof NimbusCostConfig]: NimbusCostConfig[K] };
 
 /** Read one non-rule cost section into the draft; an unknown cost section is a refusal. */
@@ -146,6 +179,8 @@ function readPlainSection(s: EffectiveSection & { header: string }, draft: Draft
   if (s.header === "cost" && !s.isArray) readCostTable(parseSection(s, "[cost]"), draft);
   else if (s.header === "cost.focus" && !s.isArray) {
     draft.focusDir = readFocusTable(parseSection(s, "[cost.focus]"));
+  } else if (s.header === "cost.github" && !s.isArray) {
+    draft.githubOrgs = readGithubTable(parseSection(s, "[cost.github]"));
   } else {
     const shown = s.isArray ? `[[${s.header}]]` : `[${s.header}]`;
     throw new CostConfigError(`unknown section ${shown}`);

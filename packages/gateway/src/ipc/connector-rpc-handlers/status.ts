@@ -57,7 +57,8 @@ export async function withConfiguredInstance(
   hit: ConnectorRpcHit,
 ): Promise<ConnectorRpcHit> {
   const row = hit.value as { serviceId?: unknown } | null;
-  if (row?.serviceId !== "github" && row?.serviceId !== "github_actions") return hit;
+  const githubFamily = ["github", "github_actions", "github_billing"];
+  if (typeof row?.serviceId !== "string" || !githubFamily.includes(row.serviceId)) return hit;
   const base = resolveGithubBase(await readConnectorSecret(ctx.vault, "github", "api_base"));
   if (!base.ok || base.host === null) return hit;
   return { kind: "hit", value: { ...row, instance: base.host } };

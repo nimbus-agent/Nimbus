@@ -1,4 +1,5 @@
 import { stripControlChars } from "../lib/strip-control-chars.ts";
+import { type CostFreshnessRow, costFreshnessLine, noCostDataText } from "./cost-freshness-line.ts";
 
 /**
  * `nimbus cost products [--period 30d] [--allocation cluster] [--json|--csv]` and
@@ -93,7 +94,7 @@ type ViewResult = {
   view: "products" | "internal";
   range: { fromDay: string; toDay: string; label: string };
   byCurrency: Record<string, Block>;
-  freshness: { source: string; lastDay: string | null; provisionalFrom: string | null }[];
+  freshness: CostFreshnessRow[];
   empty: boolean;
   excludedSources: { source: string; provider: string; reason: string }[];
   notes: string[];
@@ -150,10 +151,7 @@ function renderBlockText(r: ViewResult, currency: string, b: Block, sink: CostVi
 
 /** Freshness, exclusions and notes, written to `write` (stdout for text, stderr for CSV). */
 function renderFooter(r: ViewResult, write: (s: string) => void): void {
-  for (const f of r.freshness) {
-    const prov = f.provisionalFrom === null ? "" : ` (provisional from ${f.provisionalFrom})`;
-    write(`Source ${clean(f.source)}: data up to ${f.lastDay ?? "none"}${prov}\n`);
-  }
+  for (const f of r.freshness) write(costFreshnessLine(f));
   for (const e of r.excludedSources) {
     write(
       `Note: ${clean(e.source)} lines for ${clean(e.provider)} are not counted: ${clean(e.reason)}\n`,
@@ -168,9 +166,7 @@ function renderText(r: ViewResult, sink: CostViewsSink): number {
     return 1;
   }
   if (r.empty) {
-    sink.err(
-      'No cost data imported. Import a FOCUS export with "nimbus cost import <file|dir>".\n',
-    );
+    sink.err(noCostDataText(r.freshness));
     return 1;
   }
   const what =

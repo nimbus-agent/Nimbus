@@ -1314,6 +1314,24 @@ nimbus cost import --remove focus:0123456789abcdef
 
 **Exit codes.** 0 when every file imported, would import (`--dry-run`) or was already imported; 1 when any file was refused or the call failed. The IPC methods are `cost.import` and `cost.importRemove`; both serve only a connection that declared the `cli` kind, refuse on the demo gateway, are LAN-forbidden (the whole `cost` namespace) and are not on the desktop allowlist.
 
+### GitHub billing usage (`[cost.github]`)
+
+List the organizations whose GitHub spend you want as cost lines; nothing is fetched until you do:
+
+```toml
+[cost.github]
+orgs = ["acme"]            # 0 to 20 organization names
+```
+
+Once a day the gateway reads each organization's [billing usage report](https://docs.github.com/en/rest/billing/usage) (`GET /organizations/{org}/settings/billing/usage`, the current month, plus the previous month until the 5th and on an organization's first sync) with the `github.pat` you stored for the GitHub connector, and keeps it as cost lines of source `github_billing`, provider `github`: one per day, product, SKU and repository, the net amount in US dollars. Every GitHub product the report lists becomes lines (`serviceName` is the product: Actions, Packages, storage, Codespaces, Copilot and so on), so a `[[cost.rule]]` on `repo` (for example `match = { repo = "acme/checkout" }`) puts a repository's Actions minutes under its product. A re-sync replaces exactly that month's days, so a restated day is updated and a day GitHub no longer reports is cleared.
+
+What is and is not available (from GitHub's documentation; no live response was checked when this was written):
+
+- **No per-workflow cost.** The report has a repository, never a workflow, so lines carry `repo` and the SKU (the runner type) only.
+- **Organizations only, on GitHub's enhanced billing platform.** A personal account's Actions minutes are not in any API (the personal endpoint covers Copilot only). GitHub Enterprise Server is not supported: the endpoint is github.com's.
+- **Who may read it.** The token must belong to an organization owner or billing manager. GitHub's pages disagree on the token kind (the [tutorial](https://docs.github.com/en/billing/tutorials/automate-usage-reporting) says a classic personal access token; the reference says a fine-grained token with the "Administration" organization permission (read) works); if one kind is refused, try the other.
+- **When it cannot read an organization** (403 or 404, or an Enterprise Server base) it records why once per run and moves on, and every cost view's freshness shows it under `Source github_billing` as `Not synced: cannot read billing for <org>: …`. A rate-limited response waits for GitHub's limiter; a server error is retried on the next day's run. `connector remove github` deletes these lines too.
+
 ### `nimbus cost products` and `nimbus cost internal`
 
 Cost per product (with its parts: the service and provider, and the env), and the internal cost (CI and the dev and test environments), computed from the local cost lines (`nimbus cost import`), the indexed Vantage rows for a provider with no raw lines, and your `[[cost.rule]]` allocation rules. Local index only: **no network call, no model, no egress row**.
@@ -3533,6 +3551,7 @@ Limits for the FinOps cost data the Vantage, OpenCost and Kubecost syncs index (
 | `[finops] notify_min_interval_minutes` | `360` | 5 to 1440: at most one such notice in this many minutes; an anomaly held back by the limit is announced after it. The memory of what was announced is in the gateway process, so a restart can announce a still-open anomaly once more |
 | `[cost] internal_envs` | `["ci", "dev", "test", "staging"]` | The envs `nimbus cost internal` shows (1 to 32 names). |
 | `[cost] authoritative` | `{}` | Per provider, the source the cost views use, for example `{ aws = "vantage" }`; without it, raw lines win over Vantage rows for a provider. |
+| `[cost.github] orgs` | `[]` | GitHub organizations whose billing usage report is synced daily as cost lines (0 to 20 names; see [GitHub billing usage](#github-billing-usage-costgithub)). Empty: nothing is fetched. |
 | `[cost.focus] dir` | unset | An absolute path. A minute after boot and then once a day the gateway imports its new or changed `*.csv` FOCUS exports (never on a demo gateway; a link is not followed). |
 | `[[cost.report]]` | none | A cost report (`nimbus cost report`): `name` (lowercase letters, digits and `-`), `scope = { product, env, service, provider }` (at least one), `period` (`week`, `month` or `<N>d`, 1 to 400), optional `schedule` (a cron line as for workflows, numeric days: `0 8 * * 1` is Monday 08:00) and `tz` (an IANA zone). At most 50. As for every array block, the highest layer with reports supplies all of them. |
 | `[[cost.report.channel]]` | none | One channel of a report, its own array (so a role pack's reports can take your channels): `report` (a report name), `kind` (`slack`, `teams`, `gmail`, `outlook`; one of each per report), `to` (Slack channel id; Teams `{ team, channel }`; 1 to 50 email addresses, or one as a string), `format` (Slack `text`/`markdown`; Teams `text`/`markdown`/`html`; Gmail `text`; Outlook `text`/`html`), optional `breakdown = "csv"`, exactly one of `template` and `template_file` (in `cost-templates/`), and for Gmail and Outlook a required one-line `subject`. At most 200. A bad report or channel refuses only the reports (`nimbus cost report` names the problem); your `[[cost.rule]]` rules and every cost view keep working. |

@@ -1,4 +1,5 @@
 import { stripControlChars } from "../lib/strip-control-chars.ts";
+import { type CostFreshnessRow, costFreshnessLine, noCostDataText } from "./cost-freshness-line.ts";
 import { COST_PERIOD_RE, type CostWhyIpc, type CostWhySink } from "./cost-why-cli.ts";
 
 /**
@@ -48,7 +49,7 @@ type CheckResult = {
     reason: string;
   }[];
   topUnassignedTruncated: number;
-  freshness: { source: string; lastDay: string | null; provisionalFrom: string | null }[];
+  freshness: CostFreshnessRow[];
 };
 
 const clean = (s: string): string => stripControlChars(s).slice(0, 200);
@@ -98,9 +99,7 @@ function renderText(r: CheckResult, sink: CostWhySink): number {
     return 1;
   }
   if (r.empty) {
-    sink.err(
-      'No cost data imported. Import a FOCUS export with "nimbus cost import <file|dir>".\n',
-    );
+    sink.err(noCostDataText(r.freshness));
     return 1;
   }
   sink.out(`Cost rules check, ${r.range.fromDay} to ${r.range.toDay} (${r.range.label})\n`);
@@ -110,11 +109,7 @@ function renderText(r: CheckResult, sink: CostWhySink): number {
   }
   renderRules(r, sink);
   renderGroups(r, sink);
-  for (const f of r.freshness) {
-    const prov = f.provisionalFrom === null ? "" : ` (provisional from ${f.provisionalFrom})`;
-    sink.out(`Source ${clean(f.source)}: data up to ${f.lastDay ?? "none"}${prov}
-`);
-  }
+  for (const f of r.freshness) sink.out(costFreshnessLine(f));
   return 0;
 }
 

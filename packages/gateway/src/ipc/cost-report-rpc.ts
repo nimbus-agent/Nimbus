@@ -220,6 +220,7 @@ export function reportModel(
     weekStart,
     nowMs,
     lastDays: both.lastDays,
+    sourceGaps: both.sourceGaps ?? new Map(),
     empty: both.empty,
   });
 }
