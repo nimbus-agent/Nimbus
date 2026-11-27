@@ -204,11 +204,11 @@ describe("I15 — SandboxRunner is intrinsic to every extension spawn", () => {
         if (f === "iac-runner.ts") {
           // D2: the iac profiles' write list is built in ONE function from three inputs only: the
           // approved canonical workdir, this run's staging directory and this call's scratch
-          // directory. D3a: the `kube` profile writes its scratch directory ONLY (the fourth
-          // entry: no owner directory, no kubeconfig directory). Every assignment of it is pinned
-          // here instead of the literal scan below.
+          // directory. The init (0.21.0) and apply write the workdir alone; D3a's `kube` profile
+          // its scratch directory ONLY. Every assignment is pinned here, not by the scan below.
           expect([...code.matchAll(/\bwrite = ([^;]*);/g)].map((m) => m[1])).toEqual([
             "[...wd, ...(req.stagingDir === undefined ? [] : [req.stagingDir])]",
+            "[...wd]",
             "[...wd]",
             "req.scratchDir === undefined ? [] : [req.scratchDir]",
             "req.scratchDir === undefined ? [] : [req.scratchDir]",

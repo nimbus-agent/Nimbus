@@ -80,3 +80,29 @@ describe("scanForGitEntry caps (a fake reader)", () => {
     expect(IAC_GIT_SCAN_LIMITS).toEqual({ maxDepth: 16, maxEntries: 50_000 });
   });
 });
+
+// Connectors 0.21.0 (owner ruling: refuse clearly now, fix later): `terraform init` clones a
+// git-sourced module into `.terraform/modules/<key>/` with its `.git`.
+describe("scanForGitEntry: a .git under .terraform/modules", () => {
+  test("is its own verdict, whatever the letter case of the two folders", () => {
+    const m = dir("modules-only");
+    mkdirSync(join(m, ".terraform", "modules", "vpc", ".git"), { recursive: true });
+    expect(scanForGitEntry(m)).toBe("module");
+    const deep = dir("modules-deep");
+    writeFileSync(join(dir("modules-deep/.Terraform/Modules/a/b"), ".git"), "gitdir: x");
+    expect(scanForGitEntry(deep)).toBe("module");
+  });
+
+  test("a .git anywhere else still wins, even beside a module one", () => {
+    const both = dir("modules-and-repo");
+    mkdirSync(join(both, ".terraform", "modules", "vpc", ".git"), { recursive: true });
+    mkdirSync(join(both, "zz", ".git"), { recursive: true });
+    expect(scanForGitEntry(both)).toBe("found");
+    const providers = dir("providers-git");
+    mkdirSync(join(providers, ".terraform", "providers", ".git"), { recursive: true });
+    expect(scanForGitEntry(providers)).toBe("found");
+    const nested = dir("nested-modules");
+    mkdirSync(join(nested, "sub", ".terraform", "modules", "x", ".git"), { recursive: true });
+    expect(scanForGitEntry(nested)).toBe("found");
+  });
+});

@@ -268,6 +268,17 @@ export const CLOUD_INFRA_ROWS: readonly ConnectorWriteRow[] = [
     ),
     { template: "accept-drift {workingDirectory}" },
   ),
+  // Connectors 0.21.0 (owner ruling): `terraform init` in an approved directory. Wave 3, never offered
+  // to the model (MODEL_NEVER_OFFERED_REASONS: it fetches and runs remote provider and module code),
+  // irreversible, code execution under I26. Not bound, so no preflight: the runner opens the run for
+  // this one call itself (the `init` profile, `lazy-mesh/iac-runner.ts`). Denied on the act door
+  // like every iac row (class iac).
+  withPreview(row("iac_terraform_init", "iac.terraform.init", "mesh", 3), {
+    target: "{workingDirectory}",
+    summary:
+      "Initialise Terraform in {workingDirectory}: download the providers and modules its configuration names into .terraform/ and write the lock file (removed only by hand)",
+    fields: [textField("workingDirectory", "Working directory")],
+  }),
   withConfirm(
     withBound(
       withPreview(row("iac_cloudformation_deploy", "iac.cloudformation.deploy", "mesh", 4), {

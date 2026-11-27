@@ -32,6 +32,8 @@ export const MODEL_NEVER_OFFERED_REASONS: Readonly<Record<string, string>> = Obj
     "no plan-bound Pulumi apply exists (saved update plans are experimental): refused on every door",
   iac_cloudformation_changeset_discard:
     "only the gateway's own cleanup of a change set it created may discard one",
+  iac_terraform_init:
+    "an init fetches and runs remote provider and module code into the working directory, so which code is trusted there stays the owner's call (connectors 0.21.0 ruling)",
   azure_app_service_restart: CLI_READ_ONLY,
   azure_aks_node_pool_scale: CLI_READ_ONLY,
   gcp_cloud_run_deploy: CLI_READ_ONLY,

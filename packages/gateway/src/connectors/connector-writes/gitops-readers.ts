@@ -304,11 +304,42 @@ const TAG_NOT_IDENTIFIED = "unknown (the read does not identify this tag uniquel
 const FULLY_QUALIFIED = 3;
 
 /**
+ * A reply entry's tag as segments. Since connectors 0.21.0 each entry carries `database`, `schema`
+ * and `name`: Snowflake's STORED names (an unquoted identifier upper-cased, a quoted one as
+ * written), compared as they are, never joined and re-parsed. An entry without them (an older
+ * reply) has its `name` parsed. `identified` is true only for the stored form.
+ */
+function entryTag(t: unknown): {
+  readonly segs: string[] | undefined;
+  readonly identified: boolean;
+} {
+  const database = stringAt(t, ["database"]);
+  const schema = stringAt(t, ["schema"]);
+  const name = stringAt(t, ["name"]);
+  if (database !== undefined && schema !== undefined && name !== undefined) {
+    return { segs: [database, schema, name], identified: true };
+  }
+  return { segs: identifierSegments(name ?? ""), identified: false };
+}
+
+/** A stored name Snowflake would accept unquoted (it folds unquoted names to upper case). */
+const PLAIN_IDENTIFIER = /^[A-Z_][A-Z0-9_$]*$/;
+
+/**
+ * One stored segment as a Snowflake identifier, for display only: as it is when plain, otherwise
+ * quoted with any `"` doubled, so `DB."S.X".PII` and `DB.S."X.PII"` never read alike.
+ */
+function shownSegment(segment: string): string {
+  return PLAIN_IDENTIFIER.test(segment) ? segment : `"${segment.replaceAll('"', '""')}"`;
+}
+
+/**
  * The tag's value now. A value is shown only when the reply names the SAME fully-qualified tag
  * (database, schema and tag, quoted case respected). A reply entry that shares only the tag's
- * name (another schema's tag, a differently-quoted one, a bare name) is NOT this tag, so its value
- * is never shown as this tag's: the line is {@link TAG_NOT_IDENTIFIED}. No entry sharing the name:
- * `(not set)`.
+ * name is NOT this tag, so its value is never shown as this tag's. An entry the reply identifies
+ * (database and schema given) that is another schema's tag is left out: it says nothing about this
+ * one. An entry it does not identify (a bare or older name) makes the line {@link TAG_NOT_IDENTIFIED}.
+ * No entry left sharing the name: `(not set)`.
  */
 function tagValueNow(
   tags: readonly unknown[],
@@ -316,20 +347,17 @@ function tagValueNow(
 ): { readonly value: string | undefined; readonly unidentified: boolean } {
   const want = wanted === undefined ? undefined : identifierSegments(wanted);
   if (want === undefined) return { value: undefined, unidentified: wanted !== undefined };
-  const wantName = want.at(-1);
+  const isExact = (segs: string[] | undefined): boolean =>
+    segs?.length === FULLY_QUALIFIED &&
+    want.length === FULLY_QUALIFIED &&
+    segs.every((x, k) => x === want[k]);
   const sameName = tags.filter((t) => {
-    const segs = identifierSegments(stringAt(t, ["name"]) ?? "");
-    return segs?.at(-1) === wantName;
+    const { segs, identified } = entryTag(t);
+    if (segs?.at(-1) !== want.at(-1)) return false;
+    return !(identified && want.length === FULLY_QUALIFIED && !isExact(segs));
   });
   if (sameName.length === 0) return { value: undefined, unidentified: false };
-  const exact = sameName.filter((t) => {
-    const segs = identifierSegments(stringAt(t, ["name"]) ?? "");
-    return (
-      segs?.length === FULLY_QUALIFIED &&
-      want.length === FULLY_QUALIFIED &&
-      segs.every((x, k) => x === want[k])
-    );
-  });
+  const exact = sameName.filter((t) => isExact(entryTag(t).segs));
   const hit = exact.length === 1 ? exact[0] : undefined;
   return hit === undefined
     ? { value: undefined, unidentified: true }
@@ -362,7 +390,11 @@ export function selectSnowflakeTag(
     {
       tags: tags.flatMap((t) => {
         const n = stringAt(t, ["name"]);
-        return n === undefined ? [] : [`${n}=${stringAt(t, ["value"]) ?? ""}`];
+        if (n === undefined) return [];
+        // Shown qualified when the reply identifies the tag (display only, never matched on).
+        const { segs, identified } = entryTag(t);
+        const shown = identified && segs !== undefined ? segs.map(shownSegment).join(".") : n;
+        return [`${shown}=${stringAt(t, ["value"]) ?? ""}`];
       }),
     },
     ["tags"],

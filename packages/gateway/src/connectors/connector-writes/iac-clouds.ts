@@ -8,8 +8,9 @@
 //
 // UNVERIFIED (OR-D2 stated bound): the host lists are drawn from the vendors' documented endpoints.
 // No credentialed plan was run against a real account, so a provider that needs another host fails
-// closed on Linux (the forwarder refuses it) and the owner adds it with `--net`. There are no
-// registry hosts: provider and module downloads are not allowed (the owner runs `terraform init`).
+// closed on Linux (the forwarder refuses it) and the owner adds it with `--net`. Only the `init`
+// child (connectors 0.21.0) adds the registry hosts automatically; plan and apply get them only
+// through an owner's explicit `--net`.
 import type { IacCloud } from "./iac-grants.ts";
 
 /** The names (never the values) of the variables each cloud's credential reaches the child in. */
@@ -50,6 +51,19 @@ export function iacTerraformHosts(clouds: readonly IacCloud[]): string[] {
   if (clouds.includes("gcp")) hosts.push("oauth2.googleapis.com", "www.googleapis.com");
   return hosts;
 }
+
+/**
+ * The hosts the `init` child adds to the plan's: the public Terraform registry (provider and
+ * module lookups) and HashiCorp's release host, where the registry sends the download of every
+ * HashiCorp provider (aws, azurerm, google). A partner or community provider downloads from its own
+ * publisher's host (usually GitHub release assets) and a module from a git source from its git
+ * host: neither is granted here, so where the sandbox scopes hosts (Linux) those downloads fail
+ * closed until the owner adds the host with `--net`.
+ */
+export const IAC_TERRAFORM_INIT_HOSTS: readonly string[] = Object.freeze([
+  "registry.terraform.io",
+  "releases.hashicorp.com",
+]);
 
 /** The hosts of the CloudFormation child: its own region's endpoint and the STS endpoints. */
 export function iacCfnHosts(region: string): string[] {

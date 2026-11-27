@@ -213,8 +213,8 @@ describe("I53 — a first-party connector write reaches the model only through t
     // The seven mail sends (OR-W34-1), since D1 the Bitbucket merge (no head precondition), and
     // since D2 the rows that stay owner-only: Terraform destroy, Pulumi, the change-set discard and
     // (OR-S4-DRIFT) the accept-drift apply (D3a took the Kubernetes apply off the list: it is offered while a pair is approved),
-    // and since the Phase 9.7 close (OR-97-1) the four az/gcloud-read cloud rows and the pod delete.
-    expect(MODEL_NEVER_OFFERED_TOOL_IDS.size).toBe(17);
+    // since the Phase 9.7 close (OR-97-1) the four az/gcloud-read cloud rows and the pod delete, and the 0.21.0 init.
+    expect(MODEL_NEVER_OFFERED_TOOL_IDS.size).toBe(18);
     expect(MODEL_NEVER_OFFERED_TOOL_IDS.has("gcp_cloud_run_deploy")).toBe(true);
     expect(MODEL_NEVER_OFFERED_TOOL_IDS.has("bitbucket_pr_merge")).toBe(true);
     for (const r of CONNECTOR_WRITE_ROWS) {

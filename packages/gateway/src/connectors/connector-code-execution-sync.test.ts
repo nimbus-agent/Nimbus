@@ -40,7 +40,8 @@ const SCAN = scanProcessSpawningConnectors(
  * The review: every connector whose source can start a process, and each of its READ tools that
  * does so without letting the caller pick what runs. Writes are not listed: I26 refuses them all.
  * Reviewed 2026-10-05 against @nimbus-dev/connectors 0.2.1 and 0.2.2, identical for these eleven;
- * the iac, kubernetes and prepare-tool entries re-reviewed 2026-11-08 against 0.9.0.
+ * the iac, kubernetes and prepare-tool entries re-reviewed 2026-11-08 against 0.9.0; the aws and iac
+ * entries re-reviewed 2026-11-27 against 0.21.0 (aws_lambda_get, the two change-set reads).
  */
 const REVIEWED_PROCESS_CONNECTORS: Readonly<
   Record<string, { readonly reads: readonly string[]; readonly why: string }>
@@ -58,9 +59,10 @@ const REVIEWED_PROCESS_CONNECTORS: Readonly<
       "aws_ec2_instance_get",
       "aws_ecs_service_get",
       "aws_ecs_service_list",
+      "aws_lambda_get",
       "aws_lambda_list",
     ],
-    why: "fixed `aws` subcommands; the caller values (`--cluster`, `--services`, `--instance-ids`) are flag values, the instance id additionally matching `^i-[0-9a-f]{8,17}$` (aws → native .exe)",
+    why: "fixed `aws` subcommands; the caller values (`--cluster`, `--services`, `--instance-ids`, `--function-name`) are flag values, the instance id additionally matching `^i-[0-9a-f]{8,17}$` and the function a Lambda name or function ARN (`awsCliArg`, so no `file://` or `@=` value) (aws → native .exe)",
   },
   azure: {
     reads: [],
@@ -83,8 +85,12 @@ const REVIEWED_PROCESS_CONNECTORS: Readonly<
     why: "its reads invoke `gcloud`, a `.cmd` wrapper on Windows whose argv cmd.exe re-parses; a caller value reaches it (gcp_cloud_run_service_list's projectId/region in `--flag=value`), so all reads are refused as code execution",
   },
   iac: {
-    reads: ["iac_cloudformation_stack_get"],
-    why: "every other tool hands terraform or pulumi a caller-named directory, which evaluates its code (the plan, the destroy plan and `show -json` are refused as code execution); the stack read is a fixed `aws cloudformation describe-stacks` with a guarded stack name (aws → native .exe); the change-set prepare tool is refused as a prepare tool",
+    reads: [
+      "iac_cloudformation_changeset_get",
+      "iac_cloudformation_changesets_list",
+      "iac_cloudformation_stack_get",
+    ],
+    why: "every other tool hands terraform or pulumi a caller-named directory, which evaluates its code (the plan, the destroy plan, `show -json` and, as a write, the init are refused as code execution); the three CloudFormation reads are fixed `aws cloudformation describe-stacks`, `list-change-sets` and `describe-change-set` calls whose caller values (stack name, change-set name or ARN) are `awsCliArg`-guarded flag values (aws → native .exe); the change-set prepare tool is refused as a prepare tool",
   },
   kubernetes: {
     reads: ["k8s_deployment_get", "k8s_deployment_list", "k8s_event_list", "k8s_pod_list"],
