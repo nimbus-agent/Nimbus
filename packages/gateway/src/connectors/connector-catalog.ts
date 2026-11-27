@@ -16,6 +16,8 @@ export const CONNECTOR_SERVICE_IDS = [
   "github",
   "github_actions",
   "github_billing",
+  "openai_billing",
+  "anthropic_billing",
   "gitlab",
   "bitbucket",
   "linear",
@@ -155,6 +157,9 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   github_actions: MIN1,
   // Phase 7 slice 5: GitHub billing usage, a daily report (the cost lines of the current month).
   github_billing: 24 * 60 * MIN1,
+  // Phase 7 slice 6: OpenAI and Anthropic organization costs, daily reports.
+  openai_billing: 24 * 60 * MIN1,
+  anthropic_billing: 24 * 60 * MIN1,
   gitlab: MIN1,
   bitbucket: MIN1,
   linear: MIN1,

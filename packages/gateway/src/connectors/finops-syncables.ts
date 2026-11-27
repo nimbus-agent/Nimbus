@@ -1,6 +1,8 @@
 import type { Syncable } from "../sync/types.ts";
+import { createAnthropicCostSyncable } from "./anthropic-cost-sync.ts";
 import { createGithubBillingCostSyncable } from "./github-billing-cost-sync.ts";
 import { createK8sCostSyncable } from "./k8s-cost-sync.ts";
+import { createOpenaiCostSyncable } from "./openai-cost-sync.ts";
 import { createVantageSyncable } from "./vantage-sync.ts";
 
 /** What the FinOps syncables read per sync; an absent member means its default. */
@@ -13,7 +15,7 @@ export type FinopsSyncOptions = {
 
 /**
  * Registers the FinOps syncables: Vantage, then OpenCost and Kubecost (Phase 10), then GitHub billing usage
- * (Phase 7 slice 5). Each source runs on its own timer and fails on its own: an unconfigured one is skipped by
+ * (Phase 7 slice 5), then OpenAI and Anthropic organization costs (slice 6). Each source runs on its own timer and fails on its own: an unconfigured one is skipped by
  * the scheduler's configured check.
  */
 export function registerFinopsSyncables(
@@ -28,4 +30,6 @@ export function registerFinopsSyncables(
   scheduler.register(
     createGithubBillingCostSyncable({ githubOrgs: finops?.githubOrgs ?? (() => []) }),
   );
+  scheduler.register(createOpenaiCostSyncable());
+  scheduler.register(createAnthropicCostSyncable());
 }

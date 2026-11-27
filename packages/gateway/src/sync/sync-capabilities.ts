@@ -63,7 +63,11 @@ import { resolveAccessTokenForService } from "./access-token-registry.ts";
  * checked grant, so a NEW cross-service read is a deliberate edit here rather than an accident.
  */
 /** The services that may write cost lines through `replaceCostLinesForMonth` (Phase 7 slice 5). */
-const COST_SYNC_SERVICES: ReadonlySet<string> = new Set(["github_billing"]);
+const COST_SYNC_SERVICES: ReadonlySet<string> = new Set([
+  "github_billing",
+  "openai_billing",
+  "anthropic_billing",
+]);
 
 export const SHARED_CREDENTIAL_GRANTS = {
   bigquery: ["gcp"],

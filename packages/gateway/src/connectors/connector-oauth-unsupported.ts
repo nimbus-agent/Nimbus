@@ -7,6 +7,10 @@ export const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, strin
   github: "uses a PAT",
   github_actions: "uses the same PAT as github",
   github_billing: "uses the same PAT as github",
+  openai_billing:
+    "uses an OpenAI organization admin key (Vault only; read for the costs endpoint alone)",
+  anthropic_billing:
+    "uses an Anthropic organization admin key (Vault only; read for the cost report alone)",
   gitlab: "uses a PAT",
   bitbucket: "uses app password",
   linear: "uses an API key",
