@@ -316,7 +316,7 @@
     "packages/gateway/src/ipc/connector-rpc-agent-writes-user-mcp.test.ts": 710,
     "packages/gateway/src/ipc/connector-rpc-agent-writes.test.ts": 1260,
     "packages/gateway/src/ipc/connector-rpc-handlers/auth.test.ts": 1240,
-    "packages/gateway/src/ipc/connector-rpc-handlers/auth.ts": 1094,
+    "packages/gateway/src/ipc/connector-rpc-handlers/auth.ts": 1086,
     "packages/gateway/src/ipc/connector-rpc-handlers/removal.test.ts": 766,
     "packages/gateway/src/ipc/connector-rpc-model-writes.test.ts": 952,
     "packages/gateway/src/ipc/connector-rpc.test.ts": 555,
