@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795760699016,
+  "lastUpdate": 1795765146550,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "863f621f23cfecd36d68462595478f9dbb40a249",
-          "message": "feat(audit): index lane census (report-only) (#1561)\n\n## Summary\n\n- Adds a table-aware static census (`bun run audit:lane-census`,\n`scripts/structure-audit/check-index-lane-coverage.ts`) that extracts\nwhat production code\nREADS from the `item` table (`item.type` literals, `json_extract`\nmetadata keys, JS-side\n`meta[\"k\"]` reads) and what every connector WRITES, then diffs the two.\n- **Report-only: it always exits `0` and gates nothing.** It only writes\n`docs/structure-audit/index-lane-census.json` for a human (or a future\ngate — PR 2) to read.\n- Reproduces all four bugs confirmed by hand in the B4 bug-hunt, pinned\nby\n`scripts/structure-audit/check-index-lane-coverage.acceptance.test.ts`\nagainst the real tree:\n\n  | key | state | where |\n  |---|---|---|\n| `commit` | unmatched | `agents/expert.ts:386` — nothing writes\n`item.type='commit'`; the only commit-shaped writer,\n`filesystem-v2-sync.ts`, writes `git_commit`, and `graph-populator.ts`'s\n`commit` write lands in `graph_entity`, a different table |\n| `workflow_name` | unmatched | `preflight/preflight.ts:166` — every\n`ci_run` writer emits `workflowName` instead |\n| `branch` | **partial** (`partialCoverage: [\"circleci\"]`) |\n`preflight.ts:168`, `:175` — of four `ci_run` writers only `circleci`\nemits `branch`; `github_actions` writes `headBranch` |\n| `opened_at_ms` | unmatched | `agents/premortem.ts:199`, `:205` only —\nthe same key IS **matched** at `metrics/dora.ts`'s incident-scoped read,\nwhich proves the census scopes per-literal type rather than matching on\nkey name alone |\n\n- Current numbers over `packages/gateway/src/**`: 401 reads, 117 writes,\n83 unmatched item reads\n(73 total-absence + 10 partial), 122 ambiguous reads, 19 parameterized\nreads it cannot resolve\n  statically.\n\n## Structural guards the acceptance test pins\n\n- **No `demo/` writer is ever counted.** `demo/corpus/acme.ts` writes a\n`repo` key the real\nconnector does not, which would otherwise mask a real gap and make DORA\nlook artificially clean.\n- **`graph_entity`'s `commit` write appears in the artifact's `reads`\nlist but is never\nmisreported as an `unmatchedItemReads` entry** — confirming the\ntable-aware diff does not\n  conflate `item` with the graph tables.\n\n## Known blind spot (disclosed in the artifact itself)\n\n`imap` and `protonmail` write item rows through a generic cross-file\nmapper called with plain\nfunction-call arguments rather than an inline `{ service, type, metadata\n}` object literal, so\ntheir real writes produce zero `WriterEmission` rows here. An\n`imap:*`/`protonmail:*` entry in\n`unmatchedItemReads` is this blind spot showing, not a confirmed dead\nlane — it needs a manual\ncheck, not a census read.\n\n## Scope\n\n`item` only. `graph_entity`/`graph_relation` reads are censused for the\nartifact (recorded for\ncompleteness) but are never diffed against writes or gated.\n\n## Docs\n\n- CHANGELOG bullet dated 2026-09-20.\n- Roadmap: the B4 row (*Maintenance-initiative follow-ups*) now records\nthat the audit ran and the\ncensus landed report-only — **the checkbox stays unticked**, since the\ngate (turning these\nfindings into an enforced CI check) is still pending, separate follow-up\nwork.\n\n## Stripped from this branch before merge\n\nThe four `docs/superpowers/` spec + plan files that lived on this branch\nduring development\n(specs and plans never land on `main` — squash-merge takes the net diff,\nso deleting them in a\ncommit here is sufficient) are gone from the diff. They remain\nrecoverable at\n`08420078b4017c3390b7bc7cfc8164b8f29849d1`:\n\n```\ngit show 08420078b4017c3390b7bc7cfc8164b8f29849d1:docs/superpowers/specs/2026-09-20-index-lane-coverage-design.md\ngit show 08420078b4017c3390b7bc7cfc8164b8f29849d1:docs/superpowers/specs/2026-09-20-index-lane-coverage-review.md\ngit show 08420078b4017c3390b7bc7cfc8164b8f29849d1:docs/superpowers/plans/2026-09-20-index-lane-coverage.md\ngit show 08420078b4017c3390b7bc7cfc8164b8f29849d1:docs/superpowers/plans/2026-09-20-index-lane-coverage-review.md\n```\n\nVerified `git diff --name-only origin/main...HEAD | grep superpowers` is\nempty.\n\n## Test plan\n\n- [x] `bun run preflight:fast` — green\n- [x] `bun run preflight` — see PR discussion for the machine-local\nsandbox exception noted below\n- [x]\n`scripts/structure-audit/check-index-lane-coverage.acceptance.test.ts`\n(8 pass) and the full\n      `scripts/structure-audit/` suite (927 pass) — no regressions\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **New Features**\n* Added a report-only audit comparing production data reads with\nconnector writes and generating a JSON coverage report.\n* The audit identifies unmatched and partially covered fields, reports\nambiguity and known blind spots, and always completes successfully.\n* Supports SQL and JavaScript read patterns, aliases, metadata access,\nand connector write emissions.\n\n* **Documentation**\n  * Documented the audit, findings, scope, and deferred CI enforcement.\n\n* **Tests**\n* Added comprehensive coverage for extraction, matching, alias handling,\nSQL parsing, and confirmed coverage gaps.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>\nCo-authored-by: AsafGolombek <asafgolombek@users.noreply.github.com>",
-          "timestamp": "2026-09-21T03:53:30Z",
-          "tree_id": "4d7984debf8e0fd4bb794ff0e78f5900644c2da5",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/863f621f23cfecd36d68462595478f9dbb40a249"
-        },
-        "date": 1789963541179,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 337.64239119999945,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 338.77973940000885,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 274.03815389999363,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c10bd98894b449863b33e35f94173d414089fcd8",
+          "message": "feat: scheduled cost reports post under a standing rule (Phase 7, slice 4) (#2183)\n\n## Summary\n\nPhase 7 (the Cost Pack), slice 4 of 8: **scheduled cost reports post\nunder a standing rule.** `nimbus cost report schedule <name>` saves one\nscheduled workflow per channel; once the owner approves its write step\nas a standing rule, it posts on schedule with no prompt, audited\n`standing_approved` and in the egress ledger.\n\n- **The `report` workflow step** (`automation/workflow-step-report.ts`):\nthe whole report is EMBEDDED in the workflow — scope, period, kind,\nformat, breakdown, the template TEXT (a `template_file` read once at\ngeneration) and the zone — so the workflow content hash binds everything\na post depends on. Validated at save and at run by the same parser: the\nconfig's own validators, `parseCostTemplate` (an unknown placeholder now\nrefuses the save), subject rules, unique labels, and no `run` (model)\nstep beside a report step.\n- **The `{ report: <label>, part: \"body\" | \"subject\" }` write value**:\nallowed only on the field `REPORT_BODY_FIELDS` names for the report\nkind's own row (`slack_message_post.text`, `teams_message_post.body`,\nthe drafts' `body`/`subject`); every destination and routing field\n(channel, team, `to`, `contentType`, thread) must be a constant; a Slack\nreport feeds only the Slack row; no `from` beside it.\n- **Runs** (`automation/workflow-report-run.ts`, the only producer of a\nrun's `reports` map): render over the local cost index and the current\n`[cost]` rules — no model, no tool output, no network. A report-fed\nwrite fails closed if its report produced nothing in that run. **Owner\nruling 2:** a period with no cost line of any source ends the run\n`skipped` with the reason, dispatches nothing, and the scheduler\nnotifies once (\"Nimbus: a cost report was skipped\").\n- **I55 extension** (wiring + `docs/SECURITY-INVARIANTS.md` + tests in\none commit): provenance field source `{ report: index, part }`, rule\nscope `ScopeEntry { report, part }`; `accountedStep` re-checks the field\nagainst `REPORT_BODY_FIELDS` (defence in depth beyond the parser,\nmutation-proved with a forged rule); `scopeMatches` requires the same\nstep and part. New stated bound (i): imported billing data can change\nthe numbers and the (inert) substituted text of a rule-approved post,\nnever its destination, tool or timing; the send door still runs on the\nfinal text in `doorRefusalStep`. **Static D44 clause (h)**\n`standing-report-source-confined`.\n- **`cost.reportSchedule` / `nimbus cost report schedule <name>\n[--channel <kind>] [--json]`** (`cli` only, refused on a demo gateway,\nLAN-forbidden, not renderer-callable): saves `cost-<report>-<kind>`\nthrough `saveWorkflowDefinition`, extracted from `workflow.save` (D50(c)\nunchanged). **Owner ruling 1:** a report with no `tz` gets the gateway\nzone frozen into the workflow. **Owner ruling 3:** each channel is\nrendered once and checked by the send door; a refused channel (ChatOps\ndestination, broadcast mention, remote content, unreadable template) is\nskipped with the reason while the others save. Default schedule `0 8 * *\n1`. Prints the exact `nimbus approve add --workflow cost-<report>-<kind>\n--step 2`; a regeneration that changes the content says the rule must be\napproved again.\n- **Shared render** `automation/cost-report-render.ts`: one\nrender-then-check sequence for the slice-3 preview, the generator and\nthe run.\n- **I59:** a signed bundle still refuses a report step, now naming it\n(`ERR_WORKFLOW_BUNDLE_STEPS`).\n- **Fix from the whole-branch review:** the IPC run handler\n(`workflow.run` / `workflow.resume`) now passes the config directory, so\nan owner run or a resume of a blocked scheduled report run renders\ninstead of erroring; pinned by a resume test and a source pin.\n\n## Tests\n\n- `automation/cost-report-delivery.acceptance.test.ts` (spec acceptance\n3): generate, approve step 2, fire through the real scheduler, runner,\nexecutor and egress ledger with a fake transport → one Slack post with\nno prompt, `standing_approved`, one egress row, body equal to the\n`cost.reportRender` preview, vendor `<!here>` inert; no rule → blocked\nand notified once; Outlook → a draft, nothing sent.\n- `security-invariants/i55-standing-rule-report.test.ts` (new file: the\nI55 and invariants test files are size-baselined): rule scope and text;\nmatch whatever the body; wrong part/step/index/unknown part/constant\nclaim refused; forged destination-field rule refused; changed template\nunmatches; `<!channel>` template blocked by the door; D44 (h) clean and\nred-proved.\n- `automation/workflow-report-run.test.ts`,\n`workflow-step-report.test.ts`, `cost-report-workflow.test.ts`,\n`ipc/cost-report-schedule-rpc.test.ts`,\n`cli/.../cost-report-schedule-cli.test.ts`, scheduler and bundle tests.\n- `bun run preflight:fast` green; touched suites green locally (one I15\nsandbox test fails only locally on Windows because this worktree has no\nbuilt sandbox helper; unrelated).\n\n## Stated bounds\n\nA rule binds the workflow hash, so any change to the embedded report\nneeds a new approval; the `[cost]` rules and the authoritative source\nare read live at each run; a resumed run renders again at resume time;\n`nimbus cost report schedule` with no name still renders a report named\n`schedule`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Scheduled cost reports can now be generated as workflows for supported\nchannels, with configurable schedules and approval before posting or\ndrafting.\n* Workflow runs can render reports from local cost data and use report\ncontent in approved write steps. Runs without matching cost data are\nskipped with a notification.\n* **Documentation**\n* Updated CLI guidance, workflow and security documentation, changelog,\nand roadmap to reflect scheduled report delivery.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-27T07:31:23Z",
+          "tree_id": "717a431d9849fdb0b62cf4078be877a4461f4bc6",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/c10bd98894b449863b33e35f94173d414089fcd8"
+        },
+        "date": 1795765142212,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 188.70522554999843,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 187.29163024999525,
             "unit": "ms"
           }
         ]
