@@ -1,9 +1,9 @@
 ---
 title: Google Calendar
-description: Index your Google Calendar events for the next 30 days. Read-only, with its own consent.
+description: Index your Google Calendar events for the next 30 days, and create, change and delete events behind consent. Its own consent.
 ---
 
-The Google Calendar connector indexes your events into the local SQLite index and exposes read tools for calendars and events. Read-only: there are no write tools.
+The Google Calendar connector indexes your events into the local SQLite index and exposes read tools for calendars and events, plus three HITL-gated write tools (since `@nimbus-dev/connectors` 0.20.0) that create, change and delete events.
 
 ## What's indexed
 
@@ -19,7 +19,7 @@ The Google Calendar connector indexes your events into the local SQLite index an
 nimbus connector auth google_calendar
 ```
 
-This is its own consent: it asks only for `https://www.googleapis.com/auth/calendar.readonly`. Connecting Gmail, Drive or Photos does not give Nimbus access to your calendar, and Google Calendar sync stays off until you run this command. You use your own Google OAuth client (`NIMBUS_OAUTH_GOOGLE_CLIENT_ID`, a Desktop app client; `nimbus connector auth google_calendar --help` prints the setup), and its consent screen must list `calendar.readonly` with the Google Calendar API enabled. `calendar.readonly` is a Google sensitive-scope permission, but you do not need Google's verification for your own client: leave it in Testing with your account as a test user (Google then expires its refresh tokens after 7 days, so you re-run this command weekly), or publish it to In production without submitting it and accept Google's "unverified app" warning once (an unverified client is limited to 100 users). Google requires verification for a client offered to the public, whatever its user count, but not for one only you use.
+This is its own consent: it asks for `https://www.googleapis.com/auth/calendar.readonly` (the sync and the read tools) and, since connectors 0.20.0, `https://www.googleapis.com/auth/calendar` (the write tools). Connecting Gmail, Drive or Photos does not give Nimbus access to your calendar, and Google Calendar sync stays off until you run this command. You use your own Google OAuth client (`NIMBUS_OAUTH_GOOGLE_CLIENT_ID`, a Desktop app client; `nimbus connector auth google_calendar --help` prints the setup), and its consent screen must list `calendar.readonly` and `calendar` with the Google Calendar API enabled. Both are Google sensitive-scope permissions, but you do not need Google's verification for your own client: leave it in Testing with your account as a test user (Google then expires its refresh tokens after 7 days, so you re-run this command weekly), or publish it to In production without submitting it and accept Google's "unverified app" warning once (an unverified client is limited to 100 users). Google requires verification for a client offered to the public, whatever its user count, but not for one only you use.
 
 ## Read tools (no HITL)
 
@@ -28,3 +28,24 @@ This is its own consent: it asks only for `https://www.googleapis.com/auth/calen
 | `gcal_calendar_list` | List the calendars you can see. |
 | `gcal_event_get` | Get a single event by id. |
 | `gcal_event_list` | List events in a time window. |
+
+## Write tools (HITL-gated)
+
+Every tool below requires your consent through the Gateway HITL gate before it runs. The connector lists them only when the stored token holds `calendar` (or `calendar.events`): the Gateway passes the scopes of Google Calendar's own credential to it as `GOOGLE_OAUTH_SCOPES`, never another Google connection's.
+
+| Tool | Wave | Purpose |
+|---|---|---|
+| `gcal_event_create` | 2 | Create an event (timed, with its UTC offset, or all day), with optional guests, recurrence, location and description. |
+| `gcal_event_update` | 2 | Change an event's title, times, guests, recurrence, location or description; only the fields given change. |
+| `gcal_event_delete` | 4 | Delete an event; you approve it by typing `google_calendar/delete <last 8 characters of the event id>`. |
+
+- **Who is emailed.** Every write takes `sendUpdates`, and the prompt shows it on its own line: `none` (the default) asks Google to email no guest, though Google says some emails may still be sent; `externalOnly` emails only guests who do not use Google Calendar; `all` emails every guest.
+- **The guest list is replaced, not merged.** `attendees` on an update is the whole new list: a guest not named is removed, and `[]` removes every guest. The prompt says so.
+- **Series or one occurrence.** A recurring series' id acts on every occurrence; an instance id (as `gcal_event_list` returns) on that one. Before an update or a delete, the prompt reads the event and shows its title, start and end, status, guest count and whether it is a series or an instance. It never shows the description.
+- **Refused before you are asked.** An update that sets nothing, or gives `start` without `end` (or the reverse), and any optional field sent as `null`.
+- **Undo.** Nimbus cannot undo an update or a delete. An event you created can be deleted with `gcal_event_delete`; Nimbus does not do that for you.
+- **Not scanned.** As with the Outlook and iCloud calendar writes, the title, description and location are not scanned for broadcast mentions or remote content; Google may render some HTML in a description.
+
+### Existing connections: re-run the consent once
+
+A connection made before connectors 0.20.0 holds only `calendar.readonly`. A token refresh never adds a scope, so the write tools stay hidden: `nimbus connector writes status` lists them under `not offered`, and `nimbus connector writes enable google_calendar` marks them `(not offered yet: re-authorise Google Calendar to grant calendar)`. Run `nimbus connector auth google_calendar` again, then `nimbus connector writes enable google_calendar` (add `--wave 4` for the delete) to offer them. The sync keeps working either way.
