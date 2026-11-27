@@ -156,7 +156,7 @@ describe("the GitHub billing sync", () => {
       ["acme", "2026-11-19", "acme/checkout", 2],
     ]);
     const cur = decodeGithubBillingCursor(out.cursor);
-    expect(cur).toEqual({ gaps: {}, synced: { Acme: "2026-11-20" } });
+    expect(cur).toEqual({ gaps: {}, synced: { Acme: "2026-11-20" }, pending: {} });
 
     // The next run fetches only this month, and an identical answer changes nothing.
     const again = fakeGithub(() => ({
@@ -204,7 +204,12 @@ describe("the GitHub billing sync", () => {
     };
     const out = await run(["acme"], gh);
     expect(penalised).toEqual([["github", 30_000]]);
-    expect(decodeGithubBillingCursor(out.cursor)).toEqual({ gaps: {}, synced: {} });
+    // Not a permission gap: no gap is recorded, and both months stay pending for the next run.
+    expect(decodeGithubBillingCursor(out.cursor)).toEqual({
+      gaps: {},
+      synced: { acme: "2026-11-20" },
+      pending: { acme: ["2026-11", "2026-10"] },
+    });
   });
 
   test("a 5xx or a body that is not JSON writes nothing, keeps the earlier gap, and retries next run", async () => {
@@ -217,6 +222,7 @@ describe("the GitHub billing sync", () => {
     const prior = encodeGithubBillingCursor({
       gaps: { acme: "old gap" },
       synced: decodeGithubBillingCursor(first.cursor).synced,
+      pending: {},
     });
     for (const res of [{ status: 503 }, { status: 200, body: undefined }]) {
       const gh = fakeGithub(() => res);
@@ -245,16 +251,19 @@ describe("the GitHub billing sync", () => {
     const stale = encodeGithubBillingCursor({
       gaps: { acme: "old gap" },
       synced: { acme: "2026-11-19", gone: "2026-11-19" },
+      pending: {},
     });
     const none = fakeGithub(() => ({ status: 200, body: { usageItems: [] } }));
     expect(decodeGithubBillingCursor((await run([], none, stale)).cursor)).toEqual({
       gaps: {},
       synced: {},
+      pending: {},
     });
     // No PAT stored: no request, and no gap is kept for the listed org.
     expect(decodeGithubBillingCursor((await run(["acme"], none, stale)).cursor)).toEqual({
       gaps: {},
       synced: { acme: "2026-11-19" },
+      pending: {},
     });
     expect(none.calls).toEqual([]);
     // A removed org is dropped from `synced`, so adding it back is a first sync (two months).
@@ -280,5 +289,50 @@ describe("the GitHub billing sync", () => {
     const cur = decodeGithubBillingCursor((await run(["acme", "busy"], gh)).cursor);
     expect(penalised).toEqual(["github"]);
     expect(cur.gaps).toEqual({ acme: GITHUB_BILLING_GAPS.refused("acme") });
+  });
+
+  test("a 200 with no usageItems list never clears the stored month", async () => {
+    await fx.vault.set("github.pat", "tok");
+    const seed = fakeGithub(() => ({
+      status: 200,
+      body: { usageItems: [usage("acme", "2026-11-19", 1)] },
+    }));
+    const cur = (await run(["acme"], seed)).cursor;
+    for (const body of [{}, { usageItems: "nope" }, null]) {
+      await run(
+        ["acme"],
+        fakeGithub(() => ({ status: 200, body })),
+        cur,
+      );
+      expect(lines(), JSON.stringify(body)).toEqual([["acme", "2026-11-19", "acme/checkout", 1]]);
+    }
+  });
+
+  test("a month a run could not finish stays pending and is fetched after the restatement window", async () => {
+    await fx.vault.set("github.pat", "tok");
+    const nov5 = Date.UTC(2026, 10, 5, 9);
+    const nov6 = Date.UTC(2026, 10, 6, 9);
+    const known = encodeGithubBillingCursor({
+      gaps: {},
+      synced: { acme: "2026-11-04" },
+      pending: {},
+    });
+    // Nov 5: November succeeds, October answers 503.
+    const flaky = fakeGithub((u) =>
+      u.searchParams.get("month") === "10"
+        ? { status: 503 }
+        : { status: 200, body: { usageItems: [] } },
+    );
+    const after5 = await run(["acme"], flaky, known, nov5);
+    expect(decodeGithubBillingCursor(after5.cursor).pending).toEqual({ acme: ["2026-10"] });
+    // Nov 6 (outside the window): October is still fetched, then cleared from pending.
+    const ok = fakeGithub(() => ({
+      status: 200,
+      body: { usageItems: [usage("acme", "2026-10-30", 3)] },
+    }));
+    const after6 = await run(["acme"], ok, after5.cursor, nov6);
+    expect(ok.calls.map((c) => new URL(c.url).searchParams.get("month"))).toEqual(["11", "10"]);
+    expect(decodeGithubBillingCursor(after6.cursor).pending).toEqual({});
+    expect(lines()).toEqual([["acme", "2026-10-30", "acme/checkout", 3]]);
   });
 });

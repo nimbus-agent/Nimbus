@@ -1,5 +1,5 @@
 import { stripControlChars } from "../lib/strip-control-chars.ts";
-import { type CostFreshnessRow, costFreshnessLine } from "./cost-freshness-line.ts";
+import { type CostFreshnessRow, costFreshnessLine, noCostDataText } from "./cost-freshness-line.ts";
 
 /**
  * `nimbus cost products [--period 30d] [--allocation cluster] [--json|--csv]` and
@@ -166,9 +166,7 @@ function renderText(r: ViewResult, sink: CostViewsSink): number {
     return 1;
   }
   if (r.empty) {
-    sink.err(
-      'No cost data imported. Import a FOCUS export with "nimbus cost import <file|dir>".\n',
-    );
+    sink.err(noCostDataText(r.freshness));
     return 1;
   }
   const what =

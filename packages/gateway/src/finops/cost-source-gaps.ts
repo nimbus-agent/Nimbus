@@ -8,39 +8,62 @@
 import type { Database } from "bun:sqlite";
 
 import { loadSchedulerState } from "../sync/scheduler-store.ts";
+import { codeUnitCompare } from "../util/code-unit-compare.ts";
 
 const PREFIX = "nimbus-ghb1:";
 const GITHUB_BILLING = "github_billing";
+const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 
-/** The GitHub billing cursor: a fixed-text gap per org that could not be read, and each org's last sync day. */
+/**
+ * The GitHub billing cursor: a fixed-text gap per org that could not be read, each org's last sync day, and
+ * the months a run could not finish for an org (fetched again on every run until one succeeds).
+ */
 export type GithubBillingCursor = {
   readonly gaps: Readonly<Record<string, string>>;
   readonly synced: Readonly<Record<string, string>>;
+  readonly pending: Readonly<Record<string, readonly string[]>>;
 };
+
+const EMPTY: GithubBillingCursor = { gaps: {}, synced: {}, pending: {} };
 
 export function encodeGithubBillingCursor(c: GithubBillingCursor): string {
   return PREFIX + Buffer.from(JSON.stringify(c), "utf8").toString("base64url");
 }
 
+const asRecord = (v: unknown): Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+
 const stringMap = (v: unknown): Record<string, string> => {
   const out: Record<string, string> = {};
-  if (v === null || typeof v !== "object" || Array.isArray(v)) return out;
-  for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
-    if (typeof x === "string") out[k] = x;
+  for (const [k, x] of Object.entries(asRecord(v))) if (typeof x === "string") out[k] = x;
+  return out;
+};
+
+const monthListMap = (v: unknown): Record<string, string[]> => {
+  const out: Record<string, string[]> = {};
+  for (const [k, x] of Object.entries(asRecord(v))) {
+    if (!Array.isArray(x)) continue;
+    const months = (x as unknown[]).filter(
+      (m): m is string => typeof m === "string" && MONTH_RE.test(m),
+    );
+    if (months.length > 0) out[k] = months;
   }
   return out;
 };
 
 export function decodeGithubBillingCursor(raw: string | null): GithubBillingCursor {
-  if (raw === null || !raw.startsWith(PREFIX)) return { gaps: {}, synced: {} };
+  if (!raw?.startsWith(PREFIX)) return EMPTY;
   try {
-    const v: unknown = JSON.parse(
-      Buffer.from(raw.slice(PREFIX.length), "base64url").toString("utf8"),
+    const rec = asRecord(
+      JSON.parse(Buffer.from(raw.slice(PREFIX.length), "base64url").toString("utf8")),
     );
-    const rec = v !== null && typeof v === "object" ? (v as Record<string, unknown>) : {};
-    return { gaps: stringMap(rec["gaps"]), synced: stringMap(rec["synced"]) };
+    return {
+      gaps: stringMap(rec["gaps"]),
+      synced: stringMap(rec["synced"]),
+      pending: monthListMap(rec["pending"]),
+    };
   } catch {
-    return { gaps: {}, synced: {} };
+    return EMPTY;
   }
 }
 
@@ -49,6 +72,6 @@ export function readCostSourceGaps(db: Database): ReadonlyMap<string, readonly s
   const out = new Map<string, readonly string[]>();
   const row = loadSchedulerState(db, GITHUB_BILLING);
   const gaps = Object.values(decodeGithubBillingCursor(row?.cursor ?? null).gaps);
-  if (gaps.length > 0) out.set(GITHUB_BILLING, [...gaps].sort());
+  if (gaps.length > 0) out.set(GITHUB_BILLING, [...gaps].sort(codeUnitCompare));
   return out;
 }

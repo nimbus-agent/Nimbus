@@ -121,4 +121,13 @@ describe("githubBillingLines", () => {
     ]);
     expect(dropped.outside_month).toBe(1);
   });
+
+  test("a zone-free date-time must be a valid date-time as a whole", () => {
+    const { lines, dropped } = githubBillingLines("acme", "2026-11", [
+      row({ date: "2026-11-20T99:99:99" }),
+      row({ date: "2026-11-20T10:15:00", repositoryName: "acme/ok" }),
+    ]);
+    expect(dropped.malformed).toBe(1);
+    expect(lines.map((l) => l.repo)).toEqual(["acme/ok"]);
+  });
 });

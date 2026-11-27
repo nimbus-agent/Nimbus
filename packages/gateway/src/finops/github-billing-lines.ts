@@ -39,10 +39,11 @@ function utcDay(v: unknown): string | null {
   if (typeof v !== "string") return null;
   const m = DAY_RE.exec(v);
   if (m === null) return null;
-  // A date, or a date-time with no zone, is the date as written (never read in the machine's zone).
-  if (v.length === 10 || !/(?:Z|[+-]\d{2}:?\d{2})$/i.test(v)) {
-    const d = v.slice(0, 10);
-    return Number.isFinite(Date.parse(`${d}T00:00:00Z`)) ? d : null;
+  // A date, or a date-time with no zone, is the date as written (never read in the machine's zone); the
+  // whole value must still be a valid date-time, so `2026-11-20T99:99:99` is malformed.
+  if (v.length === 10) return Number.isFinite(Date.parse(`${v}T00:00:00Z`)) ? v : null;
+  if (!/(?:Z|[+-]\d{2}:?\d{2})$/i.test(v)) {
+    return Number.isFinite(Date.parse(`${v}Z`)) ? v.slice(0, 10) : null;
   }
   const t = Date.parse(v);
   return Number.isFinite(t) ? new Date(t).toISOString().slice(0, 10) : null;

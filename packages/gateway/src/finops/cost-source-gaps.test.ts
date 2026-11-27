@@ -63,18 +63,30 @@ const line = (day: string): CostLine => ({
 
 describe("the GitHub billing cursor and its gaps", () => {
   test("round-trips; a foreign, empty or broken cursor reads as nothing", () => {
-    const c = { gaps: { acme: "no access" }, synced: { web: "2026-11-27" } };
+    const c = {
+      gaps: { acme: "no access" },
+      synced: { web: "2026-11-27" },
+      pending: { acme: ["2026-10"] },
+    };
     expect(decodeGithubBillingCursor(encodeGithubBillingCursor(c))).toEqual(c);
     for (const raw of [null, "", "nimbus-gha1:abc", "nimbus-ghb1:%%%", "nimbus-ghb1:bnVsbA"]) {
-      expect(decodeGithubBillingCursor(raw), String(raw)).toEqual({ gaps: {}, synced: {} });
+      expect(decodeGithubBillingCursor(raw), String(raw)).toEqual({
+        gaps: {},
+        synced: {},
+        pending: {},
+      });
     }
   });
 
   test("readCostSourceGaps reads the stored cursor; none stored or no gap means no entry", () => {
     expect(readCostSourceGaps(db).size).toBe(0);
-    storeCursor(encodeGithubBillingCursor({ gaps: {}, synced: { acme: "2026-11-27" } }));
+    storeCursor(
+      encodeGithubBillingCursor({ gaps: {}, synced: { acme: "2026-11-27" }, pending: {} }),
+    );
     expect(readCostSourceGaps(db).size).toBe(0);
-    storeCursor(encodeGithubBillingCursor({ gaps: { b: "gap b", a: "gap a" }, synced: {} }));
+    storeCursor(
+      encodeGithubBillingCursor({ gaps: { b: "gap b", a: "gap a" }, synced: {}, pending: {} }),
+    );
     expect([...readCostSourceGaps(db)]).toEqual([["github_billing", ["gap a", "gap b"]]]);
   });
 

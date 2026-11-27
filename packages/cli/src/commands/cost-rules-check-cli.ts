@@ -1,5 +1,5 @@
 import { stripControlChars } from "../lib/strip-control-chars.ts";
-import { type CostFreshnessRow, costFreshnessLine } from "./cost-freshness-line.ts";
+import { type CostFreshnessRow, costFreshnessLine, noCostDataText } from "./cost-freshness-line.ts";
 import { COST_PERIOD_RE, type CostWhyIpc, type CostWhySink } from "./cost-why-cli.ts";
 
 /**
@@ -99,9 +99,7 @@ function renderText(r: CheckResult, sink: CostWhySink): number {
     return 1;
   }
   if (r.empty) {
-    sink.err(
-      'No cost data imported. Import a FOCUS export with "nimbus cost import <file|dir>".\n',
-    );
+    sink.err(noCostDataText(r.freshness));
     return 1;
   }
   sink.out(`Cost rules check, ${r.range.fromDay} to ${r.range.toDay} (${r.range.label})\n`);

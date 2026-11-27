@@ -162,7 +162,7 @@ export function costFreshness(
     ...gapOf(s.source),
   }));
   // A source whose sync could read nothing at all still gets a row, so its gap is never silent.
-  for (const source of [...gaps.keys()].sort()) {
+  for (const source of [...gaps.keys()].sort(codeUnitCompare)) {
     if (rows.some((r) => r.source === source)) continue;
     rows.push({ source, lastDay: null, provisionalFrom: null, ...gapOf(source) });
   }

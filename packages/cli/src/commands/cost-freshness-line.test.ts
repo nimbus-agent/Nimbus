@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { costFreshnessLine } from "./cost-freshness-line.ts";
+import { costFreshnessLine, noCostDataText } from "./cost-freshness-line.ts";
 
 describe("costFreshnessLine", () => {
   test("the freshness line, with the provisional days and, when a sync could not read, its gap", () => {
@@ -18,5 +18,24 @@ describe("costFreshnessLine", () => {
         gap: "cannot read billing for acme\u0007",
       }),
     ).toBe("Source github_billing: data up to none\n  Not synced: cannot read billing for acme\n");
+  });
+
+  test("the no-data refusal still shows what a sync could not read", () => {
+    const hint =
+      'No cost data imported. Import a FOCUS export with "nimbus cost import <file|dir>".\n';
+    expect(noCostDataText(undefined)).toBe(hint);
+    expect(
+      noCostDataText([
+        { source: "focus", lastDay: null, provisionalFrom: null },
+        {
+          source: "github_billing",
+          lastDay: null,
+          provisionalFrom: null,
+          gap: "cannot read billing for acme",
+        },
+      ]),
+    ).toBe(
+      `${hint}Source github_billing: data up to none\n  Not synced: cannot read billing for acme\n`,
+    );
   });
 });

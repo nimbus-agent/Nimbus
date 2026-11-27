@@ -1,5 +1,5 @@
 import { stripControlChars } from "../lib/strip-control-chars.ts";
-import { type CostFreshnessRow, costFreshnessLine } from "./cost-freshness-line.ts";
+import { type CostFreshnessRow, costFreshnessLine, noCostDataText } from "./cost-freshness-line.ts";
 import { csvCell } from "./cost-views-cli.ts";
 import type { CostWhyIpc, CostWhySink } from "./cost-why-cli.ts";
 
@@ -195,9 +195,7 @@ function modelRefusal(m: Model, sink: CostWhySink): boolean {
     return true;
   }
   if (m.empty) {
-    sink.err(
-      'No cost data imported. Import a FOCUS export with "nimbus cost import <file|dir>".\n',
-    );
+    sink.err(noCostDataText(m.freshness));
     return true;
   }
   return false;
