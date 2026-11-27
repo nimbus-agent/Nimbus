@@ -335,4 +335,38 @@ describe("the GitHub billing sync", () => {
     expect(decodeGithubBillingCursor(after6.cursor).pending).toEqual({});
     expect(lines()).toEqual([["acme", "2026-10-30", "acme/checkout", 3]]);
   });
+
+  test("a report whose every row is malformed never clears the month", async () => {
+    await fx.vault.set("github.pat", "tok");
+    const seed = fakeGithub(() => ({
+      status: 200,
+      body: { usageItems: [usage("acme", "2026-11-19", 1)] },
+    }));
+    const cur = (await run(["acme"], seed)).cursor;
+    const junk = fakeGithub(() => ({
+      status: 200,
+      body: { usageItems: [null, { date: "nope" }] },
+    }));
+    const out = await run(["acme"], junk, cur);
+    expect(lines()).toEqual([["acme", "2026-11-19", "acme/checkout", 1]]);
+    expect(decodeGithubBillingCursor(out.cursor).pending).toEqual({ acme: ["2026-11"] });
+    // A genuinely empty report still clears it.
+    await run(
+      ["acme"],
+      fakeGithub(() => ({ status: 200, body: { usageItems: [] } })),
+      out.cursor,
+    );
+    expect(lines()).toEqual([]);
+  });
+
+  test("an org named like an Object property (constructor) is an ordinary first sync", async () => {
+    await fx.vault.set("github.pat", "tok");
+    const gh = fakeGithub(() => ({ status: 200, body: { usageItems: [] } }));
+    const out = await run(["constructor", "acme"], gh);
+    expect(gh.calls.filter((c) => c.url.includes("/constructor/"))).toHaveLength(2);
+    expect(decodeGithubBillingCursor(out.cursor).synced).toEqual({
+      constructor: "2026-11-20",
+      acme: "2026-11-20",
+    });
+  });
 });

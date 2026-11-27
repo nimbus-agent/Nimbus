@@ -116,6 +116,8 @@ async function syncOrgMonth(
       "github_billing sync: dropped usage rows",
     );
   }
+  // A report whose every row is malformed is not a report of zero cost: never clear the month for it.
+  if (items.length > 0 && mapped.dropped.malformed === items.length) return { kind: "retry" };
   try {
     ctx.replaceCostLinesForMonth(
       { provider: "github", billingAccountId: org.toLowerCase(), month },
@@ -134,6 +136,11 @@ async function syncOrgMonth(
     return { kind: "retry" };
   }
   return { kind: "ok", lines: mapped.lines.length, bytes: text.length };
+}
+
+/** An org's entry in a cursor map, read as an OWN property (an org may be named `constructor`). */
+function own<T>(map: Readonly<Record<string, T>>, key: string): T | undefined {
+  return Object.hasOwn(map, key) ? map[key] : undefined;
 }
 
 /** The months to fetch for one org: the required ones, then any month an earlier run could not finish. */
@@ -194,7 +201,10 @@ export function createGithubBillingCostSyncable(options: GithubBillingSyncableOp
       const pending: Record<string, string[]> = {};
       // Only configured orgs are kept, so an org removed and added back is a first sync again.
       const synced: Record<string, string> = {};
-      for (const org of orgs) if (prev.synced[org] !== undefined) synced[org] = prev.synced[org];
+      for (const org of orgs) {
+        const day = own(prev.synced, org);
+        if (day !== undefined) synced[org] = day;
+      }
       const save = (bytes: number, lines: number): SyncResult =>
         syncPassCursorSuccess(
           t0,
@@ -220,7 +230,8 @@ export function createGithubBillingCostSyncable(options: GithubBillingSyncableOp
       let lines = 0;
       let bytes = 0;
       for (const org of orgs) {
-        const months = monthsForOrg(nowMs, synced[org] === undefined, prev.pending[org] ?? []);
+        const first = own(synced, org) === undefined;
+        const months = monthsForOrg(nowMs, first, own(prev.pending, org) ?? []);
         const r = await syncOrg(ctx, fetchFn, {
           org,
           months,
@@ -231,7 +242,8 @@ export function createGithubBillingCostSyncable(options: GithubBillingSyncableOp
         lines += r.lines;
         bytes += r.bytes;
         if (r.gap !== null) gaps[org] = r.gap;
-        else if (r.retried && prev.gaps[org] !== undefined) gaps[org] = prev.gaps[org];
+        else if (r.retried && own(prev.gaps, org) !== undefined)
+          gaps[org] = own(prev.gaps, org) as string;
         if (r.pending.length > 0) pending[org] = r.pending;
         // A first sync that was cut short still counts: the months it missed are pending, not lost.
         if (r.gap === null) synced[org] = today;

@@ -35,14 +35,16 @@ const asRecord = (v: unknown): Record<string, unknown> =>
 
 const stringMap = (v: unknown): Record<string, string> => {
   const out: Record<string, string> = {};
-  for (const [k, x] of Object.entries(asRecord(v))) if (typeof x === "string") out[k] = x;
+  for (const [k, x] of Object.entries(asRecord(v))) {
+    if (typeof x === "string" && k !== "__proto__") out[k] = x;
+  }
   return out;
 };
 
 const monthListMap = (v: unknown): Record<string, string[]> => {
   const out: Record<string, string[]> = {};
   for (const [k, x] of Object.entries(asRecord(v))) {
-    if (!Array.isArray(x)) continue;
+    if (!Array.isArray(x) || k === "__proto__") continue;
     const months = (x as unknown[]).filter(
       (m): m is string => typeof m === "string" && MONTH_RE.test(m),
     );
