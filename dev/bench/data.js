@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795778368309,
+  "lastUpdate": 1795785131530,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "8c788493e72711cebc38ec9f42726fb2c758bbcc",
-          "message": "feat(cli): nimbus wow — a guided tour of your own index, ending on a locality proof (#1565)\n\n## What\n\n`nimbus wow [--steps N] [--no-proof] [--json]` is a deterministic guided\ntour of the index the gateway actually holds. It closes on a locality\npanel: which listeners the gateway has open right now, what is in the\nlocal index and how big it is on disk, and a proof line about outbound\nactivity during the tour.\n\nThe gateway plans, the CLI runs:\n\n- `tour.plan` (new IPC). Six selectors, one per step kind (`oncall`,\n`why`, `owners`, `standup`, `decisions`, `glossary`), each reusing that\nagent's own read predicate, imported and never re-written as a `SELECT`.\nEach returns either concrete arguments or a named skip reason. No LLM.\n`--steps` is 1..6 and is refused outside that range, never clamped, in\nboth the CLI parser and the gateway handler.\n- `locality.report` (new IPC). Live listeners from a new registry, a\nper-service item count, and the database's on-disk size (main + `-wal` +\n`-shm`).\n- `runTour` (CLI). Runs each step through the existing command runners.\nOne failed step never cancels the rest, which is what PR 0's `CliExit`\nrefactor (#1563) made possible.\n- The panel prints counts only through the existing `formatProveResult`.\nThe proof window is exactly `{ since: tour.plan.t0, until:\nlocality.report.t1 }`, and both edges are the gateway's clock. A test\npins the call order (steps, then locality, then prove), because hoisting\nthe locality call would silently exclude the tour from its own proved\nwindow.\n\nBoth methods are CLI-only and LAN-forbidden (`tour` and `locality` are\nin `FORBIDDEN_OVER_LAN`, tested by calling `checkLanMethodAllowed` with\na negative control). Neither is on the Tauri allowlist:\n`ALLOWED_METHODS` is still 105 and `packages/ui/src-tauri/` is\nuntouched.\n\nNo migration, no new invariant, no new egress class, no HITL action\ntype.\n\n## Exit codes\n\n- 0 when every shown step succeeded; also for `--help`, `--json`, and an\nempty plan (which prints a pointer to `nimbus init` and no panel).\n- 1 when any step failed (the panel still prints first), or when the\n`egress.proveWindow` call itself failed. In that case the panel still\nshows listeners and inventory, with `proof unavailable — the\negress.proveWindow call failed: <message>` under the outbound heading\nand no count.\n- 2 for `--steps` out of range or an unknown flag.\n\n**Deliberate divergence.** On a degraded ledger (chain unverifiable, or\ncompleteness indeterminate), `nimbus wow` prints `formatProveResult`'s\n`indeterminate — cannot prove zero egress` line with no count and still\nexits 0 if every step ran. `nimbus prove` and `nimbus egress` exit 1 in\nthat state. The tour's exit code reports whether the steps ran. A script\ngating on chain health should use `nimbus egress verify`.\n\n## The listener registry and static rule D31\n\n`packages/gateway/src/locality/listener-registry.ts`: every place the\ngateway opens a listening socket registers a probe and unregisters on\nits stop path. `live()` calls every probe fresh, with no cache. There\nare six sites:\n\n- Five that D31 can see: `ipc/server/socket-listeners.ts` (win32 pipe\nand unix socket), `ipc/http-server.ts`, `ipc/metrics-server.ts`,\n`ipc/lan-server.ts`, `auth/pkce.ts`.\n- `federation/mdns-discovery-provider.ts`, whose UDP 5353 socket is\nopened inside `bonjour-service`. It is registered by hand, because D31\ncannot see it.\n\n**D31** (tied to no invariant, like D24 and D30): a non-test gateway\nfile that calls `Bun.serve`, `Bun.listen` or `createServer` must contain\na `registerListener(...)` call. The match is anchored so that\n`unregisterListener` cannot satisfy it; the first version used a\nsubstring match, and that is exactly how `server.ts` passed for the\nwrong reason. `typeof Bun.listen` type queries are ignored, with a\nfixture proving a real call beside a type query still flags.\n\n`auth/pkce.ts` also gets a real fix: `Bun.serve` and its registration\nnow sit under the `try`/`finally`, so a throwing `buildAuthorizeUrl` no\nlonger leaks a listening server for the life of the process.\n\n## Stated residuals\n\n1. **The proof line is a gateway-wide time window, not attribution.** A\nscheduled sync that fires mid-tour appears in it.\n2. **Only the Windows named-pipe `ipc` probe reads live socket state**\n(`netServer.listening`). Every other probe, the POSIX `ipc` socket\nincluded, is registration bookkeeping. It reports a listener open until\nthat listener's own stop path unregisters it, so a fault that closes a\nsocket without going through `stop()` is invisible to it.\n3. **The panel lists the gateway process's own listeners only.** A\nsocket opened by a gateway-spawned child is not in the registry. Today\nthat is Chromium's DevTools debugging port during a `nimbus computer`\nbrowser session: a default-off capability, open only while a session is\nlive, bound to loopback. The heading says \"Listeners the gateway has\nopen right now\" for this reason.\n4. **D31 polices three call shapes.** It cannot see a library-opened\nsocket (mDNS, registered by hand) or a child-process socket (residual\n3). Its exemption is file-level, the same granularity as D30.\n5. `oauth_callback` is transient: open only during an OAuth flow.\n6. **The printed `command` line is a display string, not a shell-safe\none.** Arguments outside a conservative safe character set are wrapped\nin double quotes, with backslashes escaped first and then double quotes,\nwhich is correct for a POSIX shell. cmd and PowerShell do not treat a\nbackslash as an escape, so a quoted Windows path shows doubled\nseparators there, which Windows path resolution tolerates. Inside double\nquotes a POSIX shell still expands `$(...)` and backticks, and no single\nquoting form is safe across bash, cmd and PowerShell. What executes is\n`args`, which is never quoted or re-parsed. The reachable arguments are\nabsolute paths, `--line <digits>` and `--incident <indexed id>`.\n7. **Identity for the `standup` step is resolved exactly as `nimbus\nstandup` resolves it in production**: the `[user]` override, then `git\nconfig user.email`, and not the OS username. `handleStandup` never\npasses one, so offering the step on a wider match would produce a step\nthat refuses. A test pins this with the machine's real OS username.\n\n## Placement\n\nThe tour code lives in `packages/gateway/src/agents/_lib/tour-*.ts`, not\na new `tour/` directory. Static rule D22(d) forbids files outside\n`ipc/agents-rpc.ts` from importing `agents/<name>.ts`, and its regex\nalso matches `agents/*-queries.ts`, which the selectors must import.\n`_lib/` is importable from `ipc/` and re-exports no emitter.\n\n## What did NOT ship\n\n- `nimbus init` chaining into the tour, and `nimbus demo` moving onto\nthe shared `runTour`. That is PR 2. `demo.ts` is untouched here.\n- A durable record of tours, any LLM step, any new agent.\n\n## Follow-ups, deliberately not in this PR\n\n- A real `cdp` listener probe registered from `computer-use/cu-lanes/`.\nIt touches invariant I35's files, and the port is known only after the\nchild reports it.\n- Real liveness for the `Bun.serve`-backed probes (residual 2).\n- Idempotent `start()` on `LanServer`, `MdnsDiscoveryProvider` and\n`createIpcServer`. A second `start()` without a `stop()` orphans a\nregistration, which shows as a duplicate row and never as a phantom one.\nEach has one production call site today. A registry-level guard is the\nwrong fix, because the registry cannot tell a double registration from\ntwo genuinely identical listeners.\n- `agents/standup.ts`'s `EmitStandupOpts.osUsername` doc comment says\nproduction \"reads `os.userInfo`\". It does not; `handleStandup` passes\nnothing. This predates the branch.\n\n## Verification\n\n- Full local `bun run preflight` on Windows, run on the final fix wave:\nevery gate green through `test:ci` with 0 test failures, plus the build\nand the lcov build. `audit:coverage-floor` then named eight files\nlocally. Seven are OS-specific files measured on a Windows box\n(`platform/linux.ts`, `platform/sandbox/win32*.ts`,\n`cli/src/lib/stop-and-wait.ts`, and the POSIX half of\n`ipc/server/socket-listeners.ts`, whose uncovered lines are exactly the\n`skipIf(win32)` unix listener); that gate is Linux-authoritative. The\neighth was real, `ipc/locality-rpc.ts` at 75% branch, and the last\ncommit on the branch adds the test that closes it. That test, `bun run\npreflight:fast` and the feature's nine test files (125 pass) were run\nafter it. The full preflight was not re-run after that one test-only\ncommit.\n- The other new OS-independent files clear the 85% line / 80% branch\nfloor locally: `run-tour.ts` 17/18 branches, `tour-rpc.ts` 25/25,\n`listener-registry.ts`, `locality-report.ts`, `locality-panel.ts` and\n`tour-plan.ts` at 100%. `run-tour.ts`'s fresh-process test drops an\nistanbul shard from its child when the parent is instrumented. The\nwhole-branch reviewer measured that through the real preload/merge path:\n81.25% branch without the child shards, 93.75% with them.\n- `packages/gateway/test/e2e/wow.e2e.test.ts` boots a real demo-rooted\ngateway in a temp dir and drives `tour.plan` and `locality.report` over\nthe real socket or named pipe. This proves the outer\n`PHASE4_PLATFORM_DISPATCHERS` routing entries, which no unit test can.\nIt also runs the real CLI as `nimbus --demo wow`. It asserts its own\nisolation before the first writer and proves the I41 sidecars are off by\nsetting their ports and showing nothing listens on them.\n- **Not run: `bun run verify:docker --changed`.** There is no Docker\ndaemon on the dev machine, so the Linux legs (the e2e's D-Bus/Vault\npath, the POSIX `ipc` registry tests that are `skipIf(win32)`, and the\nauthoritative coverage floor) are first exercised by this PR's CI.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n- **New Features**\n- Added the `nimbus wow` guided tour with up to six deterministic steps.\n  - Added JSON output and optional proof suppression via `--no-proof`.\n- Added locality reporting for active listeners, indexed services, and\ndatabase size.\n- Empty or unavailable tour steps now include explanations and suggested\ncommands.\n  - Added strict validation for `--steps` values from 1 to 6.\n  - Added proof results covering outbound activity during the tour.\n\n- **Documentation**\n- Added CLI, architecture, security, and changelog coverage for the\nguided tour and locality reporting.\n  - Updated command help to include `nimbus wow`.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Sonnet 5 <noreply@anthropic.com>",
-          "timestamp": "2026-09-21T16:03:33Z",
-          "tree_id": "ab1dfb7b70cb6c97e7a445e4d842b3bf2710e242",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/8c788493e72711cebc38ec9f42726fb2c758bbcc"
-        },
-        "date": 1790007338992,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 332.06829204999667,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 332.3867421000068,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 186.00478285000207,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "569df0368ba9c266bf0bcdeb90d151e481758b95",
+          "message": "chore: release main (#2186)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>11.19.0</summary>\n\n##\n[11.19.0](https://github.com/nimbus-agent/Nimbus/compare/v11.18.0...v11.19.0)\n(2026-11-27)\n\n\n### Features\n\n* **connectors:** google calendar event writes, the calendar scope and\nconnectors 0.20.0\n([#2185](https://github.com/nimbus-agent/Nimbus/issues/2185))\n([d09d07e](https://github.com/nimbus-agent/Nimbus/commit/d09d07eb5b94fe1464f307e5a66ac7d83b644e28))\n* GitHub billing usage as cost lines (Phase 7, slice 5)\n([#2184](https://github.com/nimbus-agent/Nimbus/issues/2184))\n([3cd662d](https://github.com/nimbus-agent/Nimbus/commit/3cd662db331bbff9630c0a91e4a400ed70152860))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-27T15:05:01+02:00",
+          "tree_id": "b3f1ef8e3611ae955f6926d903183c4d7e9719a5",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/569df0368ba9c266bf0bcdeb90d151e481758b95"
+        },
+        "date": 1795785127683,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 181.30650284999956,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 181.18498179999443,
             "unit": "ms"
           }
         ]
