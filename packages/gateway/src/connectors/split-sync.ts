@@ -102,7 +102,11 @@ export function createSplitSyncable(options: SplitSyncableOptions): Syncable {
       const apiKey = (await ctx.getSecret("api_key"))?.trim() ?? "";
       if (apiKey === "") return syncNoopResult(cursor, t0);
 
-      const workspaces = await splitGet(ctx, apiKey, "/workspaces");
+      const workspaces = await splitGet(
+        ctx,
+        apiKey,
+        `/workspaces?limit=${String(SPLIT_MAX_WORKSPACES)}`,
+      );
       let totalBytes = workspaces.bytes;
       if (workspaces.kind !== "ok") {
         return workspaces.kind === "http_error"

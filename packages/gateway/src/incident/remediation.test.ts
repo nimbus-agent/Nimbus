@@ -3,10 +3,6 @@
 // `audit replay` reads them back. Advisory mode refuses before any claim, read or prompt.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-
-import { chainVerifiers, replayIncident } from "../audit/incident-replay.ts";
-import { LocalIndex } from "../index/local-index.ts";
-import { buildRecord } from "./__fixtures__/record-builder.ts";
 import {
   ARGO_REPLY,
   DEPLOYMENT,
@@ -15,7 +11,10 @@ import {
   NOW,
   OPENED,
   pick,
-} from "./__fixtures__/remediation-harness.ts";
+} from "../../test/helpers/remediation-harness.ts";
+import { chainVerifiers, replayIncident } from "../audit/incident-replay.ts";
+import { LocalIndex } from "../index/local-index.ts";
+import { buildRecord } from "./__fixtures__/record-builder.ts";
 import { upsertIncidentRecord } from "./incident-store.ts";
 import { getProposal, getProposalByAction, setAdvisory } from "./proposal-store.ts";
 import { blastForPrompt, createRemediation, RemediationError } from "./remediation.ts";

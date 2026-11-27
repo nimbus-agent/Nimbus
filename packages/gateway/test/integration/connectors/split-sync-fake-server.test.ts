@@ -4,6 +4,7 @@ import pino from "pino";
 import {
   createSplitSyncable,
   SPLIT_MAX_PAGES_PER_WORKSPACE,
+  SPLIT_MAX_WORKSPACES,
 } from "../../../src/connectors/split-sync.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
 import { ProviderRateLimiter } from "../../../src/sync/rate-limiter.ts";
@@ -49,10 +50,12 @@ function startHarness(config: FakeConfig): Harness {
         if (config.workspacesStatus !== undefined) {
           return new Response("error", { status: config.workspacesStatus });
         }
+        // As the v2 API: `limit` defaults to 20 when the request names none.
+        const limit = Number(u.searchParams.get("limit") ?? "20");
         return Response.json({
-          objects: config.workspaces,
+          objects: config.workspaces.slice(0, limit),
           offset: 0,
-          limit: 20,
+          limit,
           totalCount: config.workspaces.length,
         });
       }
@@ -148,6 +151,21 @@ describe("split-sync against a Bun.serve fake Admin API", () => {
     expect(m["tags"]).toEqual(["beta", "checkout"]);
     expect(m["created_at"]).toBe(1_700_000_000_000);
     expect(m["killed"]).toBeUndefined();
+  });
+
+  test("asks for up to the workspace cap, so a 21st workspace is synced (the API defaults to 20)", async () => {
+    const workspaces = Array.from({ length: 21 }, (_, i) => ({
+      id: `ws-${String(i)}`,
+      name: `W${String(i)}`,
+    }));
+    h = startHarness({
+      workspaces,
+      splitsByWorkspace: { "ws-20": [split("last")] },
+    });
+    await h.vault.set("split.api_key", "fake-split-key");
+    expect((await syncable().sync(h.ctx, null)).itemsUpserted).toBe(1);
+    const list = h.requests.find((r) => r.path === "/internal/api/v2/workspaces");
+    expect(list?.search.get("limit")).toBe(String(SPLIT_MAX_WORKSPACES));
   });
 
   test("pages by offset until the total, and stops at the page cap", async () => {

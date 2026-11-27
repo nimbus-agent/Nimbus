@@ -3,15 +3,15 @@
 // size is locked by `audit:file-size`; `argoReply` lets a test change what the before-state read returns.
 import type { Database } from "bun:sqlite";
 
-import type { EgressEntry } from "../../egress/egress-record.ts";
-import { buildRemediationExecutor } from "../../engine/run-ask.ts";
-import type { ConnectorDispatcher, PlannedAction } from "../../engine/types.ts";
-import type { LocalIndex } from "../../index/local-index.ts";
-import type { ConsentCoordinator } from "../../ipc/consent.ts";
-import type { DeploymentView } from "../incident-record-types.ts";
-import { upsertIncidentRecord } from "../incident-store.ts";
-import { createRemediation, type MakeExecutor } from "../remediation.ts";
-import { buildRecord } from "./record-builder.ts";
+import type { EgressEntry } from "../../src/egress/egress-record.ts";
+import { buildRemediationExecutor } from "../../src/engine/run-ask.ts";
+import type { ConnectorDispatcher, PlannedAction } from "../../src/engine/types.ts";
+import { buildRecord } from "../../src/incident/__fixtures__/record-builder.ts";
+import type { DeploymentView } from "../../src/incident/incident-record-types.ts";
+import { upsertIncidentRecord } from "../../src/incident/incident-store.ts";
+import { createRemediation, type MakeExecutor } from "../../src/incident/remediation.ts";
+import type { LocalIndex } from "../../src/index/local-index.ts";
+import type { ConsentCoordinator } from "../../src/ipc/consent.ts";
 
 export const SHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
 export const NOW = 5_000_000;
