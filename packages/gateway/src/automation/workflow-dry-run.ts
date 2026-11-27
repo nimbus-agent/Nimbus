@@ -55,6 +55,11 @@ export function previewStep(
   if (s.kind === "query") {
     return { label, status: "preview", output: JSON.stringify(s.query), hitlActions: [] };
   }
+  if (s.kind === "report") {
+    const r = s.report;
+    const output = `report ${r.name} (${r.kind}, ${r.format}, ${r.period} in ${r.tz})`;
+    return { label, status: "preview", output, hitlActions: [] };
+  }
   let entry: WorkflowStepResult;
   if (s.kind === "run") {
     entry = {
@@ -91,7 +96,9 @@ export function observeGuardQueries(
   if (p.trigger !== "owner_cli" && p.trigger !== "owner_ui") return undefined;
   const named = new Set<string>();
   for (const s of steps) {
-    if (s.kind !== "query" && s.when !== undefined) for (const g of s.when) named.add(g.count);
+    if (s.kind !== "query" && s.kind !== "report" && s.when !== undefined) {
+      for (const g of s.when) named.add(g.count);
+    }
   }
   const out = new Map<string, DryObservation>();
   steps.forEach((s, index) => {

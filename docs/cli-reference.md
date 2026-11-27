@@ -1359,7 +1359,7 @@ nimbus cost rules check --period month
 
 ### `nimbus cost report`
 
-Renders a configured cost report for each of its channels exactly as it would be posted, so you can check the text, the escaping and the size before anything is scheduled. **Nothing is sent**: scheduled delivery through a saved workflow and a standing rule is a later change. Read from the local index and your template files only: no network call, no model, no egress row.
+Renders a configured cost report for each of its channels exactly as it would be posted, so you can check the text, the escaping and the size before anything is scheduled. **Nothing is sent** by this command; to deliver a report, see [`nimbus cost report schedule`](#nimbus-cost-report-schedule). Read from the local index and your template files only: no network call, no model, no egress row.
 
 ```bash
 nimbus cost report                              # list the [[cost.report]] definitions
@@ -1373,7 +1373,7 @@ nimbus cost report checkout-weekly --json
 
 **Scope.** `scope` names any of `product`, `env`, `service` (the outputs of your `[[cost.rule]]` rules) and `provider`; a line counts when every given key matches. Each currency is reported on its own and never added to another; the cost no rule assigned is stated beside the total (`{unassigned}`), not inside it.
 
-**Templates.** A channel has an inline `template` (one TOML line; write a line break as `\n`) or a `template_file`, read only from `<config dir>/cost-templates/`: a plain file name (no path, no `..`, not hidden), not a link, inside that folder after resolving links, at most 64 KiB, UTF-8. The placeholders are a closed set: `{report_name}`, `{period_start}`, `{period_end}`, `{week_start}` (empty for a non-week report), `{total}`, `{currency}`, `{change}`, `{change_pct}` (`new` when the previous period was 0), `{top_movers}` (at most 3 per currency), `{breakdown}`, `{unassigned}`, `{unassigned_pct}`, `{freshness}`, `{command}`. With several currencies every per-currency placeholder lists them one by one, separated by a semicolon. `{{` and `}}` are literal braces. An unknown placeholder or an unbalanced brace refuses that channel when it is rendered, naming it (the config itself still loads, so one template typo does not stop the other channels or the cost views). A subject is one plain line of at most 255 characters and cannot use `{top_movers}`, `{breakdown}` or `{freshness}`.
+**Templates.** A channel has an inline `template` (one TOML line; write a line break as `\n`) or a `template_file`, read only from `<config dir>/cost-templates/`: a plain file name (no path, no `..`, not hidden), not a link, inside that folder after resolving links, at most 64 KiB, UTF-8, with Windows line endings read as line feeds and no other control character (the inline rule). The placeholders are a closed set: `{report_name}`, `{period_start}`, `{period_end}`, `{week_start}` (empty for a non-week report), `{total}`, `{currency}`, `{change}`, `{change_pct}` (`new` when the previous period was 0), `{top_movers}` (at most 3 per currency), `{breakdown}`, `{unassigned}`, `{unassigned_pct}`, `{freshness}`, `{command}`. With several currencies every per-currency placeholder lists them one by one, separated by a semicolon. `{{` and `}}` are literal braces. An unknown placeholder or an unbalanced brace refuses that channel when it is rendered, naming it (the config itself still loads, so one template typo does not stop the other channels or the cost views). A subject is one plain line of at most 255 characters and cannot use `{top_movers}`, `{breakdown}` or `{freshness}`.
 
 **What a value can do.** Your template's own text is yours. Every substituted value (a service name or a tag value from a vendor export, for example) is NFKC-normalised (a full-width `＠` becomes `@` before it is handled, and compatibility characters such as `½` read in their plain form), has its control and invisible characters removed and is capped at 128 characters. For Slack, Teams and any html body, `< > & @` become `‹ › ⅋ (at)`, and in chat `* _ ~ [ ]` and the backtick become look-alikes, so a value cannot mention a channel, open a tag, form an entity, load content, form a `[label](url)` link or add emphasis (a bare URL in a value stays a URL); in html `" '` are escaped and `= ( )` become `꞊ ❨ ❩`. These stand-ins are chosen so the send door's own detectors, which decode entities and fold look-alikes before they scan, do not read them back. Plain mail text is only stripped. CSV cells are formula-guarded.
 
@@ -1382,6 +1382,26 @@ nimbus cost report checkout-weekly --json
 **Size caps.** A body is at most 12 000 characters for Slack and Teams and 100 000 for a Gmail or Outlook draft. A longer body first shortens `{breakdown}` and then `{top_movers}`, each ending in `… and N more`; a body that still does not fit is refused, never cut.
 
 **Exit codes.** 0 when every channel rendered with no refusal (and for the list); 1 for no cost data, an unknown report, a refused `[cost]` config, any channel error or door refusal, or an error. The IPC methods are `cost.reportList` and `cost.reportRender`; they serve only a connection that declared the `cli` or `ui` kind, are LAN-forbidden (the whole `cost` namespace) and are not on the desktop allowlist.
+
+### `nimbus cost report schedule`
+
+Saves one scheduled workflow per channel of a report, named `cost-<report>-<kind>`, so the report is delivered on its schedule. Nothing is sent by this command.
+
+```bash
+nimbus cost report schedule checkout-weekly                    # every channel of the report
+nimbus cost report schedule checkout-weekly --channel slack    # one channel
+nimbus approve add --workflow cost-checkout-weekly-slack --step 2   # let it post without asking each time
+```
+
+**What is saved.** Step 1 is a `report` step holding the whole report: its scope, period, kind, format and the template TEXT (a `template_file` is read once, now), so a later edit of the file or the config does not change what the workflow posts until you run `schedule` again. Step 2 is the channel's write: the destination (`channel`, the Teams team and channel, the draft's `to`, and an explicit `contentType` for Teams and Outlook) is fixed in the workflow; only the body and a draft's subject come from step 1. The schedule is the report's `schedule`, or Mondays at 08:00 (`0 8 * * 1`), in the report's `tz`; a report with no `tz` is fixed to the gateway's zone at the moment you run `schedule`.
+
+**When it runs.** Each run renders the report from the local cost index and your current `[[cost.rule]]` rules, with no model and no network, then posts it (a Gmail or Outlook channel creates a draft; nothing is sent from your mailbox). A scheduled run never asks anyone: without a standing rule for step 2 it stops before posting, records the run as waiting and shows a notification (`nimbus workflow resume <run id>` continues it, asking you; a resumed run renders the report again at that moment, so after the period has rolled over it shows the newer period). With the rule printed by `schedule` it posts with no prompt, recorded `standing_approved` in the audit log and in the egress ledger. The send door's checks still run on the final text (a ChatOps destination, a broadcast mention, remote content), and a refusal stops the post. A period with no cost line of any source (whatever `[cost] authoritative` picks) is skipped: nothing is posted, the run is recorded `skipped` with the reason, and you get a notification. A refused `[cost]` config stops the run with the error instead of posting figures with no rules applied.
+
+**Refused channels.** Before saving, each channel is rendered once and checked by the send door. A channel the door would refuse (for example a Slack destination that is a ChatOps channel, `<!channel>` in the template, or remote content in an html body), or whose template cannot be read or rendered, is not saved, with the reason; the report's other channels are.
+
+**Running it again** replaces each workflow in place (same id). If the content changed, the output says `replaced`: the workflow has a new content hash, so a standing rule approved for the old version no longer applies and the command prints the `nimbus approve add` line again.
+
+**Exit codes.** 0 when every requested channel was saved; 1 when any was skipped, and for an error. The IPC method is `cost.reportSchedule`; it serves only a connection that declared the `cli` kind, is refused on a demo gateway (it has no scheduler), is LAN-forbidden (the whole `cost` namespace) and is not on the desktop allowlist. A signed workflow bundle can never carry a `report` step (`nimbus workflow import` refuses it).
 
 ### `nimbus briefing`
 

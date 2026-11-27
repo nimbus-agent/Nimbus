@@ -33,6 +33,7 @@ export {
   type AutomationRpcExtensionMeshHandle,
   type AutomationRpcExtensionSyncHandle,
 } from "./automation-rpc/shared.ts";
+export { saveWorkflowDefinition } from "./automation-rpc/workflow.ts";
 
 /**
  * The handler table, one family per module under `automation-rpc/`. Each handler keeps its own

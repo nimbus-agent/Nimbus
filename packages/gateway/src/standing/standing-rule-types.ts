@@ -3,10 +3,14 @@
 // the limits the owner's rulings fixed (OR-10-5, OR-10-6); no I/O.
 import type { JsonValue } from "../automation/workflow-steps.ts";
 
-/** One input field of the rule's write step: a constant the owner approved, or a declared-query id. */
+/**
+ * One input field of the rule's write step: a constant the owner approved, a declared-query id, or
+ * (Phase 7 slice 4) the body or subject the workflow's report step (by index) renders.
+ */
 export type ScopeEntry =
   | { readonly const: JsonValue }
-  | { readonly query: number; readonly column: string };
+  | { readonly query: number; readonly column: string }
+  | { readonly report: number; readonly part: "body" | "subject" };
 
 /** Per input field of the write step. A rule can never be wider than the step it names. */
 export type StandingScope = Readonly<Record<string, ScopeEntry>>;

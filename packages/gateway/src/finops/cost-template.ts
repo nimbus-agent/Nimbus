@@ -209,12 +209,17 @@ export function renderCostTemplate(
 }
 
 /** A mail subject: one plain line, at most 255 characters. Throws {@link CostTemplateError}. */
-export function renderCostSubject(t: CostTemplate, m: CostReportModel): string {
+/** A subject template uses no multi-line placeholder. Throws {@link CostTemplateError}. */
+export function assertSubjectTemplate(t: CostTemplate): void {
   for (const p of t.parts) {
     if ("ph" in p && NOT_IN_SUBJECT.includes(p.ph)) {
       throw new CostTemplateError(`{${p.ph}} cannot be used in a subject`);
     }
   }
+}
+
+export function renderCostSubject(t: CostTemplate, m: CostReportModel): string {
+  assertSubjectTemplate(t);
   const text = assemble(
     t,
     scalarValues(m, { kind: "gmail", format: "text" }),

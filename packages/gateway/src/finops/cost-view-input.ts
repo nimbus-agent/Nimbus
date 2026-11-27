@@ -101,5 +101,6 @@ export function gatherCostViewInput(
     excludedSources: excluded,
     notes,
     configError: cfg.error,
+    presentDays: new Set(all.map((l) => l.chargeDay)),
   };
 }

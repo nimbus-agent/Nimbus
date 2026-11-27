@@ -54,7 +54,25 @@ const WORDING: ReadonlyMap<string, string> = new Map([
 const addresses = (to: CostReportPost["to"]): string =>
   typeof to === "string" ? to : (to as readonly string[]).join(", ");
 
-function inputFor(p: CostReportPost): Record<string, unknown> {
+/** The write row a report of `kind` posts with. */
+export const costReportToolFor = (kind: CostReportPostKind): string =>
+  COST_REPORT_POST_TOOL_IDS[kind];
+
+/**
+ * The input fields a `report` value may fill, per row (spec, Fixes 1): the body, and a draft's subject.
+ * Every other field of these rows (channel, team, `to`, `cc`, `bcc`, thread, `contentType`) is a constant.
+ */
+export const REPORT_BODY_FIELDS: Readonly<
+  Record<string, { readonly body: string; readonly subject: string | null }>
+> = Object.freeze({
+  slack_message_post: { body: "text", subject: null },
+  teams_message_post: { body: "body", subject: null },
+  gmail_draft_create: { body: "body", subject: "subject" },
+  outlook_draft_create: { body: "body", subject: "subject" },
+});
+
+/** The input a row receives for a rendered post (the Teams/Outlook `contentType` is `html` only for html). */
+export function costReportPostInput(p: CostReportPost): Record<string, unknown> {
   const contentType = p.format === "html" ? "html" : "text";
   if (p.kind === "slack") return { channel: p.to, text: p.body };
   if (p.kind === "teams") {
@@ -70,9 +88,13 @@ export function costReportDoorRefusal(
   p: CostReportPost,
   chatops: ChatopsPolicy | undefined,
 ): string | null {
-  const refusal = messagingDestinationRefusal(COST_REPORT_POST_TOOL_IDS[p.kind], inputFor(p), {
-    chatops,
-  });
+  const refusal = messagingDestinationRefusal(
+    COST_REPORT_POST_TOOL_IDS[p.kind],
+    costReportPostInput(p),
+    {
+      chatops,
+    },
+  );
   if (refusal === undefined) return null;
   if (refusal === CHATOPS_CHANNEL_REFUSAL && chatops === undefined) return NO_POLICY;
   return WORDING.get(refusal) ?? refusal;

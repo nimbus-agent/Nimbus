@@ -135,6 +135,8 @@ PRIVACY & AUDIT
                               What each [[cost.rule]] matched and the largest unassigned groups
   nimbus cost report [<name> [--channel <kind>] [--json|--csv]]
                               List or render configured cost reports (Slack, Teams, email drafts); sends nothing
+  nimbus cost report schedule <name> [--channel <kind>] [--json]
+                              Save one scheduled workflow per report channel (cost-<report>-<kind>)
   nimbus data export|import|delete   Encrypted bundle export/import; per-service deletion
   nimbus vault set|get|delete|list   Secrets (OS keyring only — never config, never logs)
   nimbus telemetry show | disable

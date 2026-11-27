@@ -22,6 +22,10 @@ import {
   handleCostReportRender,
 } from "./cost-report-rpc.ts";
 import {
+  type CostReportScheduleResult,
+  handleCostReportSchedule,
+} from "./cost-report-schedule-rpc.ts";
+import {
   type ClusterViewResult,
   CostViewsRpcError,
   handleCostInternal,
@@ -184,6 +188,7 @@ export async function dispatchCostRpc(
     | CostRulesCheck
     | { reports: CostReportListEntry[]; configError: string | null }
     | CostReportRenderResult
+    | CostReportScheduleResult
   >(method, params, ctx, {
     "cost.anomalies": handleAnomalies,
     "cost.waste": handleWaste,
@@ -195,5 +200,6 @@ export async function dispatchCostRpc(
     "cost.rulesCheck": viaImport(handleCostRulesCheck),
     "cost.reportList": viaImport(handleCostReportList),
     "cost.reportRender": viaImport(handleCostReportRender),
+    "cost.reportSchedule": viaImport(handleCostReportSchedule),
   });
 }

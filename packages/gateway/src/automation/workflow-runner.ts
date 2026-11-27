@@ -1,9 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
 import type { Agent } from "@mastra/core/agent";
-import { redactAuditPayload } from "../audit/format-audit-payload.ts";
 import { connectorWriteRowByToolId } from "../connectors/connector-write-registry.ts";
-import { appendAuditEntry } from "../db/audit-chain.ts";
 import {
   type RunConversationalAgentParams,
   runConversationalAgent,
@@ -27,6 +25,8 @@ import {
   observationText,
   type QueryCount,
 } from "./workflow-guard.ts";
+import { executeReportStep, type ReportOutputs } from "./workflow-report-run.ts";
+import { emitRunCompletedAudit } from "./workflow-run-audit.ts";
 import { pruneWorkflowRuns } from "./workflow-run-history.ts";
 import {
   type DeclaredQuery,
@@ -63,52 +63,17 @@ export const WORKFLOW_NEEDS_MODEL_MESSAGE =
 
 const RUN_RETENTION_PER_WORKFLOW = 100;
 
-function emitRunCompletedAudit(params: {
-  readonly db: Database;
-  readonly runId: string;
-  readonly workflowName: string;
-  readonly status: string;
-  readonly startedAt: number;
-  readonly dryRun: boolean;
-  readonly paramsOverride?: Readonly<Record<string, Record<string, unknown>>>;
-  readonly errorMsg?: string | null;
-  /** How many guarded steps did not run in a real run; absent when none. */
-  readonly stepsNotTaken?: number;
-  /** The run's derived trigger, so audit history tells a scheduled run from an owner-started one. */
-  readonly trigger?: WorkflowTrigger;
-}): void {
-  const durationMs = Date.now() - params.startedAt;
-  const details: Record<string, unknown> = {
-    runId: params.runId,
-    workflowName: params.workflowName,
-    status: params.status,
-    durationMs,
-    dryRun: params.dryRun,
-  };
-  if (params.trigger !== undefined) {
-    details["trigger"] = params.trigger;
-  }
-  if (params.paramsOverride !== undefined) {
-    details["paramsOverride"] = params.paramsOverride;
-  }
-  if (params.errorMsg !== undefined && params.errorMsg !== null) {
-    details["errorMsg"] = params.errorMsg;
-  }
-  if (params.stepsNotTaken !== undefined && params.stepsNotTaken > 0) {
-    details["stepsNotTaken"] = params.stepsNotTaken;
-  }
-  appendAuditEntry(params.db, {
-    actionType: "workflow.run.completed",
-    hitlStatus: "not_required",
-    actionJson: redactAuditPayload(details),
-    timestamp: Date.now(),
-  });
-}
-
 /** Parses a workflow's `steps_json` (see `workflow-steps.ts`); kept under its old name. */
 export function parseWorkflowStepsJson(stepsJson: string): WorkflowStep[] {
   return parseWorkflowSteps(stepsJson);
 }
+
+/** A run whose report step found no cost data for its period: it ended `skipped` and posted nothing. */
+export type SkippedRunInfo = {
+  readonly runId: string;
+  readonly workflowName: string;
+  readonly reason: string;
+};
 
 /** A run that stopped at a write step no standing rule covered and now waits for the owner (SA4). */
 export type BlockedRunInfo = {
@@ -159,6 +124,12 @@ export type RunWorkflowExecutionParams = {
   readonly signal?: AbortSignal;
   /** Called once when the run blocks on a write no standing rule covered (the scheduler notifies). */
   readonly onBlocked?: (info: BlockedRunInfo) => void;
+  /** Called once when a report step finds no cost data for its period and the run ends `skipped`. */
+  readonly onSkipped?: (info: SkippedRunInfo) => void;
+  /** The config directory a `report` step reads `[cost]` from; absent means report steps cannot run. */
+  readonly costConfigDir?: string;
+  /** Test seam: the clock a `report` step computes its period from (production: `Date.now`). */
+  readonly now?: () => number;
   /** Set only by `workflow.resume`. */
   readonly resume?: WorkflowResume;
   /**
@@ -192,6 +163,7 @@ type StepExecOutcome =
   | { kind: "ok"; label: string; reply: string; status?: string }
   | { kind: "err"; label: string; message: string; halt: boolean }
   | { kind: "blocked"; label: string; message: string }
+  | { kind: "skipped_run"; label: string; message: string }
   /** The step's `when` did not hold: nothing ran, nothing was asked, the run goes on. */
   | { kind: "not_taken"; label: string; message: string; guard: string };
 
@@ -199,6 +171,7 @@ type StepExecOutcome =
 type RunState = {
   readonly outputs: string[];
   readonly queries: Map<string, QueryCount>;
+  readonly reports: ReportOutputs;
   readonly workflowId: string;
   readonly workflowSha256: string;
   readonly workflowName: string;
@@ -318,6 +291,7 @@ async function executeWriteStep(
     runId,
     trigger: p.trigger,
     queries: state.queries,
+    reports: state.reports,
     signal: p.signal,
     ...(guard !== undefined && { guard }),
   };
@@ -355,6 +329,10 @@ async function executeWorkflowStep(
     startedAt: Date.now(),
   });
   if (step.kind === "query") return executeQueryStep(p, runId, stepIndex, step, state);
+  if (step.kind === "report") {
+    const deps = { db: p.db, configDir: p.costConfigDir, now: p.now ?? Date.now };
+    return executeReportStep(deps, runId, stepIndex, step, state.reports);
+  }
   // The guard is decided HERE, before anything is built: a step that is not taken never reaches the
   // model, the executor, the standing-rule check or the learner (I55: a guard only removes runs).
   const decided = decideGuard(p, runId, stepIndex, step, state);
@@ -521,7 +499,8 @@ function blockRun(
 
 /** On a resumed run, an earlier write or run step is skipped; an earlier query step re-runs. */
 function skippedOnResume(p: RunWorkflowExecutionParams, step: WorkflowStep, i: number): boolean {
-  return p.resume !== undefined && i < p.resume.blockedStep && step.kind !== "query";
+  const reRun = step.kind === "query" || step.kind === "report";
+  return p.resume !== undefined && i < p.resume.blockedStep && !reRun;
 }
 
 const DRY_AS_OF = "as of now; a real run re-reads the index";
@@ -602,6 +581,7 @@ export async function executeRealRunSteps(
   const state: RunState = {
     outputs: [],
     queries: new Map(),
+    reports: new Map(),
     workflowId: wf.id,
     workflowSha256: workflowStepsSha256(steps),
     workflowName: wf.name,
@@ -671,11 +651,25 @@ function settleStepOutcome(
     case "ok":
       stepResults.push({ label, status: outcome.status ?? "done", output: outcome.reply });
       return undefined;
+    case "skipped_run":
+      stepResults.push({ label, status: "skipped", output: outcome.message });
+      finalizeRun(p, wf, runId, "skipped", now, outcome.message, run.notTaken);
+      notifySkipped(p, { runId, workflowName: wf.name, reason: outcome.message });
+      return "skipped";
     case "err":
       stepResults.push({ label, status: "error", error: outcome.message });
       if (!outcome.halt) return undefined;
       finalizeRun(p, wf, runId, "error", now, outcome.message, run.notTaken);
       return "error";
+  }
+}
+
+/** Tells the owner once that a report run was skipped; a notifier that throws cannot change the outcome. */
+function notifySkipped(p: RunWorkflowExecutionParams, info: SkippedRunInfo): void {
+  try {
+    p.onSkipped?.(info);
+  } catch {
+    // The run is already recorded `skipped`; a failed notification must not change that.
   }
 }
 

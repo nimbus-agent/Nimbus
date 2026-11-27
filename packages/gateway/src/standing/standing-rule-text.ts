@@ -193,6 +193,9 @@ function scopeLine(field: string, entry: ScopeEntry): string {
   if ("const" in entry) {
     return `  ${name}: the constant ${sanitisePreviewText(JSON.stringify(entry.const))}`;
   }
+  if ("report" in entry) {
+    return `  ${name}: the report ${entry.part} rendered by step ${String(entry.report + 1)} from its embedded template and the local cost index`;
+  }
   return `  ${name}: each value of column ${sanitisePreviewText(entry.column)} that query step ${String(entry.query + 1)} selects`;
 }
 

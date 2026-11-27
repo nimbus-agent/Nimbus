@@ -54,6 +54,17 @@ describe("readCostTemplateFile", () => {
     expect(readCostTemplateFile(configDir, "weekly.md")).toBe("Checkout: {total} — ünïcode\n");
   });
 
+  test("the inline template's rule: CRLF becomes LF, any other control character is refused", () => {
+    writeFileSync(join(templates, "crlf.md"), "Checkout\r\n{total}\r\n");
+    expect(readCostTemplateFile(configDir, "crlf.md")).toBe("Checkout\n{total}\n");
+    writeFileSync(join(templates, "tab.md"), "a\tb\n");
+    expect(readCostTemplateFile(configDir, "tab.md")).toBe("a\tb\n");
+    for (const bad of ["a\rb", "a\u0007b", "a\u001bb"]) {
+      writeFileSync(join(templates, "bad.md"), bad);
+      expect(reason("bad.md"), JSON.stringify(bad)).toContain("holds a control character");
+    }
+  });
+
   test("a name that is not a plain file name is refused before any path is built", () => {
     for (const name of ["../x.md", "/etc/passwd", "a/b.md", "a\\b.md", ".hidden", "C:x.md", ""]) {
       expect(reason(name)).toContain("not a plain file name");

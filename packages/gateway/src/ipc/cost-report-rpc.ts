@@ -1,21 +1,12 @@
+import { renderReportChannel } from "../automation/cost-report-render.ts";
 import { machineTimeZone } from "../automation/cron.ts";
 import type {
   CostReportChannelDef,
   CostReportDef,
   CostReportDestination,
 } from "../config/cost-report-toml.ts";
-import { costReportDoorRefusal } from "../connectors/connector-writes/cost-report-rows.ts";
-import { broadcastMentionIn } from "../connectors/connector-writes/model-write-refusals.ts";
-import { remoteContentIn } from "../connectors/connector-writes/remote-content.ts";
 import { buildCostReport, type CostReportModel } from "../finops/cost-report-model.ts";
 import { reportPeriods } from "../finops/cost-report-period.ts";
-import {
-  COST_REPORT_BODY_MAX,
-  CostTemplateError,
-  parseCostTemplate,
-  renderCostSubject,
-  renderCostTemplate,
-} from "../finops/cost-template.ts";
 import { CostTemplateFileError, readCostTemplateFile } from "../finops/cost-template-file.ts";
 import { gatherCostViewInput } from "../finops/cost-view-input.ts";
 import type { ChatopsPolicy } from "../policy/types.ts";
@@ -68,21 +59,7 @@ export interface CostReportRenderResult {
   readonly channels: CostReportChannelRender[];
 }
 
-const BROADCAST = "notifies a whole channel, group or team (a broadcast mention)";
-const REMOTE =
-  "loads remote content (an external image, embed, frame or stylesheet) when it is opened";
-
-/** What the send door's detectors find in `text` for this channel, or null. */
-function doorFinding(ch: CostReportChannelDef, text: string): string | null {
-  const html = ch.format === "html";
-  if ((ch.kind === "slack" || ch.kind === "teams") && broadcastMentionIn(ch.kind, text, { html }))
-    return BROADCAST;
-  if (html && ch.kind === "teams" && remoteContentIn("teams-html", text)) return REMOTE;
-  if (html && ch.kind === "outlook" && remoteContentIn("outlook-html", text)) return REMOTE;
-  return null;
-}
-
-function templateText(ch: CostReportChannelDef, configDir: string | undefined): string {
+export function templateText(ch: CostReportChannelDef, configDir: string | undefined): string {
   if ("inline" in ch.template) return ch.template.inline;
   if (configDir === undefined)
     throw new CostTemplateFileError("no config directory to read template files from");
@@ -90,7 +67,7 @@ function templateText(ch: CostReportChannelDef, configDir: string | undefined): 
 }
 
 /** The enforced ChatOps policy, or undefined when it cannot be read (the door then refuses chat posts). */
-function readChatops(ctx: CostViewsRpcCtx): ChatopsPolicy | undefined {
+export function readChatops(ctx: CostViewsRpcCtx): ChatopsPolicy | undefined {
   try {
     return ctx.chatops?.();
   } catch {
@@ -100,7 +77,7 @@ function readChatops(ctx: CostViewsRpcCtx): ChatopsPolicy | undefined {
 
 const NOT_TRUNCATED = { breakdown: 0, topMovers: 0 } as const;
 
-/** One channel: template → door check of the literal → body → subject → door check of the body. */
+/** One channel: the template text, then the shared render-then-check sequence (`automation/cost-report-render.ts`). */
 function renderChannel(
   ch: CostReportChannelDef,
   model: CostReportModel,
@@ -108,36 +85,11 @@ function renderChannel(
   chatops: ChatopsPolicy | undefined,
 ): CostReportChannelRender {
   const base = { kind: ch.kind, format: ch.format, to: ch.to };
+  let template: string;
   try {
-    const text = templateText(ch, configDir);
-    const literal = doorFinding(ch, text);
-    if (literal !== null) {
-      return {
-        ...base,
-        subject: null,
-        body: null,
-        truncated: NOT_TRUNCATED,
-        error: null,
-        doorRefusal: `the template ${literal}`,
-      };
-    }
-    const out = renderCostTemplate(parseCostTemplate(text), model, {
-      kind: ch.kind,
-      format: ch.format,
-      breakdown: ch.breakdown,
-      maxChars: COST_REPORT_BODY_MAX[ch.kind],
-    });
-    const subject =
-      ch.subject === null ? null : renderCostSubject(parseCostTemplate(ch.subject), model);
-    // The send door's FULL destination check on the post as it would be made (ChatOps channel, broadcast
-    // mention, remote content), through the row table's own module (static D20 keeps tool ids there).
-    const doorRefusal = costReportDoorRefusal(
-      { kind: ch.kind, to: ch.to, format: ch.format, body: out.text, subject },
-      chatops,
-    );
-    return { ...base, subject, body: out.text, truncated: out.truncated, error: null, doorRefusal };
+    template = templateText(ch, configDir);
   } catch (e) {
-    if (!(e instanceof CostTemplateError) && !(e instanceof CostTemplateFileError)) throw e;
+    if (!(e instanceof CostTemplateFileError)) throw e;
     return {
       ...base,
       subject: null,
@@ -147,15 +99,35 @@ function renderChannel(
       doorRefusal: null,
     };
   }
+  const out = renderReportChannel({ ...ch, template }, model, chatops);
+  if (!out.ok) {
+    return {
+      ...base,
+      subject: null,
+      body: null,
+      truncated: NOT_TRUNCATED,
+      error: out.error,
+      doorRefusal: out.doorRefusal,
+    };
+  }
+  return {
+    ...base,
+    subject: out.subject,
+    body: out.body,
+    truncated: out.truncated,
+    error: null,
+    doorRefusal: out.doorRefusal,
+  };
 }
 
-function findReport(
+export function findReport(
   reports: readonly CostReportDef[],
   name: unknown,
   configError: string | null,
+  method = "cost.reportRender",
 ): CostReportDef {
   if (typeof name !== "string" || name.length === 0 || name.length > 64) {
-    throw new CostViewsRpcError(-32602, "cost.reportRender: name must be a report name");
+    throw new CostViewsRpcError(-32602, `${method}: name must be a report name`);
   }
   const def = reports.find((r) => r.name === name);
   if (def !== undefined) return def;
@@ -163,18 +135,22 @@ function findReport(
   const refused = configError === null ? "" : ` (the report config was refused: ${configError})`;
   throw new CostViewsRpcError(
     -32602,
-    `cost.reportRender: no report named "${name}" (known: ${known})${refused}`,
+    `${method}: no report named "${name}" (known: ${known})${refused}`,
   );
 }
 
-function channelsOf(def: CostReportDef, channel: unknown): readonly CostReportChannelDef[] {
+export function channelsOf(
+  def: CostReportDef,
+  channel: unknown,
+  method = "cost.reportRender",
+): readonly CostReportChannelDef[] {
   if (channel === undefined) return def.channels;
   const picked = def.channels.filter((c) => c.kind === channel);
   if (picked.length === 0) {
     const kinds = def.channels.map((c) => c.kind).join(", ") || "none";
     throw new CostViewsRpcError(
       -32602,
-      `cost.reportRender: report "${def.name}" has no ${String(channel).slice(0, 16)} channel (it has: ${kinds})`,
+      `${method}: report "${def.name}" has no ${String(channel).slice(0, 16)} channel (it has: ${kinds})`,
     );
   }
   return picked;
@@ -206,12 +182,23 @@ export function handleCostReportRender(raw: unknown, ctx: CostViewsRpcCtx): Cost
   const cfg = config(ctx);
   const def = findReport(cfg.reports, p["name"], cfg.error ?? cfg.reportsError);
   const channels = channelsOf(def, p["channel"]);
+  const model = reportModel(ctx, cfg, def, def.tz ?? machineTimeZone());
+  const chatops = readChatops(ctx);
+  return {
+    model,
+    channels: channels.map((ch) => renderChannel(ch, model, ctx.configDir, chatops)),
+  };
+}
+
+/** The report over the local cost lines for its current period in zone `tz` (no network, no model). */
+export function reportModel(
+  ctx: CostViewsRpcCtx,
+  cfg: ReturnType<typeof config>,
+  def: CostReportDef,
+  tz: string,
+): CostReportModel {
   const nowMs = (ctx.now ?? Date.now)();
-  const { range, previous, weekStart } = reportPeriods(
-    def.period,
-    def.tz ?? machineTimeZone(),
-    nowMs,
-  );
+  const { range, previous, weekStart } = reportPeriods(def.period, tz, nowMs);
   // ONE gather over both periods, so one source rule applies to both (as `cost.why` does).
   const both = gatherCostViewInput(
     ctx.db,
@@ -223,7 +210,7 @@ export function handleCostReportRender(raw: unknown, ctx: CostViewsRpcCtx): Cost
     },
     nowMs,
   );
-  const model = buildCostReport({
+  return buildCostReport({
     lines: both.lines,
     rules: cfg.rules,
     configError: cfg.error,
@@ -235,9 +222,4 @@ export function handleCostReportRender(raw: unknown, ctx: CostViewsRpcCtx): Cost
     lastDays: both.lastDays,
     empty: both.empty,
   });
-  const chatops = readChatops(ctx);
-  return {
-    model,
-    channels: channels.map((ch) => renderChannel(ch, model, ctx.configDir, chatops)),
-  };
 }

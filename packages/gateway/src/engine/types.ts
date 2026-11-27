@@ -23,9 +23,17 @@ export type WorkflowProvenance = {
   readonly stepIndex: number;
   readonly runId: string;
   readonly trigger: WorkflowTrigger;
-  /** Per input field: a constant, or the declared query step (by index) and column it came from. */
+  /**
+   * Per input field: a constant, the declared query step (by index) and column it came from, or the report
+   * step (by index) whose rendered body or subject filled it (Phase 7 slice 4).
+   */
   readonly fieldSources: Readonly<
-    Record<string, "constant" | { readonly query: number; readonly column: string }>
+    Record<
+      string,
+      | "constant"
+      | { readonly query: number; readonly column: string }
+      | { readonly report: number; readonly part: "body" | "subject" }
+    >
   >;
   /**
    * Display and history only (never read by the standing-rule check or the learner): the `when`
