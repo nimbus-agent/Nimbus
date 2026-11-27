@@ -69,6 +69,7 @@ import { IacWindowsGrants } from "./iac-runner/iac-grant-ledger.ts";
 import { type IacBinary, installReads } from "./iac-runner/iac-install-reads.ts";
 import { listOf, setEnvIfDefined, uniq } from "./iac-runner/iac-list-util.ts";
 import { IacLiveChildren } from "./iac-runner/iac-live-children.ts";
+import { initSucceeded, moduleGitKeys, removeInitModuleGits } from "./iac-runner/iac-module-git.ts";
 import { IAC_RUNNER_REFUSALS } from "./iac-runner/iac-refusals.ts";
 import { iacRootFor, isOurChangeSet } from "./iac-runner/iac-roots.ts";
 import type { IacHost, IacRunnerDeps } from "./iac-runner/iac-runner-types.ts";
@@ -652,8 +653,12 @@ export class IacRunner implements IacHost {
     try {
       // A Terraform row's preflight always resolves the path; the caller's string is never used.
       const workingDirectory = opened.workingDirectory ?? "";
+      const platform = this.deps.pathDeps.platform;
+      const before = moduleGitKeys(workingDirectory, platform);
       const out = await this.runTerraform(toolId, "init", { workingDirectory }, budget);
-      // The child has exited (awaitExit): a git-sourced module it cloned is refused now, clearly.
+      // The child has exited (awaitExit). Owner ruling 2026-11-27: the module `.git` folders THIS
+      // init cloned are removed (iac-module-git.ts); the real rescan then refuses anything left.
+      if (initSucceeded(out)) removeInitModuleGits(workingDirectory, before, platform);
       const planted = this.recheckGit(workingDirectory);
       if (planted !== undefined) throw new Error(planted);
       return out;

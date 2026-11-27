@@ -118,7 +118,7 @@ export const IAC_WORKDIR_REFUSALS = Object.freeze({
   gitRepository:
     "the directory has a Git repository in it or beneath it (a .git folder or file); point Terraform at a subdirectory without a repository",
   terraformModulesGit:
-    "the directory's .terraform/modules folder holds a git-sourced module cloned with its .git, which is not supported yet; delete that .terraform/modules folder first",
+    "the directory's .terraform/modules folder holds a .git (Nimbus removes only the ones an init it ran has just cloned); delete that .terraform/modules folder first",
 });
 export type IacWorkdirRefusal = (typeof IAC_WORKDIR_REFUSALS)[keyof typeof IAC_WORKDIR_REFUSALS];
 

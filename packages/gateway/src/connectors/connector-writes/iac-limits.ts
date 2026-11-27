@@ -318,12 +318,14 @@ export const IAC_PREFLIGHT_REFUSALS = Object.freeze({
 
 /**
  * Owner ruling (connectors 0.21.0): the refusal when the only `.git` beneath an approved directory
- * is under its `.terraform/modules/`, a git-sourced module `terraform init` cloned. Not supported
- * yet: nothing is exempted or deleted, the owner deletes the folder. It names that folder, built
- * from the gateway-resolved approved path (never the caller's string).
+ * is under its `.terraform/modules/`. Since the 2026-11-27 ruling the runner removes the
+ * `<module>/.git` folders an init it ran has just cloned (`lazy-mesh/iac-runner/iac-module-git.ts`);
+ * this is the refusal for any other one (a link, a file, a deeper one, one an init outside Nimbus
+ * left, one that could not be removed). Nothing is exempted: the owner deletes the folder. It names
+ * that folder, built from the gateway-resolved approved path (never the caller's string).
  */
 export function terraformModulesGitRefusal(workdir: string): string {
-  return `iac: git-sourced Terraform modules are not supported yet (a module under .terraform/modules was cloned with its .git); delete ${join(workdir, ".terraform", "modules")} before a plan, apply or init can run in this directory`;
+  return `iac: a .git under .terraform/modules is not one the gateway removes (it removes only the <module>/.git folders an init it ran has just cloned); delete ${join(workdir, ".terraform", "modules")} before a plan, apply or init can run in this directory`;
 }
 
 /** What the MODEL door alone refuses for an iac write (the owner's doors are not restricted). */

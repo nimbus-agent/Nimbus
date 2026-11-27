@@ -262,9 +262,10 @@ describe("the runner: iac_terraform_init opens its own run", () => {
   });
 });
 
-// Owner ruling (connectors 0.21.0 review): a git-sourced module that init cloned leaves a `.git`
-// under `.terraform/modules/`. Refused clearly with its own text, naming the folder to delete;
-// nothing is exempted or deleted. The REAL scan, not the stub.
+// Owner ruling (connectors 0.21.0 review, amended 2026-11-27): a git-sourced module that init
+// cloned leaves a `.git` under `.terraform/modules/<key>/`; the runner removes the ones THIS init
+// created, and any other is refused with its own text, naming the folder to delete. The REAL scan,
+// not the stub. The edge cases are in `iac-runner.module-git.test.ts`.
 describe("the runner: a git-sourced module under .terraform/modules", () => {
   const realDeps: IacPathDeps = { ...pathDeps, gitScan: (dir) => scanForGitEntry(dir) };
   const fresh = (name: string): { dir: string; grants: IacGrants } => {
@@ -273,25 +274,27 @@ describe("the runner: a git-sourced module under .terraform/modules", () => {
     return { dir, grants: { workdirs: [dir], clouds: [], regions: [], net: [] } };
   };
 
-  test("an init that clones one is refused with the new text, and so is the next plan's preflight", async () => {
+  test("an init that clones one answers, its .git is removed, and the next preflight passes", async () => {
     const { dir, grants } = fresh("modules-git");
     const plant = (): void => {
-      mkdirSync(join(dir, ".terraform", "modules", "x", ".git"), { recursive: true });
+      mkdirSync(join(dir, ".terraform", "modules", "x", ".git", "objects"), { recursive: true });
     };
     const { r } = make(false, { grants: () => grants, pathDeps: realDeps }, plant);
-    const text = terraformModulesGitRefusal(dir);
-    expect(text).toContain(join(dir, ".terraform", "modules"));
-    expect(text).not.toContain("subdirectory");
-    await expect(r.execute(INIT, { workingDirectory: dir })).rejects.toThrow(text);
+    await expect(r.execute(INIT, { workingDirectory: dir })).resolves.toBeDefined();
+    expect(existsSync(join(dir, ".terraform", "modules", "x", ".git"))).toBe(false);
+    // The module itself stays: only its `.git` went.
+    expect(existsSync(join(dir, ".terraform", "modules", "x"))).toBe(true);
     await settled();
-    expect(await r.preflight("iac_terraform_apply", { workingDirectory: dir })).toEqual({
-      ok: false,
-      reason: text,
-    });
-    await expect(r.execute(INIT, { workingDirectory: dir })).rejects.toThrow(text);
-    expect(r.recheckGit(dir)).toBe(text);
-    // Nothing was deleted.
-    expect(existsSync(join(dir, ".terraform", "modules", "x", ".git"))).toBe(true);
+    const o = await r.preflight("iac_terraform_apply", { workingDirectory: dir });
+    expect(o.ok).toBe(true);
+    if (o.ok) o.release();
+    expect(r.recheckGit(dir)).toBeUndefined();
+  });
+
+  test("the dedicated refusal names the modules folder, not a subdirectory", () => {
+    const text = terraformModulesGitRefusal(work);
+    expect(text).toContain(join(work, ".terraform", "modules"));
+    expect(text).not.toContain("subdirectory");
   });
 
   test("a .git anywhere else keeps the old refusal", async () => {
