@@ -27,7 +27,7 @@ import { createDiscordSyncable } from "../connectors/discord-sync.ts";
 import { createElasticsearchSyncable } from "../connectors/elasticsearch-sync.ts";
 import { createFastmailSyncable } from "../connectors/fastmail-sync.ts";
 import { createFigmaSyncable } from "../connectors/figma-sync.ts";
-import { registerFinopsSyncables } from "../connectors/finops-syncables.ts";
+import { type FinopsSyncOptions, registerFinopsSyncables } from "../connectors/finops-syncables.ts";
 import { createFirebaseSyncable } from "../connectors/firebase-sync.ts";
 import { createFlagsmithSyncable } from "../connectors/flagsmith-sync.ts";
 import { createFluxSyncable } from "../connectors/flux-sync.ts";
@@ -104,7 +104,7 @@ export type ConnectorMeshSyncableOptions = {
   /** `[briefing] snapshot_interval_minutes`, read per sync (Phase 10 MB1); absent means 15. */
   briefingSnapshotIntervalMinutes?: () => number;
   /** `[finops] max_series`, read per sync (Phase 10 FO2); absent means 500. */
-  finopsMaxSeries?: () => number;
+  finops?: FinopsSyncOptions;
 };
 
 export function registerConnectorMeshSyncables(
@@ -564,5 +564,5 @@ export function registerConnectorMeshSyncables(
   );
   syncScheduler.register(createMonteCarloSyncable());
   syncScheduler.register(createBigeyeSyncable());
-  registerFinopsSyncables(syncScheduler, options.finopsMaxSeries);
+  registerFinopsSyncables(syncScheduler, options.finops);
 }

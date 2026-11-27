@@ -6,6 +6,7 @@ import {
 } from "../../automation/watcher-engine.ts";
 import { loadNimbusAnomalyFromConfigDir } from "../../config/anomaly-toml.ts";
 import { loadNimbusBriefingFromConfigDir } from "../../config/briefing-toml.ts";
+import { loadNimbusCostFromConfigDir } from "../../config/cost-toml.ts";
 import { loadNimbusFilesystemRootsFromConfigDir } from "../../config/filesystem-toml.ts";
 import { loadNimbusFinopsFromConfigDir } from "../../config/finops-toml.ts";
 import { loadNimbusIncidentScribeFromConfigDir } from "../../config/incident-scribe-toml.ts";
@@ -457,13 +458,16 @@ export async function createSchedulerWithMesh(
   // far `syncScheduler.start()` may sit from the guard that wraps it.
   const briefingSnapshotIntervalMinutes = (): number =>
     loadNimbusBriefingFromConfigDir(paths.configDir).snapshotIntervalMinutes;
-  const finopsMaxSeries = (): number => loadNimbusFinopsFromConfigDir(paths.configDir).maxSeries;
+  const finops = {
+    maxSeries: (): number => loadNimbusFinopsFromConfigDir(paths.configDir).maxSeries,
+    githubOrgs: (): readonly string[] => loadNimbusCostFromConfigDir(paths.configDir).githubOrgs,
+  };
   if (syncEnabled) {
     registerConnectorMeshSyncables(policyFilteredRegistrar, connectorMesh, {
       pagerdutyMaxPagesPerSync: pagerdutyCfg.maxPagesPerSync,
       workdayConfig: workdayCfg,
       briefingSnapshotIntervalMinutes,
-      finopsMaxSeries,
+      finops,
     });
     registerUserMcpSyncablesFromDatabase(db, policyFilteredRegistrar, connectorMesh);
     syncScheduler.start();

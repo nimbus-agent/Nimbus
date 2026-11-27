@@ -1,4 +1,5 @@
 import { stripControlChars } from "../lib/strip-control-chars.ts";
+import { type CostFreshnessRow, costFreshnessLine } from "./cost-freshness-line.ts";
 import { csvCell } from "./cost-views-cli.ts";
 import type { CostWhyIpc, CostWhySink } from "./cost-why-cli.ts";
 
@@ -85,7 +86,7 @@ type Model = {
   previous: { fromDay: string; toDay: string; label: string };
   byCurrency: Record<string, Currency>;
   provisionalFrom: string | null;
-  freshness: { source: string; lastDay: string | null; provisionalFrom: string | null }[];
+  freshness: CostFreshnessRow[];
   empty: boolean;
   configError: string | null;
 };
@@ -213,10 +214,7 @@ function renderText(r: RenderResult, sink: CostWhySink): number {
   );
   for (const [code, c] of Object.entries(m.byCurrency)) renderCurrency(code, c, sink);
   if (m.provisionalFrom !== null) sink.out(`The days from ${m.provisionalFrom} are provisional.\n`);
-  for (const f of m.freshness) {
-    const prov = f.provisionalFrom === null ? "" : ` (provisional from ${f.provisionalFrom})`;
-    sink.out(`Source ${clean(f.source)}: data up to ${f.lastDay ?? "none"}${prov}\n`);
-  }
+  for (const f of m.freshness) sink.out(costFreshnessLine(f));
   const ok = r.channels.map((ch) => renderChannel(ch, sink));
   return ok.every(Boolean) ? 0 : 1;
 }

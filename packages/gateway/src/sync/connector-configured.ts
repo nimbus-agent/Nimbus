@@ -159,6 +159,7 @@ const DERIVED_CONFIGURED_CHECKS: Readonly<
   outlook: hasMicrosoftOAuthVaultKey,
   teams: isTeamsConfigured,
   github_actions: isGithubPatConfigured,
+  github_billing: isGithubPatConfigured,
   bigquery: isGcpCredentialConfigured,
   cloud_logging: isGcpCredentialConfigured,
   vertex_ai: isGcpCredentialConfigured,

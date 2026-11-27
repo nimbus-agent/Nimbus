@@ -157,6 +157,15 @@ export async function ensureGithubCircleCiSchedulerCompanions(
     now: Date.now(),
     intervalMs: defaultSyncIntervalMsForService("github_actions"),
   });
+  // Phase 7 slice 5: the billing usage sync is a companion of github too (it does nothing until
+  // `[cost.github] orgs` is set), on its own daily interval.
+  if (pat !== null && pat !== "") {
+    localIndex.ensureConnectorSchedulerRegistration(
+      "github_billing",
+      defaultSyncIntervalMsForService("github_billing"),
+      Date.now(),
+    );
+  }
   const cciTok = await readConnectorSecret(vault, "circleci", "api_token");
   localIndex.ensureCircleciSchedulerCompanionIfNeeded({
     circleciTokenPresent: cciTok !== null && cciTok !== "",

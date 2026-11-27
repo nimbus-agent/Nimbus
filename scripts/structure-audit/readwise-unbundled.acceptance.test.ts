@@ -15,6 +15,7 @@ import { REPO_ROOT } from "./lib.ts";
 
 const EXPECTED = [
   "packages/gateway/src/connectors/connector-catalog.ts",
+  "packages/gateway/src/connectors/connector-oauth-unsupported.ts",
   "packages/gateway/src/connectors/connector-secrets-manifest.ts",
   "packages/gateway/src/extensions/continuity/continuity-table.ts",
 ];

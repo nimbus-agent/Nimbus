@@ -70,6 +70,7 @@ export const SHARED_CREDENTIAL_GRANTS = {
   cloud_logging: ["gcp"],
   vertex_ai: ["gcp"],
   github_actions: ["github"],
+  github_billing: ["github"],
   athena: ["aws"],
   cloudwatch: ["aws"],
   sagemaker: ["aws"],

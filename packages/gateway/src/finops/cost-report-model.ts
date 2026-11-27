@@ -76,6 +76,8 @@ export interface BuildCostReportInput {
   readonly weekStart: string | null;
   readonly nowMs: number;
   readonly lastDays: readonly { readonly source: string; readonly lastDay: string }[];
+  /** Per source, what its sync could not read (shown in the freshness).  */
+  readonly sourceGaps?: ReadonlyMap<string, readonly string[]>;
   readonly empty: boolean;
 }
 
@@ -208,7 +210,11 @@ export function buildCostReport(input: BuildCostReportInput): CostReportModel {
     weekStart: input.weekStart,
     byCurrency,
     provisionalFrom: provisionalFromOf(input.range, input.nowMs),
-    freshness: costFreshness({ lastDays: input.lastDays, nowMs: input.nowMs }),
+    freshness: costFreshness({
+      lastDays: input.lastDays,
+      nowMs: input.nowMs,
+      ...(input.sourceGaps === undefined ? {} : { sourceGaps: input.sourceGaps }),
+    }),
     empty: input.empty,
     configError: input.configError,
     command: `nimbus cost report ${input.def.name}`,

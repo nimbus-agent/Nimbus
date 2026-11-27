@@ -263,11 +263,14 @@ describe("cursor invalidation lives in connector.auth github", () => {
     expect(cursorOf("github_actions")).toBe("nimbus-gha1:abc");
   });
 
-  test("the first-ever auth against a GHES registers both services and does not throw", async () => {
+  test("the first-ever auth against a GHES registers github and its companions and does not throw", async () => {
     await handleConnectorAuth(ctxFor({ apiBaseUrl: GHES }));
     expect(cursorOf("github")).toBeNull();
-    const n = (db.query("SELECT COUNT(*) AS n FROM scheduler_state").get() as { n: number }).n;
-    expect(n).toBe(2);
+    const ids = db.query("SELECT service_id FROM scheduler_state ORDER BY service_id").all() as {
+      service_id: string;
+    }[];
+    // github_billing (Phase 7 slice 5) is registered too; on a GHES base it records a gap and makes no request.
+    expect(ids.map((r) => r.service_id)).toEqual(["github", "github_actions", "github_billing"]);
   });
 });
 

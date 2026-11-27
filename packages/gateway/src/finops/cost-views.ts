@@ -86,6 +86,8 @@ export interface CostFreshness {
   readonly lastDay: string | null;
   /** Days from here to `lastDay` are provisional; null when the source has no line in that range. */
   readonly provisionalFrom: string | null;
+  /** What this source's sync could not read (e.g. a GitHub org without billing access); absent when none. */
+  readonly gap?: string;
 }
 
 export interface CostViewResult {
@@ -121,6 +123,8 @@ export interface CostViewInput {
   readonly configError: string | null;
   /** The charge days in the range that hold a line of ANY source, before `[cost] authoritative` is applied. */
   readonly presentDays?: ReadonlySet<string>;
+  /** Per source, what its sync could not read (`finops/cost-source-gaps.ts`); absent or empty when none. */
+  readonly sourceGaps?: ReadonlyMap<string, readonly string[]>;
 }
 
 type Acc = {
@@ -140,15 +144,29 @@ const newAcc = (): Acc => ({
 });
 
 /** Each source's newest day and, when it falls in the provisional days, where they start. */
-export function costFreshness(input: Pick<CostViewInput, "lastDays" | "nowMs">): CostFreshness[] {
+export function costFreshness(
+  input: Pick<CostViewInput, "lastDays" | "nowMs" | "sourceGaps">,
+): CostFreshness[] {
   const provisionalFrom = dayText(
     dayMs(dayText(input.nowMs)) - (COST_PROVISIONAL_DAYS - 1) * DAY_MS,
   );
-  return input.lastDays.map((s) => ({
+  const gaps = input.sourceGaps ?? new Map<string, readonly string[]>();
+  const gapOf = (source: string): { gap?: string } => {
+    const g = gaps.get(source);
+    return g === undefined || g.length === 0 ? {} : { gap: g.join("; ") };
+  };
+  const rows: CostFreshness[] = input.lastDays.map((s) => ({
     source: s.source,
     lastDay: s.lastDay,
     provisionalFrom: s.lastDay >= provisionalFrom ? provisionalFrom : null,
+    ...gapOf(s.source),
   }));
+  // A source whose sync could read nothing at all still gets a row, so its gap is never silent.
+  for (const source of [...gaps.keys()].sort()) {
+    if (rows.some((r) => r.source === source)) continue;
+    rows.push({ source, lastDay: null, provisionalFrom: null, ...gapOf(source) });
+  }
+  return rows;
 }
 
 function finish(acc: Acc): CostCurrencyBlock {

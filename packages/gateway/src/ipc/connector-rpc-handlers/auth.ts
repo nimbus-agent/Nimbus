@@ -268,6 +268,8 @@ function githubBaseFromRequest(rec: Record<string, unknown> | undefined): string
  * removes indexed items: that is `removeConnectorIndexData`, which is the owner's explicit
  * `connector remove`. An unchanged base clears nothing.
  */
+const GITHUB_FAMILY = ["github", "github_actions", "github_billing"] as const;
+
 async function connectorAuthGithub(ctx: ConnectorRpcHandlerContext): Promise<ConnectorRpcHit> {
   const token = aliasedStringField(ctx.rec, PAT_TOKEN_FIELDS);
   if (token === "") {
@@ -296,19 +298,16 @@ async function connectorAuthGithub(ctx: ConnectorRpcHandlerContext): Promise<Con
     }
     await writeConnectorSecret(ctx.vault, "github", "pat", token);
     const now = Date.now();
-    ctx.localIndex.ensureConnectorSchedulerRegistration(
-      "github",
-      defaultSyncIntervalMsForService("github"),
-      now,
-    );
-    ctx.localIndex.ensureConnectorSchedulerRegistration(
-      "github_actions",
-      defaultSyncIntervalMsForService("github_actions"),
-      now,
-    );
+    // github and its companions (Actions runs; Phase 7 slice 5: billing usage), each on its own interval.
+    for (const id of GITHUB_FAMILY) {
+      ctx.localIndex.ensureConnectorSchedulerRegistration(
+        id,
+        defaultSyncIntervalMsForService(id),
+        now,
+      );
+    }
     if ((previous ?? null) !== base) {
-      ctx.localIndex.clearConnectorSyncCursor("github");
-      ctx.localIndex.clearConnectorSyncCursor("github_actions");
+      for (const id of GITHUB_FAMILY) ctx.localIndex.clearConnectorSyncCursor(id);
     }
   } finally {
     ctx.connectorMesh?.restartGithub();

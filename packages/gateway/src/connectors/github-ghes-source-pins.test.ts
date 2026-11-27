@@ -55,6 +55,7 @@ describe("GHES source pins", () => {
     for (const rel of [
       "connectors/github-sync.ts",
       "connectors/github-actions-sync.ts",
+      "connectors/github-billing-cost-sync.ts",
       "connectors/lazy-mesh/connector-spawns.ts",
     ]) {
       const code = read(rel);
