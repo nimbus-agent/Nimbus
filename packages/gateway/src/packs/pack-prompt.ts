@@ -4,6 +4,7 @@
 // or bidi-control character must be shown as an escape, never rendered.
 
 import type { RolePackManifest } from "@nimbus-dev/registry-format";
+import { packCostSummary } from "../config/pack-cost-check.ts";
 import { checkPackFragment } from "../config/pack-settable.ts";
 import { routesRemotely } from "../glossary/glossary-visibility.ts";
 import { FORMAT_INVISIBLE_RANGES } from "../util/invisible-text.ts";
@@ -54,6 +55,8 @@ export type PackDiff = {
     readonly changed: string[];
   };
   readonly connectors: { readonly added: string[]; readonly removed: string[] };
+  /** The cost defaults (`[cost]`, `[[cost.rule]]`, `[[cost.report]]`) differ. */
+  readonly cost: boolean;
   readonly metadataOnly: boolean;
 };
 
@@ -102,6 +105,18 @@ function fragmentParts(m: RolePackManifest): {
   };
 }
 
+/** The cost tables of a fragment as written, so a whitespace edit elsewhere is not a cost change. */
+function costText(defaults: string): string {
+  const out: string[] = [];
+  let inCost = false;
+  for (const line of defaults.split(/\r?\n/)) {
+    const t = line.trim();
+    if (t.startsWith("[")) inCost = /^\[\[?cost(?:\.(?:rule|report))?\]\]?$/.test(t);
+    if (inCost && t !== "" && !t.startsWith("#")) out.push(t);
+  }
+  return out.join("\n");
+}
+
 function setDiff<T>(prev: Iterable<T>, next: Iterable<T>): { added: T[]; removed: T[] } {
   const p = new Set(prev);
   const n = new Set(next);
@@ -127,6 +142,7 @@ export function diffPacks(prev: RolePackManifest, next: RolePackManifest): PackD
       changed: [...nj].filter(([k, v]) => pj.has(k) && pj.get(k) !== v).map(([k]) => k),
     },
     connectors: setDiff(prev.suggestedConnectors, next.suggestedConnectors),
+    cost: costText(prev.defaults) !== costText(next.defaults),
     metadataOnly: prev.defaults === next.defaults,
   };
 }
@@ -232,6 +248,7 @@ function installSections(i: PackPromptInput): string[] {
       ...localGlossaryNote(i.sourceMappings),
     ]),
     ...section("Overnight jobs:", [...i.jobs.map(jobRow), ...fleetNote(i)]),
+    ...costSection(i),
     ...section(
       "Suggested connectors:",
       i.connectors.map(
@@ -239,6 +256,14 @@ function installSections(i: PackPromptInput): string[] {
       ),
     ),
   ];
+}
+
+/** Shown only for a pack that sets cost defaults, so the other packs' prompts are unchanged. */
+function costSection(i: PackPromptInput, changedOnly = false): string[] {
+  const rows = packCostSummary(i.manifest.defaults).map(visibleText);
+  if (changedOnly)
+    return section("Cost defaults:", rows.length === 0 ? ["removed"] : ["changed:", ...rows]);
+  return rows.length === 0 ? [] : section("Cost defaults:", rows);
 }
 
 function fleetNote(i: PackPromptInput): string[] {
@@ -271,6 +296,7 @@ function updateSections(i: PackPromptInput, d: PackDiff): string[] {
       ...removedRows(d.jobs.removed),
       ...fleetNote(i),
     ]),
+    ...(d.cost ? costSection(i, true) : []),
     ...section("Suggested connectors:", connectorRows),
   ];
 }

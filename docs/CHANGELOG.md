@@ -18,6 +18,20 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
 
 ## Post-Phase-6 deliveries
 
+- **2026-11-27: The bundled FinOps role pack (Phase 7, slice 7; no migration; I47 allowlist widened).**
+  `nimbus pack install finops` installs `finops` 1.0.0, bundled beside `pm`, `devops` and `developer`. Owner ruling: bundled, because registry-published packs are not built. It sets three cost defaults, which are now pack-settable:
+  - `[cost] internal_envs`;
+  - two `[[cost.rule]]` rules for `product` and `env` tags;
+  - a `prod-weekly` `[[cost.report]]`.
+
+  A pack can never set a `[[cost.report.channel]]`, so the pack's report sends nothing until the owner adds a channel and schedules it. The pack's cost sections are checked by the same compiler as the owner's own file (`config/pack-cost-check.ts`). Only one installed pack may set cost defaults (`ERR_PACK_CONFLICT`). The install, update and show prompts list them under `Cost defaults:`. The roadmap's Phase 7 rows are updated:
+  - ticked: the role pack, the cost briefs and cost in the demo;
+  - the acceptance criteria are rewritten from the spec;
+  - moved out, per the spec's owner ruling: data FinOps, further FinOps and sustainability connectors and cost in the approval to Phase 8, and the deletion half of cost clean-up to Phase 13;
+  - added: the Phase 14 revenue row.
+
+  Phase 7 stays open for the later cost sources and the launch copy.
+
 - **2026-11-27: connectors 0.22.0: two new connectors, Unleash and Split, indexed, with three flag writes (Phase 9.7 follow-up; services `unleash` and `split`; HITL types `unleash.feature.toggle`, `split.flag.kill` and `split.flag.restore`, 206 in the frozen set; no migration, invariant or IPC method).**
   What you can do now: store `unleash.api_url` and `unleash.token`, or `split.api_key`, with `nimbus vault set`, and the gateway starts the connector in the phase-3 bundle and indexes your flag definitions every 10 minutes as `unleash:feature_flag` and `split:feature_flag` items (definitions only; per-environment state is read live). `nimbus connector writes enable unleash` or `split` offers the model the Unleash toggle or the Split kill and restore (Wave 3, approved by name), each behind a typed preview that names the environment first and a `Before:` block of the flag's current state. Reversibility is declared: a Split kill and restore are each the other's inverse, and an Unleash toggle is reversible only if the environment already has an active strategy (whichever way it goes). The prompts and the runbook listing say "reversible only if the environment already has an active strategy" for the toggle, never plain "reversible".
   Stated bounds: the inverses are declared, but `nimbus incident undo` does not reach these writes yet (they are not in the remediation catalog, and runbook steps are never undone). Enabling an Unleash environment with no active strategy makes Unleash add a default strategy that serves everyone, which turning it off does not remove, so a toggle either way on such an environment cannot be undone through Nimbus. The Unleash sync indexes at most 100 projects and 2,000 flags per project, the Split sync at most 50 workspaces and 1,000 splits each; Split items carry no URL. Counts: 144 write rows, 126 model-offerable, 94 with a before-state, 99 bundled connectors.

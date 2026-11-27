@@ -278,4 +278,21 @@ describe("I47 — a role-pack layer is written only after the owner approved pac
       "packages/gateway/src/packs/pack-layer-store.ts",
     ]);
   });
+
+  test("a pack may set cost rules and report definitions but never a report channel (Phase 7 slice 7)", async () => {
+    // A cost rule or report definition sends nothing: a report posts only through a channel the owner wrote in
+    // their own file and a workflow the owner approved (I55, I29), so the allowlist stays local-only.
+    const { PACK_SETTABLE_ARRAYS, checkPackFragment } = await import("../config/pack-settable.ts");
+    expect(PACK_SETTABLE_ARRAYS.map((a) => a.header)).not.toContain("cost.report.channel");
+    const channel = [
+      "[[cost.report.channel]]",
+      'report = "prod-weekly"',
+      'kind = "slack"',
+      'to = "C0123ABC"',
+      'format = "text"',
+      'template = "{total}"',
+    ].join("\n");
+    expect(checkPackFragment(channel, () => []).ok).toBe(false);
+    for (const m of BUNDLED_PACKS.values()) expect(m.defaults).not.toContain("cost.report.channel");
+  });
 });
