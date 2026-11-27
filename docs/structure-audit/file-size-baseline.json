@@ -130,7 +130,7 @@
     "packages/gateway/src/connectors/bitbucket-sync.ts": 730,
     "packages/gateway/src/connectors/cloudwatch-sync.test.ts": 595,
     "packages/gateway/src/connectors/confluence-sync.test.ts": 976,
-    "packages/gateway/src/connectors/connector-catalog.ts": 533,
+    "packages/gateway/src/connectors/connector-catalog.ts": 502,
     "packages/gateway/src/connectors/connector-writes/agent-door-runtime.test.ts": 1323,
     "packages/gateway/src/connectors/connector-writes/agent-door-runtime.ts": 960,
     "packages/gateway/src/connectors/connector-writes/agent-door-runtime.user-mcp.test.ts": 947,
