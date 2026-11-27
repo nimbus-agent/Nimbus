@@ -110,7 +110,7 @@ describe("tryDispatchPackRpc", () => {
   test("pack.list answers; an unknown pack.* method is -32601", async () => {
     const ctx = ctxWith({ packLayerStore: store, configDir: dir });
     const r = (await tryDispatchPackRpc(ctx, "c1", "pack.list", null)) as { available: unknown[] };
-    expect(r.available).toHaveLength(3);
+    expect(r.available).toHaveLength(4);
     expect((await rpcError(tryDispatchPackRpc(ctx, "c1", "pack.nope", {}))).rpcCode).toBe(-32601);
   });
 

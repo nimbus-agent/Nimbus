@@ -23,7 +23,12 @@ describe("pack.* over a real socket", () => {
           installed: unknown[];
           available: { id: string }[];
         }>("pack.list", null);
-        expect(list.available.map((p) => p.id).sort()).toEqual(["developer", "devops", "finops", "pm"]);
+        expect(list.available.map((p) => p.id).sort()).toEqual([
+          "developer",
+          "devops",
+          "finops",
+          "pm",
+        ]);
         expect(list.installed).toEqual([]);
 
         const removed = await client.call<{ removed: boolean }>("pack.remove", { id: "pm" });
