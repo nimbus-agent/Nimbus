@@ -5,7 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { parseWorkflowSteps, workflowStepsSha256 } from "../automation/workflow-steps.ts";
-import { getWorkflowByName, listScheduledWorkflows } from "../automation/workflow-store.ts";
+import {
+  getWorkflowByName,
+  listScheduledWorkflows,
+  upsertWorkflowByName,
+} from "../automation/workflow-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import type { ChatopsPolicy } from "../policy/types.ts";
@@ -209,5 +213,43 @@ describe("cost.reportSchedule", () => {
       'unknown parameter "extra"',
     );
     expect(getWorkflowByName(db, "cost-checkout-weekly-slack")).toBeNull();
+  });
+});
+
+describe("cost.reportSchedule: channels it cannot generate, and what it replaces", () => {
+  test("a missing template file and a template that cannot render are skipped with the reason", async () => {
+    const missing = [...OUTLOOK.slice(0, 3), 'template_file = "nope.html"', OUTLOOK[4] ?? ""];
+    const typo = [
+      'kind = "slack"',
+      'to = "C0123ABC"',
+      'format = "text"',
+      'template = "Cost {totl}"',
+    ];
+    writeConfig(report(['tz = "UTC"'], [typo, missing]));
+    const r = await schedule({ name: "checkout-weekly" });
+    expect(r.channels.map((c) => [c.kind, c.status])).toEqual([
+      ["slack", "skipped"],
+      ["outlook", "skipped"],
+    ]);
+    expect(r.channels[0]).toMatchObject({ reason: expect.stringContaining("{totl}") });
+    expect(r.channels[1]).toMatchObject({ reason: expect.stringContaining("nope.html") });
+    expect(getWorkflowByName(db, "cost-checkout-weekly-slack")).toBeNull();
+  });
+
+  test("a stored workflow of that name whose steps no longer parse is reported replaced, never unchanged", async () => {
+    upsertWorkflowByName(db, "cost-checkout-weekly-slack", null, "not json", NOW);
+    writeConfig(report(['tz = "UTC"'], [SLACK]));
+    const [ch] = (await schedule({ name: "checkout-weekly" })).channels;
+    expect(ch?.status).toBe("replaced");
+  });
+
+  test("no params at all is refused naming the missing report name", async () => {
+    writeConfig(report(['tz = "UTC"'], [SLACK]));
+    const out = dispatchCostRpc("cost.reportSchedule", undefined, {
+      db,
+      configDir: dir,
+      caller: { kind: "cli" },
+    });
+    expect(await refusal(out)).toContain("cost.reportSchedule: name must be a report name");
   });
 });

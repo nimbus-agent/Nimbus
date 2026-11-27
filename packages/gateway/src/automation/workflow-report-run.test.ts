@@ -292,4 +292,32 @@ describe("a report step in a run", () => {
       "costConfigDir: platform.paths.configDir",
     );
   });
+
+  test("a failure while rendering halts the run with the error, and posts nothing", async () => {
+    importDays(["2026-11-20"]);
+    save([REPORT_STEP, POST_STEP]);
+    for (const [thrown, text] of [
+      [new Error("clock unavailable"), "clock unavailable"],
+      ["a bare string", "a bare string"],
+    ] as const) {
+      const h = harness();
+      const out = await runWorkflowExecution({
+        db,
+        writeExecutor: h.attended,
+        trigger: "owner_cli",
+        workflowName: "cost-checkout-weekly-slack",
+        triggeredBy: "cli",
+        dryRun: false,
+        stream: false,
+        sendChunk: () => {},
+        costConfigDir: dir,
+        now: () => {
+          throw thrown;
+        },
+      });
+      expect(out.status).toBe("error");
+      expect(out.stepResults[0]?.error).toContain(text);
+      expect(h.dispatched).toEqual([]);
+    }
+  });
 });

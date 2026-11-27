@@ -69,9 +69,11 @@ export function renderReportText(spec: ReportChannelSpec, model: CostReportModel
   return { body: out.text, subject, truncated: out.truncated };
 }
 
+/** A refusal is EITHER the template's own literal text (a door finding) OR a template or cap error. */
 export type ReportChannelOutcome =
   | ({ readonly ok: true; readonly doorRefusal: string | null } & ReportText)
-  | { readonly ok: false; readonly error: string | null; readonly doorRefusal: string | null };
+  | { readonly ok: false; readonly error: null; readonly doorRefusal: string }
+  | { readonly ok: false; readonly error: string; readonly doorRefusal: null };
 
 /** The full sequence for one channel and its destination. A template or cap refusal is `error`. */
 export function renderReportChannel(
