@@ -106,7 +106,7 @@ describe("openaiCostLines", () => {
           result({ amount: { value: "1", currency: "usd" } }),
           result({ amount: { value: Number.NaN, currency: "usd" } }),
           result({ amount: null }),
-          result({ line_item: null }),
+          result({ line_item: 7 }),
           result({ project_id: 7 }),
           "not a row",
         ]),
@@ -121,5 +121,14 @@ describe("openaiCostLines", () => {
     expect(lines).toEqual([]);
     expect(rows).toBe(10);
     expect(dropped).toEqual({ malformed: 8, outside_month: 2 });
+  });
+
+  test("a null line item is real spend under the unknown SKU, with no model", () => {
+    const { lines, dropped } = openaiCostLines(
+      [bucket(NOV20, [result({ line_item: null })])],
+      "2026-11",
+    );
+    expect(dropped.malformed).toBe(0);
+    expect(lines.map((l) => [l.skuId, l.model, l.billedCost])).toEqual([["unknown", null, 1.5]]);
   });
 });

@@ -110,8 +110,14 @@ async function syncOrgMonth(
       "github_billing sync: dropped usage rows",
     );
   }
-  // A report whose every row is malformed is not a report of zero cost: never clear the month for it.
-  if (items.length > 0 && mapped.dropped.malformed === items.length) return { kind: "retry" };
+  // A month is written whole or not at all: an unreadable row would silently lower it (and a report whose every
+  // row is unreadable is not a report of zero cost).
+  if (mapped.dropped.malformed > 0) {
+    return {
+      kind: "gap",
+      reason: `${String(mapped.dropped.malformed)} of GitHub's ${month} billing rows for ${org} could not be read; that month was not updated`,
+    };
+  }
   try {
     ctx.replaceCostLinesForMonth(
       { provider: "github", billingAccountId: org.toLowerCase(), month },

@@ -1330,7 +1330,7 @@ What is and is not available (from GitHub's documentation; no live response was 
 - **No per-workflow cost.** The report has a repository, never a workflow, so lines carry `repo` and the SKU (the runner type) only.
 - **Organizations only, on GitHub's enhanced billing platform.** A personal account's Actions minutes are not in any API (the personal endpoint covers Copilot only). GitHub Enterprise Server is not supported: the endpoint is github.com's.
 - **Who may read it.** The token must belong to an organization owner or billing manager. GitHub's pages disagree on the token kind (the [tutorial](https://docs.github.com/en/billing/tutorials/automate-usage-reporting) says a classic personal access token; the reference says a fine-grained token with the "Administration" organization permission (read) works); if one kind is refused, try the other.
-- **When it cannot read an organization** (403 or 404, or an Enterprise Server base) it records why once per run and moves on, and every cost view's freshness shows it under `Source github_billing` as `Not synced: cannot read billing for <org>: …`. A rate-limited response waits for GitHub's limiter; a server error is retried on the next day's run. `connector remove github` deletes these lines too.
+- **When it cannot read an organization** (403 or 404, or an Enterprise Server base) it records why once per run and moves on, and every cost view's freshness shows it under `Source github_billing` as `Not synced: cannot read billing for <org>: …`. A rate-limited response waits for GitHub's limiter; a server error is retried on the next day's run. A month with any row that cannot be read is kept as it was, with a gap that says so. `connector remove github` deletes these lines too.
 
 ### OpenAI and Anthropic costs (`openai_billing`, `anthropic_billing`)
 
@@ -1350,7 +1350,7 @@ What is read (from each vendor's documentation; no live response was checked whe
 - **One organization per key.** There is no per-API-key or per-user detail, by design.
 - A `[[cost.rule]]` on `sub_account` (for example `match = { sub_account = "proj_checkout" }`) puts a project's or workspace's AI spend under its product.
 
-When a key cannot read its organization (an ordinary or workspace key, a missing report, a refused request) the reason appears in every cost view's freshness as `Not synced: …`; a rate-limited or failed response is retried the next day, and a month is never cleared by a bad answer. `connector remove openai_billing` (or `anthropic_billing`) deletes that source's lines.
+When a key cannot read its organization (an ordinary or workspace key, a missing report, a refused request) the reason appears in every cost view's freshness as `Not synced: …`; a rate-limited or failed response is retried the next day. A month is written whole or not at all: if any row of it cannot be read, the stored month is kept as it was and the gap says how many rows could not be read (an OpenAI cost with no line item is kept, under the line item `unknown`). `connector remove openai_billing` (or `anthropic_billing`) deletes that source's lines.
 
 ### `nimbus cost products` and `nimbus cost internal`
 

@@ -320,4 +320,33 @@ describe("the Anthropic cost sync", () => {
     expect(createOpenaiCostSyncable().serviceId).toBe("openai_billing");
     expect(createAnthropicCostSyncable().serviceId).toBe("anthropic_billing");
   });
+
+  test("one unreadable row keeps the whole month as it was and says so; it is not written in part", async () => {
+    await vault.set("openai_billing.admin_key", "sk-x");
+    const sync = (fetch: typeof fetchSameOriginOnly) =>
+      createOpenaiCostSyncable({ now: () => NOW, fetch }).sync(ctxFor("openai_billing"), null);
+    await sync(fakeVendor(() => ({ status: 200, body: openaiPage(5) })).fetch);
+    const page = openaiPage(1);
+    const firstBucket = page.data[0] as { results: unknown[] };
+    firstBucket.results.push({ amount: { value: "12", currency: "usd" }, line_item: "x" });
+    const out = await sync(fakeVendor(() => ({ status: 200, body: page })).fetch);
+    expect(lines("openai_billing")).toEqual([["2026-11-19", "proj_checkout", "gpt-6.2-astra", 5]]);
+    const gap = decodeCostSyncCursor(OPENAI_COST_VENDOR.cursorPrefix, out.cursor).gaps["openai"];
+    expect(gap).toBe(
+      "1 row of openai's 2026-11 cost report could not be read; that month was not updated",
+    );
+  });
+
+  test("paging stops when has_more is false, even if a cursor is present", async () => {
+    await vault.set("openai_billing.admin_key", "sk-x");
+    const v = fakeVendor(() => ({
+      status: 200,
+      body: { ...openaiPage(1), has_more: false, next_page: "ignored" },
+    }));
+    await createOpenaiCostSyncable({ now: () => NOW, fetch: v.fetch }).sync(
+      ctxFor("openai_billing"),
+      null,
+    );
+    expect(v.calls.map((c) => c.url.searchParams.get("page"))).toEqual([null, null]);
+  });
 });

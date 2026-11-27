@@ -62,7 +62,7 @@ import { resolveAccessTokenForService } from "./access-token-registry.ts";
  * blanket vault handle would have un-done the narrowing. This is the third option: a named,
  * checked grant, so a NEW cross-service read is a deliberate edit here rather than an accident.
  */
-/** The services that may write cost lines through `replaceCostLinesForMonth` (Phase 7 slice 5). */
+/** The services that may write cost lines through `replaceCostLinesForMonth` (Phase 7 slices 5 and 6). */
 const COST_SYNC_SERVICES: ReadonlySet<string> = new Set([
   "github_billing",
   "openai_billing",
@@ -204,9 +204,9 @@ export interface SyncCapabilities<S extends ConnectorServiceId = ConnectorServic
     externalIds: readonly string[],
   ): { stored: number; dropped: number };
   /**
-   * Replaces THIS service's cost lines of one (provider, billing account, month) (Phase 7 slice 5, static
-   * D24 `cost-line-confined`). Scoped to the bound service: the line `source` is the service and is never a
-   * parameter, and only a cost-sync service (`github_billing`) may call it. One transaction; a line of any
+   * Replaces THIS service's cost lines of one (provider, billing account, month) (Phase 7 slices 5 and 6,
+   * static D24 `cost-line-confined`). Scoped to the bound service: the line `source` is the service and is never
+   * a parameter, and only a cost-sync service (`github_billing`, `openai_billing`, `anthropic_billing`) may call it. One transaction; a line of any
    * other source, provider, account or month refuses the whole call.
    */
   replaceCostLinesForMonth(

@@ -1,7 +1,7 @@
 // Phase 7 (the Cost Pack, slice 6): OpenAI's organization costs as cost lines. Pure (static D48: no network, no
 // connector, no model import).
 //
-// Source: `GET /v1/organization/costs` with `group_by[]=project_id&group_by[]=line_item`, daily buckets —
+// Source: `GET /v1/organization/costs` grouped by `project_id` and `line_item` (a repeated `group_by` key), daily buckets —
 // documentation-verified only (no live response was seen): a page's `data[]` buckets carry `start_time` (Unix
 // seconds) and `results[]` of `{ amount: { value: <number>, currency: "usd" }, line_item, project_id,
 // quantity, quantity_unit, ... }`. The API names no organization (one per admin key), so the account is the fixed
@@ -25,6 +25,8 @@ export type { CostDropReason, CostMapResult } from "./cost-bucket-map.ts";
 export const OPENAI_COST_SOURCE = "openai_billing";
 export const OPENAI_COST_PROVIDER = "openai";
 export const OPENAI_COST_ACCOUNT = "openai";
+/** The SKU of a cost row whose `line_item` is null. */
+export const OPENAI_UNKNOWN_LINE_ITEM = "unknown";
 
 const MAX_TEXT = 256;
 /** `line_item` prefixes that name a cost kind before the model (`fine-tuning, <model>, training`). */
@@ -44,7 +46,10 @@ function lineOf(day: string, month: string, r: Record<string, unknown>): CostLin
   const amount = isRecord(r["amount"]) ? r["amount"] : null;
   const value = amount?.["value"];
   const currency = text(amount?.["currency"]);
-  const lineItem = text(r["line_item"]);
+  // The reference allows a null `line_item`: that spend is kept under an "unknown" line item, with no model.
+  const rawItem = r["line_item"];
+  const lineItem =
+    rawItem === null || rawItem === undefined ? OPENAI_UNKNOWN_LINE_ITEM : text(rawItem);
   if (
     typeof value !== "number" ||
     !Number.isFinite(value) ||
@@ -77,7 +82,7 @@ function lineOf(day: string, month: string, r: Record<string, unknown>): CostLin
     tags: unit === null ? {} : { unit },
     repo: null,
     workflow: null,
-    model: openaiLineItemModel(lineItem),
+    model: lineItem === OPENAI_UNKNOWN_LINE_ITEM ? null : openaiLineItemModel(lineItem),
     importId: `${OPENAI_COST_SOURCE}:${OPENAI_COST_ACCOUNT}:${month}`,
   };
 }

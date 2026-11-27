@@ -61,6 +61,11 @@ function penalise(ctx: SyncContext, limiter: Provider, res: Response): void {
   ctx.rateLimiter.penalise(limiter, Number.isFinite(sec) && sec > 0 ? sec * 1000 : 60_000);
 }
 
+/** The gap for a month that held rows the mapper could not read (the month is kept as it was). */
+export function unreadableRowsGap(vendor: AiCostVendor, month: string, rows: number): string {
+  return `${String(rows)} ${rows === 1 ? "row" : "rows"} of ${vendor.provider}'s ${month} cost report could not be read; that month was not updated`;
+}
+
 /** The day after `month`'s last day, or tomorrow when the month is the current one (`YYYY-MM-DD`). */
 export function aiCostEndDay(month: string, nowMs: number): string {
   const [y, m] = month.split("-").map(Number) as [number, number];
@@ -103,9 +108,14 @@ async function fetchPage(
   const more = body["has_more"] === true;
   const cursor = body["next_page"];
   const next = typeof cursor === "string" && cursor !== "" ? cursor : null;
-  // A page that says there is more but gives no cursor cannot be completed: never write part of a month.
+  // `has_more` says whether to go on; a page that says there is more but gives no cursor cannot be completed.
   if (more && next === null) return { kind: "retry" };
-  return { kind: "page", data: body["data"] as unknown[], next, bytes: text.length };
+  return {
+    kind: "page",
+    data: body["data"] as unknown[],
+    next: more ? next : null,
+    bytes: text.length,
+  };
 }
 
 async function syncMonth(
@@ -136,6 +146,10 @@ async function syncMonth(
   }
   const today = new Date(nowMs).toISOString().slice(0, 10);
   const mapped = vendor.map(buckets, month, today);
+  // A month is written whole or not at all: a row that cannot be read would silently lower it.
+  if (mapped.dropped.malformed > 0) {
+    return { kind: "gap", reason: unreadableRowsGap(vendor, month, mapped.dropped.malformed) };
+  }
   if (mapped.rows > 0 && mapped.lines.length === 0) return { kind: "retry" };
   if (mapped.dropped.malformed + mapped.dropped.outside_month > 0) {
     ctx.logger.warn(
