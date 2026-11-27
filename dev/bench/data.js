@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795807962731,
+  "lastUpdate": 1795810145995,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "8c0f248065627123bd0a14a98067cfa702d10598",
-          "message": "chore: release main (#1571)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.32.0</summary>\n\n##\n[7.32.0](https://github.com/nimbus-agent/Nimbus/compare/v7.31.0...v7.32.0)\n(2026-09-23)\n\n\n### Features\n\n* **cli:** nimbus init and nimbus demo end on the guided tour\n([#1570](https://github.com/nimbus-agent/Nimbus/issues/1570))\n([fc8ce7c](https://github.com/nimbus-agent/Nimbus/commit/fc8ce7ce07de2ff8219d9647d922ae4576837a67))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-09-23T18:39:33+03:00",
-          "tree_id": "35ed3d9449f3bb39a0e8e8f4e8bec969d0b07a6d",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/8c0f248065627123bd0a14a98067cfa702d10598"
-        },
-        "date": 1790179710223,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 325.6867537500017,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 308.8066824500056,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 188.42996140000304,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0898d6bb70313b20437d79183498f22d3263cdb1",
+          "message": "chore: release main (#2191)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>11.20.0</summary>\n\n##\n[11.20.0](https://github.com/nimbus-agent/Nimbus/compare/v11.19.0...v11.20.0)\n(2026-11-27)\n\n\n### Features\n\n* **connectors:** iac_terraform_init, the new infra reads and connectors\n0.21.0 ([#2188](https://github.com/nimbus-agent/Nimbus/issues/2188))\n([46d701b](https://github.com/nimbus-agent/Nimbus/commit/46d701bf29ab3049636d1e6961b08d99b3d5b4aa))\n* OpenAI and Anthropic costs as cost lines (Phase 7, slice 6)\n([#2189](https://github.com/nimbus-agent/Nimbus/issues/2189))\n([3c59481](https://github.com/nimbus-agent/Nimbus/commit/3c5948103d7218ff89fefdc69e4b8d15b46aa551))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-27T21:58:22+02:00",
+          "tree_id": "de22414bb5e27b9a4275e64e0d558c7186795fcf",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/0898d6bb70313b20437d79183498f22d3263cdb1"
+        },
+        "date": 1795810140489,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 263.94779860000034,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 262.85854144999973,
             "unit": "ms"
           }
         ]
