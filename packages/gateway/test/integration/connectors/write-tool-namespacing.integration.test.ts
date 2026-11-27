@@ -187,8 +187,9 @@ describe("I26 — the code-execution refusal holds in the form a federated sessi
       }
     }
     // Exactly these, out of every key seven real connectors list: no bypass, and no over-blocking.
-    // The iac seven evaluate a caller-named directory (D2 added the destroy plan and `show -json`,
-    // which load the directory's providers); a CloudFormation change set and the Kubernetes dry run
+    // The iac ten evaluate a caller-named directory (D2 added the destroy plan and `show -json`,
+    // which load the directory's providers; connectors 0.21.0 the init, which fetches and installs
+    // them); a CloudFormation change set and the Kubernetes dry run
     // run remotely and are prepare tools, refused by the composed predicate instead; the az/gcloud reads reach a `.cmd` wrapper's
     // argv on Windows. (azure/gcp writes are refused by the WRITE predicate, asserted above.)
     expect(refused.sort()).toEqual([
@@ -202,6 +203,7 @@ describe("I26 — the code-execution refusal holds in the form a federated sessi
       "iac_iac_terraform_apply_refresh_only",
       "iac_iac_terraform_destroy",
       "iac_iac_terraform_destroy_plan",
+      "iac_iac_terraform_init",
       "iac_iac_terraform_plan",
       "iac_iac_terraform_plan_refresh_only",
       "iac_iac_terraform_show_json",

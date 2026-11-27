@@ -23,7 +23,12 @@ import {
 } from "../../util/path-overlap.ts";
 import { isConfirmChar } from "./confirm-template.ts";
 import type { GitScan } from "./iac-git-scan.ts";
-import { IAC_LIMITS, terraformInputRefusal } from "./iac-limits.ts";
+import {
+  IAC_LIMITS,
+  IAC_PREFLIGHT_REFUSALS,
+  terraformInputRefusal,
+  terraformModulesGitRefusal,
+} from "./iac-limits.ts";
 
 export const IAC_CLOUDS = ["aws", "azure", "gcp"] as const;
 export type IacCloud = (typeof IAC_CLOUDS)[number];
@@ -112,6 +117,8 @@ export const IAC_WORKDIR_REFUSALS = Object.freeze({
   shape: "the path is not a plain absolute path",
   gitRepository:
     "the directory has a Git repository in it or beneath it (a .git folder or file); point Terraform at a subdirectory without a repository",
+  terraformModulesGit:
+    "the directory's .terraform/modules folder holds a git-sourced module cloned with its .git, which is not supported yet; delete that .terraform/modules folder first",
 });
 export type IacWorkdirRefusal = (typeof IAC_WORKDIR_REFUSALS)[keyof typeof IAC_WORKDIR_REFUSALS];
 
@@ -201,7 +208,9 @@ export function approveWorkdir(
     return no(IAC_WORKDIR_REFUSALS.shape);
   }
   // Last (it walks the tree): a plan or apply child writes the whole directory and could plant hooks.
-  if (deps.gitScan(canonical) !== "clean") return no(IAC_WORKDIR_REFUSALS.gitRepository);
+  const scan = deps.gitScan(canonical);
+  if (scan === "module") return no(IAC_WORKDIR_REFUSALS.terraformModulesGit);
+  if (scan !== "clean") return no(IAC_WORKDIR_REFUSALS.gitRepository);
   return { ok: true, path: canonical };
 }
 
@@ -223,7 +232,28 @@ export function gateWorkdir(
 /** What {@link gateWorkdirChecked} found: the canonical path, or which fixed refusal applies. */
 export type GateWorkdirResult =
   | { readonly ok: true; readonly path: string }
-  | { readonly ok: false; readonly reason: "not-approved" | "git" };
+  | { readonly ok: false; readonly reason: "not-approved" | "git" }
+  | { readonly ok: false; readonly reason: "git-module"; readonly path: string };
+
+/**
+ * The runner's fixed refusal for a `.git` scan verdict (undefined for `clean`): a git-sourced
+ * module under `.terraform/modules/` gets {@link terraformModulesGitRefusal}, anything else the
+ * `gitRepository` text.
+ */
+export function gitScanRefusal(scan: GitScan, workdir: string): string | undefined {
+  if (scan === "clean") return undefined;
+  return scan === "module"
+    ? terraformModulesGitRefusal(workdir)
+    : IAC_PREFLIGHT_REFUSALS.gitRepository;
+}
+
+/** The runner's fixed refusal for a failed {@link gateWorkdirChecked}. */
+export function gateRefusalText(result: Extract<GateWorkdirResult, { ok: false }>): string {
+  if (result.reason === "not-approved") return IAC_PREFLIGHT_REFUSALS.notApprovedDirectory;
+  return result.reason === "git-module"
+    ? terraformModulesGitRefusal(result.path)
+    : IAC_PREFLIGHT_REFUSALS.gitRepository;
+}
 
 /**
  * {@link gateWorkdir} with the reason. `git` is reported only for a directory that is otherwise
@@ -256,8 +286,10 @@ export function gateWorkdirChecked(
   for (const granted of grants.workdirs) {
     const rel = api.relative(norm(granted), norm(canonical));
     if (rel === "" || (!api.isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${api.sep}`))) {
-      return deps.gitScan(canonical) === "clean"
-        ? { ok: true, path: canonical }
+      const scan = deps.gitScan(canonical);
+      if (scan === "clean") return { ok: true, path: canonical };
+      return scan === "module"
+        ? { ok: false, reason: "git-module", path: canonical }
         : { ok: false, reason: "git" };
     }
   }

@@ -305,6 +305,14 @@ describe("enableWritesPromptLines: the iac grants (D2, I15)", () => {
     );
     expect(out).toContain("  sts.amazonaws.com");
     expect(out).toContain(IAC_NO_DOWNLOAD_LINE);
+    // The init child reaches the registry AND the granted clouds' hosts, only where enforced.
+    for (const part of [
+      "registry.terraform.io",
+      "the granted clouds' hosts",
+      "where hosts are enforced",
+    ]) {
+      expect(IAC_NO_DOWNLOAD_LINE).toContain(part);
+    }
     expect(out).toContain(IAC_EACH_APPLY_LINE);
     expect(out.some((l) => l.startsWith("Terraform runs the code in these directories"))).toBe(
       true,

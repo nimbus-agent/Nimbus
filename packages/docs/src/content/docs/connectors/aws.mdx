@@ -25,7 +25,8 @@ The Gateway resolves credentials from the Vault keys `aws.access_key_id`, `aws.s
 | Tool | Purpose |
 |---|---|
 | `aws_ecs_service_list` | List ECS services in a cluster. |
-| `aws_lambda_list` | List Lambda functions (first page). |
+| `aws_lambda_get` | One Lambda function's configuration: runtime, handler, memory, timeout, layers, state and the environment variable **names** (never their values). |
+| `aws_lambda_list` | List Lambda functions (first page). Since connectors 0.21.0 each entry carries its environment variable names (`EnvironmentVariableNames`), never their values. |
 
 ## Write tools (HITL-gated)
 

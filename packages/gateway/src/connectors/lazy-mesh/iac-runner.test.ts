@@ -349,8 +349,8 @@ async function openRun(r: IacRunner): Promise<{ release: () => void }> {
 const PLAN_INPUT = { workingDirectory: work };
 
 describe("the runner: routing, spawn shape and the per-run policy", () => {
-  test("routes the ten tools and nothing else (the exact names: iac-tool-profile.test.ts)", () => {
-    expect(Object.keys(IAC_TOOL_PROFILE)).toHaveLength(10);
+  test("routes the eleven tools and nothing else (the exact names: iac-tool-profile.test.ts)", () => {
+    expect(Object.keys(IAC_TOOL_PROFILE)).toHaveLength(11);
     const { r } = runner("answer");
     const merged: Record<string, { execute?: (i: unknown) => Promise<unknown> }> = {
       iac_iac_terraform_plan: { execute: async () => "original" },

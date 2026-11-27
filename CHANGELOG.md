@@ -4,6 +4,13 @@ All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-
 
 ## [11.19.0](https://github.com/nimbus-agent/Nimbus/compare/v11.18.0...v11.19.0) (2026-11-27)
 
+> **Never published — superseded by 11.19.1.** This tag's release gate failed on connector
+> version skew (`@nimbus-dev/connectors` 0.21.0 was published while `main` pinned `^0.20.0`;
+> run 46004371617, the Static job "Connector version skew"), which skipped packaging, so no
+> GitHub Release, installer, or updater manifest was ever produced for `v11.19.0`; the git tag
+> is its only trace. The tag is immutable under the *Protected release tags* ruleset and was
+> left in place rather than moved, so the features below shipped in 11.19.1 instead.
+
 
 ### Features
 

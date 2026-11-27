@@ -252,6 +252,7 @@ describe("reversibility: the irreversible rows and the default", () => {
     "bitrise_build_trigger",
     "codemagic_build_trigger",
     "k8s_pod_delete",
+    "iac_terraform_init",
   ];
 
   test.each(IRREVERSIBLE)("%s is declared irreversible, with a reason", (toolId) => {

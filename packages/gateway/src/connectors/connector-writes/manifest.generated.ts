@@ -95,6 +95,7 @@ export const CONNECTOR_WRITE_MANIFEST: readonly ConnectorWriteRegistration[] = [
   { toolId: "iac_terraform_apply", connector: "iac" },
   { toolId: "iac_terraform_apply_refresh_only", connector: "iac" },
   { toolId: "iac_terraform_destroy", connector: "iac" },
+  { toolId: "iac_terraform_init", connector: "iac" },
   { toolId: "imap_mail_send", connector: "imap" },
   { toolId: "jenkins_build_abort", connector: "jenkins" },
   { toolId: "jenkins_build_trigger", connector: "jenkins" },

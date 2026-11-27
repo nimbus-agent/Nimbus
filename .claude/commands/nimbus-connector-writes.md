@@ -100,8 +100,8 @@ A row declaring `bound` is dispatched only with values its own gate-run prepare 
 executor's own gate (`engine/prepare-step.ts`: `runPrepareStep`, `injectBoundFields`, `boundInputRefusal`), after the
 before-state and before the confirm text. A caller-supplied bound field is refused before any read; the audit row carries SHA-256s, never file text.
 Rows: the two commits (`commit-bound.ts`, `commit-limits.ts`, `diff.ts`: the gateway renders the unified diff itself, in full or refuses),
-Terraform apply/destroy/refresh-only and CloudFormation deploy (`iac-bound.ts`, `iac-plan-preview.ts`, `iac-grants.ts`; five per-run sandbox
-profiles built only in `connectors/lazy-mesh/iac-runner.ts`, D43), Kubernetes apply (`k8s-bound.ts`, `k8s-manifest.ts`; settled by `engine/k8s-settle.ts`, D42(h)).
+Terraform apply/destroy/refresh-only and CloudFormation deploy (`iac-bound.ts`, `iac-plan-preview.ts`, `iac-grants.ts`; six per-run sandbox
+profiles built only in `connectors/lazy-mesh/iac-runner.ts`, D43; the unbound Terraform init has its own `init` profile), Kubernetes apply (`k8s-bound.ts`, `k8s-manifest.ts`; settled by `engine/k8s-settle.ts`, D42(h)).
 Pulumi apply carries `refuse`. `ChatOps` cannot approve a bound commit. Terraform drift check is the one other prepare caller (`checkTerraformDrift`, D42(i)).
 
 ## Reversibility

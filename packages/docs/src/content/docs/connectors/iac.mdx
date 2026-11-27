@@ -27,6 +27,8 @@ The connector inherits the ambient process environment, so cloud credentials com
 
 | Tool | Purpose |
 |---|---|
+| `iac_cloudformation_changeset_get` | One CloudFormation change set of a stack: its status and the resource changes it would make. Parameter names only, never their values; a change set of another stack is refused. From the gateway this read runs in the iac listing slot, which has no network, so it cannot reach AWS there today (a known limit, as for the stack read). |
+| `iac_cloudformation_changesets_list` | The change sets of a CloudFormation stack (one page, at most 100). From the gateway this read runs in the iac listing slot, which has no network, so it cannot reach AWS there today (a known limit, as for the stack read). |
 | `iac_pulumi_preview` | Run `pulumi preview` in a stack directory. |
 | `iac_terraform_plan` | Run `terraform plan` in a directory. |
 
@@ -41,6 +43,7 @@ Every tool below requires interactive consent through the Gateway HITL gate befo
 | `iac_terraform_apply` | Run `terraform apply`. |
 | `iac_terraform_destroy` | Run `terraform destroy`. |
 | `iac_terraform_apply_refresh_only` | Apply a saved refresh-only plan: accept drift into the Terraform state, changing no infrastructure. |
+| `iac_terraform_init` | Run `terraform init` in an approved directory: download the providers and modules it names into `.terraform/` and write the lock file. Never offered to the model; irreversible (remove `.terraform/` by hand). The gateway runs it in its own sandbox with the granted clouds' hosts plus `registry.terraform.io` and `releases.hashicorp.com`; another provider or module host needs `--net`. Git-sourced modules (most public registry modules) are not supported yet: an init that clones one is refused and names `<workdir>/.terraform/modules` to delete, and the directory stays refused until you delete it. |
 
 ## Platform notes
 

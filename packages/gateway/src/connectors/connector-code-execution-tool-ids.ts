@@ -12,7 +12,7 @@ import { matchesBareOrNamespacedToolId } from "./namespaced-tool-id.ts";
  * runs its provider plugins and any `external` data source program; a Pulumi preview runs the stack
  * program itself. So `iac_terraform_plan` and `iac_pulumi_preview` — registered as READS, because
  * they change no infrastructure — still let whoever names the directory decide what code runs. The
- * three iac WRITES that evaluate the same caller-named directory are listed too (the write predicate
+ * iac WRITES that evaluate the same caller-named directory are listed too (the write predicate
  * refuses them first, so the gate audits them `write_forbidden`; naming them here keeps the
  * code-execution classification true on its own, whatever happens to the write list).
  *
@@ -59,6 +59,9 @@ export const DIRECTORY_EVALUATION_TOOL_IDS: ReadonlySet<string> = new Set([
   "iac_terraform_destroy",
   "iac_terraform_apply_refresh_only",
   "iac_pulumi_up",
+  // Connectors 0.21.0: an init loads the directory's configuration and fetches and installs the
+  // provider and module code it names; whoever names the directory chose that code.
+  "iac_terraform_init",
 ]);
 
 /**
