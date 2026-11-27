@@ -10,29 +10,27 @@
 // The buckets of ALL a month's pages are mapped together, so rows of one day and grain on two pages are summed
 // (the `cost_line_grain` unique index). A malformed row, a bucket outside the month or after `lastDay` is
 // DROPPED and counted, never thrown.
-import { type CostLine, costLineGrainHash } from "./cost-line.ts";
+import {
+  type CostBucketVendor,
+  type CostMapResult,
+  costText,
+  isRecord,
+  mapCostBuckets,
+  nullableId,
+} from "./cost-bucket-map.ts";
+import type { CostLine } from "./cost-line.ts";
+
+export type { CostDropReason, CostMapResult } from "./cost-bucket-map.ts";
 
 export const OPENAI_COST_SOURCE = "openai_billing";
 export const OPENAI_COST_PROVIDER = "openai";
 export const OPENAI_COST_ACCOUNT = "openai";
 
-export type CostDropReason = "malformed" | "outside_month";
-
-export interface CostMapResult {
-  readonly lines: readonly CostLine[];
-  /** How many result rows the buckets held, kept or not (an all-dropped non-empty report is a retry). */
-  readonly rows: number;
-  readonly dropped: Readonly<Record<CostDropReason, number>>;
-}
-
 const MAX_TEXT = 256;
 /** `line_item` prefixes that name a cost kind before the model (`fine-tuning, <model>, training`). */
 const NON_MODEL_PREFIXES: ReadonlySet<string> = new Set(["fine-tuning"]);
 
-const isRecord = (v: unknown): v is Record<string, unknown> =>
-  typeof v === "object" && v !== null && !Array.isArray(v);
-const text = (v: unknown): string | null =>
-  typeof v === "string" && v.length > 0 && v.length <= MAX_TEXT ? v : null;
+const text = costText;
 
 /** The model a `line_item` names: the first comma-separated part, or the second after a cost-kind prefix. */
 export function openaiLineItemModel(lineItem: string): string | null {
@@ -55,8 +53,8 @@ function lineOf(day: string, month: string, r: Record<string, unknown>): CostLin
   ) {
     return null;
   }
-  const project = r["project_id"];
-  if (project !== null && project !== undefined && text(project) === null) return null;
+  const project = nullableId(r["project_id"]);
+  if (!project.ok) return null;
   const unit = text(r["quantity_unit"]);
   return {
     source: OPENAI_COST_SOURCE,
@@ -64,7 +62,7 @@ function lineOf(day: string, month: string, r: Record<string, unknown>): CostLin
     billingAccountId: OPENAI_COST_ACCOUNT,
     billingPeriod: month,
     chargeDay: day,
-    subAccountId: text(project),
+    subAccountId: project.value,
     subAccountName: null,
     serviceName: "openai",
     serviceCategory: null,
@@ -91,51 +89,13 @@ function bucketDay(b: Record<string, unknown>): string | null {
   return new Date(t * 1000).toISOString().slice(0, 10);
 }
 
+const OPENAI_VENDOR: CostBucketVendor = { dayOf: bucketDay, lineOf };
+
 /** The cost lines of every bucket of one month (`YYYY-MM`), up to `lastDay` (`YYYY-MM-DD`). */
 export function openaiCostLines(
   buckets: readonly unknown[],
   month: string,
   lastDay = "9999-12-31",
 ): CostMapResult {
-  const dropped: Record<CostDropReason, number> = { malformed: 0, outside_month: 0 };
-  const merged = new Map<string, CostLine>();
-  let rows = 0;
-  for (const b of buckets) {
-    const results = isRecord(b) && Array.isArray(b["results"]) ? (b["results"] as unknown[]) : null;
-    if (!isRecord(b) || results === null) {
-      rows++;
-      dropped.malformed++;
-      continue;
-    }
-    const day = bucketDay(b);
-    for (const r of results) {
-      rows++;
-      if (day === null || !isRecord(r)) {
-        dropped.malformed++;
-        continue;
-      }
-      if (day.slice(0, 7) !== month || day > lastDay) {
-        dropped.outside_month++;
-        continue;
-      }
-      const line = lineOf(day, month, r);
-      if (line === null) {
-        dropped.malformed++;
-        continue;
-      }
-      const key = `${day}|${costLineGrainHash(line)}`;
-      const prior = merged.get(key);
-      merged.set(
-        key,
-        prior === undefined
-          ? line
-          : {
-              ...prior,
-              billedCost: prior.billedCost + line.billedCost,
-              effectiveCost: (prior.effectiveCost ?? 0) + (line.effectiveCost ?? 0),
-            },
-      );
-    }
-  }
-  return { lines: [...merged.values()], rows, dropped };
+  return mapCostBuckets(OPENAI_VENDOR, buckets, month, lastDay);
 }
