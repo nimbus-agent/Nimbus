@@ -100,7 +100,7 @@ export function isCostTemplateFileName(name: string): boolean {
 }
 // Control characters other than TAB and LF; a template is the owner's own literal text otherwise.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: the point is to find control characters.
-const TEMPLATE_CONTROL_RE = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/;
+export const TEMPLATE_CONTROL_RE = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/;
 // biome-ignore lint/suspicious/noControlCharactersInRegex: the point is to find control characters.
 const SUBJECT_CONTROL_RE = /[\u0000-\u001f\u007f-\u009f]/;
 

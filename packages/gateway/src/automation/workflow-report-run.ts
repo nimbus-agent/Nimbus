@@ -68,6 +68,9 @@ export function executeReportStep(
     const r = step.report;
     const nowMs = deps.now();
     const cfg = loadNimbusCostFromConfigDir(deps.configDir);
+    if (cfg.error !== null) {
+      return fail(`the [cost] config was refused, so no report was rendered: ${cfg.error}`);
+    }
     const { range, previous, weekStart } = reportPeriods(r.period, r.tz, nowMs);
     const both = gatherCostViewInput(
       deps.db,
@@ -79,8 +82,10 @@ export function executeReportStep(
       },
       nowMs,
     );
-    // Owner ruling 2: "no cost data" means no line in the report's period (not `CostReportModel.empty`).
-    if (!both.lines.some((l) => l.chargeDay >= range.fromDay && l.chargeDay <= range.toDay)) {
+    // Owner ruling 2: "no cost data" means no line of ANY source in the report's period (not
+    // `CostReportModel.empty`, and before `[cost] authoritative` drops a provider's other sources).
+    const present = [...(both.presentDays ?? [])];
+    if (!present.some((d) => d >= range.fromDay && d <= range.toDay)) {
       const message = `no cost data for ${range.fromDay} to ${range.toDay}; nothing was posted`;
       finish(deps, runId, stepIndex, "skipped", { skipped: message });
       return { kind: "skipped_run", label, message };

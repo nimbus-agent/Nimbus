@@ -27,7 +27,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 
-import { isCostTemplateFileName } from "../config/cost-report-toml.ts";
+import { isCostTemplateFileName, TEMPLATE_CONTROL_RE } from "../config/cost-report-toml.ts";
 import { isSameOrInside } from "../util/path-overlap.ts";
 
 export const COST_TEMPLATE_DIR = "cost-templates";
@@ -160,9 +160,17 @@ export function readCostTemplateFile(
   const { bytes, st } = readThroughHandle(path, file);
   checkUnchanged(path, file, st);
   checkFolderSame(dir, folder);
+  let text: string;
   try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch {
     return refuse(`the template file ${file} is not valid UTF-8`);
   }
+  // The same rule as an inline template (which a scheduled workflow embeds): Windows line endings become
+  // line feeds; any other control character is refused.
+  const normalized = text.replaceAll("\r\n", "\n");
+  if (TEMPLATE_CONTROL_RE.test(normalized)) {
+    return refuse(`the template file ${file} holds a control character`);
+  }
+  return normalized;
 }

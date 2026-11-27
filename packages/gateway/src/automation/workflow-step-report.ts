@@ -189,10 +189,16 @@ export function validateReportReferences(steps: readonly WorkflowStep[]): void {
     if (s.kind === "report") reportAt.set(label, i);
     labelAt.set(label, i);
   });
+  if (reportAt.size > 1) refuse("a workflow can hold at most one report step");
   if (reportAt.size > 0 && steps.some((s) => s.kind === "run")) {
     refuse("a workflow with a report step can hold no run step (it is scheduled and unattended)");
   }
   steps.forEach((s, i) => {
     if (s.kind === "write") checkWrite(s, i, reportAt, steps);
   });
+  const reportIndex = reportAt.size === 1 ? [...reportAt.values()][0] : undefined;
+  if (reportIndex !== undefined && steps.slice(0, reportIndex).some((s) => s.kind === "write")) {
+    // A skipped period ends the run saying nothing was posted; no write may run before the report.
+    refuse("a write step cannot come before the report step");
+  }
 }

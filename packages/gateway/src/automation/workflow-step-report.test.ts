@@ -243,6 +243,22 @@ describe("parseWorkflowSteps: the { report } value source", () => {
   });
 });
 
+describe("parseWorkflowSteps: one report step, and nothing posted before it", () => {
+  test("a second report step and a write before the report are refused", () => {
+    const second = { ...REPORT, label: "render-2" };
+    expect(refusal([REPORT, second, POST])).toContain("at most one report step");
+    const early = {
+      kind: "write",
+      label: "early",
+      tool: costReportToolFor("slack"),
+      input: { channel: { const: "C1" }, text: { const: "hello" } },
+    };
+    expect(refusal([early, REPORT, POST])).toContain(
+      "a write step cannot come before the report step",
+    );
+  });
+});
+
 describe("no site reads a { report } value as a constant", () => {
   const steps = () => parseWorkflowSteps(JSON.stringify([REPORT, POST]));
   test("building the write's actions fills it only from the run's report output; the rule scope names the step", () => {

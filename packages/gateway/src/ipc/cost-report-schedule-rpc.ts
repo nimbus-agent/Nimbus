@@ -22,6 +22,7 @@ import { parseWorkflowSteps, workflowStepsSha256 } from "../automation/workflow-
 import { getWorkflowByName } from "../automation/workflow-store.ts";
 import type { CostReportChannelDef } from "../config/cost-report-toml.ts";
 import { CostTemplateFileError } from "../finops/cost-template-file.ts";
+import { constantTimeStringEqual } from "../util/timing-safe-compare.ts";
 import { saveWorkflowDefinition } from "./automation-rpc.ts";
 import {
   channelsOf,
@@ -149,7 +150,9 @@ export function handleCostReportSchedule(
     let status: "new" | "replaced" | "unchanged" = "new";
     if (before !== null) {
       const old = storedHash(before.steps_json);
-      status = old !== null && old === storedHash(stepsJson) ? "unchanged" : "replaced";
+      const fresh = storedHash(stepsJson);
+      const same = old !== null && fresh !== null && constantTimeStringEqual(old, fresh);
+      status = same ? "unchanged" : "replaced";
     }
     out.push({
       kind: ch.kind,

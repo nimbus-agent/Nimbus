@@ -119,6 +119,8 @@ export interface CostViewInput {
   readonly excludedSources: CostViewResult["excludedSources"];
   readonly notes: readonly string[];
   readonly configError: string | null;
+  /** The charge days in the range that hold a line of ANY source, before `[cost] authoritative` is applied. */
+  readonly presentDays?: ReadonlySet<string>;
 }
 
 type Acc = {

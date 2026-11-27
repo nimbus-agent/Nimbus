@@ -320,4 +320,49 @@ describe("a report step in a run", () => {
       expect(h.dispatched).toEqual([]);
     }
   });
+
+  test("a refused [cost] config halts the step: no figures from an empty rule set are posted", async () => {
+    importDays(["2026-11-20"]);
+    save([REPORT_STEP, POST_STEP]);
+    writeFileSync(join(dir, "nimbus.toml"), `${RULE}[cost]\nunknown_key = 1\n`);
+    const h = harness();
+    const out = await runWorkflowExecution({
+      db,
+      writeExecutor: h.attended,
+      trigger: "owner_cli",
+      workflowName: "cost-checkout-weekly-slack",
+      triggeredBy: "cli",
+      dryRun: false,
+      stream: false,
+      sendChunk: () => {},
+      costConfigDir: dir,
+      now: () => NOW,
+    });
+    expect(out.status).toBe("error");
+    expect(out.stepResults[0]?.error).toContain("the [cost] config was refused");
+    expect(h.dispatched).toEqual([]);
+  });
+
+  test("the skip looks at every source: an authoritative source with no line does not hide the others", async () => {
+    importDays(["2026-11-20"]); // FOCUS lines only
+    save([REPORT_STEP, POST_STEP]);
+    writeFileSync(
+      join(dir, "nimbus.toml"),
+      `[cost]\nauthoritative = { aws = "vantage" }\n\n${RULE}`,
+    );
+    const h = harness();
+    const out = await runWorkflowExecution({
+      db,
+      writeExecutor: h.attended,
+      trigger: "owner_cli",
+      workflowName: "cost-checkout-weekly-slack",
+      triggeredBy: "cli",
+      dryRun: false,
+      stream: false,
+      sendChunk: () => {},
+      costConfigDir: dir,
+      now: () => NOW,
+    });
+    expect(out.status).not.toBe("skipped");
+  });
 });
