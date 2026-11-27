@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795765146550,
+  "lastUpdate": 1795765592050,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "21b55028626ad7cfe8f45dbac5c72b5608757825",
-          "message": "chore: release main (#1562)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.30.0</summary>\n\n##\n[7.30.0](https://github.com/nimbus-agent/Nimbus/compare/v7.29.0...v7.30.0)\n(2026-09-21)\n\n\n### Features\n\n* **audit:** index lane census (report-only)\n([#1561](https://github.com/nimbus-agent/Nimbus/issues/1561))\n([863f621](https://github.com/nimbus-agent/Nimbus/commit/863f621f23cfecd36d68462595478f9dbb40a249))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-09-21T07:40:41+03:00",
-          "tree_id": "fe18ed7499d60cd11a8e73537f60f4c687b8eada",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/21b55028626ad7cfe8f45dbac5c72b5608757825"
-        },
-        "date": 1789966401180,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 331.13030025000114,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 334.7013718500042,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 187.29163024999525,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "bc2824a314d4c5cc693283f6a148bab04c95fe33",
+          "message": "chore: release main (#2182)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>11.18.0</summary>\n\n##\n[11.18.0](https://github.com/nimbus-agent/Nimbus/compare/v11.17.0...v11.18.0)\n(2026-11-27)\n\n\n### Features\n\n* **connectors:** issue, label, assignee and review write rows and\nconnectors 0.19.0\n([#2181](https://github.com/nimbus-agent/Nimbus/issues/2181))\n([f6e040c](https://github.com/nimbus-agent/Nimbus/commit/f6e040c940bc94f7051f14245ace9696b2d4e5ba))\n* scheduled cost reports post under a standing rule (Phase 7, slice 4)\n([#2183](https://github.com/nimbus-agent/Nimbus/issues/2183))\n([c10bd98](https://github.com/nimbus-agent/Nimbus/commit/c10bd98894b449863b33e35f94173d414089fcd8))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-27T07:38:59Z",
+          "tree_id": "1515f7b16e6ed77a948b7ca90c79df7c320b560c",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/bc2824a314d4c5cc693283f6a148bab04c95fe33"
+        },
+        "date": 1795765587222,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 178.86161505000126,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 178.05071464999892,
             "unit": "ms"
           }
         ]
