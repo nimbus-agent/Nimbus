@@ -36,11 +36,14 @@ let stubbed: SpawnResult | undefined;
 const actual = (await import(RUN_CLI)) as Record<string, unknown> & {
   runCliCode: (c: readonly string[], e: Record<string, string | undefined>) => Promise<SpawnResult>;
 };
+// Captured BEFORE the mock: once mocked, `actual.runCliCode` is the replacement itself, so calling
+// it from the fallback would recurse forever.
+const realRunCliCode = actual.runCliCode;
 // Delegates to the real function unless this file set a reply, so no other file is affected.
 mock.module(RUN_CLI, () => ({
   ...actual,
   runCliCode: (c: readonly string[], e: Record<string, string | undefined>) =>
-    stubbed === undefined ? actual.runCliCode(c, e) : Promise.resolve(stubbed),
+    stubbed === undefined ? realRunCliCode(c, e) : Promise.resolve(stubbed),
 }));
 
 // The gateway's mode, as `run-bundled-connector.ts` sets it (raw handlers, the executor is the
@@ -117,5 +120,15 @@ describe("aws_lambda_invoke before-state over the installed aws_lambda_list (0.2
   test("the reader shows no environment value even from an unprojected reply", () => {
     const fields = selectLambdaFunction(RAW_LIST, { functionName: "orders" });
     expect(JSON.stringify(fields)).not.toContain(SECRET);
+  });
+
+  test("with no stubbed reply the mock delegates to the real runCliCode (no recursion)", async () => {
+    const mocked = (await import(RUN_CLI)) as typeof actual;
+    // The real function answers an empty command itself, without spawning anything.
+    expect(await mocked.runCliCode([], {})).toEqual({
+      code: 1,
+      stdout: "",
+      stderr: "empty command",
+    });
   });
 });
