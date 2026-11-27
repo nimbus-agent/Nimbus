@@ -1,0 +1,53 @@
+---
+title: Unleash
+description: Index Unleash feature-flag definitions from your self-hosted instance, read per-environment state, and turn a flag on or off behind HITL.
+---
+
+The Unleash connector indexes feature-flag definitions from your Unleash instance into the local SQLite index and exposes read tools for projects, flags and the per-environment state of one flag. It also has one write, a flag toggle, behind the Gateway HITL gate. Authentication is an Unleash admin token or personal access token.
+
+---
+
+## What's indexed
+
+- **Service id:** `unleash`
+- **Item types:** `feature_flag`
+
+The sync walks `GET /api/admin/projects`, then each project's `GET /api/admin/projects/{id}/features`, every 10 minutes. It indexes the flag DEFINITION only: name, type, description, tags, the stale and archived state, the project and the timestamps. At most 100 projects and 2,000 flags per project are indexed in a pass. The per-environment state (on or off, strategies, variants) changes often and is not indexed; read it live with `unleash_feature_state_get`.
+
+## Authenticate
+
+```bash
+nimbus vault set unleash.api_url
+nimbus vault set unleash.token
+```
+
+Unleash has no `nimbus connector auth` flow (that command prints these two lines); each `vault set` asks for your approval. Two Vault keys, both required:
+
+- `unleash.api_url`, the instance URL (for example `https://unleash.example.com`, or a sub-path install such as `https://example.com/unleash`; a trailing `/api` is accepted). Injected at spawn as `UNLEASH_API_URL`. It must be `https`; plain `http` is accepted only for `localhost`, `127.0.0.1` or `[::1]`. Unleash is usually self-hosted, so there is no default: the connector's sandbox reaches only this URL's host, added at spawn as the owner's.
+- `unleash.token`, the admin or personal access token. Injected at spawn as `UNLEASH_API_TOKEN` and sent as the bare `Authorization: <token>` header, as Unleash's Admin API examples do.
+
+## Read tools (no HITL)
+
+| Tool | Purpose |
+|---|---|
+| `unleash_list` | List the instance's projects, or one project's flag definitions (capped at `limit`, default 100). |
+| `unleash_get` | One flag with each environment's enabled state, strategies and variants (bounded). |
+| `unleash_search` | Search flags by name or tag, across projects or in one (`GET /api/admin/search/features`, recent Unleash versions). |
+| `unleash_feature_state_get` | One flag in ONE environment: `enabled`, the strategies and the variants (bounded). |
+
+## Write tools (HITL-gated)
+
+Every tool below requires interactive consent through the Gateway HITL gate before it executes.
+
+| Tool | Purpose |
+|---|---|
+| `unleash_feature_toggle` | Turn a flag on or off in ONE environment. |
+
+`unleash_feature_toggle` is a Wave 3 write, offered to the model after `nimbus connector writes enable unleash` and your approval by name. Its prompt names the environment first (`production: web/new_checkout`) and shows, under `Before:`, whether the flag is on now, the change the call makes, the environment's strategies (active and disabled) and, for a call that turns it on, whether Unleash will add a default strategy.
+
+When it enables an environment that has no active strategy (none, or only disabled ones), Unleash itself adds a default strategy, a gradual rollout to 100% unless the project sets another default, and turning the environment off later does not remove it. So `nimbus incident undo` reverses a toggle only when it turned the environment off, or when the environment already had an active strategy; for any other toggle it says the call cannot be reversed from what was recorded. Unleash refuses the toggle, with its own message, while change requests are enabled for the environment.
+
+## See also
+
+- [Connectors overview](/connectors/overview/)
+- [HITL and safety](/user-guide/hitl-and-safety/)
