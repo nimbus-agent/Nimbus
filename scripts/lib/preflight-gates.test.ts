@@ -64,7 +64,6 @@ describe("connector audits are wired into CI, not just the local manifest", () =
     expect([...connectorGates].sort()).toEqual([
       "audit:connector-hosts",
       "audit:connector-registry-drift",
-      "audit:connector-version-skew",
     ]);
   });
 

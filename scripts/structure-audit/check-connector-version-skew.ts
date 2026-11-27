@@ -1,4 +1,12 @@
 #!/usr/bin/env bun
+// `bun run report:connector-version-skew`: an on-demand REPORT of what `nimbus-mcp-servers` has published that this
+// gateway has not pinned yet. It is NOT a gate and always exits 0 (owner ruling 2026-11-27): the connectors ship
+// from their own repository with their own CI/CD precisely so they can publish without touching the gateway, so a
+// publish there must never block a gateway PR, `main` or a release. What IS gated is a pin change made here: a PR
+// that moves the pin is checked by the frozen lockfile, `audit:connector-registry-drift`, the connector-writes
+// manifest sync and row tests, the full suite and the compiled binary's connector boot (`connector-boot-smoke`,
+// packaging runs on every PR). As a gate this check failed v11.19.0's release (connectors 0.21.0 was published
+// minutes before the tag), and turned every unrelated PR and `main` red after each publish.
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -122,11 +130,10 @@ async function defaultFetchLatest(): Promise<string> {
  */
 export function report(skew: Skew): number {
   if (skew.kind === "behind") {
-    console.error(
-      `::error file=packages/gateway/package.json::${PACKAGE_NAME} is pinned at ${skew.pinned} but ${skew.latest} is published — a connector capability has shipped that this gateway cannot load`,
+    console.log(
+      `connector version skew: behind (${skew.pinned} < ${skew.latest}) — ${PACKAGE_NAME} ${skew.latest} has connector capabilities this gateway does not pin yet; picking them up is a pin bump PR`,
     );
-    console.log(`connector version skew: BEHIND (${skew.pinned} < ${skew.latest})`);
-    return 1;
+    return 0;
   }
   if (skew.kind === "patch") {
     console.warn(

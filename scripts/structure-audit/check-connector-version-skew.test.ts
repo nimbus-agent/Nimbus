@@ -73,13 +73,10 @@ describe("checkVersionSkew", () => {
 });
 
 describe("report", () => {
-  test("behind exits non-zero", () => {
-    expect(report({ kind: "behind", pinned: "0.1.1", latest: "0.2.0" })).toBe(1);
-  });
-
-  // The three non-failing verdicts must all exit 0. A patch gap and an unreachable registry are
-  // information, not grounds to red a PR.
+  // A report, never a gate (owner ruling 2026-11-27): every verdict exits 0, `behind` included. A publish in the
+  // connectors repository must not block a gateway PR, `main` or a release.
   test.each([
+    { kind: "behind", pinned: "0.1.1", latest: "0.2.0" } as const,
     { kind: "ok", pinned: "0.1.1", latest: "0.1.1" } as const,
     { kind: "patch", pinned: "0.1.1", latest: "0.1.4" } as const,
     { kind: "indeterminate", reason: "registry unreachable: offline" } as const,
