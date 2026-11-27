@@ -130,9 +130,8 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   "repo.branch.delete",
   "repo.tag.create",
   "repo.commit.push",
-  // Per-connector git-host action types. `repo.*` above stays: removing a generic type silently
-  // ungates anything still emitting it. The prefix is what `serviceOf()` records as I29's egress
-  // destination and scopes an I20 delegation by, so "github" beats a shared "repo".
+  // Per-connector git-host types (`repo.*` stays: dropping a generic type ungates its emitters);
+  // the prefix is `serviceOf()`'s I29 egress destination and I20 delegation scope.
   "github.pr.merge",
   "github.pr.close",
   "github.issue.create",
@@ -150,6 +149,17 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   "gitlab.issue.assignees.add",
   "gitlab.issue.state.set",
   "jira.issue.transition",
+  // @nimbus-dev/connectors 0.19.0 — the issue edits and removes, the PR review, Jira assign, Linear labels.
+  "github.issue.labels.remove",
+  "github.issue.assignees.remove",
+  "github.issue.update",
+  "github.pr.review.create",
+  "gitlab.issue.labels.remove",
+  "gitlab.issue.assignees.remove",
+  "gitlab.issue.update",
+  "jira.issue.assign",
+  "linear.issue.labels.add",
+  "linear.issue.labels.remove",
   "outlook.draft.create",
   "discord.message.post",
   "confluence.page.append",
@@ -253,10 +263,8 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   "incident.resolve",
   "data.delete",
   "connector.remove",
-  // Local-auth reuse: lifts a credential (gh) or points a connector at the owner's own CLI login
-  // (aws/kubectl) — the owner never typed this secret, so the consent lives here, in the executor
-  // (Non-Negotiable 2), not in a CLI prompt. One type covers every source (I3: the gate reads
-  // action.type only). Gate site: connectors/local-auth/adopt-local-auth.ts.
+  // Local-auth reuse (gh, aws, kubectl): a secret the owner never typed, so consent lives here (NN 2),
+  // one type for every source (I3). Gate site: connectors/local-auth/adopt-local-auth.ts.
   "connector.adoptLocalAuth",
   "extension.autoUpdate",
   "extension.downgrade",
@@ -268,36 +276,27 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   // signed extension — install + run grant + credential grant together. Gate site:
   // extensions/migration/migration-engine.ts (`migrationConsentViaGate`). Never delegable (I20).
   "extension.migrate",
-  // `nimbus eval --extension`: the owner's one approval to run the eval suites of installed
-  // extensions, offline and without credentials. Gate site: extensions/installed-eval.ts, through
-  // the gate-only executor that ipc/server/dispatchers.ts builds per call. Never delegable (see
-  // tryDelegatedApproval's extension.* rule).
+  // `nimbus eval --extension` (offline, no credentials). Gate site: extensions/installed-eval.ts,
+  // via ipc/server/dispatchers.ts's gate-only executor. Never delegable (the extension.* rule).
   "extension.eval",
-  // Adding a registry pins a trust root that later extension installs verify against. Gate site:
-  // the `registry.add` handler in ipc/registry-rpc.ts, through the gate-only executor that
-  // ipc/server/dispatchers.ts builds per call. Never delegable (see tryDelegatedApproval).
+  // Adding a registry pins a trust root later installs verify against. Gate site: ipc/registry-rpc.ts,
+  // via ipc/server/dispatchers.ts's gate-only executor. Never delegable (see tryDelegatedApproval).
   "registry.add",
-  // Role-pack install (Project 3 PR 2): applying a pack writes settings to the owner's config
-  // layer. Gate site: packs/pack-install.ts, through the gate-only executor that
-  // ipc/server/dispatchers.ts builds per call. Never delegable (see tryDelegatedApproval).
+  // Role-pack install (Project 3 PR 2) writes settings to the owner's config layer. Gate site:
+  // packs/pack-install.ts, via the same gate-only executor. Never delegable (see tryDelegatedApproval).
   "pack.install",
-  // Connector write opt-in (Phase 9.7 S4): offering a service's write tools to the model. Gate site:
-  // the `connector.writes.enable` handler, through the IPC executor. Never delegable (I20; see
-  // tryDelegatedApproval).
+  // Connector write opt-in (Phase 9.7 S4): offering a service's writes to the model. Gate site: the
+  // `connector.writes.enable` handler, through the IPC executor. Never delegable (I20).
   "connector.writes.enable",
-  // Phase 10 SA3 (I55): the two owner approvals behind a standing rule: creating one, and resuming a
-  // paused one (which widens again). Gate site: ipc/standing-rpc.ts, through an executor built with
-  // no delegation. Never delegable (I20; see tryDelegatedApproval), and refused unless the
-  // owner's own prompt answered (the handler checks `answerSource`).
+  // Phase 10 SA3 (I55): creating a standing rule, and resuming a paused one. Gate site: ipc/standing-rpc.ts,
+  // no delegation (I20), and refused unless the owner's own prompt answered (`answerSource`).
   "standing.rule.create",
   "standing.rule.resume",
-  // Signed workflow import (I59): writing a workflow definition that came from outside this install
-  // into the saved-workflow store. Gate site: ipc/workflow-import-rpc.ts through
-  // `engine/owner-only-approval.ts` (no delegation, a human answer only). Never delegable (I20).
+  // Signed workflow import (I59) into the saved-workflow store. Gate site: ipc/workflow-import-rpc.ts
+  // through `engine/owner-only-approval.ts` (no delegation, a human answer only; I20).
   "workflow.import",
-  // Model access to a saved generated tool (S4, I60): one model-initiated call, approved by a person
-  // over the verbatim input. Gate site: toolgen/toolgen-model-door.ts through
-  // `engine/owner-only-approval.ts` (no delegation, a human answer only). Never delegable (I20).
+  // Model access to a saved generated tool (S4, I60), approved by a person over the verbatim input.
+  // Gate site: toolgen/toolgen-model-door.ts through `engine/owner-only-approval.ts` (I20).
   "tool.model.invoke",
   "connector.addMcp",
   "data.export",

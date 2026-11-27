@@ -4,11 +4,9 @@
  * row, is refused identically by `messagingDestinationRefusal` and `modelWriteRefusal` (which the
  * agent door runs since AD3b); each allowed form passes both. Plus the row-level rules (field,
  * format, OPTIONAL Drive content, contentType, Drive type/name), the order pin, fail-closed throws,
- * the completeness tripwire and a source pin on the call.
+ * the completeness tripwire. The source pin on the call is in `remote-content-source-pin.test.ts`.
  */
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { stripComments } from "../../../../../scripts/structure-audit/lib.ts";
 import type { ChatopsPolicy } from "../../policy/types.ts";
 import {
@@ -464,7 +462,7 @@ describe("B3r and B3w completeness tripwire", () => {
   // An outside agent reaches every row the model is offered, so one set covers both.
   const doorRows = CONNECTOR_WRITE_ROWS.filter((r) => isModelOfferableRow(r));
 
-  test("the scanned rows are exactly the twenty-five, with exactly the field column", () => {
+  test("the scanned rows are exactly the twenty-eight, with exactly the field column", () => {
     expect([...remoteContentScannedRows()].sort((a, b) => a.localeCompare(b))).toEqual([
       "bitbucket_pr_comment_create",
       "confluence_comment_add",
@@ -474,10 +472,13 @@ describe("B3r and B3w completeness tripwire", () => {
       "gdrive_file_create",
       "github_issue_comment_create",
       "github_issue_create",
+      "github_issue_update",
       "github_pr_create",
+      "github_pr_review_create",
       "github_pr_update",
       "gitlab_issue_create",
       "gitlab_issue_note_create",
+      "gitlab_issue_update",
       "gitlab_mr_create",
       "gitlab_mr_note_create",
       "gitlab_mr_update",
@@ -513,6 +514,10 @@ describe("B3r and B3w completeness tripwire", () => {
       github_issue_create: ["body"],
       github_pr_create: ["body"],
       github_pr_update: ["body"],
+      // 0.19.0; the review's `comments[].body` too (nestedTextKeys, `github-pr-review-rows.test.ts`).
+      github_issue_update: ["body"],
+      github_pr_review_create: ["body"],
+      gitlab_issue_update: ["description"],
       gitlab_mr_create: ["description"],
       gitlab_mr_update: ["description"],
       gitlab_issue_note_create: ["body"],
@@ -603,54 +608,5 @@ describe("B3r and B3w completeness tripwire", () => {
       const plain = remoteContentScannedKeys(id).filter((k) => !MARKUP_KEYS.has(k));
       expect(schemaTextKeys(id), id).toEqual(plain);
     }
-  });
-});
-
-// ---------------------------------------------------------------------------------------------
-// Source pin (coordinator ruling on concern 1): the production call passes exactly two arguments,
-// so the `{ tripwire: false }` test seam can never be reached from a door.
-// ---------------------------------------------------------------------------------------------
-
-/** Every `remoteContentIn(` call's argument count in comment-free source (top-level commas). */
-function remoteContentInArgCounts(code: string): number[] {
-  const out: number[] = [];
-  for (
-    let at = code.indexOf("remoteContentIn(");
-    at !== -1;
-    at = code.indexOf("remoteContentIn(", at + 1)
-  ) {
-    let depth = 0;
-    let args = 1;
-    let i = at + "remoteContentIn(".length;
-    let empty = true;
-    for (; i < code.length; i++) {
-      const ch = code.charAt(i);
-      if (ch === "(" || ch === "[" || ch === "{") depth++;
-      else if (ch === ")" || ch === "]" || ch === "}") {
-        if (depth === 0) break;
-        depth--;
-      } else if (ch === "," && depth === 0) args++;
-      if (ch.trim() !== "") empty = false;
-    }
-    // A trailing comma (`f(a, b,)`) adds no argument.
-    const trailing = code.slice(at, i).trimEnd().endsWith(",");
-    out.push(empty ? 0 : args - (trailing ? 1 : 0));
-  }
-  return out;
-}
-
-describe("source pin: the door calls remoteContentIn with exactly two arguments", () => {
-  const src = stripComments(readFileSync(join(import.meta.dir, "model-write-refusals.ts"), "utf8"));
-
-  test("model-write-refusals.ts calls it once, with two arguments", () => {
-    expect(remoteContentInArgCounts(src)).toEqual([2]);
-  });
-
-  test("guard: the counter sees a third argument", () => {
-    expect(remoteContentInArgCounts("remoteContentIn(format, text, { tripwire: false })")).toEqual([
-      3,
-    ]);
-    expect(remoteContentInArgCounts("remoteContentIn(f(a, b), g[1, 2])")).toEqual([2]);
-    expect(remoteContentInArgCounts("remoteContentIn(a, b,)")).toEqual([2]);
   });
 });

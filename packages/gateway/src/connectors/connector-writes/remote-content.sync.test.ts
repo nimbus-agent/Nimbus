@@ -261,6 +261,26 @@ describe("remote-content (B3w): the installed connectors send each new body as t
     ).toBe(true);
   });
 
+  test("(h2, connectors 0.19.0) the issue edits send the body or description, and the review its body and each comment's, as given", () => {
+    expect(
+      sends(
+        registration("github_issue_update", "github"),
+        "...(parsed.body === undefined ? {} : { body: parsed.body })",
+      ),
+    ).toBe(true);
+    expect(
+      sends(
+        registration("gitlab_issue_update", "gitlab"),
+        "...(parsed.description === undefined ? {} : { description: parsed.description })",
+      ),
+    ).toBe(true);
+    const review = registration("github_pr_review_create", "github");
+    expect(sends(review, 'jsonInit("POST", { body: parsed.body, event: parsed.event,')).toBe(true);
+    // Each inline comment is sent with its own body, unchanged.
+    expect(sends(review, "comments: parsed.comments.map((c) => ({")).toBe(true);
+    expect(sends(review, "body: c.body, }))")).toBe(true);
+  });
+
   test("(i) Linear sends the description and the comment body as given", () => {
     for (const id of ["linear_issue_create", "linear_issue_update"]) {
       expect(

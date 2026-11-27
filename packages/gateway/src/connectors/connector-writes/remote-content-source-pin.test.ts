@@ -216,3 +216,52 @@ describe("source pin: the remote-content files never strip, replace or match a t
     ).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------------------------
+// Source pin (coordinator ruling on concern 1): the production call passes exactly two arguments,
+// so the `{ tripwire: false }` test seam can never be reached from a door.
+// ---------------------------------------------------------------------------------------------
+
+/** Every `remoteContentIn(` call's argument count in comment-free source (top-level commas). */
+function remoteContentInArgCounts(code: string): number[] {
+  const out: number[] = [];
+  for (
+    let at = code.indexOf("remoteContentIn(");
+    at !== -1;
+    at = code.indexOf("remoteContentIn(", at + 1)
+  ) {
+    let depth = 0;
+    let args = 1;
+    let i = at + "remoteContentIn(".length;
+    let empty = true;
+    for (; i < code.length; i++) {
+      const ch = code.charAt(i);
+      if (ch === "(" || ch === "[" || ch === "{") depth++;
+      else if (ch === ")" || ch === "]" || ch === "}") {
+        if (depth === 0) break;
+        depth--;
+      } else if (ch === "," && depth === 0) args++;
+      if (ch.trim() !== "") empty = false;
+    }
+    // A trailing comma (`f(a, b,)`) adds no argument.
+    const trailing = code.slice(at, i).trimEnd().endsWith(",");
+    out.push(empty ? 0 : args - (trailing ? 1 : 0));
+  }
+  return out;
+}
+
+describe("source pin: the door calls remoteContentIn with exactly two arguments", () => {
+  const src = stripComments(readFileSync(join(import.meta.dir, "model-write-refusals.ts"), "utf8"));
+
+  test("model-write-refusals.ts calls it once, with two arguments", () => {
+    expect(remoteContentInArgCounts(src)).toEqual([2]);
+  });
+
+  test("guard: the counter sees a third argument", () => {
+    expect(remoteContentInArgCounts("remoteContentIn(format, text, { tripwire: false })")).toEqual([
+      3,
+    ]);
+    expect(remoteContentInArgCounts("remoteContentIn(f(a, b), g[1, 2])")).toEqual([2]);
+    expect(remoteContentInArgCounts("remoteContentIn(a, b,)")).toEqual([2]);
+  });
+});

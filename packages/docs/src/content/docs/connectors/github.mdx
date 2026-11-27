@@ -63,9 +63,13 @@ Every tool below requires interactive consent through the Gateway HITL gate befo
 | Tool | Purpose |
 |---|---|
 | `github_branch_delete` | Delete a branch by ref name. |
+| `github_issue_assignees_remove` | Remove the named assignees from an issue or pull request; adds nobody. Offered to the model at wave 2. |
 | `github_issue_create` | Create a new issue in a repository. |
+| `github_issue_labels_remove` | Remove the named labels from an issue or pull request, one request each; never deletes a label from the repository. Offered to the model at wave 2. |
+| `github_issue_update` | Edit an issue's or pull request's title or body; never its state, labels or assignees. Offered to the model at wave 2; a text that notifies a team or loads remote content is refused. |
 | `github_pr_close` | Close a pull request without merging. |
 | `github_pr_merge` | Merge a pull request. |
+| `github_pr_review_create` | Submit a COMMENT or REQUEST_CHANGES review (never an approval), with optional inline comments. Offered to the model at wave 2; it must name the pull request's current head as `commitId`, and Nimbus cannot delete a submitted review. |
 | `github_tag_create` | Create a lightweight tag pointing at a commit SHA. |
 
 **Remote content in a model-written comment or issue is refused.** When the model (or an MCP client's proposal) writes a `github_issue_comment_create` comment or a `github_issue_create` body, Nimbus reads the text as Markdown and refuses it, before it asks you, if viewing it would load remote content: any Markdown image (`![alt](url)`, a reference image, an escaped or entity-spelled `!`), whatever its URL, even a relative upload; raw HTML that loads an external URL (`<img src>`, `<picture><source srcset>`, `<video>`, an `<iframe>`, a CSS `url(`); and a diagram block (`mermaid`, PlantUML, a Kroki type, `geojson`, `topojson`, `stl`) that names a URL. Plain links (`[text](url)`, a bare URL) are allowed and shown to you verbatim; a raw-HTML `<img>` with a relative `src` is allowed. Code blocks are not exempt, so some code is refused too: a Rust `#![allow(...)]`, code holding `url(`, `@import` or `src="https://`, an unclosed `<` followed by a letter (`if a <b`), an HTML snippet quoted in a code block. Describe the code or link to the file instead. The refusal is the same fixed message every time and repeats nothing from the text.
