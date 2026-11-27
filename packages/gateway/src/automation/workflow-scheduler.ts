@@ -23,6 +23,7 @@ import {
   type RunWorkflowExecutionParams,
   type RunWorkflowExecutionResult,
   runWorkflowExecution,
+  type SkippedRunInfo,
 } from "./workflow-runner.ts";
 import { needsModel, parseWorkflowSteps } from "./workflow-steps.ts";
 import { advanceSchedule, listDueWorkflows, type ScheduledWorkflowRow } from "./workflow-store.ts";
@@ -49,6 +50,8 @@ export interface WorkflowSchedulerDeps {
   readonly runWorkflow?: (p: RunWorkflowExecutionParams) => Promise<RunWorkflowExecutionResult>;
   readonly tickMs?: number;
   readonly onError?: (workflow: string, err: unknown) => void;
+  /** The config directory a report step reads `[cost]` from (Phase 7 slice 4); absent: report steps error. */
+  readonly costConfigDir?: string;
 }
 
 export type FireOutcome =
@@ -65,6 +68,14 @@ export function blockedNotification(info: BlockedRunInfo): { title: string; body
   return {
     title: "Nimbus: a workflow is waiting for you",
     body: `Workflow ${plain(info.workflowName)} is waiting for you: step ${plain(info.stepLabel)} needs your approval (nimbus workflow resume ${info.runId})`,
+  };
+}
+
+/** The notification text for a report run skipped for lack of cost data (owner ruling 2026-11-27). */
+export function skippedNotification(info: SkippedRunInfo): { title: string; body: string } {
+  return {
+    title: "Nimbus: a cost report was skipped",
+    body: `Workflow ${plain(info.workflowName)} posted nothing: ${plain(info.reason)}`,
   };
 }
 
@@ -167,6 +178,10 @@ export class WorkflowScheduler {
         stream: false,
         sendChunk: () => {},
         onBlocked: (info) => this.notifyBlocked(info),
+        onSkipped: (info) => this.notifyOnce(skippedNotification(info)),
+        ...(this.deps.costConfigDir === undefined
+          ? {}
+          : { costConfigDir: this.deps.costConfigDir }),
       });
       return { workflow: wf.name, kind: "ran", status: out.status };
     } catch (err) {
@@ -177,11 +192,14 @@ export class WorkflowScheduler {
   }
 
   private notifyBlocked(info: BlockedRunInfo): void {
-    const { title, body } = blockedNotification(info);
+    this.notifyOnce(blockedNotification(info));
+  }
+
+  private notifyOnce({ title, body }: { title: string; body: string }): void {
     try {
       void Promise.resolve(this.deps.notify(title, body)).catch(() => {});
     } catch {
-      // A failed notification never changes the block.
+      // A failed notification never changes the block or the skip.
     }
   }
 }

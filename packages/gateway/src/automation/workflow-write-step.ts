@@ -38,6 +38,11 @@ export type WriteStepRun = {
     string,
     { readonly index: number; readonly values: readonly string[] }
   >;
+  /** The report step each label names, and the body and subject it rendered in this run. */
+  readonly reports?: ReadonlyMap<
+    string,
+    { readonly index: number; readonly body: string; readonly subject: string | null }
+  >;
   readonly signal?: AbortSignal | undefined;
   /** The evaluated `when` of a guarded step (the runner decided it held); required for such a step. */
   readonly guard?: GuardEvaluation | undefined;
@@ -57,9 +62,12 @@ function fieldSourcesOf(
   step: WriteWorkflowStep,
   run: WriteStepRun,
 ): WorkflowProvenance["fieldSources"] {
-  const out: Record<string, "constant" | { query: number; column: string }> = {};
+  const out: Record<string, WorkflowProvenance["fieldSources"][string]> = {};
   for (const [field, v] of Object.entries(step.input)) {
-    if ("report" in v) throw new Error("a report value has no field source yet");
+    if ("report" in v) {
+      out[field] = { report: run.reports?.get(v.report)?.index ?? -1, part: v.part };
+      continue;
+    }
     if ("from" in v) {
       const q = run.queries.get(v.from);
       out[field] = { query: q?.index ?? -1, column: v.column };
@@ -73,10 +81,20 @@ function fieldSourcesOf(
 function inputFor(
   step: WriteWorkflowStep,
   selected: string | undefined,
+  reports: WriteStepRun["reports"],
 ): Record<string, JsonValue> {
   const input: Record<string, JsonValue> = {};
   for (const [field, v] of Object.entries(step.input) as [string, WriteValue][]) {
-    if ("report" in v) throw new Error("a report value is not filled yet");
+    if ("report" in v) {
+      // Fail closed: a report value is filled ONLY from the report step's output in THIS run.
+      const out = reports?.get(v.report);
+      const text = v.part === "body" ? out?.body : out?.subject;
+      if (text === undefined || text === null) {
+        throw new Error(`the report step "${v.report}" produced no ${v.part} in this run`);
+      }
+      input[field] = text;
+      continue;
+    }
     if ("from" in v) {
       // buildActions only reaches here with a selected value for a step that has a `from`.
       input[field] = selected as string;
@@ -117,7 +135,7 @@ export function buildWriteActions(step: WriteWorkflowStep, run: WriteStepRun): P
   return ids.map((id) => {
     const action: PlannedAction = {
       type: row.actionType,
-      payload: { mcpToolId: row.toolId, input: inputFor(step, id) },
+      payload: { mcpToolId: row.toolId, input: inputFor(step, id, run.reports) },
     };
     if (trigger !== undefined) {
       action.provenance = {

@@ -353,6 +353,40 @@ describe("block and notify", () => {
   });
 });
 
+describe("report runs (Phase 7 slice 4)", () => {
+  test("the scheduler passes the cost config directory and notifies a skipped run once", async () => {
+    schedule("cost-checkout-weekly-slack", T0 - MIN);
+    const h = harness({
+      costConfigDir: "/cfg",
+      runWorkflow: async (p) => {
+        p.onSkipped?.({
+          runId: "run-1",
+          workflowName: "cost-checkout-weekly-slack",
+          reason: "no cost data for 2026-11-02 to 2026-11-08; nothing was posted",
+        });
+        return { runId: "run-1", status: "skipped", dryRun: false, stepResults: [] };
+      },
+    });
+    expect(await h.scheduler.tick()).toEqual([
+      { workflow: "cost-checkout-weekly-slack", kind: "ran", status: "skipped" },
+    ]);
+    await new Promise((r) => setTimeout(r, 1));
+    expect(h.notes).toEqual([
+      {
+        title: "Nimbus: a cost report was skipped",
+        body: "Workflow cost-checkout-weekly-slack posted nothing: no cost data for 2026-11-02 to 2026-11-08; nothing was posted",
+      },
+    ]);
+  });
+
+  test("the config directory reaches the runner", async () => {
+    schedule("w", T0 - MIN);
+    const h = harness({ costConfigDir: "/cfg" });
+    await h.scheduler.tick();
+    expect(h.runs[0]?.costConfigDir).toBe("/cfg");
+  });
+});
+
 describe("lifecycle", () => {
   test("start ticks at once and on the interval; stop ends it; start is idempotent", async () => {
     schedule("w", T0 - MIN);

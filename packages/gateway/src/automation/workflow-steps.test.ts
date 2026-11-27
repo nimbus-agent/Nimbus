@@ -121,7 +121,9 @@ describe("a query and a write", () => {
 
 describe("every refusal", () => {
   test("an unknown kind", () => {
-    expect(refusal([{ kind: "wirte", tool: "x" }])).toContain("kind must be run, query, write or report");
+    expect(refusal([{ kind: "wirte", tool: "x" }])).toContain(
+      "kind must be run, query, write or report",
+    );
   });
   test("an unknown key on a query row, a query, a write, a value", () => {
     expect(refusal([{ ...qStep(), oops: 1 }])).toContain('unknown key "oops"');

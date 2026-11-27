@@ -505,6 +505,7 @@ export async function main(): Promise<void> {
               enforcedPolicy: platform.enforcedPolicy,
             }),
           notify: (title, body) => showIgnoringFailure(platform.notifications, title, body),
+          costConfigDir: platform.paths.configDir,
           onError: (workflow, err) =>
             process.stderr.write(
               `[gateway] scheduled workflow ${workflow} failed: ${err instanceof Error ? err.message : String(err)}\n`,

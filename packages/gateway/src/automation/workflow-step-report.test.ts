@@ -257,7 +257,18 @@ describe("no site reads a { report } value as a constant", () => {
       trigger: "schedule" as const,
       queries: new Map(),
     };
-    expect(() => buildWriteActions(write, run)).toThrow("a report value");
+    // With no report output in this run, a report-fed write fails closed instead of posting anything.
+    expect(() => buildWriteActions(write, run)).toThrow(
+      'the report step "render" produced no body in this run',
+    );
+    const filled = buildWriteActions(write, {
+      ...run,
+      reports: new Map([["render", { index: 0, body: "B", subject: null }]]),
+    });
+    expect(filled[0]?.payload).toEqual({
+      mcpToolId: costReportToolFor("slack"),
+      input: { channel: "C0123ABC", text: "B" },
+    });
     expect(() => scopeOfStep(write, parsed)).toThrow("a report value");
   });
 });

@@ -152,6 +152,8 @@ function accountedStep(input: PlainRecord, p: WorkflowProvenance): boolean {
     if (!Object.hasOwn(p.fieldSources, f)) return false;
     const s = p.fieldSources[f];
     if (s === "constant") continue;
+    // A report source is accounted only by the I55 report extension (slice 4, Task 3); until then, never.
+    if (s !== undefined && typeof s === "object" && "report" in s) return false;
     if (s === undefined || typeof s !== "object" || !Number.isInteger(s.query) || s.query < 0) {
       return false;
     }
@@ -173,6 +175,7 @@ function scopeMatches(rule: StandingRule, input: PlainRecord, p: WorkflowProvena
       if (canonicalJson(entry.const) !== canonicalJson(input[field])) return false;
     } else if (
       source === "constant" ||
+      "report" in source ||
       source.query !== entry.query ||
       source.column !== entry.column
     ) {
