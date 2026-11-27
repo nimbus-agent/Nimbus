@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795726294195,
+  "lastUpdate": 1795760699016,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "8e6bc62793aab614e4a9a902d6eb31454d6f3731",
-          "message": "chore: release main (#1560)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.29.0</summary>\n\n##\n[7.29.0](https://github.com/nimbus-agent/Nimbus/compare/v7.28.0...v7.29.0)\n(2026-09-20)\n\n\n### Features\n\n* **connectors:** gcloud login mode for the GCP connectors, detected and\nadopted ([#1557](https://github.com/nimbus-agent/Nimbus/issues/1557))\n([d01e198](https://github.com/nimbus-agent/Nimbus/commit/d01e198c3af72a188621ad407911a367ceb13c79))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-09-20T20:56:10+03:00",
-          "tree_id": "ba59a5d1b335f58f01556515378eb9e4f224cf30",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/8e6bc62793aab614e4a9a902d6eb31454d6f3731"
-        },
-        "date": 1789927697836,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 324.99252804999907,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 327.77626690001125,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 206.23060005000443,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f6e040c940bc94f7051f14245ace9696b2d4e5ba",
+          "message": "feat(connectors): issue, label, assignee and review write rows and connectors 0.19.0 (#2181)\n\n## Summary\n\nBumps `@nimbus-dev/connectors` to **0.19.0** and adds the gateway write\nrows for its ten new tools (nimbus-agent/nimbus-mcp-servers#108,\nreleased in #109).\n\n**This unblocks every branch.** 0.19.0 is published, so\n`audit:connector-version-skew` fails `main` until the pin moves. A pin\nbump alone would not pass, because `manifest.sync.test.ts` needs a row\nfor each new tool.\n\n**The rows** (owner rulings 2026-11-27: all wave 2, offered to the model\nbehind a typed preview):\n\n| Tool | Before-state | Notes |\n|---|---|---|\n| `github_issue_labels_remove`, `github_issue_assignees_remove`,\n`github_issue_update` | the issue's state reader (B2's) | no\nreversibility entry, like the shipped `_add` siblings |\n| `gitlab_issue_labels_remove`, `gitlab_issue_assignees_remove`,\n`gitlab_issue_update` | the issue's state reader (B2's) | a numeric\nproject path is refused before the prompt on the assignee remove\n(GraphQL needs the full path); quick actions are refused in the update's\ndescription |\n| `jira_issue_assign` | `jira_issue_get` (shows the current assignee) |\n`accountId: null` unassigns and is allowed; an absent `accountId` is\nrefused. Reassigning an assigned issue is allowed (owner ruling) |\n| `linear_issue_labels_add`, `linear_issue_labels_remove` | the issue\nreader | |\n| `github_pr_review_create` | `github_pr_get`: title, state, head\ncommit, never the description | irreversible. **`commitId` is required\nand must equal the head the reader read** (case-insensitive), as\n`github_pr_merge`'s `sha` is bound, so a review never lands on a head\npushed after approval. APPROVE is not in the connector's schema |\n\n- **Scanning:** the issue edits' title and body/description and the\nreview body are scanned for broadcast mentions and remote content, as\nthe comment rows are. Each inline review comment's body is scanned too\n(`nested-text-refusals.ts`), and a `comments` list the scan cannot read\nis refused.\n- **Edits that set nothing** are refused before the prompt (the\n`github_pr_update` / `gitlab_mr_update` guard).\n- **Executor:** all ten are added to `HITL_REQUIRED_BACKING`.\n\n**Jira definition change.** 0.19.0 tightens `issueKey` on five shipped\nJira tools, so their definition hash changes. Agent-door approvals of\n`jira_issue_update`, `jira_comment_add` and `jira_issue_transition` are\nsuspended until re-approved. The two reads have no approvals, and\nmodel-door approvals are stored by tool id, so they are unaffected.\n\n**Moved, unchanged** (so locked files stay at or under their\n`audit:file-size` baselines): the calendar refusals, the B2 tripwires,\nboth before-reader censuses (connector-writes and I53), the\n`remoteContentIn` source pin and the `connector.writes` wiring pins.\nComments were condensed in `executor.ts` and `capture-rpc.test.ts`, and\nthe baseline was lowered where files shrank.\n\n**One shipped pin updated:** 0.19.0 moved GitLab's assignee call into a\nshared helper, which broke `add-only.sync.test.ts`. The pin now matches\nthe new shape, and new pins check that the removes and the Linear label\nadd do only what their previews say.\n\n**Counts:** 137 write rows (`CLAUDE.md`/`GEMINI.md`,\n`docs/SECURITY-INVARIANTS.md`, tests). The stale \"Exactly 105 rows are\nofferable\" in SECURITY-INVARIANTS is corrected to the derived 120.\n\n## Related Issue\n\nPhase 9.7 connector follow-ups, \"Code review and issue writes\".\n\n## Type of Change\n\n- [x] New feature\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors (`bun run\npreflight:fast` PASSED)\n- [x] `bun run lint` passes\n- [x] All existing tests pass. The connectors, security-invariants,\nengine, ipc and share suites: 17499 pass, 5 fail. The 5 (the I15\nuser-MCP write-grant test and 4 in `mesh-user-mcp-write-grant.test.ts`)\nfail identically on unmodified `main` in a worktree under `.claude/`,\nwhose path segment the marker-folder rule refuses.\n- [x] New behaviour is covered by tests (`issue-edit-rows.test.ts`,\n`issue-edit-refusals.test.ts`, `github-pr-review-rows.test.ts`: golden\nlines, drift keys against the installed schema, offer, before-readers,\nthe head guard, reversibility, refusals)\n- [x] No `any` types introduced\n- [x] No credentials, tokens, or secret values appear\n- [x] Platform-specific code is behind `PlatformServices` (n/a)\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable (the rows add HITL types, and nothing is removed)\n- [x] Does not touch `docs/README.md`\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added model-offerable connector actions for editing issues, managing\nlabels and assignees, assigning Jira issues, and creating GitHub\npull-request reviews. Actions include previews and confirmation checks.\n* **Bug Fixes**\n* Added safeguards that reject certain unsafe review and issue text,\nincluding remote-content and notification-triggering content.\n* **Documentation**\n* Updated connector guides and security references with the expanded\naction set and revised availability totals.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-27T06:13:54Z",
+          "tree_id": "35dbfaa96e2e8d69379d1c5078e93420a2ac1e5a",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/f6e040c940bc94f7051f14245ace9696b2d4e5ba"
+        },
+        "date": 1795760693401,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 270.09779035000173,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 274.03815389999363,
             "unit": "ms"
           }
         ]
