@@ -2,6 +2,14 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [11.18.0](https://github.com/nimbus-agent/Nimbus/compare/v11.17.0...v11.18.0) (2026-11-27)
+
+
+### Features
+
+* **connectors:** issue, label, assignee and review write rows and connectors 0.19.0 ([#2181](https://github.com/nimbus-agent/Nimbus/issues/2181)) ([f6e040c](https://github.com/nimbus-agent/Nimbus/commit/f6e040c940bc94f7051f14245ace9696b2d4e5ba))
+* scheduled cost reports post under a standing rule (Phase 7, slice 4) ([#2183](https://github.com/nimbus-agent/Nimbus/issues/2183)) ([c10bd98](https://github.com/nimbus-agent/Nimbus/commit/c10bd98894b449863b33e35f94173d414089fcd8))
+
 ## [11.17.0](https://github.com/nimbus-agent/Nimbus/compare/v11.16.0...v11.17.0) (2026-11-26)
 
 
