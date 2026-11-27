@@ -397,6 +397,15 @@ export function reversibleOnlyIf(toolId: string): string | undefined {
   return entryOf(toolId)?.conditional?.condition;
 }
 
+/**
+ * `{ reversibleIf }` for a conditionally reversible row, else nothing: what a runbook or proposal listing carries
+ * beside the class, so it never reads plain "reversible" for a row whose undo depends on the call's before-state.
+ */
+export function reversibleIfOf(toolId: string | undefined): { reversibleIf?: string } {
+  const condition = toolId === undefined ? undefined : reversibleOnlyIf(toolId);
+  return condition === undefined ? {} : { reversibleIf: condition };
+}
+
 /** Why THIS call of a conditionally reversible row cannot be undone, else `undefined`. */
 export function notReversibleBecause(
   toolId: string,

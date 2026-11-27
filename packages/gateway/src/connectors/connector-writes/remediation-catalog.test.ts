@@ -25,6 +25,18 @@ describe("the remediation catalogue names real, classified write rows (Phase 10 
     expect(REMEDIATION_CATALOG.repeatable).not.toContain("aws_ecs_service_update");
   });
 
+  test("the flag writes are repeatable: LaunchDarkly, Flagsmith, and the Unleash and Split writes (owner ruling 2026-11-27)", () => {
+    expect(REMEDIATION_CATALOG.repeatable).toEqual([
+      "launchdarkly_flag_toggle",
+      "flagsmith_feature_state_set",
+      "unleash_feature_toggle",
+      "split_kill",
+      "split_restore",
+      "aws_ec2_instance_start",
+      "aws_ec2_instance_stop",
+    ]);
+  });
+
   test("the alert tools are irreversible and the rollback is reversible", () => {
     for (const a of Object.values(REMEDIATION_CATALOG.alerts)) {
       expect(reversibilityClassOf(row(a.ack))).toBe("irreversible");

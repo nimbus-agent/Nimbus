@@ -179,6 +179,25 @@ describe("a push carries its record's top proposal", () => {
     expect(text.split("\n")[2]).toStartWith("[IRREVERSIBLE]");
   });
 
+  test("a conditionally reversible proposal (the Unleash toggle) names its condition, never plain reversible", () => {
+    const text = proposalSection("pagerduty:PA", {
+      ...PROPOSAL("inc_0000000000000000"),
+      kind: "repeat_last",
+      toolId: "unleash_feature_toggle",
+      reversibleIf: "the environment already has an active strategy",
+    });
+    expect(text.split("\n")[2]).toStartWith(
+      "[reversible only if the environment already has an active strategy; otherwise IRREVERSIBLE] repeat_last: `unleash_feature_toggle`",
+    );
+    // A condition on a class that is not reversible changes nothing.
+    const unknown = proposalSection("pagerduty:PA", {
+      ...PROPOSAL("inc_0000000000000000"),
+      reversibility: "unknown",
+      reversibleIf: "x",
+    });
+    expect(unknown.split("\n")[2]).toStartWith("[unknown]");
+  });
+
   test("no proposal, a null one or a throwing listing: no block, a null proposal, the push still ok", async () => {
     for (const topProposal of [
       undefined,
@@ -212,8 +231,20 @@ describe("pushedProposalOf re-validates what it reads", () => {
     ["a bad confidence", JSON.stringify({ proposal: { ...good, confidence: "high" } })],
     ["a bad expiry", JSON.stringify({ proposal: { ...good, expiresAtMs: 1.5 } })],
     ["an array", JSON.stringify({ proposal: [] })],
+    ["a condition that is not text", JSON.stringify({ proposal: { ...good, reversibleIf: 1 } })],
+    [
+      "a condition with control text",
+      JSON.stringify({ proposal: { ...good, reversibleIf: "x\u001b[31m" } }),
+    ],
   ])("%s is no proposal", (_why, json) => {
     expect(pushedProposalOf(json)).toBeNull();
+  });
+  test("a well-formed condition passes through; none stays absent", () => {
+    const reversibleIf = "the environment already has an active strategy";
+    expect(
+      pushedProposalOf(JSON.stringify({ proposal: { ...good, reversibleIf } }))?.reversibleIf,
+    ).toBe(reversibleIf);
+    expect(pushedProposalOf(JSON.stringify({ proposal: good }))).not.toHaveProperty("reversibleIf");
   });
   test("a null confidence is allowed", () => {
     expect(

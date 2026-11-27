@@ -12,22 +12,20 @@ import { REMEDIATION_CATALOG } from "../connectors/connector-writes/remediation-
 import {
   callIsReversible,
   reversibilityClassOf,
+  reversibleIfOf,
   undoRefusalReason,
 } from "../connectors/connector-writes/reversibility.ts";
 import type { ConnectorWriteRow } from "../connectors/connector-writes/types.ts";
 import { mcpClientToolKey } from "../connectors/lazy-mesh/tool-map.ts";
 import type { BeforeOnlyOutcome } from "../engine/executor.ts";
-import {
-  BLAST_MAX_DEPENDENTS,
-  BLAST_NAME_RE,
-  ENGINE_PROPOSAL_ID_RE,
-} from "../engine/incident-link.ts";
+import { ENGINE_PROPOSAL_ID_RE } from "../engine/incident-link.ts";
 import { serviceOf } from "../engine/service-of.ts";
 import type { ActionResult, EngineProposalBlast, PlannedAction } from "../engine/types.ts";
 import { resolveIncidentRef } from "./incident-id.ts";
 import { mintIncidentLink } from "./incident-link-mint.ts";
 import type { IncidentRecordV1 } from "./incident-record-types.ts";
 import { getById } from "./incident-store.ts";
+import { blastForPrompt } from "./proposal-blast.ts";
 import {
   claimProposal,
   claimUndo,
@@ -130,6 +128,8 @@ export type ProposalView = {
   readonly evidence: ProposalEvidence | null;
   readonly confidence: number | null;
   readonly reversibility: string;
+  /** The condition a conditionally reversible row's undo rests on (listings never show plain "reversible" for it). */
+  readonly reversibleIf?: string;
   /** The declared reason when irreversible (shown before anything else). */
   readonly irreversibleReason: string | null;
   readonly status: string;
@@ -166,6 +166,7 @@ export type TopProposal = {
   readonly kind: string;
   readonly toolId: string;
   readonly reversibility: string;
+  readonly reversibleIf?: string;
   readonly confidence: number | null;
   readonly expiresAtMs: number;
 };
@@ -198,37 +199,6 @@ function parseEvidence(json: string): unknown {
 }
 const FAIL_TEXT_MAX = 200;
 
-/**
- * The blast radius a prompt may show, from a proposal's evidence (Phase 17 one-tap rollback). No blast in the
- * evidence gives `undefined` (the prompt says it was not recorded). A blast whose names are not all
- * configuration ids ({@link BLAST_NAME_RE}), or that is malformed, gives the `unverified` form, so the prompt
- * says it is not shown rather than implying there is none. Never throws.
- */
-export function blastForPrompt(
-  evidence: unknown,
-  recorded: boolean,
-): EngineProposalBlast | undefined {
-  if (evidence === null || typeof evidence !== "object") return undefined;
-  if (!Object.hasOwn(evidence, "blast")) return undefined;
-  const unverified = { unverified: true, recorded } as const;
-  const b = (evidence as { blast?: unknown }).blast;
-  if (b === null || typeof b !== "object") return unverified;
-  const { service, environment, dependents, dependentsTruncated } = b as Record<string, unknown>;
-  const name = (x: unknown): x is string => typeof x === "string" && BLAST_NAME_RE.test(x);
-  if (service !== null && !name(service)) return unverified;
-  if (environment !== null && environment !== undefined && !name(environment)) return unverified;
-  if (!Array.isArray(dependents) || dependents.length > BLAST_MAX_DEPENDENTS) return unverified;
-  if (!dependents.every(name)) return unverified;
-  if (typeof dependentsTruncated !== "boolean") return unverified;
-  return {
-    service,
-    environment: environment ?? null,
-    dependents: [...dependents],
-    dependentsTruncated,
-    recorded,
-  };
-}
-
 function failText(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err);
   // Control characters (C0 and DEL) become spaces, then the text is cut.
@@ -236,6 +206,7 @@ function failText(err: unknown): string {
   return flat.slice(0, FAIL_TEXT_MAX);
 }
 
+export { blastForPrompt } from "./proposal-blast.ts";
 /** The advisory switch, exported for IC6's runbook action steps (refused while on). */
 export { isAdvisory } from "./proposal-store.ts";
 
@@ -306,6 +277,7 @@ export function createRemediation(deps: RemediationDeps) {
       evidence,
       confidence: p.confidence,
       reversibility: p.reversibility,
+      ...reversibleIfOf(p.tool_id),
       irreversibleReason: decl?.class === "irreversible" ? decl.reason : null,
       status: p.status,
       createdAtMs: p.created_at_ms,
@@ -375,6 +347,7 @@ export function createRemediation(deps: RemediationDeps) {
       kind: best.kind,
       toolId: best.toolId,
       reversibility: best.reversibility,
+      ...(best.reversibleIf === undefined ? {} : { reversibleIf: best.reversibleIf }),
       confidence: best.confidence,
       expiresAtMs: best.expiresAtMs,
     };

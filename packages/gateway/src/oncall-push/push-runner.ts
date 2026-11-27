@@ -86,6 +86,8 @@ export type PushedProposal = {
   readonly kind: string;
   readonly toolId: string;
   readonly reversibility: string;
+  /** The condition a conditionally reversible row's undo rests on (the Unleash toggle), else absent. */
+  readonly reversibleIf?: string;
   readonly confidence: number | null;
   readonly expiresAtMs: number;
 };
@@ -191,8 +193,16 @@ function proposalPart(deps: OncallPushRunnerDeps, recordId: string): PushedPropo
  * gateway-set (the proposal kind, the row's tool id and reversibility label, the confidence, the expiry, the
  * trigger item id the owner already reads in the brief); the proposal's input is never shown here.
  */
+/** The reversibility label first: never plain "reversible" for a row whose undo rests on a condition. */
+function pushedLabel(p: PushedProposal): string {
+  if (p.reversibility === "irreversible") return "IRREVERSIBLE";
+  return p.reversibility === "reversible" && p.reversibleIf !== undefined
+    ? `reversible only if ${p.reversibleIf}; otherwise IRREVERSIBLE`
+    : p.reversibility;
+}
+
 export function proposalSection(incidentId: string, p: PushedProposal): string {
-  const label = p.reversibility === "irreversible" ? "IRREVERSIBLE" : p.reversibility;
+  const label = pushedLabel(p);
   const confidence = p.confidence === null ? "" : `, confidence ${String(p.confidence)}`;
   return [
     "## Proposed remediation",

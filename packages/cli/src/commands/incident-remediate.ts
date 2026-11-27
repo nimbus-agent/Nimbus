@@ -135,6 +135,8 @@ export type ProposalLike = {
   evidence: Evidence | null;
   confidence: number | null;
   reversibility: string;
+  /** The condition a conditionally reversible row's undo rests on; absent from an older gateway. */
+  reversibleIf?: string;
   irreversibleReason: string | null;
   status: string;
   actionId: string | null;
@@ -168,7 +170,11 @@ function headline(p: ProposalLike): string {
     const why = p.irreversibleReason === null ? "" : `: ${clean(p.irreversibleReason)}`;
     return `IRREVERSIBLE${why}`;
   }
-  return p.reversibility === "reversible" ? "reversible" : "reversibility unknown";
+  if (p.reversibility !== "reversible") return "reversibility unknown";
+  // Never plain "reversible" for a row whose undo depends on the call's own before-state (the Unleash toggle).
+  return p.reversibleIf === undefined
+    ? "reversible"
+    : `reversible only if ${clean(p.reversibleIf)}; otherwise IRREVERSIBLE`;
 }
 
 function confidenceText(p: ProposalLike): string[] {

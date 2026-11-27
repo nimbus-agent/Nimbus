@@ -1,6 +1,7 @@
 // Test helpers for the remediation service tests: the harness over the REAL ToolExecutor
 // (`buildRemediationExecutor`), real SQLite and a fake dispatcher. Moved out of `remediation.test.ts`, whose
-// size is locked by `audit:file-size`; `argoReply` lets a test change what the before-state read returns.
+// size is locked by `audit:file-size`; `argoReply` lets a test change what the before-state read returns, and
+// `beforeReply` sees every other dispatched action and may answer it (`undefined`: the default reply).
 import type { Database } from "bun:sqlite";
 
 import type { EgressEntry } from "../../src/egress/egress-record.ts";
@@ -62,6 +63,7 @@ export function makeRemediationHarness(
   localIndex: LocalIndex,
   opts: {
     argoReply?: unknown;
+    beforeReply?: (action: PlannedAction) => unknown;
     deployment?: boolean;
     now?: () => number;
     onPrompt?: () => void;
@@ -97,6 +99,8 @@ export function makeRemediationHarness(
     async dispatch(action) {
       dispatched.push(action);
       if (action.type === "argocd.before.read") return opts.argoReply ?? ARGO_REPLY;
+      const reply = opts.beforeReply?.(action);
+      if (reply !== undefined) return reply;
       return { status: "requested" };
     },
   };
@@ -176,6 +180,36 @@ export function makeRemediationHarness(
     },
     makeCalls: () => makes,
   };
+}
+
+/**
+ * An executed proposal of `toolId` with `input` on an EARLIER record of the same service ("payments"), so the
+ * harness record's listing offers it again as `repeat_last` (the only way a repeatable catalogue tool is proposed).
+ */
+export function seedPriorRun(
+  db: Database,
+  over: { readonly n: number; readonly toolId: string; readonly input: unknown },
+): void {
+  const prior = upsertIncidentRecord(db, {
+    record: buildRecord({ itemId: `pagerduty:PRIOR${String(over.n)}`, boundService: "payments" }),
+    markdown: "m",
+    recordSha256: `h-prior-${String(over.n)}`,
+    citedServices: [],
+    nowMs: 1,
+  });
+  db.run(
+    `INSERT INTO incident_proposal (id, record_id, record_version, kind, tool_id, input_json, evidence_json,
+       confidence, reversibility, status, created_at_ms, expires_at_ms, updated_at_ms, action_id)
+     VALUES (?, ?, 1, 'repeat_last', ?, ?, '{}', NULL, 'reversible', 'executed', 1, 2, ?, ?)`,
+    [
+      `prp_${String(over.n).padStart(16, "9")}`,
+      prior.recordId,
+      over.toolId,
+      JSON.stringify(over.input),
+      over.n,
+      `act_${String(over.n).padStart(16, "9")}`,
+    ],
+  );
 }
 
 export const pick = (h: Harness, kind: string): string => {
