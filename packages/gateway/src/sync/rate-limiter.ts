@@ -63,6 +63,8 @@ export type Provider =
   | "dagster"
   | "ramp"
   | "vantage"
+  | "openai_billing"
+  | "anthropic_billing"
   | "opencost"
   | "kubecost"
   | "zoom"
@@ -161,6 +163,9 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   ramp: { requestsPerMinute: 60, burstSize: 10 },
   // Vantage documents 1,000 requests per hour (about 16 per minute), shared with the owner's own automation.
   vantage: { requestsPerMinute: 16, burstSize: 2 },
+  // Daily cost reports: a few paged requests per run. Anthropic asks for at most one request a minute sustained.
+  openai_billing: { requestsPerMinute: 10, burstSize: 3 },
+  anthropic_billing: { requestsPerMinute: 1, burstSize: 5 },
   // The owner's own cluster service: one paged request per sync, so a low limit is plenty.
   opencost: { requestsPerMinute: 30, burstSize: 5 },
   kubecost: { requestsPerMinute: 30, burstSize: 5 },

@@ -8,6 +8,7 @@ import type { CostLine } from "./cost-line.ts";
 import { readCostLines } from "./cost-line-store.ts";
 import {
   decodeGithubBillingCursor,
+  encodeCostSyncCursor,
   encodeGithubBillingCursor,
   readCostSourceGaps,
 } from "./cost-source-gaps.ts";
@@ -116,6 +117,34 @@ describe("the GitHub billing cursor and its gaps", () => {
   });
 });
 
+describe("gaps across every cost sync (slice 6)", () => {
+  test("each service's cursor is read with its own prefix; a cursor with another prefix reads as nothing", () => {
+    const put = (service: string, cursor: string) => {
+      upsertSchedulerRegistration(db, service, 86_400_000, NOW, false);
+      updateSchedulerState(db, {
+        serviceId: service,
+        cursor,
+        intervalMs: 86_400_000,
+        lastSyncAt: NOW,
+        nextSyncAt: NOW + 86_400_000,
+        status: "ok",
+        errorMsg: null,
+        consecutiveFailures: 0,
+        paused: false,
+      });
+    };
+    const c = (gap: string) => ({ gaps: { org: gap }, synced: {}, pending: {} });
+    put("openai_billing", encodeCostSyncCursor("nimbus-oai1:", c("openai gap")));
+    put("anthropic_billing", encodeCostSyncCursor("nimbus-ant1:", c("anthropic gap")));
+    // A cursor written with GitHub's prefix under another service is not that service's.
+    put("github_billing", encodeCostSyncCursor("nimbus-oai1:", c("misfiled")));
+    expect([...readCostSourceGaps(db)]).toEqual([
+      ["openai_billing", ["openai gap"]],
+      ["anthropic_billing", ["anthropic gap"]],
+    ]);
+  });
+});
+
 describe("github_billing end to end in the store", () => {
   test("the capability writes its own lines, and connector removal erases them", () => {
     const deps = {
@@ -123,6 +152,7 @@ describe("github_billing end to end in the store", () => {
       db,
       depth: "full",
     } as SyncCapabilityDeps;
+    upsertSchedulerRegistration(db, "github_billing", 86_400_000, NOW, false);
     const caps = buildSyncCapabilities(deps, "github_billing");
     const r = caps.replaceCostLinesForMonth(
       { provider: "github", billingAccountId: "acme", month: "2026-11" },

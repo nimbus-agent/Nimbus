@@ -73,6 +73,16 @@ export const CONNECTOR_CATALOG_META = Object.freeze({
     "ci-cd",
     "GitHub's built-in workflow automation and CI service",
   ),
+  openai_billing: m(
+    "OpenAI costs",
+    "cloud",
+    "OpenAI's daily organization cost report, per project and model",
+  ),
+  anthropic_billing: m(
+    "Anthropic costs",
+    "cloud",
+    "Anthropic's daily organization cost report, per workspace and model",
+  ),
   github_billing: m(
     "GitHub billing",
     "cloud",
