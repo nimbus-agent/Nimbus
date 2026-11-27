@@ -8,6 +8,7 @@ import { FILES_ROWS } from "./files.ts";
 import { FLAGS_ROWS } from "./flags.ts";
 import { GITHUB_PR_REVIEW_ROWS } from "./github-pr-review-rows.ts";
 import { GITOPS_ML_ROWS } from "./gitops-ml.ts";
+import { GOOGLE_CALENDAR_ROWS } from "./google-calendar-rows.ts";
 import { INCIDENT_ROWS } from "./incident.ts";
 import { ISSUE_EDIT_ROWS } from "./issue-edit-rows.ts";
 import { KNOWLEDGE_ROWS } from "./knowledge.ts";
@@ -25,6 +26,7 @@ export const CONNECTOR_WRITE_ROWS: readonly ConnectorWriteRow[] = applyReversibi
   ...ISSUE_EDIT_ROWS,
   ...KNOWLEDGE_ROWS,
   ...MAIL_CALENDAR_ROWS,
+  ...GOOGLE_CALENDAR_ROWS,
   ...FILES_ROWS,
   ...VCS_CI_ROWS,
   ...BITBUCKET_COMMENT_ROWS,

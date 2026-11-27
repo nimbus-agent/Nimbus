@@ -256,6 +256,12 @@ export const REVERSIBILITY_TABLE: Readonly<Record<string, ReversibilityEntry>> =
   onedrive_item_delete: irreversible(`a delete ${NO_UNDO}`),
   outlook_calendar_delete: irreversible(`a deleted event ${NO_UNDO}`),
   apple_calendar_event_delete: irreversible(`a deleted event ${NO_UNDO}`),
+  // Owner ruling 2026-11-27 (connectors 0.20.0). `gcal_event_create` has no entry (unknown): its
+  // inverse is a delete of the id it returns, which no before-read can capture.
+  gcal_event_update: irreversible(
+    "an edit overwrites the event's fields, and Nimbus keeps no copy to restore",
+  ),
+  gcal_event_delete: irreversible(`a deleted event ${NO_UNDO}`),
   aws_lambda_invoke: irreversible("the function's own code decides what an invoke did"),
   jenkins_build_trigger: irreversible(`a started build ${NO_UNDO}`),
   gha_run_trigger: irreversible(`a started workflow run ${NO_UNDO}`),

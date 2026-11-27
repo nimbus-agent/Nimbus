@@ -242,6 +242,8 @@ describe("reversibility: the irreversible rows and the default", () => {
     "onedrive_item_delete",
     "outlook_calendar_delete",
     "apple_calendar_event_delete",
+    "gcal_event_update",
+    "gcal_event_delete",
     "aws_lambda_invoke",
     "jenkins_build_trigger",
     "gha_run_trigger",

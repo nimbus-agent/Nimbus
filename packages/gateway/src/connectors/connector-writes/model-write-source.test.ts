@@ -303,6 +303,7 @@ const REAL_SERVICES = [
   "outlook",
   "apple",
   "google_drive",
+  "google_calendar",
   "obsidian",
 ];
 
@@ -379,15 +380,14 @@ async function realDoor(
 describe("the real messaging rows through the real door (plan Task 3)", () => {
   const chatopsRefused = { refused: CHATOPS_CHANNEL_REFUSAL };
 
-  test("every B1-B4b row is offered on an approved wave-2 opt-in", async () => {
+  test("every B1-B4b row (and the 0.20.0 Calendar create and update) is offered on an approved wave-2 opt-in, not the wave-3 rows C0 made offerable", async () => {
     const door = await realDoor(() => BOUND);
     expect(door.offered).toEqual(
-      // A wave-2 opt-in: the wave-3 rows C0 made offerable are outside it.
       CONNECTOR_WRITE_ROWS.filter((r) => isModelOfferableRow(r) && r.wave === 2)
         .map((r) => `${serviceOf(r.actionType)}__${r.toolId}`)
         .sort((a, b) => a.localeCompare(b)),
     );
-    expect(door.offered).toHaveLength(50);
+    expect(door.offered).toHaveLength(52);
   });
 
   test("Slack: the bound channel by id and any channel NAME are refused, the DM too; nothing executed", async () => {

@@ -91,8 +91,8 @@ function altPlaceholders(r: ConnectorWriteRow): string[] {
 }
 
 describe("every wave 4 row declares a type-to-confirm target", () => {
-  test("there are 51 wave 4 rows, each with a confirm template that parses", () => {
-    expect(WAVE4).toHaveLength(51);
+  test("there are 52 wave 4 rows, each with a confirm template that parses", () => {
+    expect(WAVE4).toHaveLength(52);
     for (const r of WAVE4) {
       expect(r.confirm, r.toolId).toBeDefined();
       expect(parseConfirmTemplate(r.confirm?.template ?? "").ok, r.toolId).toBe(true);
@@ -120,12 +120,13 @@ describe("every wave 4 row declares a type-to-confirm target", () => {
     }
   });
 
-  test("the three opaque-id deletes confirm on the id's last 8 characters (OR-W34-8), the Cloud Run deploy on its image's last 8 (D1), and the D3b deploy and build triggers on their opaque ids", () => {
+  test("the four opaque-id deletes confirm on the id's last 8 characters (OR-W34-8; the Google Calendar delete since connectors 0.20.0), the Cloud Run deploy on its image's last 8 (D1), and the D3b deploy and build triggers on their opaque ids", () => {
     const tail = WAVE4.filter((r) => r.confirm?.template.includes(":tail8"));
     expect(tail.map((r) => r.toolId).sort((a, b) => a.localeCompare(b))).toEqual([
       "apple_calendar_event_delete",
       "bitrise_build_trigger",
       "codemagic_build_trigger",
+      "gcal_event_delete",
       "gcp_cloud_run_deploy",
       "netlify_build_trigger",
       "onedrive_item_delete",
