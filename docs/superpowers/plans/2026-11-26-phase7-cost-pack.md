@@ -502,6 +502,22 @@ Design:
 
 **Files per task:** Task 1 `finops/cost-source-gaps.ts` (+ test), `connectors/cost-month-sync.ts` (+ test), `connectors/github-billing-cost-sync.ts`. Task 2 `finops/openai-cost-lines.ts` (+ test). Task 3 `finops/anthropic-cost-lines.ts` (+ test). Task 4 `connectors/{openai,anthropic}-cost-sync.ts` (+ tests), `connectors/finops-syncables.ts`, `connectors/connector-catalog.ts`, `connectors/connector-oauth-unsupported.ts`, `connectors/connector-secrets-manifest.ts`, `catalog/connector-catalog-meta.ts`, `sync/sync-capabilities.ts` (`COST_SYNC_SERVICES`), the pinned lists those touch. Task 5 acceptance test, docs (`cli-reference.md` connector rows and a "AI provider costs" section, `architecture.md`, `roadmap.md` slices 1 to 6 of 8, `CHANGELOG.md`, `CLAUDE.md`/`GEMINI.md`, `nimbus-file-map`).
 
+**Fixes from the Antigravity review (slice 6, 2026-11-27: APPROVED WITH FIXES; each verified). These override Design 1 to 5 and the tasks where they differ.**
+
+1. **Same-origin transport.** Both syncables send the admin key only through `fetchSameOriginOnly` (`connectors/same-origin-fetch.ts`, manual redirects, same-origin check), as the GitHub syncable does; a test proves a cross-origin redirect is refused and the key is never sent to the other host.
+2. **No key is ever printed.** `nimbus connector auth openai_billing|anthropic_billing` prints the key NAME and how to set it (`nimbus vault set openai_billing.admin_key`), never a value: Design 4's "prints the key" means the name.
+3. **Aggregate across pages.** A month's pages are collected first and mapped ONCE, so rows of one day and grain on two pages are summed, never written twice (the `cost_line_grain` unique index).
+4. **Exact cents.** `centsToDollars(s)` shifts the decimal point on the string (sign kept, zero-padded) and converts once, so `"12345.678"` is `123.45678` exactly as `Number("123.45678")`, never `12345.678 / 100`.
+5. **Query parameters, explicitly.** OpenAI: `start_time`, `end_time`, `bucket_width=1d`, `limit=180`, `group_by[]=project_id`, `group_by[]=line_item`. Anthropic: `starting_at`, `ending_at`, `bucket_width=1d`, `limit=31` (the documented maximum), `group_by[]=workspace_id`, `group_by[]=description`.
+6. **400 is a stated gap** ("the vendor refused the cost request"), not a daily retry.
+7. **A non-empty report that maps to no line is a retry** (all malformed, or all outside the requested range), so stored lines are never cleared by it; an empty `data`/`results` list still clears.
+8. **D24 docs.** `docs/SECURITY-INVARIANTS.md`'s `cost-line-confined` paragraph names the three cost-sync services; Task 4 edits it in the same commit as `COST_SYNC_SERVICES`.
+9. **Advisory, adopted.** The GitHub cursor names (`encodeGithubBillingCursor`, `decodeGithubBillingCursor`, `GithubBillingCursor`) stay as thin wrappers over the generic codec, so slice 5's tests compile unchanged.
+10. **Advisory, adopted.** OpenAI `model` from `line_item`: split on `", "`; when the first part is a known non-model prefix (`fine-tuning`), the model is the second part; otherwise the first part; null when the text has no model part. Recorded as documentation-shaped (the docs give one example).
+11. **Advisory, adopted.** Docs also state: Anthropic's cost report is not on Claude Platform on AWS; the default workspace (`workspace_id: null`) is a null sub-account.
+
+**Anthropic Cost API reference, read (Task 3 step 1).** Results: `amount` (string, lowest units: `"123.45"` = $1.23), `currency` (always `"USD"`), `workspace_id` (null = default or not grouped), `description` (null unless grouped), `model` (null for non-token costs), `cost_type` (`tokens`, `web_search`, `code_execution`, `session_usage`), `token_type`, `service_tier` (`batch`/`standard`), `context_window`, `speed`, `inference_geo`. Buckets: `starting_at`, `ending_at`, `results`, oldest first, empty buckets included; `limit` 1 to 31. The mapper's grain uses `workspace_id` (sub-account), `description` (sku), `model`; `cost_type` and `service_tier` as tags (constant per description).
+
 ### Task 1: One month-sync loop and cursor for every cost sync
 - [ ] Move the loop and the cursor codec; GitHub's tests unchanged and green; new tests for the generic loop (pending, window, own keys) and for gaps read across services. Commit `refactor(gateway): one month-sync loop and cursor for every cost sync`.
 
