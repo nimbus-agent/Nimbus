@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795765592050,
+  "lastUpdate": 1795775477110,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "1c8d4bbca5e47c013f9133a891c600156d0108c9",
-          "message": "refactor(cli): agent-brief commands throw CliExit instead of calling process.exit (#1563)\n\n## What\n\nThe agent-brief CLI commands now signal a failing exit code by throwing\n`CliExit(code)` instead of calling `process.exit(code)`. `main()`'s\ntop-level catch classifies the error: a `CliExit` sets\n`process.exitCode` and returns silently; anything else is printed\nexactly as before.\n\nNo user-visible behaviour changes: same messages, same exit codes, and\nthe \"Done.\" outro is still skipped on failure, as it was when\n`process.exit` never reached it.\n\n## Why\n\n`process.exit` skips `finally` blocks, so an IPC disconnect or\npending-brief cancel never ran on a failure path. It also makes a\ncommand unusable from a caller that runs several commands in one\nprocess: the first failure kills the whole process. `nimbus demo`'s tour\nalready calls `runOwnersCommand`/`runWhyCli` in-process, and a `CliExit`\nfrom one of them now unwinds through the helper's `finally` on the way\nout.\n\n## Converted sites\n\n- `lib/cli-exit.ts` — new: `CliExit` (integer code in 1..255, refused\notherwise) and `classifyTopLevelError`.\n- `index.ts` — `main()`'s catch gains the silent `cli-exit` arm.\n- `lib/agent-cli-dispatcher.ts` (`runAgentCli`) and\n`commands/_agent-brief-cli.ts` (`runAgentBriefCli`) — exit 1 on\ngateway-not-running, exit 2 in the catch; both re-throw an incoming\n`CliExit` unchanged as the first line of that catch.\n- `commands/oncall.ts`, `commands/standup.ts` — the same two sites each.\n- `commands/decisions.ts` — `--rebuild` without `--yes`, exit 2.\n- `commands/glossary.ts` — rebuild-preview catch, exit 1 or 2, with the\nsame re-throw guard.\n- `lib/agent-brief-render.ts` (`renderAgentBrief`) — the empty-index gap\nthrows `CliExit(1)`.\n\nOnly the agent-brief commands are converted. Other commands\n(`changelog`, `preflight`'s approve mode, and the rest) still call\n`process.exit` directly.\n\n## A test artifact this removed\n\n`renderAgentBrief`'s empty-index path called `process.exit(1)` directly,\nso in production `runAgentCli`'s catch never ran. Under the tests'\n`process.exit` stub, the stub's throw landed in that catch, which\nre-labelled it to exit 2 and printed a stray `exit 1` line. Tests named\n\"exits 1\" were asserting 2. Those tests are re-pinned to the real\nbehaviour: code 1, no stray line.\n\nThe vestigial `captureExit: true` stub is removed from every test file\nwhere nothing under test can reach `process.exit` any more. It was worse\nthan dead: a re-introduced `process.exit` inside a shared `try` would\nhave been caught, printed and re-thrown as `CliExit(2)`, so every \"exits\n2\" test would still have passed. `preflight.dispatcher.test.ts` keeps\nits stub, since its approve-mode block exercises a real\n`process.exit(1)`.\n\n## Cleanup that now runs must not change the outcome\n\n`process.exit` skipped the `finally` blocks on a failure path. Now that\nthey run, a rejecting `disconnect()` would replace the pending\n`CliExit`, and `main()` would print the teardown error and exit 1. The\nfour cleanup sites go through `lib/disconnect-quietly.ts`, which\nswallows a teardown failure. The outcome is already decided by then, and\nthe socket is about to be dropped anyway.\n\n## Tests\n\n- `cli-exit.test.ts` — the class and the classifier.\n- Dispatcher tests prove a `CliExit` thrown from inside the shared\ncatch's `try` propagates unchanged: no re-printed message, no re-coding.\n- `glossary.test.ts` injects a `CliExit(1)` through the existing\n`withGatewayIpc` DI seam; red without the re-throw guard.\n- `test/e2e/glossary.smoke.e2e.test.ts` adds a process-level case\ndriving `nimbus decisions --rebuild` with no `--yes` and no gateway. It\nasserts exit 2, no re-printed `exit 2` line, and no \"Done.\" outro, which\nare the three signals only `main()`'s `cli-exit` arm produces. It was\nproven able to fail by temporarily breaking the `instanceof CliExit`\ncheck.\n\n## Invariants\n\nNone touched. No IPC method, migration, egress class or HITL action\ntype. CLI-only.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Sonnet 5 <noreply@anthropic.com>",
-          "timestamp": "2026-09-21T09:21:13Z",
-          "tree_id": "4999762dacc44a42597f7f6f6f6a6feabb018881",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/1c8d4bbca5e47c013f9133a891c600156d0108c9"
-        },
-        "date": 1789983212973,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 332.5279990999967,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 337.0874059499973,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 178.05071464999892,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d09d07eb5b94fe1464f307e5a66ac7d83b644e28",
+          "message": "feat(connectors): google calendar event writes, the calendar scope and connectors 0.20.0 (#2185)\n\n## Summary\n\nBumps `@nimbus-dev/connectors` to **0.20.0** and adds the gateway half\nof Google Calendar's first writes (nimbus-agent/nimbus-mcp-servers#110,\nreleased in #111). It covers the three write rows, the `calendar` scope,\nand passing Google Calendar's own granted scopes to the connector at\nspawn.\n\n**This unblocks every branch.** 0.20.0 is published, so\n`audit:connector-version-skew` fails `main` until the pin moves.\n\n**The rows** (owner rulings 2026-11-27):\n\n| Tool | Wave / offer | Before-state | Notes |\n|---|---|---|---|\n| `gcal_event_create` | 2, offered | none (a create has no prior state)\n| The typed preview shows the calendar, title, times, location, guests,\nrecurrence and `sendUpdates`. |\n| `gcal_event_update` | 2, offered | `gcal_event_get`: title, times,\nguest count, recurring or not; never the description | Irreversible. The\npreview says `attendees` replaces the whole guest list. A guard refuses\nan update that sets nothing, or sets only one of `start`/`end`. |\n| `gcal_event_delete` | 4, offered | `gcal_event_get` (as above) |\nIrreversible. **The confirm text is the whole event id**\n(`google_calendar/delete <eventId>`): an occurrence id is\n`<seriesId>_<timestamp>`, so a tail would name only the time of day. The\npreview says a series id deletes every occurrence, and what\n`sendUpdates` notifies. |\n\n- All three are in `HITL_REQUIRED_BACKING`. Every optional key is in\n`NULL_REFUSED_OPTIONAL_KEYS`.\n- **Scope gate:** the rows are offered only when Google Calendar's own\nconnection holds `calendar` (or `calendar.events`), as\n`gmail_thread_archive` is gated today. Until then, `nimbus connector\nwrites status` and the enable prompt say \"re-authorise Google Calendar\nto grant calendar\".\n\n**Scopes and spawn** (owner ruling: the full `calendar` scope):\n- Google Calendar's `defaultScopes` become `calendar.readonly` +\n`calendar`. The read scope is kept, as Gmail kept its read scope beside\n`gmail.modify`. The Google scope lists moved unchanged into\n`connectors/google-oauth-scopes.ts`, to keep `connector-catalog.ts` at\nits file-size baseline.\n- The granted scopes are passed at spawn as `GOOGLE_OAUTH_SCOPES`, read\nfrom `google_calendar.oauth` **only**. A shared `google.oauth` holding\n`calendar` neither starts Google Calendar nor lends it scopes; tests\ncover this. `lazy-mesh/mesh/listing-table.ts` and\n`lazy-mesh/service-credential.ts` gained `google_calendar` (own key\nonly), so the model door can list the tools.\n- **Fixed in the same PR, older code that the new scope would make\nworse:** `nimbus connector auth google_calendar` used to save the token\nto the shared `google.oauth` and then copy it to\n`google_calendar.oauth`. With `calendar` added, the shared key would\nhave held a calendar-write token that Drive, Photos, Meet and Gmail pick\nup. `runPKCEFlow` now takes a `vaultKey`, and the Calendar consent saves\nstraight to its own key and never writes `google.oauth`. A test checks\nthat an existing shared key is left byte-for-byte unchanged. Other\nGoogle and Microsoft consents are unchanged.\n\n**Existing users:** a connection made before this change holds only\n`calendar.readonly`. Sync and reads keep working, and the writes are not\noffered until the owner re-runs `nimbus connector auth google_calendar`.\nThat is documented beside Gmail's re-consent paragraph in\n`docs/cli-reference.md`.\n\n**Known bounds, stated in tests and docs:**\n- **Create's reversibility is recorded as unknown, not reversible.** The\nruling was \"reversible, inverse `gcal_event_delete`\", but the\nreversibility table can only build an inverse from before-read captures,\nand the delete needs the new event id, which exists only in the create's\nresult. Encoding it would need result-capture support in the\nreversibility engine. That is a follow-up for the owner to decide.\n- Event descriptions are not scanned for remote content (the Outlook\ncalendar rows' precedent), although Google may render some HTML there,\nincluding in invitations when `sendUpdates` is `all`.\n- An event id over the 200-character confirm limit, or one with\nuntypable characters, has its delete refused rather than truncated.\nNormal Google ids are far shorter.\n- A Google Calendar consent made before this fix may already have copied\na `calendar.readonly` token into `google.oauth`. This PR stops new\nconsents from doing that; it does not clean an existing shared key.\n- Not checked against the live API: whether `sendUpdates: none` sends no\nemail (Google says some may still be sent), and the update's explicit\n`null` for the other time kind.\n\n**Counts:** 140 write rows, 123 offerable (`CLAUDE.md`/`GEMINI.md`,\n`docs/SECURITY-INVARIANTS.md`, `docs/cli-reference.md`, tests).\n\n## Related Issue\n\nPhase 9.7 connector follow-ups, \"Google Calendar writes\".\n\n## Type of Change\n\n- [x] New feature\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors (`bun run\npreflight:fast` PASSED)\n- [x] `bun run lint` passes\n- [x] All existing tests pass. connectors 9851 pass / 4 fail;\nsecurity-invariants 726 / 1; engine 1920 / 0; ipc 4936 / 0; share 130 /\n0; auth 181 / 0. The 5 failures (the I15 user-MCP write-grant test and 4\nin `mesh-user-mcp-write-grant.test.ts`) fail identically on unmodified\n`main` in a worktree under `.claude/`, whose path segment the\nmarker-folder rule refuses. `audit:file-size`,\n`audit:connector-version-skew` (0.20.0) and `audit:connector-hosts` are\nOK.\n- [x] New behaviour is covered by tests (`google-calendar-rows.test.ts`,\n`google-spawn-env.test.ts`, the consent-key tests,\n`confirm-rows.test.ts`)\n- [x] No `any` types introduced\n- [x] No credentials, tokens, or secret values appear\n- [x] Platform-specific code is behind `PlatformServices` (n/a)\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable (the rows add HITL types, and nothing is removed)\n- [x] Does not touch `docs/README.md`\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-27T12:20:09+02:00",
+          "tree_id": "78cdd1442a84f83f42e72b40cd9ce03819fbfb64",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/d09d07eb5b94fe1464f307e5a66ac7d83b644e28"
+        },
+        "date": 1795775470955,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 256.2377480000014,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 256.9692456499888,
             "unit": "ms"
           }
         ]
