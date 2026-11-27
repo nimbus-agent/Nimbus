@@ -27,14 +27,19 @@ describe("pack-settable allowlist", () => {
       "oncall.push.enabled",
       "decisions.min_confidence",
     ]);
-    expect(PACK_SETTABLE_ARRAYS.map((a) => a.header)).toEqual(["fleet.job"]);
+    // Phase 7 slice 7: the cost rule and report arrays; never `cost.report.channel`.
+    expect(PACK_SETTABLE_ARRAYS.map((a) => a.header)).toEqual([
+      "fleet.job",
+      "cost.rule",
+      "cost.report",
+    ]);
     for (const k of PACK_SETTABLE_KEYS) {
       expect(k.why.length).toBeGreaterThan(0);
       expect(k.consumer).toBe(k.section === "decisions" ? "per-call" : "reactive");
     }
     for (const a of PACK_SETTABLE_ARRAYS) {
       expect(a.why.length).toBeGreaterThan(0);
-      expect(a.consumer).toBe("reactive");
+      expect(a.consumer).toBe(a.header === "fleet.job" ? "reactive" : "per-call");
     }
   });
 

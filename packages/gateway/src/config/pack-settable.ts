@@ -2,8 +2,14 @@
 // reports problems; it reads no files. A pack fragment may set only the keys listed
 // here; one bad line refuses the whole fragment.
 
+import { COST_SET_VALUE_RE } from "../finops/cost-rules.ts";
 import { parseSourceMapList } from "../sources/source-mapping.ts";
 import { type DocLine, type DocSection, parseLayerDoc } from "./layered-merge.ts";
+import {
+  checkPackCostSections,
+  isPackCostArrayHeader,
+  PACK_COST_INTERNAL_ENVS_MAX,
+} from "./pack-cost-check.ts";
 import { parseStrictStringList } from "./strict-string-list.ts";
 import { parseBool, parseIntDec, parseString } from "./toml-primitives.ts";
 
@@ -131,13 +137,37 @@ export const PACK_SETTABLE_LISTS: readonly PackSettableList[] = [
     expect: 'a non-empty array of "service:type=kind" entries, e.g. ["ext_notes:highlight=note"]',
     parse: (valRaw) => parseSourceMapList(valRaw),
   },
+  {
+    section: "cost",
+    key: "internal_envs",
+    consumer: "per-call",
+    why: "the environments `nimbus cost internal` counts as internal cost; the owner's own list replaces it",
+    expect: `a non-empty array of at most ${PACK_COST_INTERNAL_ENVS_MAX} env names, e.g. ["ci", "dev"]`,
+    parse: (valRaw) => {
+      const envs = parseStrictStringList(valRaw, (env) => COST_SET_VALUE_RE.test(env));
+      return envs !== undefined && envs.length <= PACK_COST_INTERNAL_ENVS_MAX ? envs : undefined;
+    },
+  },
 ];
 
+/**
+ * Array tables. `[[fleet.job]]` merges by name; a cost array is supplied whole by the highest layer that has it,
+ * so an owner's own `[[cost.rule]]` or `[[cost.report]]` replaces the pack's set. `[[cost.report.channel]]` is
+ * deliberately absent: a pack never chooses where cost data goes.
+ */
 export const PACK_SETTABLE_ARRAYS: readonly {
-  readonly header: "fleet.job";
-  readonly consumer: "reactive";
+  readonly header: "fleet.job" | "cost.rule" | "cost.report";
+  readonly consumer: PackConsumerMode;
   readonly why: string;
-}[] = [{ header: "fleet.job", consumer: "reactive", why: "scheduled fleet jobs, merged by name" }];
+}[] = [
+  { header: "fleet.job", consumer: "reactive", why: "scheduled fleet jobs, merged by name" },
+  { header: "cost.rule", consumer: "per-call", why: "default cost allocation rules, ordered" },
+  {
+    header: "cost.report",
+    consumer: "per-call",
+    why: "cost report definitions; they send nothing without an owner-written channel",
+  },
+];
 
 /** Returns the problems with the rendered `[[fleet.job]]` blocks; empty when fine. */
 export type PackJobChecker = (jobsText: string) => readonly string[];
@@ -148,6 +178,8 @@ export type PackFragmentCheck =
       readonly scalars: ReadonlyMap<string, PackScalar>;
       readonly lists: ReadonlyMap<string, readonly string[]>;
       readonly jobNames: readonly string[];
+      /** The fragment sets a cost default (`[cost]`, `[[cost.rule]]` or `[[cost.report]]`). */
+      readonly cost: boolean;
     }
   | { readonly ok: false; readonly problems: readonly string[] };
 
@@ -244,14 +276,22 @@ function parseSettableValue<T>(
   }
 }
 
-/** An array table: refused unless pack-settable, else checked as a `[[fleet.job]]` block. */
+/**
+ * An array table: refused unless pack-settable. A `[[fleet.job]]` block is checked here; a cost block is
+ * collected for the cost compiler (`checkPackCostSections`).
+ */
 function checkArraySection(
   section: DocSection,
   header: string,
   problems: string[],
+  costSections: DocSection[],
 ): JobBlock | undefined {
   if (!PACK_SETTABLE_ARRAYS.some((a) => a.header === header)) {
     problems.push(`[[${header}]] is not pack-settable`);
+    return undefined;
+  }
+  if (isPackCostArrayHeader(header)) {
+    costSections.push(section);
     return undefined;
   }
   return checkJobBlock(section, problems);
@@ -270,6 +310,7 @@ export function checkPackFragment(text: string, checkJobs: PackJobChecker): Pack
   const lists = new Map<string, readonly string[]>();
   const seenKeys = new Set<string>();
   const blocks: JobBlock[] = [];
+  const costSections: DocSection[] = [];
   for (const section of doc.sections) {
     if (section.malformed !== undefined) {
       problems.push(`malformed table header: ${section.malformed.trim()}`);
@@ -280,16 +321,24 @@ export function checkPackFragment(text: string, checkJobs: PackJobChecker): Pack
       continue;
     }
     if (section.isArray) {
-      const block = checkArraySection(section, section.header, problems);
+      const block = checkArraySection(section, section.header, problems, costSections);
       if (block !== undefined) blocks.push(block);
       continue;
     }
     checkPlainSection(section, section.header, scalars, lists, seenKeys, problems);
+    if (section.header === "cost") costSections.push(section);
   }
+  problems.push(...checkPackCostSections(costSections));
   if (blocks.length > 0) {
     const jobsText = blocks.map((b) => `[[fleet.job]]\n${b.raw.join("\n")}\n`).join("");
     problems.push(...checkJobs(jobsText));
   }
   if (problems.length > 0) return { ok: false, problems };
-  return { ok: true, scalars, lists, jobNames: blocks.map((b) => b.name) };
+  return {
+    ok: true,
+    scalars,
+    lists,
+    jobNames: blocks.map((b) => b.name),
+    cost: costSections.length > 0,
+  };
 }

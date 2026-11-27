@@ -4,9 +4,10 @@
 import { parseRolePackManifestValue, type RolePackManifest } from "@nimbus-dev/registry-format";
 import developer from "./bundled/developer.json" with { type: "json" };
 import devops from "./bundled/devops.json" with { type: "json" };
+import finops from "./bundled/finops.json" with { type: "json" };
 import pm from "./bundled/pm.json" with { type: "json" };
 
-const entries: readonly RolePackManifest[] = [pm, devops, developer].map((raw) =>
+const entries: readonly RolePackManifest[] = [pm, devops, developer, finops].map((raw) =>
   parseRolePackManifestValue(raw),
 );
 

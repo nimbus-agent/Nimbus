@@ -18,8 +18,8 @@ afterEach(() => {
 });
 
 describe("BUNDLED_PACKS", () => {
-  test("holds pm, devops and developer", () => {
-    expect([...BUNDLED_PACKS.keys()].sort()).toEqual(["developer", "devops", "pm"]);
+  test("holds pm, devops, developer and finops", () => {
+    expect([...BUNDLED_PACKS.keys()].sort()).toEqual(["developer", "devops", "finops", "pm"]);
     expect(BUNDLED_PACKS.get("pm")?.members).toEqual([]);
   });
 
