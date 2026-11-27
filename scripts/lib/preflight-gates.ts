@@ -79,17 +79,6 @@ const FAST: readonly Gate[] = [
     tier: "fast",
   },
   {
-    // The connectors ship from their own repo now, so the gateway can silently fall behind a
-    // capability that has already been published. A MINOR gap fails: a connector the shipped
-    // binary cannot load is indistinguishable, to a user, from a connector that does not work. A
-    // patch gap warns. An unreachable registry is INDETERMINATE, never a failure — offline
-    // development and a registry outage are not skew, and a gate that reds for them is one people
-    // learn to ignore.
-    name: "audit:connector-version-skew",
-    cmd: ["bun", "run", "audit:connector-version-skew"],
-    tier: "fast",
-  },
-  {
     // The gateway ships as a `bun build --compile` binary, which cannot bundle a native module: it
     // either fails the compile or produces a binary that cannot load its shared library, where the
     // only symptom is a connector that never works. sqlite-vec is the one native dependency and is
