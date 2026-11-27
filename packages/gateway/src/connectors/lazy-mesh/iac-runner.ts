@@ -53,7 +53,7 @@ import {
   nodeKubeFs,
 } from "../connector-writes/kubeconfig-facts.ts";
 import { manifestForFirstParty } from "./first-party-manifests.ts";
-import { CFN_READ_TOOLS, cfnRegionFor } from "./iac-runner/iac-cfn.ts";
+import { CFN_READ_TOOLS, cfnRefusal, cfnRegionFor } from "./iac-runner/iac-cfn.ts";
 import {
   callChildTool,
   EXIT_WAIT_MS,
@@ -81,7 +81,7 @@ import { wrapIacServerSpec } from "./wrap-server-spec.ts";
 
 // The public surface of this module is unchanged by the split (the pieces live in `./iac-runner/`).
 export { IAC_APPLY_ESCALATE_AFTER_MS as APPLY_ESCALATE_AFTER_MS } from "../connector-writes/iac-limits.ts";
-export { CFN_READ_TOOLS, cfnRegionFor } from "./iac-runner/iac-cfn.ts";
+export { CFN_READ_REFUSALS, CFN_READ_TOOLS, cfnRegionFor } from "./iac-runner/iac-cfn.ts";
 export {
   type ChildCall,
   callChildTool,
@@ -893,13 +893,13 @@ export class IacRunner implements IacHost {
     const unreadable = this.live.liveRecordRefusal();
     if (unreadable !== undefined) throw new Error(unreadable);
     const grants = this.deps.grants();
-    if (!grants.clouds.includes("aws")) throw new Error(IAC_RUNNER_REFUSALS.noCredential);
+    if (!grants.clouds.includes("aws")) throw new Error(cfnRefusal(toolId, "noCloud"));
     const aws = this.resolve("aws");
     if (aws === undefined) throw new Error(IAC_RUNNER_REFUSALS.noBinary);
     const creds = await loadAwsCreds(this.deps.vault);
-    if (!creds.ok) throw new Error(IAC_RUNNER_REFUSALS.noCredential);
+    if (!creds.ok) throw new Error(cfnRefusal(toolId, "noCredential"));
     const region = cfnRegionFor(creds.region, grants.regions);
-    if (region === undefined) throw new Error(IAC_RUNNER_REFUSALS.regionNotApproved);
+    if (region === undefined) throw new Error(cfnRefusal(toolId, "regionNotApproved"));
     if (toolId === "iac_cloudformation_changeset_discard" && !isOurChangeSet(args, region)) {
       throw new Error(IAC_RUNNER_REFUSALS.notOurChangeSet);
     }

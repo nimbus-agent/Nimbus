@@ -13,6 +13,7 @@ import type { IacGrants, IacPathDeps } from "../connector-writes/iac-grants.ts";
 import { IAC_PREFLIGHT_REFUSALS, IAC_TOOL_TIMEOUTS_MS } from "../connector-writes/iac-limits.ts";
 import { iacToolTimeoutMs } from "../registry.ts";
 import {
+  CFN_READ_REFUSALS,
   CFN_READ_TOOLS,
   IAC_RUNNER_REFUSALS,
   IAC_TOOL_PROFILE,
@@ -201,25 +202,48 @@ describe("a read's child: the cfn network and credential, nothing writable", () 
 });
 
 describe("a read is refused before any child as a cfn write is", () => {
+  test("the read refusals are read texts that name the remedy, never 'this change'", () => {
+    const enable = "`nimbus connector writes enable iac --wave 4 --cloud aws --region <region>`";
+    expect(CFN_READ_REFUSALS.noCloud).toContain(enable);
+    expect(CFN_READ_REFUSALS.regionNotApproved).toContain(enable);
+    // Re-enabling replaces the approved scope, so the text says to repeat the directories.
+    expect(CFN_READ_REFUSALS.noCloud).toContain("--workdir");
+    expect(CFN_READ_REFUSALS.noCredential).toContain("`nimbus vault set`");
+    expect(CFN_READ_REFUSALS.noCredential).toContain("access key id");
+    for (const text of Object.values(CFN_READ_REFUSALS)) {
+      expect(text.startsWith("iac: the CloudFormation reads")).toBe(true);
+      expect(text).not.toContain("change");
+    }
+  });
+
   test("no aws cloud granted, no stored credential, an unapproved region, no binary, a stopped runner", async () => {
     const vault = await awsVault();
     const cases: Array<[Partial<IacRunnerDeps>, string, NimbusVault]> = [
-      [{ grants: () => ({ ...GRANTED, clouds: [] }) }, IAC_RUNNER_REFUSALS.noCredential, vault],
-      [{}, IAC_RUNNER_REFUSALS.noCredential, createMockVault()],
+      [{ grants: () => ({ ...GRANTED, clouds: [] }) }, CFN_READ_REFUSALS.noCloud, vault],
+      [{}, CFN_READ_REFUSALS.noCredential, createMockVault()],
       [
         { grants: () => ({ ...GRANTED, regions: ["eu-west-1"] }) },
-        IAC_RUNNER_REFUSALS.regionNotApproved,
+        CFN_READ_REFUSALS.regionNotApproved,
         vault,
       ],
       [{ resolveBinary: () => undefined }, IAC_RUNNER_REFUSALS.noBinary, vault],
     ];
     for (const [over, reason, v] of cases) {
-      const { r, children } = make(v, over);
-      await expect(r.execute("iac_cloudformation_stack_get", { stackName: "p" })).rejects.toThrow(
-        reason,
-      );
-      expect(children).toEqual([]);
+      for (const id of READS) {
+        const { r, children } = make(v, over);
+        await expect(r.execute(id, ARGS[id])).rejects.toThrow(reason);
+        expect(children).toEqual([]);
+      }
     }
+    // A cfn WRITE keeps its own texts.
+    const w = make(vault, { grants: () => ({ ...GRANTED, clouds: [] }) });
+    await expect(w.r.execute("iac_cloudformation_deploy", { stackName: "p" })).rejects.toThrow(
+      IAC_RUNNER_REFUSALS.noCredential,
+    );
+    const wr = make(vault, { grants: () => ({ ...GRANTED, regions: ["eu-west-1"] }) });
+    await expect(wr.r.execute("iac_cloudformation_deploy", { stackName: "p" })).rejects.toThrow(
+      IAC_RUNNER_REFUSALS.regionNotApproved,
+    );
     const { r, children } = make(vault);
     await r.stop();
     await expect(r.execute("iac_cloudformation_stack_get", { stackName: "p" })).rejects.toThrow(
