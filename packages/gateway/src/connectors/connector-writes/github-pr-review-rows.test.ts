@@ -221,7 +221,10 @@ describe("github_pr_review_create: the before-state reader and the head binding"
     expect(allows(undefined)).toBe(false);
     expect(allows(null)).toBe(false);
     expect(allows(HEAD.slice(0, 7))).toBe(false);
-    expect(allows(HEAD.toUpperCase())).toBe(false);
+    // The connector's schema takes either case, and a sha names the same commit in both.
+    expect(HEAD).toMatch(/[a-f]/);
+    expect(allows(HEAD.toUpperCase())).toBe(true);
+    expect(allows(HEAD, mcp({ ...PR, head: { sha: HEAD.toUpperCase() } }))).toBe(true);
     expect(allows(HEAD, mcp({ ...PR, head: {} }))).toBe(false);
     expect(() => allows(HEAD, { content: [] })).toThrow();
   });

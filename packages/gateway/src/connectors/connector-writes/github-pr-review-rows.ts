@@ -46,7 +46,8 @@ export function selectGithubPrReviewTarget(reply: unknown): readonly BeforeState
  * model must send `commitId`, and the pull request's head, read at call time, must be exactly that
  * commit. So the review the owner approves lands on the code the prompt names, never on a head
  * pushed in between (GitHub's `commit_id`). An absent, `null` or unreadable `commitId` or head
- * refuses; the comparison is case-sensitive, as GitHub reports a lowercase sha.
+ * refuses. The comparison ignores case: the connector's schema takes either, and a hex sha names
+ * the same commit in both.
  */
 export const GITHUB_REVIEW_HEAD_GUARD: BeforeStateGuard = {
   reason:
@@ -59,7 +60,7 @@ export const GITHUB_REVIEW_HEAD_GUARD: BeforeStateGuard = {
       typeof commitId === "string" &&
       SHA_40.test(commitId) &&
       head !== undefined &&
-      commitId === head
+      commitId.toLowerCase() === head.toLowerCase()
     );
   },
 };
