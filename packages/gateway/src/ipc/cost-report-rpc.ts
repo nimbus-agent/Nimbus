@@ -59,7 +59,7 @@ export interface CostReportRenderResult {
   readonly channels: CostReportChannelRender[];
 }
 
-function templateText(ch: CostReportChannelDef, configDir: string | undefined): string {
+export function templateText(ch: CostReportChannelDef, configDir: string | undefined): string {
   if ("inline" in ch.template) return ch.template.inline;
   if (configDir === undefined)
     throw new CostTemplateFileError("no config directory to read template files from");
@@ -67,7 +67,7 @@ function templateText(ch: CostReportChannelDef, configDir: string | undefined): 
 }
 
 /** The enforced ChatOps policy, or undefined when it cannot be read (the door then refuses chat posts). */
-function readChatops(ctx: CostViewsRpcCtx): ChatopsPolicy | undefined {
+export function readChatops(ctx: CostViewsRpcCtx): ChatopsPolicy | undefined {
   try {
     return ctx.chatops?.();
   } catch {
@@ -120,13 +120,14 @@ function renderChannel(
   };
 }
 
-function findReport(
+export function findReport(
   reports: readonly CostReportDef[],
   name: unknown,
   configError: string | null,
+  method = "cost.reportRender",
 ): CostReportDef {
   if (typeof name !== "string" || name.length === 0 || name.length > 64) {
-    throw new CostViewsRpcError(-32602, "cost.reportRender: name must be a report name");
+    throw new CostViewsRpcError(-32602, `${method}: name must be a report name`);
   }
   const def = reports.find((r) => r.name === name);
   if (def !== undefined) return def;
@@ -134,18 +135,22 @@ function findReport(
   const refused = configError === null ? "" : ` (the report config was refused: ${configError})`;
   throw new CostViewsRpcError(
     -32602,
-    `cost.reportRender: no report named "${name}" (known: ${known})${refused}`,
+    `${method}: no report named "${name}" (known: ${known})${refused}`,
   );
 }
 
-function channelsOf(def: CostReportDef, channel: unknown): readonly CostReportChannelDef[] {
+export function channelsOf(
+  def: CostReportDef,
+  channel: unknown,
+  method = "cost.reportRender",
+): readonly CostReportChannelDef[] {
   if (channel === undefined) return def.channels;
   const picked = def.channels.filter((c) => c.kind === channel);
   if (picked.length === 0) {
     const kinds = def.channels.map((c) => c.kind).join(", ") || "none";
     throw new CostViewsRpcError(
       -32602,
-      `cost.reportRender: report "${def.name}" has no ${String(channel).slice(0, 16)} channel (it has: ${kinds})`,
+      `${method}: report "${def.name}" has no ${String(channel).slice(0, 16)} channel (it has: ${kinds})`,
     );
   }
   return picked;
@@ -177,12 +182,23 @@ export function handleCostReportRender(raw: unknown, ctx: CostViewsRpcCtx): Cost
   const cfg = config(ctx);
   const def = findReport(cfg.reports, p["name"], cfg.error ?? cfg.reportsError);
   const channels = channelsOf(def, p["channel"]);
+  const model = reportModel(ctx, cfg, def, def.tz ?? machineTimeZone());
+  const chatops = readChatops(ctx);
+  return {
+    model,
+    channels: channels.map((ch) => renderChannel(ch, model, ctx.configDir, chatops)),
+  };
+}
+
+/** The report over the local cost lines for its current period in zone `tz` (no network, no model). */
+export function reportModel(
+  ctx: CostViewsRpcCtx,
+  cfg: ReturnType<typeof config>,
+  def: CostReportDef,
+  tz: string,
+): CostReportModel {
   const nowMs = (ctx.now ?? Date.now)();
-  const { range, previous, weekStart } = reportPeriods(
-    def.period,
-    def.tz ?? machineTimeZone(),
-    nowMs,
-  );
+  const { range, previous, weekStart } = reportPeriods(def.period, tz, nowMs);
   // ONE gather over both periods, so one source rule applies to both (as `cost.why` does).
   const both = gatherCostViewInput(
     ctx.db,
@@ -194,7 +210,7 @@ export function handleCostReportRender(raw: unknown, ctx: CostViewsRpcCtx): Cost
     },
     nowMs,
   );
-  const model = buildCostReport({
+  return buildCostReport({
     lines: both.lines,
     rules: cfg.rules,
     configError: cfg.error,
@@ -206,9 +222,4 @@ export function handleCostReportRender(raw: unknown, ctx: CostViewsRpcCtx): Cost
     lastDays: both.lastDays,
     empty: both.empty,
   });
-  const chatops = readChatops(ctx);
-  return {
-    model,
-    channels: channels.map((ch) => renderChannel(ch, model, ctx.configDir, chatops)),
-  };
 }

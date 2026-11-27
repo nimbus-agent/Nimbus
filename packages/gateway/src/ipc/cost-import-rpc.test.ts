@@ -119,6 +119,7 @@ describe("the Phase 7 cost methods over LAN (I5)", () => {
     "cost.rulesCheck",
     "cost.reportList",
     "cost.reportRender",
+    "cost.reportSchedule",
   ])("%s is refused over LAN regardless of grant-write", (method) => {
     for (const writeAllowed of [true, false]) {
       expect(() => checkLanMethodAllowed(method, { peerId: "p", writeAllowed })).toThrow(LanError);

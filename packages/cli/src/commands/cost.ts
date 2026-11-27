@@ -6,6 +6,10 @@ import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 import { parseCostImportArgs, runCostImportWith } from "./cost-import-cli.ts";
 import { parseCostReportArgs, runCostReportWith } from "./cost-report-cli.ts";
+import {
+  parseCostReportScheduleArgs,
+  runCostReportScheduleWith,
+} from "./cost-report-schedule-cli.ts";
 import { parseCostRulesCheckArgs, runCostRulesCheckWith } from "./cost-rules-check-cli.ts";
 import { parseCostViewsArgs, runCostViewsWith } from "./cost-views-cli.ts";
 import { parseCostWasteArgs, runCostWasteWith } from "./cost-waste.ts";
@@ -37,7 +41,8 @@ export const COST_USAGE =
   "       nimbus cost internal [--period <N>d|week|month] [--json|--csv]\n" +
   "       nimbus cost why <product|service> [--period <N>d|week|month] [--json]\n" +
   "       nimbus cost rules check [--period <N>d|week|month] [--json]\n" +
-  "       nimbus cost report [<name> [--channel slack|teams|gmail|outlook] [--json|--csv]]";
+  "       nimbus cost report [<name> [--channel slack|teams|gmail|outlook] [--json|--csv]]\n" +
+  "       nimbus cost report schedule <name> [--channel slack|teams|gmail|outlook] [--json]";
 
 export interface CostAnomaliesArgs {
   readonly json: boolean;
@@ -272,6 +277,10 @@ function subcommandRunner(args: readonly string[], sink: CostSink): CostRun | un
   if (args[0] === "rules") {
     const r = parseCostRulesCheckArgs(args.slice(1));
     return r === undefined ? undefined : (c) => runCostRulesCheckWith(c, r, sink);
+  }
+  if (args[0] === "report" && args[1] === "schedule" && args.length > 2) {
+    const s = parseCostReportScheduleArgs(args.slice(2));
+    return s === undefined ? undefined : (c) => runCostReportScheduleWith(c, s, sink);
   }
   if (args[0] === "report") {
     const p = parseCostReportArgs(args.slice(1));

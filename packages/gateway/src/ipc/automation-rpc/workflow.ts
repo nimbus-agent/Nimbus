@@ -14,6 +14,7 @@ import {
   upsertWorkflowByName,
 } from "../../automation/workflow-store.ts";
 import { constantTimeStringEqual } from "../../util/timing-safe-compare.ts";
+import type { ClientKind } from "../server/client-kind.ts";
 import {
   type AutomationCtx,
   type AutomationHandler,
@@ -79,6 +80,51 @@ function refuseSuppliedClientKind(rec: Record<string, unknown> | undefined, meth
   }
 }
 
+/** A save the gateway refused; its message names why (`workflow.save` adds its own prefix). */
+export class WorkflowSaveError extends Error {
+  override readonly name = "WorkflowSaveError";
+}
+
+/**
+ * The ONE save path (`workflow.save`, and `cost.reportSchedule` for a generated cost report workflow): the
+ * steps are validated as at every run, the schedule is resolved for the CONNECTION's kind (never a param),
+ * then the row is upserted by name. Throws {@link WorkflowSaveError}.
+ */
+export function saveWorkflowDefinition(
+  db: AutomationCtx["db"],
+  d: {
+    readonly name: string;
+    readonly description: string | null;
+    readonly stepsJson: string;
+    readonly schedule: unknown;
+    readonly scheduleTz: unknown;
+    readonly clientKind: ClientKind | undefined;
+    readonly now: number;
+  },
+): { id: string; scheduled: boolean } {
+  // A query or write step is validated at SAVE and again at every run (Phase 10 SA2); a
+  // run-only workflow saves exactly as it always did.
+  const refusal = stepsSaveRefusal(d.stepsJson);
+  if (refusal !== undefined) throw new WorkflowSaveError(refusal);
+  // A save sets the schedule it names or clears the old one; only a local owner client may set one
+  // (SA4): the kind comes from the connection, and an absent kind is `unknown`, which is refused.
+  let schedule: ReturnType<typeof resolveSaveSchedule>;
+  try {
+    schedule = resolveSaveSchedule({
+      schedule: d.schedule,
+      scheduleTz: d.scheduleTz,
+      stepsJson: d.stepsJson,
+      clientKind: d.clientKind ?? "unknown",
+      now: d.now,
+    });
+  } catch (e) {
+    if (e instanceof ScheduleSaveError) throw new WorkflowSaveError(e.message);
+    throw e;
+  }
+  const id = upsertWorkflowByName(db, d.name, d.description, d.stepsJson, d.now, schedule);
+  return { id, scheduled: schedule !== null };
+}
+
 export const WORKFLOW_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
   "workflow.list": (_rec, ctx) => ({
     kind: "hit",
@@ -90,31 +136,26 @@ export const WORKFLOW_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
       rec !== undefined && typeof rec["description"] === "string" ? rec["description"] : null;
     const name = requireString(rec, "name");
     const stepsJson = requireString(rec, "stepsJson");
-    // A query or write step is validated at SAVE and again at every run (Phase 10 SA2); a
-    // run-only workflow saves exactly as it always did.
     const refusal = stepsSaveRefusal(stepsJson);
     if (refusal !== undefined) throw new AutomationRpcError(-32602, `workflow.save: ${refusal}`);
     refuseSuppliedClientKind(rec, "workflow.save");
-    const now = Date.now();
-    // A save sets the schedule it names or clears the old one; only a local owner client may set one
-    // (SA4): the kind comes from the connection, and an absent kind is `unknown`, which is refused.
-    let schedule: ReturnType<typeof resolveSaveSchedule>;
     try {
-      schedule = resolveSaveSchedule({
+      const value = saveWorkflowDefinition(ctx.db, {
+        name,
+        description,
+        stepsJson,
         schedule: rec?.["schedule"],
         scheduleTz: rec?.["scheduleTz"],
-        stepsJson,
-        clientKind: ctx.clientKind ?? "unknown",
-        now,
+        clientKind: ctx.clientKind,
+        now: Date.now(),
       });
+      return { kind: "hit", value };
     } catch (e) {
-      if (e instanceof ScheduleSaveError) {
+      if (e instanceof WorkflowSaveError) {
         throw new AutomationRpcError(-32602, `workflow.save: ${e.message}`);
       }
       throw e;
     }
-    const id = upsertWorkflowByName(ctx.db, name, description, stepsJson, now, schedule);
-    return { kind: "hit", value: { id, scheduled: schedule !== null } };
   },
 
   "workflow.scheduleList": (_rec, ctx) => ({

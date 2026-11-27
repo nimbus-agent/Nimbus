@@ -48,7 +48,7 @@ const withReport = (over: Record<string, unknown>) => ({
 describe("REPORT_BODY_FIELDS", () => {
   test("names the body (and the subject of a draft) of each kind's row, and nothing else", () => {
     expect(Object.keys(REPORT_BODY_FIELDS).sort()).toEqual(
-      (["gmail", "outlook", "slack", "teams"] as const).map(costReportToolFor).sort(),
+      (["gmail", "outlook", "slack", "teams"] as const).map((k) => costReportToolFor(k)).sort(),
     );
     expect(REPORT_BODY_FIELDS[costReportToolFor("slack")]).toEqual({ body: "text", subject: null });
     expect(REPORT_BODY_FIELDS[costReportToolFor("teams")]).toEqual({ body: "body", subject: null });
