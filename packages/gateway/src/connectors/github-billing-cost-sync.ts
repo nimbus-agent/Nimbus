@@ -20,7 +20,12 @@ import {
 import { githubBillingLines } from "../finops/github-billing-lines.ts";
 import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
-import { own, requiredCostMonths, runCostAccounts } from "./cost-month-sync.ts";
+import {
+  type CostMonthOutcome,
+  own,
+  requiredCostMonths,
+  runCostAccounts,
+} from "./cost-month-sync.ts";
 import { readGithubCredentialPair } from "./github-api-base.ts";
 import { fetchSameOriginOnly } from "./same-origin-fetch.ts";
 
@@ -47,12 +52,7 @@ export type GithubBillingSyncableOptions = {
   readonly fetch?: typeof fetchSameOriginOnly;
 };
 
-type OrgOutcome =
-  | { kind: "ok"; lines: number; bytes: number }
-  | { kind: "gap"; reason: string }
-  | {
-      kind: "retry";
-    };
+type OrgOutcome = CostMonthOutcome;
 
 const isRateLimited = (res: Response): boolean =>
   res.headers.get("x-ratelimit-remaining") === "0" || res.headers.get("retry-after") !== null;
@@ -114,7 +114,7 @@ async function syncOrgMonth(
   // row is unreadable is not a report of zero cost).
   if (mapped.dropped.malformed > 0) {
     return {
-      kind: "gap",
+      kind: "month_gap",
       reason: `${String(mapped.dropped.malformed)} of GitHub's ${month} billing rows for ${org} could not be read; that month was not updated`,
     };
   }

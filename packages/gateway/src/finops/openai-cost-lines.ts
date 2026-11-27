@@ -91,7 +91,8 @@ function lineOf(day: string, month: string, r: Record<string, unknown>): CostLin
 function bucketDay(b: Record<string, unknown>): string | null {
   const t = b["start_time"];
   if (typeof t !== "number" || !Number.isFinite(t)) return null;
-  return new Date(t * 1000).toISOString().slice(0, 10);
+  const d = new Date(t * 1000);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
 }
 
 const OPENAI_VENDOR: CostBucketVendor = { dayOf: bucketDay, lineOf };

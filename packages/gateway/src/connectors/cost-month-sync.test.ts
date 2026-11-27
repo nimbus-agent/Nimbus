@@ -83,4 +83,15 @@ describe("runCostAccounts", () => {
     const r = await runCostAccounts(prev, [], NOV20, fetcher({}).fn);
     expect(r.cursor).toEqual(EMPTY);
   });
+
+  test("a month gap keeps that month pending with its gap and goes on to older months", async () => {
+    const f = fetcher({ "a:2026-11": { kind: "month_gap", reason: "2 rows unreadable" } });
+    const r = await runCostAccounts(EMPTY, ["a"], NOV20, f.fn);
+    expect(f.calls).toEqual(["a:2026-11", "a:2026-10"]);
+    expect(r.cursor).toEqual({
+      gaps: { a: "2 rows unreadable" },
+      synced: { a: "2026-11-20" },
+      pending: { a: ["2026-11"] },
+    });
+  });
 });

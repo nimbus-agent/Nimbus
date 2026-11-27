@@ -41,6 +41,7 @@ import { type PrCandidateScope, selectPrFileCandidates } from "../prfiles/pr-fil
 import { type BlameRow, pruneBlameForFile, upsertBlameLines } from "../security/blame-store.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { resolveAccessTokenForService } from "./access-token-registry.ts";
+import { loadSchedulerState } from "./scheduler-store.ts";
 
 /**
  * What a syncable may reach, in place of the raw `vault` and `db` handles it holds today.
@@ -353,6 +354,13 @@ export function buildSyncCapabilities<S extends ConnectorServiceId>(
     replaceCostLinesForMonth: (target, lines) => {
       if (!COST_SYNC_SERVICES.has(serviceId)) {
         throw new Error(`replaceCostLinesForMonth is not available to "${serviceId}".`);
+      }
+      // `connector remove` deletes the scheduler row and the lines: a run that was still fetching must not
+      // write them back. Checked at the write (one synchronous step with it), not before the fetch.
+      if (loadSchedulerState(deps.db, serviceId) === null) {
+        throw new Error(
+          `${serviceId} was removed during this sync; its cost lines are not written`,
+        );
       }
       return ingestSyncedCostLines(deps.db, serviceId, target, lines, Date.now());
     },

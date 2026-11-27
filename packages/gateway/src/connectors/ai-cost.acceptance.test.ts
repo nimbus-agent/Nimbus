@@ -119,6 +119,7 @@ async function syncOnce(
   syncable: Syncable,
   cursor: string | null,
 ): Promise<string | null> {
+  upsertSchedulerRegistration(db, service, DAY, Date.now(), false);
   const ctx = {
     ...buildSyncCapabilities({ vault, db, depth: "full" }, service),
     logger: pino({ level: "silent" }),

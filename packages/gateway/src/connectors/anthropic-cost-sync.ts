@@ -38,7 +38,12 @@ export const ANTHROPIC_COST_VENDOR: AiCostVendor = {
   pageUrl: (month, endDay, page) => {
     const u = new URL(`${ANTHROPIC_COST_ORIGIN}/v1/organizations/cost_report`);
     u.searchParams.set("starting_at", `${month}-01T00:00:00Z`);
-    u.searchParams.set("ending_at", `${endDay}T00:00:00Z`);
+    // The report returns buckets that END BEFORE `ending_at`, and the last day's bucket ends AT `endDay`: ask one
+    // day further so it is included (the mapper drops any bucket outside the month or after today).
+    const after = new Date(Date.parse(`${endDay}T00:00:00Z`) + 86_400_000)
+      .toISOString()
+      .slice(0, 10);
+    u.searchParams.set("ending_at", `${after}T00:00:00Z`);
     u.searchParams.set("bucket_width", "1d");
     u.searchParams.set("limit", "31");
     u.searchParams.append("group_by[]", "workspace_id");

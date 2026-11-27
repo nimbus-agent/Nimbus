@@ -131,4 +131,13 @@ describe("openaiCostLines", () => {
     expect(dropped.malformed).toBe(0);
     expect(lines.map((l) => [l.skuId, l.model, l.billedCost])).toEqual([["unknown", null, 1.5]]);
   });
+
+  test("a bucket whose start_time is not a representable date is malformed, never a thrown RangeError", () => {
+    const { lines, dropped } = openaiCostLines(
+      [{ object: "bucket", start_time: 1e20, results: [result()] }],
+      "2026-11",
+    );
+    expect(lines).toEqual([]);
+    expect(dropped.malformed).toBe(1);
+  });
 });

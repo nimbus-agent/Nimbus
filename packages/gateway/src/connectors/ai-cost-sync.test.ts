@@ -8,6 +8,7 @@ import { readCostLines } from "../finops/cost-line-store.ts";
 import { decodeCostSyncCursor, encodeCostSyncCursor } from "../finops/cost-source-gaps.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
+import { upsertSchedulerRegistration } from "../sync/scheduler-store.ts";
 import { buildSyncCapabilities } from "../sync/sync-capabilities.ts";
 import type { SyncContext } from "../sync/types.ts";
 import { createMockVault } from "../vault/mock.ts";
@@ -40,13 +41,16 @@ beforeEach(() => {
 });
 afterEach(() => db.close());
 
-const ctxFor = (serviceId: "openai_billing" | "anthropic_billing"): SyncContext =>
-  ({
+const ctxFor = (serviceId: "openai_billing" | "anthropic_billing"): SyncContext => {
+  // The scheduler registers a service before it runs it (the cost write refuses a removed one).
+  upsertSchedulerRegistration(db, serviceId, 86_400_000, NOW, false);
+  return {
     ...buildSyncCapabilities({ vault, db, depth: "full" }, serviceId),
     logger: pino({ level: "silent" }),
     rateLimiter: limiter,
     depth: "full",
-  }) as unknown as SyncContext;
+  } as unknown as SyncContext;
+};
 
 function fakeVendor(
   respond: (url: URL) => { status: number; body?: unknown; headers?: Record<string, string> },
@@ -348,5 +352,104 @@ describe("the Anthropic cost sync", () => {
       null,
     );
     expect(v.calls.map((c) => c.url.searchParams.get("page"))).toEqual([null, null]);
+  });
+
+  test("the default transport refuses a cross-origin redirect: the sync retries and the key reaches only OpenAI", async () => {
+    await vault.set("openai_billing.admin_key", "sk-secret");
+    const seen: string[] = [];
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      seen.push(
+        `${new URL(String(input)).origin} ${new Headers(init?.headers).get("authorization") ?? ""}`,
+      );
+      return new Response("", { status: 302, headers: { location: "https://evil.example/steal" } });
+    }) as typeof fetch;
+    let out: Awaited<ReturnType<ReturnType<typeof createOpenaiCostSyncable>["sync"]>>;
+    try {
+      out = await createOpenaiCostSyncable({ now: () => NOW }).sync(ctxFor("openai_billing"), null);
+    } finally {
+      globalThis.fetch = original;
+    }
+    expect(seen.every((s) => s === "https://api.openai.com Bearer sk-secret")).toBe(true);
+    expect(seen.length).toBeGreaterThan(0);
+    expect(decodeCostSyncCursor(OPENAI_COST_VENDOR.cursorPrefix, out.cursor).pending).toEqual({
+      openai: ["2026-11", "2026-10"],
+    });
+    expect(lines("openai_billing")).toEqual([]);
+  });
+
+  test("a has_more that is not a boolean, or a repeated cursor, is a retry: the month is not written", async () => {
+    await vault.set("openai_billing.admin_key", "sk-x");
+    const sync = (fetch: typeof fetchSameOriginOnly) =>
+      createOpenaiCostSyncable({ now: () => NOW, fetch }).sync(ctxFor("openai_billing"), null);
+    await sync(fakeVendor(() => ({ status: 200, body: openaiPage(2) })).fetch);
+    await sync(
+      fakeVendor(() => ({
+        status: 200,
+        body: { ...openaiPage(9), has_more: "true", next_page: "p2" },
+      })).fetch,
+    );
+    expect(lines("openai_billing")).toEqual([["2026-11-19", "proj_checkout", "gpt-6.2-astra", 2]]);
+    const looping = fakeVendor((u) =>
+      u.searchParams.get("page") === "p2"
+        ? { status: 200, body: openaiPage(9, "p2") }
+        : { status: 200, body: openaiPage(9, "p2") },
+    );
+    await sync(looping.fetch);
+    expect(lines("openai_billing")).toEqual([["2026-11-19", "proj_checkout", "gpt-6.2-astra", 2]]);
+  });
+
+  test("Anthropic is asked one day past the window, so the last day's bucket is in the report", async () => {
+    await vault.set("anthropic_billing.admin_key", "k");
+    const v = fakeVendor(() => ({ status: 200, body: anthropicPage("100") }));
+    await createAnthropicCostSyncable({ now: () => NOW, fetch: v.fetch }).sync(
+      ctxFor("anthropic_billing"),
+      null,
+    );
+    const ending = v.calls.map((c) => c.url.searchParams.get("ending_at"));
+    // November's window ends tomorrow (2026-11-21), October's on 2026-11-01: each is asked one day further.
+    expect(ending).toEqual(["2026-11-22T00:00:00Z", "2026-11-02T00:00:00Z"]);
+  });
+
+  test("a connector removed while its sync was fetching gets no lines written back", async () => {
+    await vault.set("openai_billing.admin_key", "sk-x");
+    const ctx = ctxFor("openai_billing");
+    const v = fakeVendor(() => {
+      // `connector remove` runs while the request is in flight: the scheduler row and lines go.
+      db.run("DELETE FROM scheduler_state WHERE service_id = 'openai_billing'");
+      return { status: 200, body: openaiPage(3) };
+    });
+    await createOpenaiCostSyncable({ now: () => NOW, fetch: v.fetch }).sync(ctx, null);
+    expect(lines("openai_billing")).toEqual([]);
+  });
+
+  test("an unreadable month keeps its gap and stays pending, and older months are still read", async () => {
+    await vault.set("openai_billing.admin_key", "sk-x");
+    const v = fakeVendor((u) => {
+      const nov = u.searchParams.get("start_time") === String(Date.UTC(2026, 10, 1) / 1000);
+      if (!nov) {
+        return {
+          status: 200,
+          body: {
+            ...openaiPage(4),
+            data: [{ ...openaiPage(4).data[0], start_time: Date.UTC(2026, 9, 30) / 1000 }],
+          },
+        };
+      }
+      const page = openaiPage(1);
+      (page.data[0] as { results: unknown[] }).results.push({
+        amount: { value: "x", currency: "usd" },
+        line_item: "y",
+      });
+      return { status: 200, body: page };
+    });
+    const out = await createOpenaiCostSyncable({ now: () => NOW, fetch: v.fetch }).sync(
+      ctxFor("openai_billing"),
+      null,
+    );
+    const cur = decodeCostSyncCursor(OPENAI_COST_VENDOR.cursorPrefix, out.cursor);
+    expect(cur.pending).toEqual({ openai: ["2026-11"] });
+    expect(cur.gaps["openai"]).toContain("could not be read");
+    expect(lines("openai_billing")).toEqual([["2026-10-30", "proj_checkout", "gpt-6.2-astra", 4]]);
   });
 });

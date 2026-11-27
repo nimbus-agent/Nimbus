@@ -88,8 +88,19 @@ async function fetchPage(
   headers: Record<string, string>,
 ): Promise<PageResult> {
   await ctx.rateLimiter.acquire(vendor.limiter);
-  const res = await fetchFn(url, { headers });
-  const text = await res.text();
+  let res: Response;
+  let text: string;
+  try {
+    res = await fetchFn(url, { headers });
+    text = await res.text();
+  } catch (e) {
+    // A refused cross-origin redirect or a network failure: nothing was read, so nothing is written.
+    ctx.logger.warn(
+      { serviceId: vendor.serviceId, err: e instanceof Error ? e.name : "error" },
+      "AI cost sync: the request failed; retrying next run",
+    );
+    return { kind: "retry" };
+  }
   if (isRateLimited(res) && (res.status === 429 || res.status === 403)) {
     penalise(ctx, vendor.limiter, res);
     return { kind: "retry" };
@@ -105,7 +116,9 @@ async function fetchPage(
     return { kind: "retry" };
   }
   if (!isRecord(body) || !Array.isArray(body["data"])) return { kind: "retry" };
-  const more = body["has_more"] === true;
+  // Both vendors define `has_more` as the continuation flag: anything but a boolean is not a page.
+  if (typeof body["has_more"] !== "boolean") return { kind: "retry" };
+  const more = body["has_more"];
   const cursor = body["next_page"];
   const next = typeof cursor === "string" && cursor !== "" ? cursor : null;
   // `has_more` says whether to go on; a page that says there is more but gives no cursor cannot be completed.
@@ -129,6 +142,7 @@ async function syncMonth(
   const buckets: unknown[] = [];
   let bytes = 0;
   let page: string | null = null;
+  const seen = new Set<string>();
   for (let n = 0; ; n++) {
     if (n === AI_COST_MAX_PAGES) {
       ctx.logger.warn(
@@ -142,13 +156,19 @@ async function syncMonth(
     buckets.push(...r.data);
     bytes += r.bytes;
     if (r.next === null) break;
+    // A cursor seen before would read the same rows twice: never sum a page into the month again.
+    if (seen.has(r.next)) return { kind: "retry" };
+    seen.add(r.next);
     page = r.next;
   }
   const today = new Date(nowMs).toISOString().slice(0, 10);
   const mapped = vendor.map(buckets, month, today);
   // A month is written whole or not at all: a row that cannot be read would silently lower it.
   if (mapped.dropped.malformed > 0) {
-    return { kind: "gap", reason: unreadableRowsGap(vendor, month, mapped.dropped.malformed) };
+    return {
+      kind: "month_gap",
+      reason: unreadableRowsGap(vendor, month, mapped.dropped.malformed),
+    };
   }
   if (mapped.rows > 0 && mapped.lines.length === 0) return { kind: "retry" };
   if (mapped.dropped.malformed + mapped.dropped.outside_month > 0) {

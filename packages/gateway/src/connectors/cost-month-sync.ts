@@ -12,8 +12,13 @@ const RESTATEMENT_DAYS = 5;
 /** What fetching one month of one account came to. */
 export type CostMonthOutcome =
   | { readonly kind: "ok"; readonly lines: number; readonly bytes: number }
-  /** A stated gap: shown in the cost views; no write; the month stays pending. */
+  /** A stated gap for the ACCOUNT (no access, refused): shown; no write; this and older months stay pending. */
   | { readonly kind: "gap"; readonly reason: string }
+  /**
+   * A stated gap for THIS MONTH only (rows that could not be read): shown; this month is kept as stored and stays
+   * pending, and the older months are still fetched.
+   */
+  | { readonly kind: "month_gap"; readonly reason: string }
   /** A transient failure: no write; the earlier gap (if any) is kept; the month stays pending. */
   | { readonly kind: "retry" };
 
@@ -76,7 +81,9 @@ export async function runCostAccounts(
       own(prev.pending, account) ?? [],
     );
     let gap: string | null = null;
+    let monthGap: string | null = null;
     let retried = false;
+    const unfinished: string[] = [];
     for (const [i, month] of months.entries()) {
       const r = await fetchMonth(account, month); // NOSONAR S9382: one request at a time through the vendor's rate limiter
       if (r.kind === "ok") {
@@ -84,15 +91,21 @@ export async function runCostAccounts(
         bytes += r.bytes;
         continue;
       }
+      if (r.kind === "month_gap") {
+        monthGap ??= r.reason;
+        unfinished.push(month);
+        continue;
+      }
       if (r.kind === "gap") gap = r.reason;
       else retried = true;
-      pending[account] = months.slice(i);
+      unfinished.push(...months.slice(i));
       break;
     }
+    if (unfinished.length > 0) pending[account] = unfinished;
     const earlierGap = own(prev.gaps, account);
-    if (gap !== null) gaps[account] = gap;
-    else if (retried && earlierGap !== undefined) gaps[account] = earlierGap;
-    // A first sync cut short still counts: the months it missed are pending, not lost.
+    const shown = gap ?? monthGap ?? (retried ? (earlierGap ?? null) : null);
+    if (shown !== null) gaps[account] = shown;
+    // The account was read (an unreadable MONTH does not change that); the months it missed are pending, not lost.
     if (gap === null) synced[account] = today;
   }
   return { cursor: { gaps, synced, pending }, lines, bytes };

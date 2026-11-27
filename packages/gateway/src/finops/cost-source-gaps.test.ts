@@ -152,6 +152,7 @@ describe("github_billing end to end in the store", () => {
       db,
       depth: "full",
     } as SyncCapabilityDeps;
+    upsertSchedulerRegistration(db, "github_billing", 86_400_000, NOW, false);
     const caps = buildSyncCapabilities(deps, "github_billing");
     const r = caps.replaceCostLinesForMonth(
       { provider: "github", billingAccountId: "acme", month: "2026-11" },
