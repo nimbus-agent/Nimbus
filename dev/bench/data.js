@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795785131530,
+  "lastUpdate": 1795796691135,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "588afb4c84dd49a5d1c2e95268f71187c3b4c1b3",
-          "message": "chore: release main (#1567)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.31.0</summary>\n\n##\n[7.31.0](https://github.com/nimbus-agent/Nimbus/compare/v7.30.0...v7.31.0)\n(2026-09-21)\n\n\n### Features\n\n* **cli:** nimbus wow — a guided tour of your own index, ending on a\nlocality proof\n([#1565](https://github.com/nimbus-agent/Nimbus/issues/1565))\n([8c78849](https://github.com/nimbus-agent/Nimbus/commit/8c788493e72711cebc38ec9f42726fb2c758bbcc))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-09-21T21:49:49+03:00",
-          "tree_id": "890cc11433db5c265f16baba6da81e30e2cada1f",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/588afb4c84dd49a5d1c2e95268f71187c3b4c1b3"
-        },
-        "date": 1790017309667,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 329.10882275000074,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 333.3142169000039,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 181.18498179999443,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "46d701bf29ab3049636d1e6961b08d99b3d5b4aa",
+          "message": "feat(connectors): iac_terraform_init, the new infra reads and connectors 0.21.0 (#2188)\n\n## Summary\n\nBumps `@nimbus-dev/connectors` to **0.21.0** and adds the gateway half\nof batch 3, \"Infra reads and fixes\"\n(nimbus-agent/nimbus-mcp-servers#112, released in #113).\n\n**This unblocks `main` and the next release.** 0.21.0 is published while\n`main` pins `^0.20.0`, so `audit:connector-version-skew` fails, and it\nis why the v11.19.0 release gate failed (run 46004371617). Nothing was\npublished for 11.19.0. Per the release rule, it is marked\nnever-published in `CHANGELOG.md`, and this PR cuts 11.19.1 (trailer\nbelow).\n\n**`iac_terraform_init`** (owner ruling 2026-11-27: Wave 3, **never\noffered to the model**, irreversible, code execution):\n- **Row and classification:** a typed preview of the working directory.\nThe row is in `MODEL_NEVER_OFFERED_REASONS`, `HITL_REQUIRED_BACKING` and\n`DIRECTORY_EVALUATION_TOOL_IDS`.\n- **Runner:** init opens its own run through the same checks as plan and\napply: `gateWorkdirChecked` (approved directory, realpath, no `.git`),\nno overlapping run, and the orphan check. The child receives only the\nresolved `workingDirectory`, and the directory stays locked until the\nchild exits. Only `execute(\"iac_terraform_init\")` reaches this path.\n- **Sandbox:** a new `init` profile. The working directory is the only\nwritable path. Network is plan's hosts (the granted clouds' hosts and\ncredential, since an S3-style backend is read at init), plus\n`registry.terraform.io`, `releases.hashicorp.com` and the owner's\n`--net` hosts.\n- **Budget:** 10 minutes, the same as a plan.\n- **Git-sourced modules are refused clearly (owner ruling: refuse now,\nfix later).** Terraform clones git-sourced modules, and most registry\nmodules, into `.terraform/modules/<key>/` with their `.git`, which the\nOR-D2-8 scan refuses.\n- After an init's child exits, the runner rescans. When a `.git` sits\nonly under the directory's own `.terraform/modules/`, the init fails\nwith a dedicated refusal naming `<workdir>/.terraform/modules` to\ndelete. Every later preflight, gate and re-check on that directory gives\nthe same text.\n- Nothing is exempted or deleted, and a `.git` anywhere else keeps the\nold refusal. Real-scan tests cover both cases.\n- The bound is documented beside OR-D2-8, in `cli-reference.md` and on\nthe iac page. A proper fix is a follow-up.\n- **The enable prompt** now says what init can reach where hosts are\nenforced: the two registry hosts, the granted clouds' hosts (storage\nincluded) and the owner's extra hosts. Otherwise it follows the posture\nline above it.\n\n**New reads:**\n- `aws_lambda_get` is in the reviewed `aws.reads`.\n- `iac_cloudformation_changesets_list` and\n`iac_cloudformation_changeset_get` are in `iac.reads`, following the\n`iac_cloudformation_stack_get` precedent.\n- None needs `EXTRA_READ_TOOL_IDS`.\n\n**Behaviour fixes in 0.21.0, checked here:**\n- **`aws_lambda_list` is projected** to environment variable names only.\nA new test runs the installed tool on a reply carrying secret values.\n`aws_lambda_invoke`'s before-state (`selectLambdaFunction`) still gets\nall seven fields it shows, and no environment value reaches the reply or\nthe before-state.\n- **Snowflake tag before-state** (`gitops-readers.ts`) now matches on\nthe reply's stored database, schema and name. A same-named tag in\nanother schema reads \"(not set)\" instead of \"unknown\", and the right\ntag's value is shown; both cases are tested.\n\n**Known bounds:**\n- The two change-set reads, like the existing\n`iac_cloudformation_stack_get`, sit in the iac listing slot, which has\nno network, so they cannot reach AWS from the gateway today.\n- When init's child hangs after answering, the timeout text says \"the\nplan process did not exit\".\n- The git-module refusal names the gateway-resolved approved directory,\nnever the caller's string.\n\n**Counts:** 141 write rows, 123 offerable, 203 HITL types. Recorded in\n`CLAUDE.md`/`GEMINI.md`, `docs/SECURITY-INVARIANTS.md`,\n`docs/cli-reference.md` and the tests. The `docs/CHANGELOG.md` 0.21.0\ndelivery entry is added.\n\n## Related Issue\n\nPhase 9.7 connector follow-ups, \"Infra reads and fixes\".\n\n## Type of Change\n\n- [x] New feature\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors (`bun run\npreflight:fast` PASSED)\n- [x] `bun run lint` passes\n- [x] All existing tests pass:\n  - connector-writes: 4422 pass, 0 fail\n  - lazy-mesh: 984 pass, 4 fail\n  - security-invariants: 726 pass, 1 fail\n  - engine: 1920 pass, 0 fail\n  - ipc: 4936 pass, 0 fail\n  - share and auth: 311 pass, 0 fail\n\nThe 5 failures (I15 and 4 in `mesh-user-mcp-write-grant.test.ts`) are\nthe known ones in a worktree under `.claude/`. `audit:file-size`,\n`audit:connector-version-skew` (0.21.0) and `audit:connector-hosts` are\nOK.\n- [x] New behaviour is covered by tests (`iac-runner.init.test.ts`, the\ngit-module scan tests, `lambda-before-state.test.ts`, the Snowflake tag\nreader tests, the enable-prompt line)\n- [x] No `any` types introduced\n- [x] No credentials, tokens, or secret values appear\n- [x] Platform-specific code is behind `PlatformServices` (n/a)\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable (init adds a HITL type and is never offered to the model)\n- [x] Does not touch `docs/README.md`\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nRelease-As: 11.19.1\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added a sandboxed Terraform initialization option for approved working\ndirectories, with a 10-minute limit. Git-sourced modules remain\nunsupported.\n* Added AWS Lambda configuration reads and CloudFormation change-set\nstatus and resource-change reads.\n* **Bug Fixes**\n* Improved Snowflake tag matching for qualified names and ambiguous\nresults.\n* Updated Terraform initialization handling to distinguish module\ndownloads from other Git entries.\n* **Documentation**\n* Updated connector guidance, security details, and release history for\nthese changes.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-27T18:17:41+02:00",
+          "tree_id": "f4d29d8e716f3ec8b60312eb1659ad0a2f54690b",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/46d701bf29ab3049636d1e6961b08d99b3d5b4aa"
+        },
+        "date": 1795796687640,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 179.83445564999911,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 181.87540095000296,
             "unit": "ms"
           }
         ]
