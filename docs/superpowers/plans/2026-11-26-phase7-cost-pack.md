@@ -535,6 +535,127 @@ Design:
 
 **Review focus (slice 6):** the admin keys never leave the Vault except as the auth header to their own vendor host; the syncables can only write their own source's lines; cents parsing is exact; a malformed or partial (page-capped) report never clears a month; the Anthropic exclusions and the one-org-per-key bound are in the docs.
 
+## Slice 7 (PR 7): the `finops` role pack and the Phase 7 close-out
+
+**Owner rulings 2026-11-27 (supersede the spec's "official registry" wording):**
+(a) `finops` 1.0.0 ships **bundled** in the gateway, like `pm`, `devops` and `developer`. Registry-published
+packs are not built: no installer reads the signed index's `packs` map, `nimbus registry maintain` cannot add a
+pack, and a pack entry has no publisher or trust rule (`docs/roadmap.md` already says so). That stays its own
+unbuilt item. (b) The pack allowlist (`config/pack-settable.ts`, I47) is widened to exactly three cost defaults:
+`[cost] internal_envs`, `[[cost.rule]]` and `[[cost.report]]`. **Not** `[[cost.report.channel]]`: a pack never
+chooses where cost data goes. Not `[cost] authoritative`, `[cost.focus]` or `[cost.github]`. (c) Phase 7 stays
+open after this slice: slice 8+ (every later cost source) is built in Phase 7, and the phase closes only after
+the owner releases the agent-door launch copy (that row stays in Phase 7).
+
+**Probe (done 2026-11-27):** `resolveCostConfig` over a pack layer alone accepts the rules and `internal_envs`,
+and refuses a `[[cost.report]]` with no `scope` ("scope must name at least one of product, env, service,
+provider"). So the pack's report carries a fixed scope.
+
+**Task 1. The allowlist (I47 triple rule: wiring + docs + test in this commit).**
+- `config/pack-settable.ts`:
+  - `PACK_SETTABLE_LISTS` gains `cost.internal_envs` (per-call). Its parser is the strict string list, with each
+    value matching `COST_SET_VALUE_RE` (the same set an env value may take), non-empty, at most 32 entries.
+  - `PACK_SETTABLE_ARRAYS` gains `cost.rule` and `cost.report` (per-call). The header type widens from the
+    literal `"fleet.job"` to a union, and `checkArraySection` dispatches on it: a fleet job stays checked by
+    `checkJobBlock`, and a cost block is collected as raw lines.
+  - After the loop, the cost sections (the `[cost]` section, if any, plus the collected cost blocks) are checked
+    by the REAL compiler, not a copy: a new pure `config/pack-cost-check.ts` parses them as one pack layer
+    (`parseLayerDoc` + `mergeLayerDocs`) and runs `resolveCostConfig`. A non-null `error` or `reportsError` is a
+    fragment problem, prefixed `cost:`. A cost block that is not `key = value` is already refused by
+    `resolveCostConfig` (passthrough check).
+  - The `ok` result gains `cost: boolean` (the fragment sets any cost default).
+- `packs/pack-layer-store.ts`: `CleanPack` gains `cost`, and `conflicts` gains `costConflicts`. **Only one
+  installed pack may set cost defaults**: two would silently resolve as "the highest pack layer's rules win
+  whole", so the second is refused `ERR_PACK_CONFLICT` ("cost defaults are also set by pack X"). The file is
+  484 lines and must stay under 500.
+- `packs/pack-prompt.ts`: `diffPacks` gains `cost: boolean` (the cost text changed), and the update prompt says
+  "cost defaults changed" when it did. The full `defaults` text is already printed on every install and update
+  prompt, so the owner sees every rule and report verbatim.
+- Tests:
+  - `pack-settable.test.ts`: update the pinned allowlist, and add accept/refuse cases:
+    - accepted: the pack's exact fragment, `internal_envs` alone, a rule alone, a report alone;
+    - refused: `[[cost.report.channel]]`, `[cost] authoritative`, `[cost.focus]`, `[cost.github]`, a rule with
+      an unknown placeholder, a report with no scope, a bad env value, a cost line that is not `key = value`.
+  - `pack-layer-store.test.ts`: a second cost-setting pack conflicts; a pack with no cost keys does not.
+  - `pack-prompt.test.ts`: the cost-changed diff.
+  - `security-invariants/i47-*.test.ts`: a pack can never set a report channel (the I47 statement's
+    "allowlisted, local-only keys" stays true: cost rules and report definitions send nothing; a report posts
+    only through a channel the owner wrote and a workflow the owner approved, I55/I29).
+
+**Task 2. The pack.**
+- `packs/bundled/finops.json`: `finops` 1.0.0, name "FinOps", roles `["finops"]`. `suggestedConnectors`:
+  `vantage`, `kubecost`, `opencost`, `github_billing`, `openai_billing`, `anthropic_billing` (every id
+  checked by `validatePackContent` against the catalog). No `agents.visible`: the cost briefs are CLI commands,
+  not catalog agents. `defaults`:
+  ```toml
+  [cost]
+  internal_envs = ["ci", "dev", "test", "staging"]
+
+  [[cost.rule]]
+  match = { tag = { product = "*", env = "*" } }
+  set = { product = "{tag.product}", env = "{tag.env}" }
+
+  [[cost.rule]]
+  match = { tag = { product = "*" } }
+  set = { product = "{tag.product}" }
+
+  [[cost.report]]
+  name = "prod-weekly"
+  scope = { env = "prod" }
+  period = "week"
+  schedule = "0 8 * * 1"
+  ```
+  The rules are the tagging convention, product and env tags. A line with neither tag stays `unassigned`, which
+  is what the views show today. The report is inert until the owner adds a `[[cost.report.channel]]` in their
+  own file and runs `nimbus cost report schedule prod-weekly` (which generates the workflow the owner approves).
+  An owner `[[cost.rule]]` or `[[cost.report]]` replaces the pack's whole set (the existing array-layer rule),
+  and an owner `internal_envs` overrides the pack's.
+- `packs/bundled-packs.ts`: import it. `bundled-packs.test.ts`: the id list becomes
+  `["developer","devops","finops","pm"]`; all four install into one profile without conflict; the finops
+  fragment resolves through `loadNimbusCostFromConfigDir` (the real layered reader, a temp config dir) to two
+  rules, one report and the four envs. `ipc/pack-rpc.test.ts`: the `available` ids.
+
+**Task 3. Docs (the five core docs, plus the close-out).**
+- `docs/cli-reference.md`: the bundled pack list (L83 area and the Tip line), and a `finops` paragraph under
+  the cost section: what it sets, that an owner rule or report replaces the pack's whole set, that it sets no
+  channel.
+- `docs/SECURITY-INVARIANTS.md` I47: the allowlist now includes three cost defaults, and a pack can never set
+  a report channel; the one-cost-pack conflict.
+- `docs/architecture.md`: the role-pack paragraph lists the cost defaults.
+- `docs/roadmap.md` Phase 7:
+  - the sequencing line says slices 1 to 7 of 8;
+  - tick "A FinOps role pack" (bundled; registry-published packs remain the separate unbuilt item);
+  - tick "Cost in the demo";
+  - tick "`nimbus cost` briefs" (summary, why, owners, waste all shipped; verify `cost waste` before ticking);
+  - the guardrail text changes to "cost data leaves only in a report the owner approved, at the prompt or once
+    as a standing rule for that exact workflow, and every post is in the egress ledger" (already close; align
+    it to the spec);
+  - the acceptance criteria are replaced by the spec's five;
+  - the moved-out rows move to where the spec put them: GC deletion to Phase 13; data FinOps attribution,
+    further FinOps and sustainability connectors, and cost in the approval (Terraform) to Phase 8, each with
+    "(moved from Phase 7 on 2026-11-26, owner)";
+  - "Raw cloud billing intake" stays open (the cloud API pulls are slice 8+);
+  - the Phase 14 revenue row: "Revenue as the other side of product cost (Stripe first, sources pluggable);
+    Phase 7's product mapping is the key it joins on".
+- `docs/CHANGELOG.md`, `CLAUDE.md`/`GEMINI.md` (only if a summary line becomes false), and `nimbus-file-map`.
+
+**Antigravity review (2026-11-27, APPROVED WITH CHANGES), applied:**
+(1) `checkArraySection` branches on the header: only `fleet.job` goes to `checkJobBlock` and `checkJobs`, and a
+cost block is collected as a `DocSection`. (2) `config/pack-cost-check.ts` takes the already-parsed cost
+`DocSection`s (no re-parse): `mergeLayerDocs([{ layer, sections }])` and then `resolveCostConfig`. (3) The list
+entry is `{ section: "cost", key: "internal_envs" }`. (4) `pack-layer-store.ts` keeps the cost conflict inline in
+`conflicts()` (no helper) to stay under 500 lines. (5) `pack-prompt.ts`: `fragmentParts` carries the cost text, the
+update diff shows "Cost defaults: changed", and install/show list a `Cost defaults:` section (rule count, report
+names, internal envs), so `pack show finops` never says the pack sets nothing. (6) Tests: re-installing or updating
+the same cost pack does not conflict with itself; a second cost pack does. (7) cli-reference: an owner
+`[[cost.report]]` replaces the pack's reports whole, so a channel naming `prod-weekly` then fails "no report
+named"; copy the pack's block to keep it.
+
+**Not in this slice:** registry-published packs; deleting the spec and plan (they wait for slice 8+).
+
+**Verify:** `bun run preflight:fast`; the pack, config and security-invariant suites; `audit:file-size`;
+`audit:doc-refs`; `audit:status-drift`.
+
 ## Slices 2–8 (each gets a detailed task list here before its code starts)
 
 - **Slice 2 — detailed above.** Summary kept for the record: `finops/cost-why.ts` (pure; compares period vs previous, ranks moved lines); the deploy/PR/owner lookup lives OUTSIDE `finops/` in `agents/_lib/cost-why-query.ts`, passed in as data (D48). IPC `cost.why`, `cost.rulesCheck`; CLI `nimbus cost why <product|service> [--period 14d] [--json]`, `nimbus cost rules check`. Acceptance: the demo spike names the seeded deploy, PR and owner with no network.
