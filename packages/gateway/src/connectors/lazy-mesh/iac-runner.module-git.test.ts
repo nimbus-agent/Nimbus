@@ -14,6 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { FakeIacChild, settled } from "../../../test/helpers/iac-fake-child.ts";
+import { dirent, fakeFs } from "../../../test/helpers/iac-module-git-fake-fs.ts";
 import { createMockVault } from "../../vault/mock.ts";
 import { type GitScan, scanForGitEntry } from "../connector-writes/iac-git-scan.ts";
 import type { IacGrants, IacPathDeps } from "../connector-writes/iac-grants.ts";
@@ -21,12 +22,7 @@ import {
   IAC_PREFLIGHT_REFUSALS,
   terraformModulesGitRefusal,
 } from "../connector-writes/iac-limits.ts";
-import {
-  initSucceeded,
-  type ModuleGitFs,
-  moduleGitKeys,
-  removeInitModuleGits,
-} from "./iac-runner/iac-module-git.ts";
+import { initSucceeded, moduleGitKeys, removeInitModuleGits } from "./iac-runner/iac-module-git.ts";
 import { IacRunner, type IacRunnerDeps } from "./iac-runner.ts";
 
 // Owner ruling 2026-11-27: after a SUCCESSFUL init the runner removes exactly the
@@ -290,42 +286,6 @@ describe("anything else is kept, and the existing refusal stands (OR-D2-8 unchan
 // ---------------------------------------------------------------------------------------------
 // The module itself, on an injected filesystem: the cases a real disk cannot produce.
 
-function dirent(name: string, kind: "dir" | "file" | "link"): Dirent {
-  return {
-    name,
-    isDirectory: () => kind === "dir",
-    isFile: () => kind === "file",
-    isSymbolicLink: () => kind === "link",
-  } as unknown as Dirent;
-}
-
-/** A fake disk: `tree` maps a directory to its entries; every path is its own realpath. */
-function fakeFs(
-  tree: Record<string, Dirent[]>,
-  over: Partial<ModuleGitFs> = {},
-): ModuleGitFs & { removed: string[]; touched: string[] } {
-  const removed: string[] = [];
-  const touched: string[] = [];
-  return {
-    removed,
-    touched,
-    readDir: (d) => {
-      const e = tree[d];
-      if (e === undefined) throw new Error("ENOENT");
-      return e;
-    },
-    lstatKind: (p) => (tree[p] !== undefined ? "dir" : undefined),
-    realpath: (p) => p,
-    makeWritable: (p) => {
-      touched.push(p);
-    },
-    removeTree: (p) => {
-      removed.push(p);
-    },
-    ...over,
-  };
-}
-
 describe("removeInitModuleGits on an injected filesystem", () => {
   const W = join(sep, "w");
   const M = join(W, ".terraform", "modules");
@@ -353,8 +313,13 @@ describe("removeInitModuleGits on an injected filesystem", () => {
     const fs = fakeFs(tree);
     expect(removeInitModuleGits(W, new Set(), "linux", fs).removed).toEqual(["a", "b"]);
     expect(fs.removed).toEqual([join(M, "a", ".git"), join(M, "b", ".git")]);
-    // The link inside is neither made writable nor followed.
-    expect(fs.touched).toEqual([
+    // POSIX: no chmod walk at all (unlinking needs write on the parent, which git's folders have).
+    expect(fs.touched).toEqual([]);
+    // win32: the walk clears read-only bits; the link inside is neither changed nor followed.
+    const win = fakeFs(tree);
+    expect(removeInitModuleGits(W, new Set(), "win32", win).removed).toEqual(["a", "b"]);
+    expect(win.listed).not.toContain(join(M, "a", ".git", "hooks"));
+    expect(win.touched).toEqual([
       join(M, "a", ".git"),
       join(M, "a", ".git", "HEAD"),
       join(M, "b", ".git"),
@@ -390,8 +355,14 @@ describe("removeInitModuleGits on an injected filesystem", () => {
       expect(removeInitModuleGits(W, new Set(["mod"]), platform, fakeFs(tree)).kept).toEqual([
         "Mod",
       ]);
+      // The kernel's name is compared byte for byte: a case-variant realpath (a `<key>` link to
+      // a sibling on a case-sensitive volume or folder) is a different path, and is kept.
       const upper = fakeFs(tree, { realpath: (p) => p.toUpperCase() });
-      expect(removeInitModuleGits(W, new Set(), platform, upper).removed).toEqual(["Mod"]);
+      expect(removeInitModuleGits(W, new Set(), platform, upper)).toEqual({
+        removed: [],
+        kept: ["Mod"],
+      });
+      expect(upper.removed).toEqual([]);
     }
     expect(moduleGitKeys(W, "linux", fakeFs(tree))).toEqual(new Set(["Mod"]));
     expect(removeInitModuleGits(W, new Set(["mod"]), "linux", fakeFs(tree)).removed).toEqual([
@@ -423,7 +394,7 @@ describe("removeInitModuleGits on an injected filesystem", () => {
         throw new Error("EPERM");
       },
     });
-    expect(removeInitModuleGits(W, new Set(), "linux", noChmod).kept).toEqual(["a", "b"]);
+    expect(removeInitModuleGits(W, new Set(), "win32", noChmod).kept).toEqual(["a", "b"]);
     expect(noChmod.removed).toEqual([]);
   });
 

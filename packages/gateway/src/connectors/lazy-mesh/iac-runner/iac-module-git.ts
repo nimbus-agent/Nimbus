@@ -10,9 +10,13 @@
 // A candidate is removed only when it is a real directory (not a link or a junction, not a file)
 // AND the kernel's name for it is exactly `<workdir>/.terraform/modules/<key>/.git`, so no
 // component of the path (`.terraform`, `modules`, `<key>`) is a link that leads out of the workdir.
-// The workdir is the gateway-resolved canonical path. Every file under it is made writable before
-// the removal (Windows marks git's pack and object files read-only); links inside are never
-// followed, neither by that walk nor by the removal.
+// The workdir is the gateway-resolved canonical path, and the compare is byte for byte: a key that
+// links to a case-variant sibling (a case-sensitive APFS volume or Windows folder) is kept.
+// On Windows only, the tree's files are made writable first (git marks its object files read-only
+// there); on POSIX nothing is chmodded, since unlinking needs write on the parent folder, which
+// git's folders have. That walk lstats each path right before it changes or lists it, and skips
+// (never enters) anything that is then a link or a junction. The `.git` itself is lstat'd again
+// right before the removal on every system.
 import { chmodSync, type Dirent, lstatSync, readdirSync, realpathSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
@@ -23,7 +27,7 @@ export interface ModuleGitFs {
   readonly lstatKind: (p: string) => "dir" | "link" | "other" | undefined;
   /** The kernel's view of the path; throws when it is missing. */
   readonly realpath: (p: string) => string;
-  /** Makes a real file or directory writable (never called on a link). */
+  /** Windows only: makes a real file or directory writable (never called on a link). */
   readonly makeWritable: (p: string, isDir: boolean) => void;
   readonly removeTree: (p: string) => void;
 }
@@ -50,6 +54,7 @@ export interface ModuleGitRemoval {
   readonly kept: readonly string[];
 }
 
+/** Is the filesystem case-insensitive (only to treat two spellings of one key as one)? */
 function insensitive(platform: NodeJS.Platform): boolean {
   return platform === "win32" || platform === "darwin";
 }
@@ -112,25 +117,33 @@ function moduleGitCandidates(
   return out;
 }
 
-/** Does the kernel name `p` exactly as written (so no component of it is a link)? */
-function namedExactly(p: string, platform: NodeJS.Platform, fs: ModuleGitFs): boolean {
-  let real: string;
+/**
+ * Does the kernel name `p` exactly as written, byte for byte (so no component of it is a link)?
+ * `p` is built from the `realpath.native` workdir and `readdir`'s on-disk spellings.
+ */
+function namedExactly(p: string, fs: ModuleGitFs): boolean {
   try {
-    real = fs.realpath(p);
+    return fs.realpath(p) === p;
   } catch {
     return false;
   }
-  return insensitive(platform) ? real.toLowerCase() === p.toLowerCase() : real === p;
 }
 
-/** Makes every real file and folder in a tree writable; a link is neither changed nor followed. */
-function makeTreeWritable(dir: string, fs: ModuleGitFs): void {
-  fs.makeWritable(dir, true);
+/**
+ * Windows: clears the read-only bit on every real file and folder under `dir` (itself already
+ * checked and made writable). Each entry is lstat'd again right before it is changed or listed: one
+ * that is now a link or a junction, or gone, is skipped and never entered.
+ */
+function makeChildrenWritable(dir: string, fs: ModuleGitFs): void {
   for (const e of fs.readDir(dir)) {
-    if (e.isSymbolicLink()) continue;
     const p = join(dir, e.name);
-    if (e.isDirectory()) makeTreeWritable(p, fs);
-    else fs.makeWritable(p, false);
+    const kind = fs.lstatKind(p);
+    if (kind === "dir") {
+      fs.makeWritable(p, true);
+      makeChildrenWritable(p, fs);
+    } else if (kind === "other") {
+      fs.makeWritable(p, false);
+    }
   }
 }
 
@@ -163,12 +176,17 @@ export function removeInitModuleGits(
       kept.push(c.key);
       continue;
     }
-    if (c.kind !== "dir" || !namedExactly(c.path, platform, fs)) {
+    if (c.kind !== "dir" || !namedExactly(c.path, fs)) {
       kept.push(c.key);
       continue;
     }
     try {
-      makeTreeWritable(c.path, fs);
+      // Looked at again right before acting: it must still be a real folder.
+      if (fs.lstatKind(c.path) !== "dir") throw new Error("no longer a folder");
+      if (platform === "win32") {
+        fs.makeWritable(c.path, true);
+        makeChildrenWritable(c.path, fs);
+      }
       fs.removeTree(c.path);
       removed.push(c.key);
     } catch {
