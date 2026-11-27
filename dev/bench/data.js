@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795810145995,
+  "lastUpdate": 1795810847839,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "55f92024b3d74e113e27aadbd2b4519528b08fc5",
-          "message": "test(ci): local-auth e2e clears its machine-global Vault keys; tui fallback spawns async with an explicit deadline (#1572)\n\n## Summary\n\nTwo test-hermeticity defects that reddened CI without a product change\nbehind\neither. Both surfaced on 2026-09-23: the first on the macOS PR leg of\n#1568,\nthe second on the Windows push leg of `main` (run 35883179641).\n\n### 1. `local-auth.e2e.test.ts` leaked its Vault writes into a\nmachine-global store\n\nThe test adopts `aws` and `gcloud` through a real gateway, which writes\n`aws.profile`, `aws.default_region`, `gcp.auth_source` and\n`gcp.project_id`\ninto the Vault. `paths.configDir` is a fresh temp dir, but only the\nWindows\nDPAPI store lives under it. The macOS Keychain uses the fixed service\n`dev.nimbus` and Linux libsecret is likewise machine-global, so those\nkeys\noutlive the temp dir and the process.\n\nCI retries the whole suite once on the same VM. On the macOS leg of run\n35883006601, attempt 1 failed on an unrelated test, and attempt 2 then\nfailed\nBOTH adoptions with `ERR_LOCAL_AUTH_ALREADY_CONFIGURED`, because attempt\n1's\nkeys were still in the Keychain. A residue failure wearing a product\nfailure's\nerror code.\n\nFix: the four keys are deleted in `afterAll` unconditionally, so they\nnever\noutlive the test, and in `beforeAll` on CI only. The CI guard is\ndeliberate:\non a developer's macOS or Linux box a real `aws.profile` sits in the\nsame\nstore, and there the gateway's existing refusal fails the test loudly\nrather\nthan the test silently overwriting a real credential.\n\n### 2. `dumb-terminal.test.ts` intermittently failed its first spawn on\nWindows\n\nThe `TERM=dumb` case failed with `spawnSync bun.exe ETIMEDOUT` about 10\nms\ninto a 30 s timeout, on both attempts of `main` runs 35623124409,\n35880499482 and 35883179641. The two later spawns in the same file\npassed\nevery time, and the green runs on either side used the same Bun 1.3.14,\nso\nit is not a version regression. Two local experiments ruled out a stale\nevent-loop clock as the cause.\n\nWhat remains is a two-way ambiguity the error object cannot resolve.\nBun's\nown spawnSync deadline and libuv's translation of a Windows\n`ERROR_SEM_TIMEOUT` from stdio pipe setup into `UV_ETIMEDOUT` build the\nsame\nerror, with the same `code`, `errno`, `syscall`, `path` and `spawnargs`.\n\nFix: the test spawns asynchronously with an explicit deadline and\n`stdin`\nignored. That removes Bun's sync-deadline path from the picture, and\nleaves\na pipe-setup failure as a thrown spawn error the first assertion reports\nby\nname. Stated honestly: this is a fix for one mechanism and a diagnostic\nfor\nthe other. If the failure recurs it will now say which one it is.\n\n### 3. The three `nimbus tui` fallback tests were vacuous\n\nFound by review on this PR. `runTui` reads `gateway.json` BEFORE it\ninspects\nthe terminal, and the isolated profile the tests spawn into had no such\nfile, so every run printed \"Gateway is not running\", exited 1, and never\ncalled `detectFallbackReason`. The tests passed on the absence of\n\"Sub-Tasks\" alone, which a gateway-not-running exit satisfies trivially.\n\nFix: the isolated profile now carries a `gateway.json` that points at a\nsocket nothing listens on. That `dataDir` is resolved in a fresh child\nunder the\nexact env the test children get (resolving it in-process gave a\ndifferent\ndirectory on darwin, where `dataDir` hangs off `homedir()`), and the\nseed is\nrefused unless it lies inside the isolated temp root, so the file can\nnever\nwrite over a real state file. `runTui` then gets past the state check,\nprints the fallback\nnotice, which each test now asserts verbatim with its reason, and the\nREPL\nit falls back to fails fast on the dead socket, about 0.4 s, rather than\nhanging. `NO_COLOR`, `CI` and `TERM` are pinned in the child env rather\nthan inherited, so the reason that fires no longer depends on the host.\n\nOne honest limit: through a pipe the detector reports `non-TTY` before\nit\nreaches `CI`, so the `CI=true` case asserts `non-TTY` and says why. The\n`CI=true` reason itself is pinned by the unit test in\n`detect-fallback.test.ts`.\n\n## Verification\n\n- `bun test packages/cli/src/tui/dumb-terminal.test.ts`: 3 pass, each\nnow\nasserting the verbatim fallback notice; without the seeded state file\nthe\nnotice is never printed (verified live), so the assertion is a real one.\n- `bun test packages/gateway/test/e2e/local-auth.e2e.test.ts`: 5 pass,\nrun\n  twice back to back, once with `CI=true` and once without, so both the\n  `beforeAll` delete and the DPAPI delete-on-missing-key path executed.\n- `bun run typecheck:tests`: ok, 0 new. Biome clean. `bun run\npreflight:fast`\n  passed.\n- Neither original failure reproduces on Windows, where the DPAPI store\nis\nper-config-dir. The macOS Keychain path is exercised only by the CI\nlegs.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **Tests**\n* Expanded terminal fallback coverage across piped and CI environments,\nwith checks for the expected fallback message and no terminal UI output.\nTest runs now detect launch failures and timeouts.\n* Updated authentication test cleanup to preserve credentials that\nexisted before the test while removing credentials created during\ntesting.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Fable 5.1 <noreply@anthropic.com>",
-          "timestamp": "2026-09-23T21:47:09+03:00",
-          "tree_id": "6d675c0442f1f25274df366f080bfce239a40b12",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/55f92024b3d74e113e27aadbd2b4519528b08fc5"
-        },
-        "date": 1790189996375,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 339.89038350000084,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 341.06460790000057,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 262.85854144999973,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "58730b2bf7d0fa1af6f58b8b99ca1949575f266e",
+          "message": "feat(connectors): Unleash and Split, indexed, with three flag writes (connectors 0.22.0) (#2193)\n\n## Summary\n\nBumps `@nimbus-dev/connectors` to **0.22.0** and adds the gateway half\nof batch 4, \"Flag connectors\" (nimbus-agent/nimbus-mcp-servers#114,\nreleased in #115). It brings in two new connectors, **Unleash** and\n**Split**. Both are indexed and have three flag writes between them.\n\n**New services `unleash` and `split`:**\n- **Registration:** both are added to `CONNECTOR_SERVICE_IDS`, the\ncatalog, the secrets manifest, the first-party manifests, the lazy-mesh\nphase-3 spawn wiring and the model-door listing.\n- **Vault keys:** `unleash.api_url` and `unleash.token`, and\n`split.api_key`. Neither service has a `nimbus connector auth` flow, so\nthe docs say to use `nimbus vault set`.\n- **Unleash host:** Unleash is self-hosted. Its URL comes only from the\nvault and is validated as the connector validates it: https, or plain\nhttp only to a loopback host, with no userinfo, query or fragment. At\nspawn, the stored URL's host is added as the owner's host, following the\nargocd/flux pattern.\n- **Split host:** fixed at `api.split.io`.\n\n**Indexing** (owner ruling: index both): flag definitions only.\nPer-environment state stays a live read.\n- **Caps:** Unleash indexes at most 100 projects and 2,000 flags per\nproject. Split indexes at most 50 workspaces and 20 pages of 50 splits\neach.\n- **Rate and failures:** both use a 60/min rate limiter. A failing page\nis skipped and deletes nothing.\n\n**The rows** (owner rulings 2026-11-27):\n\n| Tool | Wave / offer | Before-state | Reversibility |\n|---|---|---|---|\n| `unleash_feature_toggle` | 3, offered | `unleash_feature_state_get`\n(the environment's state and strategies) | **Reversible only when the\nenvironment already has an active strategy, in either direction.**\nOtherwise it is irreversible: Unleash adds a default strategy that\nserves everyone when enabling an environment with none, and turning it\noff does not remove it. |\n| `split_kill` | 3, offered | `split_definition_get` (killed or not,\ndefault treatment) | reversible, inverse `split_restore` |\n| `split_restore` | 3, offered | `split_definition_get` | reversible,\ninverse `split_kill` |\n\nAll three are added to `HITL_REQUIRED_BACKING`.\n\n**Shared-engine change: conditional reversibility.**\n- A reversibility entry can now carry a condition, a reason and a\nper-call `whyNot(input, captured)`.\n- The engine-proposal and runbook prompt lines and the runbook CLI\nlisting state the condition rather than an unconditional \"reversible\".\nThe prompt cannot judge the individual call, because captured\nbefore-state never enters a prompt (IC5a). The owner sees the strategies\nin the `Before:` block.\n- `incident/remediation.ts` now decides `undoable` per call from the\nstored input and capture, and an undo refusal gives the entry's reason.\n- `nimbus incident undo` with no id now skips an action whose capture\nbuilds no inverse. Before, a newer no-op could hide an older action that\ncan be undone.\n- For the shipped reversible rows (the LaunchDarkly and Flagsmith\ntoggles, EC2 start and stop, the Argo rollback), only calls that changed\nnothing stop showing as undoable. `undo()` already refused those, and\nthe prompt text is unchanged.\n- Tests cover a no-op capture, an executed proposal read back, and a\nproposal stored before this change. Reverting to the class-only check\nfails them.\n\n**Known bounds:**\n- **Undo does not reach these rows yet.** The inverses are declared, but\n`nimbus incident undo` does not reach these three writes, because they\nare not in the remediation catalog and runbook steps are never undone.\nAdding them is a follow-up for the owner.\n- **Unindexed details:** Split items carry no URL. `dry-run-predict` and\nremediation `repeatable` entries are not added (no owner ruling).\n\n**Counts:** 144 write rows, 126 offerable to the model, 206 HITL types.\nThe package exports 100 connectors and 99 are bundled; Readwise ships as\na signed extension. These are recorded in `CLAUDE.md`/`GEMINI.md`,\n`.claude/commands/nimbus-file-map.md`, `docs/SECURITY-INVARIANTS.md`,\n`docs/cli-reference.md` and the tests. The `docs/CHANGELOG.md` entry is\nadded, and the docs pages `unleash.mdx` and `split.mdx` are new.\n\nRebased onto #2192: nothing here refers to\n`audit:connector-version-skew` as a gate.\n\n## Related Issue\n\nPhase 9.7 connector follow-ups, \"Flag connectors: Unleash and Split\".\n\n## Type of Change\n\n- [x] New feature\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors (`bun run\npreflight:fast` PASSED after the rebase; `typecheck:tests` OK, 0 new)\n- [x] `bun run lint` passes\n- [x] All existing tests pass:\n  - connector-writes: 4449 pass\n  - incident: 432 pass\n  - runbook: 40 pass\n  - engine: 1923 pass\n  - ipc: 4937 pass\n  - cli: 6774 pass\n  - security-invariants: 726 pass, 1 fail\n  - `test/integration/connectors`: 333 pass\n  - the two new sync fake-server tests: 9 pass\n\nThe 1 failure is the known I15 user-MCP write-grant test, in a worktree\nunder `.claude/`. `audit:file-size` and `audit:connector-hosts` are OK.\n- [x] New behaviour is covered by tests (`unleash-split-rows.test.ts`,\nthe reversibility and prompt-text tests, `remediation.test.ts`, the\nincident-undo selector test, the two sync fake-server tests)\n- [x] No `any` types introduced\n- [x] No credentials, tokens, or secret values appear\n- [x] Platform-specific code is behind `PlatformServices` (n/a)\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable (three HITL types added; reversibility labels are now\nstricter, never looser)\n- [x] Does not touch `docs/README.md`\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added Unleash and Split connectors for indexing feature flags, with\nsetup guidance and read tools.\n* Added human-confirmed controls to toggle Unleash flags and kill or\nrestore Split flags. Prompts show relevant current state and explain\nwhen an action can be undone.\n* **Documentation**\n* Updated connector and security references to reflect the new\nintegrations and write actions.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-27T22:13:31+02:00",
+          "tree_id": "f5d709034150a38f42308a807c04b41eae5083ea",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/58730b2bf7d0fa1af6f58b8b99ca1949575f266e"
+        },
+        "date": 1795810844294,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 181.63843085000008,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 185.33268025000143,
             "unit": "ms"
           }
         ]
