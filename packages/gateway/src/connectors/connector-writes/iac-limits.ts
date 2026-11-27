@@ -55,6 +55,9 @@ export const IAC_TOOL_TIMEOUTS_MS: Readonly<Record<string, number>> = Object.fre
   iac_terraform_plan_refresh_only: 10 * 60_000,
   iac_terraform_show_json: 120_000,
   iac_cloudformation_changeset_create: 180_000,
+  // Connectors 0.21.0: a plan's budget. An init downloads every provider the configuration names
+  // (the aws provider alone is hundreds of MB) and writes no state, so the short grace applies.
+  iac_terraform_init: 10 * 60_000,
   iac_terraform_apply: 30 * 60_000,
   iac_terraform_destroy: 30 * 60_000,
   iac_terraform_apply_refresh_only: 30 * 60_000,

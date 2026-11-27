@@ -4,6 +4,7 @@
 // after the owner's gate.
 import {
   IAC_CLOUD_ENV_NAMES,
+  IAC_TERRAFORM_INIT_HOSTS,
   iacCfnHosts,
   iacTerraformHosts,
   isSafeIacRegion,
@@ -224,6 +225,8 @@ function iacPromptScope(
     hosts: [
       ...new Set([
         ...iacTerraformHosts(grants.clouds),
+        // The init child's registry hosts (connectors 0.21.0), whatever cloud is granted.
+        ...IAC_TERRAFORM_INIT_HOSTS,
         ...iacWildcardHosts(grants.clouds),
         ...cfn,
         ...grants.net,

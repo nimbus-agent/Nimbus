@@ -157,7 +157,7 @@ describe("connector.writesEnable iac (V85)", () => {
     expect(text).toContain(work);
     expect(text).toContain("AWS_ACCESS_KEY_ID");
     expect(text).toContain("ec2.*.amazonaws.com");
-    expect(text).toContain("Provider and module downloads are not allowed");
+    expect(text).toContain("Plans and applies download nothing");
     expect(text).toContain("Each apply will still show the plan");
     expect(text).toContain("write access to them");
   });

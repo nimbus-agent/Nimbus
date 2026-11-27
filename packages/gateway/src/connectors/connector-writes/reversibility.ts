@@ -270,6 +270,9 @@ export const REVERSIBILITY_TABLE: Readonly<Record<string, ReversibilityEntry>> =
   bitrise_build_trigger: irreversible(`a started build ${NO_UNDO}`),
   codemagic_build_trigger: irreversible(`a started build ${NO_UNDO}`),
   k8s_pod_delete: irreversible(`a deleted pod ${NO_UNDO}`),
+  iac_terraform_init: irreversible(
+    "no tool removes what an init wrote (.terraform/ and the lock file are removed by hand), and the provider and module code it fetched has already been downloaded",
+  ),
 });
 
 /** The problems of one REVERSIBLE entry: its row needs a before reader, its inverse a row, its keys a capture. */

@@ -2,10 +2,11 @@
 // The IaC runner (Phase 9.7 D2 and D3a, invariants I15, I1, I50, I54; static D43(d)). The `iac` and
 // `kubernetes` connectors' listing slots have no network and no filesystem, so they can list their
 // tools but cannot run Terraform or kubectl. This module runs each Terraform, CloudFormation or
-// Kubernetes tool call in its OWN short-lived connector child under one of five per-RUN profiles,
+// Kubernetes tool call in its OWN short-lived connector child under one of six per-RUN profiles,
 // each built here and nowhere else:
 //
 //   plan  network of the granted clouds, their credential; workdir read+write, this run's staging dir
+//   init  plan's network plus the Terraform registry hosts, the credential; workdir read+write only
 //   show  NO network, NO credential; workdir read, the approved plan directory read, no write
 //   apply the granted clouds' network and credential; workdir read+write, approved dir read-only
 //   cfn   CloudFormation + STS endpoints, the AWS credential; this call's scratch dir read+write
@@ -28,20 +29,19 @@ import { dirname, join, relative, sep } from "node:path";
 import type { PreflightOutcome } from "../../engine/bound-write-capabilities.ts";
 import type { ExtensionManifest } from "../../extensions/manifest.ts";
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
-import type { PlatformPaths } from "../../platform/paths.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
-import { iacCfnHosts, iacTerraformHosts } from "../connector-writes/iac-clouds.ts";
+import {
+  IAC_TERRAFORM_INIT_HOSTS,
+  iacCfnHosts,
+  iacTerraformHosts,
+} from "../connector-writes/iac-clouds.ts";
 import {
   gateWorkdirChecked,
   type IacCloud,
   type IacGrants,
   workdirsOverlap,
 } from "../connector-writes/iac-grants.ts";
-import {
-  IAC_PREFLIGHT_REFUSALS,
-  IAC_TOOL_TIMEOUTS_MS,
-  isPlainStackName,
-} from "../connector-writes/iac-limits.ts";
+import { IAC_PREFLIGHT_REFUSALS, IAC_TOOL_TIMEOUTS_MS } from "../connector-writes/iac-limits.ts";
 import { type K8sGrant, k8sGrantFor } from "../connector-writes/k8s-grants.ts";
 import {
   buildSingleContextKubeconfig,
@@ -65,6 +65,7 @@ import { IacWindowsGrants } from "./iac-runner/iac-grant-ledger.ts";
 import { type IacBinary, installReads } from "./iac-runner/iac-install-reads.ts";
 import { IacLiveChildren } from "./iac-runner/iac-live-children.ts";
 import { IAC_RUNNER_REFUSALS } from "./iac-runner/iac-refusals.ts";
+import { iacRootFor, isOurChangeSet } from "./iac-runner/iac-roots.ts";
 import type { IacHost, IacRunnerDeps } from "./iac-runner/iac-runner-types.ts";
 import { defaultRemoveTree } from "./iac-runner/iac-tree.ts";
 import { connectorSpawn } from "./keys.ts";
@@ -95,14 +96,15 @@ export {
   isSystemOwnedDir,
 } from "./iac-runner/iac-install-reads.ts";
 export { IAC_RUNNER_REFUSALS } from "./iac-runner/iac-refusals.ts";
+export { iacProtectedRootsFor, iacRootFor } from "./iac-runner/iac-roots.ts";
 export type { IacHost, IacRunnerDeps } from "./iac-runner/iac-runner-types.ts";
 
 // ---------------------------------------------------------------------------------------------
 // Routing: which tool runs in which profile.
 
-export type IacProfileKind = "plan" | "show" | "apply" | "cfn" | "kube";
+export type IacProfileKind = "plan" | "init" | "show" | "apply" | "cfn" | "kube";
 
-/** The tools the runner executes (ten). Everything else the `iac` slot lists stays in it. */
+/** The tools the runner executes (eleven). Everything else the `iac` slot lists stays in it. */
 export const IAC_TOOL_PROFILE: Readonly<Record<string, Exclude<IacProfileKind, "kube">>> =
   Object.freeze({
     iac_terraform_plan: "plan",
@@ -112,6 +114,7 @@ export const IAC_TOOL_PROFILE: Readonly<Record<string, Exclude<IacProfileKind, "
     iac_terraform_apply: "apply",
     iac_terraform_destroy: "apply",
     iac_terraform_apply_refresh_only: "apply",
+    iac_terraform_init: "init",
     iac_cloudformation_changeset_create: "cfn",
     iac_cloudformation_changeset_discard: "cfn",
     iac_cloudformation_deploy: "cfn",
@@ -240,6 +243,13 @@ function kindGrants(
       write = [...wd, ...(req.stagingDir === undefined ? [] : [req.stagingDir])];
       setEnvIfDefined(env, "NIMBUS_IAC_PLAN_DIR", req.stagingDir);
       break;
+    case "init":
+      // The plan's hosts (a backend such as S3 is read at init) plus the registry the providers
+      // and registry modules come from; it writes `.terraform/` and the lock file, nothing else.
+      network = [...iacTerraformHosts(req.clouds), ...IAC_TERRAFORM_INIT_HOSTS, ...req.net];
+      declaredRead = [...req.installTrees, ...(req.credentialFiles ?? [])];
+      write = [...wd];
+      break;
     case "show":
       // No network, no credential, no write: it renders one saved plan and nothing else.
       declaredRead = [...wd, ...listOf(req.approvedRunDir), ...req.installTrees];
@@ -297,8 +307,7 @@ function ownerConfiguredHosts(
   network: readonly string[],
 ): readonly string[] {
   if (req.kind === "kube") return network;
-  if (req.kind === "plan" || req.kind === "apply") return req.net;
-  return [];
+  return req.kind === "show" || req.kind === "cfn" ? [] : req.net;
 }
 
 /**
@@ -309,7 +318,7 @@ function ownerConfiguredHosts(
 export function buildIacProfile(req: IacProfileRequest): IacProfile {
   const { kind } = req;
   const env: Record<string, string> = {};
-  const terraform = kind === "plan" || kind === "show" || kind === "apply";
+  const terraform = kind !== "cfn" && kind !== "kube";
   if (terraform) {
     env["TF_IN_AUTOMATION"] = "1";
     env["TF_INPUT"] = "0";
@@ -379,8 +388,11 @@ function kubeRunKey(context: string, namespace: string): string {
   return `${context}\0${namespace}`;
 }
 
+/** The tools a Terraform run is opened for: the three bound rows (by their preflight) and the init (by itself). */
 const TERRAFORM_ROWS: ReadonlySet<string> = new Set(
-  Object.keys(IAC_TOOL_PROFILE).filter((id) => IAC_TOOL_PROFILE[id] === "apply"),
+  Object.keys(IAC_TOOL_PROFILE).filter((id) =>
+    ["apply", "init"].includes(IAC_TOOL_PROFILE[id] ?? ""),
+  ),
 );
 const CFN_ROW = "iac_cloudformation_deploy";
 const HEX32 = /^[0-9a-f]{32}$/;
@@ -646,7 +658,29 @@ export class IacRunner implements IacHost {
     if (kind === undefined) throw new Error(IAC_RUNNER_REFUSALS.noRun);
     if (this.stopped) throw new Error(IAC_RUNNER_REFUSALS.stopping);
     if (kind === "cfn") return this.runCfn(toolId, args, budget);
+    if (kind === "init") return this.runInit(toolId, args, budget);
     return this.runTerraform(toolId, kind, args, budget);
+  }
+
+  /**
+   * `iac_terraform_init`, the one runner write with no bound step and so no preflight: it opens
+   * its own run through the same checks (approved directory, no `.git`, no overlapping run or
+   * orphan), runs ONE child on the gateway-resolved path alone (no other input key reaches it) and
+   * gives the run back; the lock is held until that child has exited, as for every run.
+   */
+  private async runInit(
+    toolId: string,
+    args: Record<string, unknown>,
+    budget: number,
+  ): Promise<unknown> {
+    const opened = await this.preflight(toolId, args);
+    if (!opened.ok) throw new Error(opened.reason);
+    try {
+      const workingDirectory = opened.workingDirectory ?? args["workingDirectory"];
+      return await this.runTerraform(toolId, "init", { workingDirectory }, budget);
+    } finally {
+      opened.release();
+    }
   }
 
   /**
@@ -773,7 +807,7 @@ export class IacRunner implements IacHost {
 
   private async runTerraform(
     toolId: string,
-    kind: "plan" | "show" | "apply",
+    kind: "plan" | "init" | "show" | "apply",
     args: Record<string, unknown>,
     budget: number,
   ): Promise<unknown> {
@@ -792,7 +826,7 @@ export class IacRunner implements IacHost {
     if (terraform === undefined) throw new Error(IAC_RUNNER_REFUSALS.noBinary);
 
     let approvedRunDir: string | undefined;
-    if (kind !== "plan") {
+    if (kind === "show" || kind === "apply") {
       approvedRunDir = this.approvedRunDirOf(args["planFile"]);
       if (approvedRunDir === undefined) throw new Error(IAC_RUNNER_REFUSALS.badPlanFile);
       run.approvedRunDirs.add(approvedRunDir);
@@ -839,7 +873,7 @@ export class IacRunner implements IacHost {
   }
 
   private terraformProfile(
-    kind: "plan" | "show" | "apply",
+    kind: "plan" | "init" | "show" | "apply",
     run: Run,
     workdir: string,
     approvedRunDir: string | undefined,
@@ -1043,49 +1077,6 @@ export class IacRunner implements IacHost {
   private cloudEnv(grants: IacGrants): Promise<{ env: Record<string, string>; files: string[] }> {
     return loadIacCloudEnv(this.deps.vault, grants);
   }
-}
-
-const OUR_CHANGE_SET_ARN =
-  /^arn:aws[a-z-]*:cloudformation:([a-z0-9-]+):\d{12}:changeSet\/nimbus-[0-9a-f]{64}-[0-9a-f]{12}\/[0-9a-f-]{36}$/;
-
-/**
- * A discard may only name a change set this gateway could have created: a plain stack name, an ARN
- * whose name has the `nimbus-<template sha256>-<12 hex>` form the prepare step gives, in the region
- * this run's credential uses. Anything else (another region, someone else's change set) never
- * reaches a child, whoever asked.
- */
-function isOurChangeSet(args: Record<string, unknown>, region: string): boolean {
-  const id = args["changeSetId"];
-  if (region === "" || !isPlainStackName(args["stackName"]) || typeof id !== "string") return false;
-  return OUR_CHANGE_SET_ARN.exec(id)?.[1] === region;
-}
-
-/**
- * The folders no approved Terraform directory may overlap (is, contain or sit inside): Nimbus's data,
- * config and sandbox directories, the extensions directory, the WHOLE cache root the sandbox and the
- * iac root live under, the temp directory Nimbus uses (`$TMP/nimbus`), the iac root itself and, on
- * Linux, the runtime directory (`XDG_RUNTIME_DIR`, which holds the gateway's socket).
- */
-export function iacProtectedRootsFor(
-  paths: Pick<PlatformPaths, "dataDir" | "configDir" | "sandboxDir" | "extensionsDir" | "tempDir">,
-  platform: NodeJS.Platform,
-  runtimeDir: string | undefined,
-): readonly string[] {
-  return [
-    paths.dataDir,
-    paths.configDir,
-    paths.sandboxDir,
-    paths.extensionsDir,
-    paths.tempDir,
-    dirname(paths.sandboxDir),
-    iacRootFor(paths),
-    ...(platform === "linux" && runtimeDir !== undefined && runtimeDir !== "" ? [runtimeDir] : []),
-  ];
-}
-
-/** `<cache>/iac-runs`, a sibling of the sandbox root: never `dataDir` (the filesystem MCP writes there). */
-export function iacRootFor(paths: Pick<PlatformPaths, "sandboxDir">): string {
-  return join(dirname(paths.sandboxDir), "iac-runs");
 }
 
 /**

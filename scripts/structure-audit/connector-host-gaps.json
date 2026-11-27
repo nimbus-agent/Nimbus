@@ -208,10 +208,19 @@
     },
     "aws": {
       "reaches": "aws CLI to ecs, lambda and ec2 at <region>.amazonaws.com; sts for an assume-role profile.",
-      "decision": "Every tool is a regional call and the fixed list named none of them, so the connector would have failed outright. Regional hosts are added at spawn from aws.default_region. With no region stored they are Linux wildcards on amazonaws.com and amazonaws.com.cn; macOS enforces only ports, so 443 reaches them there. Local auth adoption stores the profile's region when it has one, so this needs a profile with no region or a hand-set profile. The fixed list's iam, s3, ec2 and cloudfront hosts are not called by any tool; left in place and reported. An SSO profile's portal.sso.<sso_region> hosts are never declared. Connectors 0.8.0 (D-X PR1): aws_ec2_instance_get runs aws ec2 describe-instances --instance-ids <id>, the same regional EC2 host as start/stop-instances; no new host.",
+      "decision": "Every tool is a regional call and the fixed list named none of them, so the connector would have failed outright. Regional hosts are added at spawn from aws.default_region. With no region stored they are Linux wildcards on amazonaws.com and amazonaws.com.cn; macOS enforces only ports, so 443 reaches them there. Local auth adoption stores the profile's region when it has one, so this needs a profile with no region or a hand-set profile. The fixed list's iam, s3, ec2 and cloudfront hosts are not called by any tool; left in place and reported. An SSO profile's portal.sso.<sso_region> hosts are never declared. Connectors 0.8.0 (D-X PR1): aws_ec2_instance_get runs aws ec2 describe-instances --instance-ids <id>, the same regional EC2 host as start/stop-instances; no new host. Connectors 0.21.0: aws_lambda_get runs aws lambda get-function-configuration and aws_lambda_list aws lambda list-functions, both through one lambdaRead helper (so the bare lambda array is gone), the same regional Lambda host as the invoke; no new host.",
       "covers": {
         "env": [],
-        "cli": ["aws", "aws ec2", "aws ecs", "aws lambda", "ec2", "ecs", "lambda"],
+        "cli": [
+          "aws",
+          "aws ec2",
+          "aws ecs",
+          "aws lambda",
+          "ec2",
+          "ecs",
+          "get-function-configuration",
+          "list-functions"
+        ],
         "dynamicUrls": []
       }
     },
@@ -395,7 +404,7 @@
     },
     "iac": {
       "reaches": "terraform, pulumi and aws CLIs; hosts depend on each workspace.",
-      "decision": "The shared listing slot declares nothing (empty list, in knownUnreachable). The credentialed children are declared per run by the iac runner, per granted cloud (iac-clouds.ts and the iac_* wildcard rows of the first-party table), UNVERIFIED completeness. Re-read against connectors 0.9.0: terraform plan, show and apply (a local plan file), aws cloudformation (create-change-set, describe-change-set, describe-stacks, delete-change-set, delete-stack, execute-change-set) and pulumi preview; the Pulumi apply is refused in the connector itself and no longer shells out. The plan and apply hosts are declared per call by the gateway's per-profile runner, not by this slot.",
+      "decision": "The shared listing slot declares nothing (empty list, in knownUnreachable). The credentialed children are declared per run by the iac runner, per granted cloud (iac-clouds.ts and the iac_* wildcard rows of the first-party table), UNVERIFIED completeness. Re-read against connectors 0.9.0: terraform plan, show and apply (a local plan file), aws cloudformation (create-change-set, describe-change-set, describe-stacks, delete-change-set, delete-stack, execute-change-set) and pulumi preview; the Pulumi apply is refused in the connector itself and no longer shells out. The plan and apply hosts are declared per call by the gateway's per-profile runner, not by this slot. Re-read against connectors 0.21.0: terraform init (its own init profile, the plan's hosts plus registry.terraform.io and releases.hashicorp.com from IAC_TERRAFORM_INIT_HOSTS in iac-clouds.ts) and aws cloudformation list-change-sets and describe-change-set for the two change-set reads, which stay in this slot like describe-stacks.",
       "covers": {
         "env": [],
         "cli": ["aws", "aws cloudformation", "cloudformation", "pulumi preview", "terraform"],

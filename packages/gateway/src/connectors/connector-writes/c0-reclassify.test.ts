@@ -73,7 +73,7 @@ const SCHEMA_KEYS: Readonly<Record<(typeof DOWN_TO_WAVE_3)[number], readonly str
 };
 
 describe("C0: the sends are never offered to the model (OR-W34-1)", () => {
-  test("the set is the seven sends (each a real row whose action type ends in .send), the Bitbucket merge (D1) and the D2 rows that stay owner-only (destroy, Pulumi, the change-set discard) and the five rows the Phase 9.7 close kept owner-only, each with a reason", () => {
+  test("the set is the seven sends (each a real row whose action type ends in .send), the Bitbucket merge (D1) and the D2 rows that stay owner-only (destroy, Pulumi, the change-set discard), the 0.21.0 init and the five rows the Phase 9.7 close kept owner-only, each with a reason", () => {
     expect([...MODEL_NEVER_OFFERED_TOOL_IDS].sort((a, b) => a.localeCompare(b))).toEqual(
       [
         ...SENDS,
@@ -82,6 +82,7 @@ describe("C0: the sends are never offered to the model (OR-W34-1)", () => {
         "iac_terraform_apply_refresh_only",
         "iac_pulumi_up",
         "iac_cloudformation_changeset_discard",
+        "iac_terraform_init",
         // The Phase 9.7 close (OR-97-1): the four cloud rows and the pod delete.
         "azure_app_service_restart",
         "azure_aks_node_pool_scale",
