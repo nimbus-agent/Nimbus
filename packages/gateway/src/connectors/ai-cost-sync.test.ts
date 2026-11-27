@@ -357,11 +357,13 @@ describe("the Anthropic cost sync", () => {
   test("the default transport refuses a cross-origin redirect: the sync retries and the key reaches only OpenAI", async () => {
     await vault.set("openai_billing.admin_key", "sk-secret");
     const seen: string[] = [];
+    const modes: (RequestInit["redirect"] | undefined)[] = [];
     const original = globalThis.fetch;
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       seen.push(
         `${new URL(String(input)).origin} ${new Headers(init?.headers).get("authorization") ?? ""}`,
       );
+      modes.push(init?.redirect);
       return new Response("", { status: 302, headers: { location: "https://evil.example/steal" } });
     }) as typeof fetch;
     let out: Awaited<ReturnType<ReturnType<typeof createOpenaiCostSyncable>["sync"]>>;
@@ -371,6 +373,9 @@ describe("the Anthropic cost sync", () => {
       globalThis.fetch = original;
     }
     expect(seen.every((s) => s === "https://api.openai.com Bearer sk-secret")).toBe(true);
+    // The transport never lets fetch follow a redirect itself (fetch's default is "follow").
+    expect(modes.length).toBeGreaterThan(0);
+    expect(modes.every((m) => m === "manual")).toBe(true);
     expect(seen.length).toBeGreaterThan(0);
     expect(decodeCostSyncCursor(OPENAI_COST_VENDOR.cursorPrefix, out.cursor).pending).toEqual({
       openai: ["2026-11", "2026-10"],
@@ -451,5 +456,22 @@ describe("the Anthropic cost sync", () => {
     expect(cur.pending).toEqual({ openai: ["2026-11"] });
     expect(cur.gaps["openai"]).toContain("could not be read");
     expect(lines("openai_billing")).toEqual([["2026-10-30", "proj_checkout", "gpt-6.2-astra", 4]]);
+  });
+
+  test("a run with no key keeps the months an earlier run could not finish", async () => {
+    const prior = encodeCostSyncCursor(OPENAI_COST_VENDOR.cursorPrefix, {
+      gaps: { openai: "old" },
+      synced: { openai: "2026-11-19" },
+      pending: { openai: ["2026-10"] },
+    });
+    const out = await createOpenaiCostSyncable({
+      now: () => NOW,
+      fetch: fakeVendor(() => ({ status: 200 })).fetch,
+    }).sync(ctxFor("openai_billing"), prior);
+    expect(decodeCostSyncCursor(OPENAI_COST_VENDOR.cursorPrefix, out.cursor)).toEqual({
+      gaps: {},
+      synced: { openai: "2026-11-19" },
+      pending: { openai: ["2026-10"] },
+    });
   });
 });

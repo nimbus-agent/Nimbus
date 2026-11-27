@@ -9,7 +9,7 @@ All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-
 > run 46004371617, the Static job "Connector version skew"), which skipped packaging, so no
 > GitHub Release, installer, or updater manifest was ever produced for `v11.19.0`; the git tag
 > is its only trace. The tag is immutable under the *Protected release tags* ruleset and was
-> left in place rather than moved, so the features below shipped in 11.20.0 instead (the
+> left in place rather than moved, so the features below ship in 11.20.0 instead, the next release (the
 > `Release-As: 11.19.1` trailer meant to force 11.19.1 was ignored: an appended review summary pushed it out
 > of the squash commit's footer).
 

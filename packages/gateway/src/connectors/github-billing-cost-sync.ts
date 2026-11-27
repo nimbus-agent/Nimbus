@@ -154,8 +154,19 @@ export function createGithubBillingCostSyncable(options: GithubBillingSyncableOp
         const day = own(prev.synced, org);
         if (day !== undefined) synced[org] = day;
       }
+      // Unfinished months of a listed org stay pending through a run that fetches nothing.
+      const keptPending: Record<string, string[]> = {};
+      for (const org of orgs) {
+        const months = own(prev.pending, org);
+        if (months !== undefined) keptPending[org] = [...months];
+      }
       const idle = (gaps: Record<string, string> = {}): SyncResult =>
-        syncPassCursorSuccess(t0, 0, encodeGithubBillingCursor({ gaps, synced, pending: {} }), 0);
+        syncPassCursorSuccess(
+          t0,
+          0,
+          encodeGithubBillingCursor({ gaps, synced, pending: keptPending }),
+          0,
+        );
       // Nothing to sync: no gap is left behind for an org that is no longer listed or readable.
       if (orgs.length === 0) return idle();
       const pair = await readGithubCredentialPair((k) => ctx.getSharedSecret("github", k));

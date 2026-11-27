@@ -206,10 +206,13 @@ export function createAiCostSyncable(
       const prev = decodeCostSyncCursor(vendor.cursorPrefix, cursor);
       const key = ((await ctx.getSecret("admin_key")) ?? "").trim();
       if (key === "") {
-        // No key stored: nothing is fetched and no gap is left behind.
+        // No key stored: nothing is fetched and no gap is left behind, but unfinished months stay pending (a key
+        // removed after the scheduler's configured check must not forget them).
         const day = own(prev.synced, vendor.account);
         const synced = day === undefined ? {} : { [vendor.account]: day };
-        const idle = encodeCostSyncCursor(vendor.cursorPrefix, { gaps: {}, synced, pending: {} });
+        const months = own(prev.pending, vendor.account);
+        const pending = months === undefined ? {} : { [vendor.account]: [...months] };
+        const idle = encodeCostSyncCursor(vendor.cursorPrefix, { gaps: {}, synced, pending });
         return syncPassCursorSuccess(t0, 0, idle, 0);
       }
       const nowMs = (options.now ?? Date.now)();
