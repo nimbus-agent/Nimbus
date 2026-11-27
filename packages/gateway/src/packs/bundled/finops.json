@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "id": "finops",
+  "name": "FinOps",
+  "version": "1.0.0",
+  "description": "Cost by product and environment from your billing data, why it moved, and a weekly report you route yourself: allocation rules for product and env tags, the internal environments, and a production report that sends nothing until you add a channel.",
+  "roles": ["finops"],
+  "suggestedConnectors": [
+    "vantage",
+    "kubecost",
+    "opencost",
+    "github_billing",
+    "openai_billing",
+    "anthropic_billing"
+  ],
+  "members": [],
+  "defaults": "[cost]\ninternal_envs = [\"ci\", \"dev\", \"test\", \"staging\"]\n\n[[cost.rule]]\nmatch = { tag = { product = \"*\", env = \"*\" } }\nset = { product = \"{tag.product}\", env = \"{tag.env}\" }\n\n[[cost.rule]]\nmatch = { tag = { product = \"*\" } }\nset = { product = \"{tag.product}\" }\n\n[[cost.report]]\nname = \"prod-weekly\"\nscope = { env = \"prod\" }\nperiod = \"week\"\nschedule = \"0 8 * * 1\"\n"
+}
