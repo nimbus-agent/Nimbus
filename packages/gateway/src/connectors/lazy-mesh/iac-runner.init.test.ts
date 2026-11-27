@@ -1,12 +1,17 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseSandboxPolicy, SANDBOX_POLICY_ENV } from "../../platform/sandbox/sandbox-policy.ts";
 import { createMockVault } from "../../vault/mock.ts";
 import { IAC_TERRAFORM_INIT_HOSTS } from "../connector-writes/iac-clouds.ts";
+import { scanForGitEntry } from "../connector-writes/iac-git-scan.ts";
 import type { IacGrants, IacPathDeps } from "../connector-writes/iac-grants.ts";
-import { IAC_PREFLIGHT_REFUSALS, IAC_TOOL_TIMEOUTS_MS } from "../connector-writes/iac-limits.ts";
+import {
+  IAC_PREFLIGHT_REFUSALS,
+  IAC_TOOL_TIMEOUTS_MS,
+  terraformModulesGitRefusal,
+} from "../connector-writes/iac-limits.ts";
 import {
   buildIacProfile,
   IAC_RUNNER_REFUSALS,
@@ -105,10 +110,12 @@ class Child implements IacChild {
   constructor(
     readonly spec: { command: string; args: string[]; env: Record<string, string> },
     private readonly linger: boolean,
+    private readonly onCall?: () => void,
   ) {}
   send(line: string): void {
     const msg = JSON.parse(line) as Record<string, unknown>;
     this.sent.push(msg);
+    if (msg["method"] === "tools/call") this.onCall?.();
     const result =
       msg["method"] === "initialize" ? {} : { content: [{ type: "text", text: "{}" }] };
     queueMicrotask(() => this.lineCb?.(JSON.stringify({ jsonrpc: "2.0", id: msg["id"], result })));
@@ -137,6 +144,7 @@ class Child implements IacChild {
 function make(
   linger = false,
   over: Partial<IacRunnerDeps> = {},
+  onCall?: () => void,
 ): { r: IacRunner; children: Child[] } {
   const children: Child[] = [];
   let n = 0;
@@ -147,7 +155,7 @@ function make(
     grants: () => GRANTS,
     pathDeps,
     spawnChild: (spec) => {
-      const c = new Child(spec, linger);
+      const c = new Child(spec, linger, onCall);
       children.push(c);
       return c;
     },
@@ -191,8 +199,10 @@ describe("the runner: iac_terraform_init opens its own run", () => {
   });
 
   test("the directory stays locked while the init child is alive", async () => {
-    const { r, children } = make(true);
-    await r.execute(INIT, { workingDirectory: work });
+    const { r, children } = make(true, { exitWaitMs: 60_000 });
+    // The init's answer waits for its child to exit (the workdir is rescanned after it).
+    const pending = r.execute(INIT, { workingDirectory: work });
+    await settled();
     const busy = await r.preflight("iac_terraform_apply", { workingDirectory: work });
     expect(busy).toEqual({ ok: false, reason: IAC_PREFLIGHT_REFUSALS.busy });
     await expect(r.execute(INIT, { workingDirectory: work })).rejects.toThrow(
@@ -200,6 +210,7 @@ describe("the runner: iac_terraform_init opens its own run", () => {
     );
     expect(children).toHaveLength(1);
     children[0]?.exit();
+    await pending;
     await settled();
     const after = await r.preflight("iac_terraform_apply", { workingDirectory: work });
     expect(after.ok).toBe(true);
@@ -246,6 +257,64 @@ describe("the runner: iac_terraform_init opens its own run", () => {
     );
     expect(children).toEqual([]);
     const o = await r.preflight("iac_terraform_apply", { workingDirectory: work });
+    expect(o.ok).toBe(true);
+    if (o.ok) o.release();
+  });
+});
+
+// Owner ruling (connectors 0.21.0 review): a git-sourced module that init cloned leaves a `.git`
+// under `.terraform/modules/`. Refused clearly with its own text, naming the folder to delete;
+// nothing is exempted or deleted. The REAL scan, not the stub.
+describe("the runner: a git-sourced module under .terraform/modules", () => {
+  const realDeps: IacPathDeps = { ...pathDeps, gitScan: (dir) => scanForGitEntry(dir) };
+  const fresh = (name: string): { dir: string; grants: IacGrants } => {
+    const dir = join(root, name);
+    mkdirSync(dir, { recursive: true });
+    return { dir, grants: { workdirs: [dir], clouds: [], regions: [], net: [] } };
+  };
+
+  test("an init that clones one is refused with the new text, and so is the next plan's preflight", async () => {
+    const { dir, grants } = fresh("modules-git");
+    const plant = (): void => {
+      mkdirSync(join(dir, ".terraform", "modules", "x", ".git"), { recursive: true });
+    };
+    const { r } = make(false, { grants: () => grants, pathDeps: realDeps }, plant);
+    const text = terraformModulesGitRefusal(dir);
+    expect(text).toContain(join(dir, ".terraform", "modules"));
+    expect(text).not.toContain("subdirectory");
+    await expect(r.execute(INIT, { workingDirectory: dir })).rejects.toThrow(text);
+    await settled();
+    expect(await r.preflight("iac_terraform_apply", { workingDirectory: dir })).toEqual({
+      ok: false,
+      reason: text,
+    });
+    await expect(r.execute(INIT, { workingDirectory: dir })).rejects.toThrow(text);
+    expect(r.recheckGit(dir)).toBe(text);
+    // Nothing was deleted.
+    expect(existsSync(join(dir, ".terraform", "modules", "x", ".git"))).toBe(true);
+  });
+
+  test("a .git anywhere else keeps the old refusal", async () => {
+    const { dir, grants } = fresh("other-git");
+    mkdirSync(join(dir, "envs", ".git"), { recursive: true });
+    const { r, children } = make(false, { grants: () => grants, pathDeps: realDeps });
+    expect(await r.preflight("iac_terraform_apply", { workingDirectory: dir })).toEqual({
+      ok: false,
+      reason: IAC_PREFLIGHT_REFUSALS.gitRepository,
+    });
+    await expect(r.execute(INIT, { workingDirectory: dir })).rejects.toThrow(
+      IAC_PREFLIGHT_REFUSALS.gitRepository,
+    );
+    expect(r.recheckGit(dir)).toBe(IAC_PREFLIGHT_REFUSALS.gitRepository);
+    expect(children).toEqual([]);
+  });
+
+  test("an init that clones nothing answers, and the directory stays usable", async () => {
+    const { dir, grants } = fresh("no-git");
+    const { r } = make(false, { grants: () => grants, pathDeps: realDeps });
+    await expect(r.execute(INIT, { workingDirectory: dir })).resolves.toBeDefined();
+    await settled();
+    const o = await r.preflight("iac_terraform_apply", { workingDirectory: dir });
     expect(o.ok).toBe(true);
     if (o.ok) o.release();
   });

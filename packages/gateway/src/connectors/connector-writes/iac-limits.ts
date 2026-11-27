@@ -2,6 +2,8 @@
 // The size and shape limits of the plan-bound IaC writes (Phase 9.7 D2, spec § 15.5), one table,
 // the fixed refusal reasons, and the two PURE input checks the iac rows hand to the prepare step
 // (`PrepareRead.inputRefusal`). Imports nothing from the row table, the executor or the dispatcher.
+import { join } from "node:path";
+
 // The connector's own caps (`connectors/iac/src/tools.ts`: plan file 64 MiB, plan JSON 4 MiB, 500
 // changes, template 51,200 bytes) are the outer bound; the gateway is tighter where it must SHOW
 // the result in full (a plan file 16 MiB, rendered text 64 KiB), and a plan that exceeds a cap is
@@ -308,6 +310,16 @@ export const IAC_PREFLIGHT_REFUSALS = Object.freeze({
   gitRepository:
     "iac: the working directory has a Git repository in it or beneath it (a .git folder or file); point Terraform at a subdirectory without a repository",
 });
+
+/**
+ * Owner ruling (connectors 0.21.0): the refusal when the only `.git` beneath an approved directory
+ * is under its `.terraform/modules/`, a git-sourced module `terraform init` cloned. Not supported
+ * yet: nothing is exempted or deleted, the owner deletes the folder. It names that folder, built
+ * from the gateway-resolved approved path (never the caller's string).
+ */
+export function terraformModulesGitRefusal(workdir: string): string {
+  return `iac: git-sourced Terraform modules are not supported yet (a module under .terraform/modules was cloned with its .git); delete ${join(workdir, ".terraform", "modules")} before a plan, apply or init can run in this directory`;
+}
 
 /** What the MODEL door alone refuses for an iac write (the owner's doors are not restricted). */
 export const IAC_MODEL_REFUSALS = Object.freeze({

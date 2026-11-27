@@ -36,7 +36,9 @@ import {
   iacTerraformHosts,
 } from "../connector-writes/iac-clouds.ts";
 import {
+  gateRefusalText,
   gateWorkdirChecked,
+  gitScanRefusal,
   type IacCloud,
   type IacGrants,
   workdirsOverlap,
@@ -442,9 +444,7 @@ export class IacRunner implements IacHost {
   }
 
   recheckGit(workdir: string): string | undefined {
-    return this.deps.pathDeps.gitScan(workdir) === "clean"
-      ? undefined
-      : IAC_PREFLIGHT_REFUSALS.gitRepository;
+    return gitScanRefusal(this.deps.pathDeps.gitScan(workdir), workdir);
   }
 
   k8sServerFor(context: string, namespace: string): string | undefined {
@@ -476,7 +476,7 @@ export class IacRunner implements IacHost {
       this.deps.grants(),
       this.deps.pathDeps,
     );
-    if (!gated.ok) return { ok: false, reason: this.gateRefusal(gated.reason) };
+    if (!gated.ok) return { ok: false, reason: gateRefusalText(gated) };
     const workdir = gated.path;
     // One run per workdir, held until its children have exited (not merely until the gate returns).
     // A child a previous gateway left running may still be writing this directory.
@@ -506,12 +506,6 @@ export class IacRunner implements IacHost {
     };
     this.runs.set(workdir, run);
     return { ok: true, workingDirectory: workdir, release: () => this.release(run) };
-  }
-
-  private gateRefusal(reason: "not-approved" | "git"): string {
-    return reason === "git"
-      ? IAC_PREFLIGHT_REFUSALS.gitRepository
-      : IAC_PREFLIGHT_REFUSALS.notApprovedDirectory;
   }
 
   /**
@@ -676,8 +670,13 @@ export class IacRunner implements IacHost {
     const opened = await this.preflight(toolId, args);
     if (!opened.ok) throw new Error(opened.reason);
     try {
-      const workingDirectory = opened.workingDirectory ?? args["workingDirectory"];
-      return await this.runTerraform(toolId, "init", { workingDirectory }, budget);
+      // A Terraform row's preflight always resolves the path; the caller's string is never used.
+      const workingDirectory = opened.workingDirectory ?? "";
+      const out = await this.runTerraform(toolId, "init", { workingDirectory }, budget);
+      // The child has exited (awaitExit): a git-sourced module it cloned is refused now, clearly.
+      const planted = this.recheckGit(workingDirectory);
+      if (planted !== undefined) throw new Error(planted);
+      return out;
     } finally {
       opened.release();
     }
@@ -818,7 +817,7 @@ export class IacRunner implements IacHost {
       this.deps.grants(),
       this.deps.pathDeps,
     );
-    if (!gated.ok) throw new Error(this.gateRefusal(gated.reason));
+    if (!gated.ok) throw new Error(gateRefusalText(gated));
     const workdir = gated.path;
     const run = this.runs.get(workdir);
     if (run === undefined) throw new Error(IAC_RUNNER_REFUSALS.noRun);
@@ -868,7 +867,7 @@ export class IacRunner implements IacHost {
       { ...cloudEnv.env },
       { toolId, args, budget, timeoutText },
       onExited,
-      { awaitExit: kind === "plan", workdir },
+      { awaitExit: kind === "plan" || kind === "init", workdir },
     );
   }
 
