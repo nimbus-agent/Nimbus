@@ -255,3 +255,36 @@ describe("runRunbookWith", () => {
     });
   });
 });
+
+describe("formatRunbooks: a conditionally reversible step", () => {
+  test("shows its condition in place of plain reversible, control text stripped", () => {
+    const out = formatRunbooks({
+      ...REPLY,
+      runbooks: [
+        {
+          name: "flags",
+          description: null,
+          file: "f.toml",
+          matched: true,
+          steps: [
+            {
+              n: 1,
+              kind: "action",
+              tool: "unleash_feature_toggle",
+              params: { enabled: false },
+              wave: 3,
+              reversibility: "reversible",
+              reversibleIf: "the environment already has an active strategy\u001b[31m",
+              status: null,
+            },
+          ],
+        },
+      ],
+    });
+    expect(out).toContain(
+      "1. action [reversible only if the environment already has an active strategy[31m, wave 3] unleash_feature_toggle enabled=false",
+    );
+    expect(out).not.toContain("\u001b");
+    expect(out).not.toContain("[reversible, wave 3]");
+  });
+});

@@ -19,13 +19,51 @@ export const UNLEASH_CAPTURES: BeforeCaptures = {
   },
 };
 
+/** Whether the call changed the environment's on/off state, from a well-formed record. */
+function toggleChanged(
+  input: Readonly<Record<string, unknown>>,
+  before: string | undefined,
+): boolean {
+  const wanted = input["enabled"];
+  return (
+    typeof wanted === "boolean" &&
+    (before === "true" || before === "false") &&
+    before !== String(wanted)
+  );
+}
+
+/** The condition the Unleash toggle's reversibility rests on, shown wherever no before-read exists yet. */
+export const UNLEASH_REVERSIBLE_IF = "the environment already has an active strategy";
+
+/** Why a toggle outside {@link UNLEASH_REVERSIBLE_IF} cannot be undone, for a label shown before any before-read. */
+export const UNLEASH_OTHERWISE =
+  "Unleash adds a default strategy that serves everyone when it enables an environment with no active strategy, and turning it off does not remove it";
+
 /**
- * The Unleash toggle is undone by the opposite toggle, CONDITIONALLY (owner ruling): only when the
- * call changed the state, and either it turned the environment off or the before-read showed an
- * active strategy. Turning on an environment with no active strategy makes Unleash add a default
- * strategy (a gradual rollout to 100%), which turning it off does not remove, so that call cannot be
- * undone through Nimbus and `invert` returns `undefined` (an `unknown` active strategy, from a capped
- * list, counts as none: fail closed).
+ * Why THIS Unleash toggle cannot be undone, or `undefined` when nothing about Unleash prevents it (a call
+ * that changed nothing has no inverse either, but for no Unleash reason). Unleash adds a default strategy
+ * that serves everyone when it enables an environment with no active strategy, and turning the environment
+ * off does not remove it: so a toggle ON made it, and the undo of a toggle OFF would make it.
+ */
+export function unleashToggleWhyNot(
+  input: Readonly<Record<string, unknown>>,
+  captured: Readonly<Record<string, string>>,
+): string | undefined {
+  const active = captured["activeStrategy"];
+  if (active === "yes" || !toggleChanged(input, captured["enabled"])) return undefined;
+  const unsure =
+    active === "no"
+      ? ""
+      : "not every strategy was shown, so Nimbus cannot tell whether one is active; ";
+  return input["enabled"] === true
+    ? `${unsure}turning the environment on made Unleash add a default strategy that serves everyone, and turning it off does not remove it`
+    : `${unsure}turning the environment back on, Unleash would add a default strategy that serves everyone, which it did not have`;
+}
+
+/**
+ * The Unleash toggle is undone by the opposite toggle ONLY when the before-read showed an active strategy,
+ * whichever way the call went (owner ruling 2026-11-27); otherwise {@link unleashToggleWhyNot} says why not
+ * (an `unknown` active strategy, from a capped list, counts as none: fail closed).
  */
 export function unleashToggleDecl(): ReversibilityDecl {
   return {
@@ -37,15 +75,12 @@ export function unleashToggleDecl(): ReversibilityDecl {
       const featureName = asText(input["featureName"]);
       const environment = asText(input["environment"]);
       const before = captured["enabled"];
-      const wanted = input["enabled"];
       if (
         projectId === undefined ||
         featureName === undefined ||
         environment === undefined ||
-        typeof wanted !== "boolean" ||
-        (before !== "true" && before !== "false") ||
-        before === String(wanted) ||
-        (wanted && captured["activeStrategy"] !== "yes")
+        !toggleChanged(input, before) ||
+        captured["activeStrategy"] !== "yes"
       ) {
         return undefined;
       }

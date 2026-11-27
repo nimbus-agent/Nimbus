@@ -23,7 +23,14 @@ import {
   scannedTextKeys,
 } from "./model-write-refusals.ts";
 import { buildConnectorWritePreviewFrom, renderConnectorWritePreviewLines } from "./preview.ts";
-import { REVERSIBILITY_TABLE } from "./reversibility.ts";
+import {
+  callIsReversible,
+  checkReversibilityTable,
+  notReversibleBecause,
+  REVERSIBILITY_TABLE,
+  reversibleOnlyIf,
+  undoRefusalReason,
+} from "./reversibility.ts";
 import { type ConnectorWriteRow, previewTemplateKeys } from "./types.ts";
 import {
   selectSplitKill,
@@ -321,11 +328,20 @@ describe("reversibility (owner rulings 2026-11-27)", () => {
     const captured = capture(TOGGLE, state(true, [{ name: "default" }]), input);
     expect(captured).toEqual({ enabled: "true", activeStrategy: "yes" });
     expect(invert(TOGGLE, input, captured)).toEqual({ ...UNLEASH_IN, enabled: true });
-    // Off is reversible whatever the strategies (owner ruling).
-    expect(invert(TOGGLE, input, { enabled: "true", activeStrategy: "no" })).toEqual({
-      ...UNLEASH_IN,
-      enabled: true,
-    });
+    expect(notReversibleBecause(TOGGLE, input, captured)).toBeUndefined();
+    expect(callIsReversible(rowOf(TOGGLE), input, captured)).toBe(true);
+  });
+
+  test("unleash_feature_toggle: turning off with no active strategy is irreversible too (owner ruling)", () => {
+    const input = { ...UNLEASH_IN, enabled: false };
+    for (const activeStrategy of ["no", "unknown"]) {
+      const captured = { enabled: "true", activeStrategy };
+      expect(invert(TOGGLE, input, captured), activeStrategy).toBeUndefined();
+      expect(callIsReversible(rowOf(TOGGLE), input, captured), activeStrategy).toBe(false);
+      expect(notReversibleBecause(TOGGLE, input, captured), activeStrategy).toContain(
+        "Unleash would add a default strategy that serves everyone",
+      );
+    }
   });
 
   test("unleash_feature_toggle: turning on is undone only when an active strategy was already there", () => {
@@ -340,9 +356,27 @@ describe("reversibility (owner rulings 2026-11-27)", () => {
     const none = capture(TOGGLE, state(false, []), UNLEASH_IN);
     expect(none).toEqual({ enabled: "false", activeStrategy: "no" });
     expect(invert(TOGGLE, UNLEASH_IN, none)).toBeUndefined();
+    expect(notReversibleBecause(TOGGLE, UNLEASH_IN, none)).toBe(
+      "turning the environment on made Unleash add a default strategy that serves everyone, and turning it off does not remove it",
+    );
+    const unknown = { enabled: "false", activeStrategy: "unknown" };
+    expect(invert(TOGGLE, UNLEASH_IN, unknown)).toBeUndefined();
+    expect(notReversibleBecause(TOGGLE, UNLEASH_IN, unknown)).toContain("not every strategy");
+  });
+
+  test("the conditional label: a condition with no capture, no reason when nothing makes it irreversible", () => {
+    expect(reversibleOnlyIf(TOGGLE)).toBe("the environment already has an active strategy");
+    expect(reversibleOnlyIf(KILL)).toBeUndefined();
+    expect(reversibleOnlyIf("toString")).toBeUndefined();
+    // A call that changed nothing has no inverse, but no Unleash reason either.
     expect(
-      invert(TOGGLE, UNLEASH_IN, { enabled: "false", activeStrategy: "unknown" }),
+      notReversibleBecause(TOGGLE, UNLEASH_IN, { enabled: "true", activeStrategy: "no" }),
     ).toBeUndefined();
+    expect(notReversibleBecause(KILL, SPLIT_IN, { killed: "true" })).toBeUndefined();
+    expect(callIsReversible(rowOf(KILL), SPLIT_IN, { killed: "false" })).toBe(true);
+    expect(callIsReversible(rowOf(KILL), SPLIT_IN, { killed: "true" })).toBe(false);
+    expect(callIsReversible(undefined, SPLIT_IN, { killed: "false" })).toBe(false);
+    expect(callIsReversible(rowOf(KILL), SPLIT_IN, undefined)).toBe(false);
   });
 
   test("unleash_feature_toggle: a call that changed nothing, or a bad record, has no inverse", () => {
@@ -394,5 +428,30 @@ describe("door refusals", () => {
         id,
       ).toBeUndefined();
     }
+  });
+});
+
+describe("the undo refusal and the table's check of a condition", () => {
+  test("the undo refusal names the Unleash reason, else the generic text", () => {
+    const off = JSON.stringify({ ...UNLEASH_IN, enabled: false });
+    expect(
+      undoRefusalReason(TOGGLE, off, JSON.stringify({ enabled: "true", activeStrategy: "no" })),
+    ).toBe(
+      "irreversible: turning the environment back on, Unleash would add a default strategy that serves everyone, which it did not have",
+    );
+    expect(
+      undoRefusalReason(KILL, JSON.stringify(SPLIT_IN), JSON.stringify({ killed: "true" })),
+    ).toBe("that call changed nothing, or cannot be reversed from what was recorded");
+  });
+
+  test("a condition on an irreversible entry is refused at load", () => {
+    const whyNot = () => undefined;
+    const problems = checkReversibilityTable(CONNECTOR_WRITE_ROWS, {
+      split_kill: {
+        decl: { class: "irreversible", reason: "x" },
+        conditional: { condition: "c", otherwise: "o", whyNot },
+      },
+    });
+    expect(problems).toEqual(["split_kill: a condition on an irreversible row"]);
   });
 });
