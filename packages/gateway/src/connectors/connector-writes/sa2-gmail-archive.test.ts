@@ -115,8 +115,13 @@ describe("selectGmailThreadArchive", () => {
 
 describe("scopeGatedReason", () => {
   const MODIFY = "https://www.googleapis.com/auth/gmail.modify";
-  test("the table gates exactly the archive row", () => {
-    expect(Object.keys(SCOPE_GATED_WRITES)).toEqual(["gmail_thread_archive"]);
+  test("the table gates exactly the archive row and the three Google Calendar writes (0.20.0)", () => {
+    expect(Object.keys(SCOPE_GATED_WRITES)).toEqual([
+      "gmail_thread_archive",
+      "gcal_event_create",
+      "gcal_event_update",
+      "gcal_event_delete",
+    ]);
   });
   test("modify or the full-mailbox scope lifts the gate; anything else keeps it", () => {
     expect(scopeGatedReason("gmail_thread_archive", { gmail: `a ${MODIFY}` })).toBeUndefined();

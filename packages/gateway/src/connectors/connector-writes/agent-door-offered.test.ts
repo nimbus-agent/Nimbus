@@ -104,7 +104,7 @@ describe("agentOffered (the second door's predicate, D-1)", () => {
       (r) => isModelOfferableRow(r) && !agentOffered(r, factsFor(r)),
     ).map((r) => r.toolId);
     expect(never).toEqual(["slack_message_post_dm"]);
-    expect(reachable.filter((r) => isModelOfferableRow(r))).toHaveLength(119);
+    expect(reachable.filter((r) => isModelOfferableRow(r))).toHaveLength(122);
   });
 
   test("each conjunct alone flips an offered row to false", () => {

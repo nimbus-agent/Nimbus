@@ -575,6 +575,7 @@ describe("listFirstPartyServerTools: wave-2 services on their own slots", () => 
         "github_actions",
         "gitlab",
         "gmail",
+        "google_calendar",
         "google_drive",
         "jenkins",
         "jira",
@@ -607,8 +608,7 @@ describe("every model-offerable write's service can be listed", () => {
         Object.hasOwn(listing, service),
         `${r.toolId}: ${service} is not in the listing map`,
       ).toBe(true);
-      // A phase-3 bundle service is checked by its spawner's own adder; every other one needs a
-      // per-service predicate in service-credential.ts.
+      // A phase-3 bundle service is checked by its spawner's adder; others need a service-credential.ts predicate.
       const bundled = listing[service]?.slot === LAZY_MESH.phase3Bundle;
       expect(
         bundled || SERVICE_CREDENTIAL_SERVICES.includes(service),

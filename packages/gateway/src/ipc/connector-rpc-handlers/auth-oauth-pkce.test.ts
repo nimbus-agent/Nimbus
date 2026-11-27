@@ -57,7 +57,7 @@ const TOKENS: PKCEResult = {
 
 /**
  * A stand-in for `runPKCEFlow` that records the options it was handed and, like the real flow,
- * persists the tokens under the provider's SHARED Vault key before returning.
+ * persists the tokens under `options.vaultKey` when given, else the provider's SHARED Vault key.
  */
 function fakeFlow(sharedKey: string | undefined): {
   readonly calls: PKCEOptions[];
@@ -68,7 +68,8 @@ function fakeFlow(sharedKey: string | undefined): {
     calls,
     run: async (options) => {
       calls.push(options);
-      if (sharedKey !== undefined) await options.vault.set(sharedKey, JSON.stringify(TOKENS));
+      const key = options.vaultKey ?? sharedKey;
+      if (key !== undefined) await options.vault.set(key, JSON.stringify(TOKENS));
       return TOKENS;
     },
   };
@@ -106,6 +107,41 @@ function registeredIntervalMs(serviceId: ConnectorServiceId): number | undefined
 async function storedKeys(): Promise<string[]> {
   return [...(await vault.listKeys())].sort();
 }
+
+describe("connectorAuthOAuthPkce — google_calendar is saved to its own key only (0.20.0)", () => {
+  test("a pre-existing google.oauth is left byte-for-byte unchanged; google_calendar.oauth holds the token", async () => {
+    const before = JSON.stringify({ accessToken: "gmail-token", refreshToken: "r", scopes: ["g"] });
+    await vault.set("google.oauth", before);
+    const flow = fakeFlow("google.oauth");
+    await handleConnectorAuth(ctxFor({ service: "google_calendar" }, CONFIG, flow.run));
+    expect(flow.calls[0]?.vaultKey).toBe("google_calendar.oauth");
+    expect(await vault.get("google.oauth")).toBe(before);
+    expect(await vault.get("google_calendar.oauth")).toBe(JSON.stringify(TOKENS));
+    expect(await storedKeys()).toEqual(["google.oauth", "google_calendar.oauth"]);
+  });
+
+  test("with no google.oauth, none is created", async () => {
+    const flow = fakeFlow("google.oauth");
+    await handleConnectorAuth(ctxFor({ service: "google_calendar" }, CONFIG, flow.run));
+    expect(await storedKeys()).toEqual(["google_calendar.oauth"]);
+  });
+
+  test("the other Google services still save to the shared key and mirror it to their own", async () => {
+    for (const service of ["google_drive", "gmail", "google_photos", "google_meet"] as const) {
+      const flow = fakeFlow("google.oauth");
+      await handleConnectorAuth(ctxFor({ service }, CONFIG, flow.run));
+      expect(flow.calls[0]?.vaultKey, service).toBeUndefined();
+      expect(await vault.get("google.oauth"), service).toBe(JSON.stringify(TOKENS));
+    }
+    expect(await storedKeys()).toEqual([
+      "google.oauth",
+      "google_drive.oauth",
+      "google_gmail.oauth",
+      "google_meet.oauth",
+      "google_photos.oauth",
+    ]);
+  });
+});
 
 describe("connectorAuthOAuthPkce — after the guards pass", () => {
   test("google: the shared token is mirrored to the service's own key, and the run is registered", async () => {

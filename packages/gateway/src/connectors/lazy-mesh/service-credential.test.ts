@@ -37,6 +37,8 @@ async function vaultWith(secrets: Record<string, string>): Promise<NimbusVault> 
 
 const ALL_CONFIGURED: Record<string, string> = {
   "google.oauth": EXPIRED,
+  // google_calendar is own-key-only (never the shared google.oauth).
+  "google_calendar.oauth": EXPIRED,
   "microsoft.oauth": EXPIRED,
   "github.pat": "p",
   "gitlab.pat": "p",
@@ -92,6 +94,15 @@ describe("isServiceCredentialConfigured", () => {
     const vault = await vaultWith({ [key]: EXPIRED });
     expect(await isServiceCredentialConfigured(vault, "google_drive", {})).toBe(true);
     expect(await isServiceCredentialConfigured(vault, "gmail", {})).toBe(false);
+  });
+
+  test("google_calendar is own-key-only: the shared google.oauth does not configure it (0.20.0)", async () => {
+    const shared = await vaultWith({ "google.oauth": EXPIRED });
+    expect(await isServiceCredentialConfigured(shared, "gmail", {})).toBe(true);
+    expect(await isServiceCredentialConfigured(shared, "google_calendar", {})).toBe(false);
+    const key = perServiceOAuthVaultKey("google_calendar") ?? "";
+    const own = await vaultWith({ [key]: EXPIRED });
+    expect(await isServiceCredentialConfigured(own, "google_calendar", {})).toBe(true);
   });
 
   test("discord needs the opt-in flag; jira, confluence and apple need every key", async () => {

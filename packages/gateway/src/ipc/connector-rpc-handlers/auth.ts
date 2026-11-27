@@ -40,9 +40,7 @@ import {
   type ConnectorSecretKeyOf,
   deleteConnectorSecret,
   readConnectorSecret,
-  sharedOAuthKey,
   writeConnectorSecret,
-  writePerServiceOAuthKey,
 } from "../../connectors/connector-vault.ts";
 import { hasCredentialProbe, runCredentialProbe } from "../../connectors/credential-probe.ts";
 import { normaliseGithubApiBase } from "../../connectors/github-api-base.ts";
@@ -63,6 +61,7 @@ import type {
   OAuthClientConfig,
   OAuthClientConfigResolver,
 } from "./context.ts";
+import { mirrorSharedOAuthToken, ownOnlyOAuthSaveKey } from "./oauth-token-keys.ts";
 
 /** Returns the trimmed string value of `raw`, or `""` if it is not a non-empty string. */
 function extractStringField(raw: unknown): string {
@@ -812,19 +811,12 @@ async function connectorAuthOAuthPkce(
     config.clientSecret !== undefined && config.clientSecret !== ""
       ? { ...pkceBase, oauthClientSecret: config.clientSecret }
       : pkceBase;
-  const pkceFlowInput: PKCEOptions =
-    redirectPort === undefined ? merged : { ...merged, redirectPort };
+  const withPort: PKCEOptions = redirectPort === undefined ? merged : { ...merged, redirectPort };
+  // Google Calendar saves straight to its own key; the shared key is never written for it.
+  const ownKey = ownOnlyOAuthSaveKey(id, profile.provider);
+  const pkceFlowInput = ownKey === undefined ? withPort : { ...withPort, vaultKey: ownKey };
   const tokens = await runPkceFlow(pkceFlowInput);
-
-  let sharedKey: string | undefined;
-  if (profile.provider === "google") {
-    sharedKey = sharedOAuthKey("google");
-  } else if (profile.provider === "microsoft") {
-    sharedKey = sharedOAuthKey("microsoft");
-  }
-  if (sharedKey !== undefined) {
-    await writePerServiceOAuthKey(vault, id, sharedKey);
-  }
+  if (ownKey === undefined) await mirrorSharedOAuthToken(vault, id, profile.provider);
 
   const interval = defaultSyncIntervalMsForService(id);
   localIndex.ensureConnectorSchedulerRegistration(id, interval, Date.now());

@@ -1079,10 +1079,10 @@ describe("a bound row's prepare tool at offer time", () => {
 // `connectors/connector-writes/listed-support.ts` and are shared with the agent door. The model
 // door's offered set over the REAL write table, with and without the readers and prepare tools in
 // each listing, must be exactly what it was before the move (digest taken on the pre-move code).
-const SNAP_FULL_COUNT = 120;
-const SNAP_FULL_DIGEST = "bf3fd3ef62a382bbc8cb5a6df45ee99197927fc887ffc331e239e2b5dc4e0ca5";
-const SNAP_BARE_COUNT = 79;
-const SNAP_BARE_DIGEST = "2283d5746ecf17cb8041ee6b4c9a49d3f0a2f14b6a79e5fb61ac7757208c5851";
+const SNAP_FULL_COUNT = 123;
+const SNAP_FULL_DIGEST = "02757cbb4b475eb21ac52b191853149682dfbe143c58c7d74b74a13d8d3a425c";
+const SNAP_BARE_COUNT = 81;
+const SNAP_BARE_DIGEST = "86ee04d7a076fcccd6988a9fe0c00a7b4d7f21da2ba50a28d027c902843b4e6b";
 describe("the model door's offered set over the real table (listing-helper extraction snapshot)", () => {
   async function offered(withSupportTools: boolean): Promise<string[]> {
     const offerable = CONNECTOR_WRITE_ROWS.filter(isModelOfferableRow);

@@ -1,4 +1,7 @@
-import { readGoogleOAuthScopesForGmailEnv } from "../auth/oauth-vault-tokens.ts";
+import {
+  readGoogleOAuthScopesForCalendarEnv,
+  readGoogleOAuthScopesForGmailEnv,
+} from "../auth/oauth-vault-tokens.ts";
 import { readConnectorSecret } from "../connectors/connector-vault.ts";
 import { nodeKubeFs } from "../connectors/connector-writes/kubeconfig-facts.ts";
 import type { LazyConnectorMesh } from "../connectors/lazy-mesh/index.ts";
@@ -64,12 +67,15 @@ export { ConnectorRpcError } from "./connector-rpc-shared.ts";
  * disclosing a clear that will never happen) — that whole suite injects its own
  * `readGcpKeyPath` stub and never exercises this line. See `connector-rpc.test.ts`.
  */
-/** `{ grantedScopes: { gmail } }` from the stored credential, or nothing when it cannot be read. */
-async function gmailGrantedScopes(
+/** `{ grantedScopes: { gmail, google_calendar } }` from the stored credentials, else nothing. */
+async function googleGrantedScopes(
   vault: NimbusVault,
 ): Promise<{ grantedScopes: Record<string, string | undefined> } | Record<string, never>> {
   try {
-    return { grantedScopes: { gmail: await readGoogleOAuthScopesForGmailEnv(vault) } };
+    const gmail = await readGoogleOAuthScopesForGmailEnv(vault);
+    return {
+      grantedScopes: { gmail, google_calendar: await readGoogleOAuthScopesForCalendarEnv(vault) },
+    };
   } catch {
     return {};
   }
@@ -242,9 +248,10 @@ export async function dispatchConnectorRpc(options: {
 
   const modelWritesDeps = async (): Promise<ModelWritesDeps> => ({
     db: localIndex.getDatabase(),
-    // SA2: which scopes the stored Gmail credential holds, so `status` and the enable prompt can
-    // say the archive row needs a re-authorisation. A failed read makes no claim.
-    ...(await gmailGrantedScopes(vault)),
+    // SA2 and connectors 0.20.0: which scopes the stored Gmail and Google Calendar credentials
+    // hold, so `status` and the enable prompt can say the archive row and the Calendar event
+    // writes need a re-authorisation. A failed read makes no claim.
+    ...(await googleGrantedScopes(vault)),
     // D3a: the kubeconfig the Vault names, read through the real filesystem (kubectl never sees it).
     readKubeconfigPath: async () =>
       (await readConnectorSecret(vault, "kubernetes", "kubeconfig")) ?? undefined,

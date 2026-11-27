@@ -97,9 +97,39 @@ export async function readGoogleOAuthScopesForGmailEnv(
 }
 
 /**
+ * Space-separated scopes of Google Calendar's OWN credential (`google_calendar.oauth`), for the
+ * Calendar child's `GOOGLE_OAUTH_SCOPES`: the connector lists the event writes (connectors 0.20.0)
+ * only when the token holds `calendar` or `calendar.events`. Never the shared `google.oauth`: the
+ * service is own-key-only (`GOOGLE_OWN_KEY_ONLY_SERVICES`), so its token never comes from that
+ * key, and another consent's scopes must not unlock writes for it. `undefined` when the own key is
+ * absent or records no scopes, and the connector then hides the writes (fail closed).
+ */
+export async function readGoogleOAuthScopesForCalendarEnv(
+  vault: NimbusVault,
+): Promise<string | undefined> {
+  const own = perServiceOAuthVaultKey("google_calendar");
+  if (own === undefined) return undefined;
+  return oauthScopesFromVaultPayload(await vault.get(own));
+}
+
+/**
+ * The `GOOGLE_OAUTH_SCOPES` a Google bundle child is spawned with: Gmail's and Google Calendar's
+ * credential scopes (each connector lists its scope-gated tools only when the token holds the
+ * scope), and `undefined` for every other Google service, which gets the access token only.
+ */
+export async function readGoogleOAuthScopesForSpawnEnv(
+  vault: NimbusVault,
+  serviceId: string,
+): Promise<string | undefined> {
+  if (serviceId === "gmail") return readGoogleOAuthScopesForGmailEnv(vault);
+  if (serviceId === "google_calendar") return readGoogleOAuthScopesForCalendarEnv(vault);
+  return undefined;
+}
+
+/**
  * The space-separated `scopes` of a stored OAuth vault payload, or `undefined` when the payload is
- * absent, not a JSON object, or has no non-empty `scopes` array. Shared by the Outlook and Gmail
- * scope reads so the two cannot parse a payload differently.
+ * absent, not a JSON object, or has no non-empty `scopes` array. Shared by the Outlook, Gmail and
+ * Google Calendar scope reads so they cannot parse a payload differently.
  */
 export function oauthScopesFromVaultPayload(raw: string | null): string | undefined {
   if (raw === null || raw === "") {

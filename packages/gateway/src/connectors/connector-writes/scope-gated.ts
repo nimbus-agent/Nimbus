@@ -8,6 +8,18 @@
 const GMAIL_MODIFY = "https://www.googleapis.com/auth/gmail.modify";
 /** The full-mailbox scope, a superset of `gmail.modify`. */
 const GMAIL_FULL = "https://mail.google.com/";
+/** Either Calendar write scope lists the event writes (connectors 0.20.0 `tool-scope-policy.ts`). */
+const CALENDAR_WRITE = [
+  "https://www.googleapis.com/auth/calendar",
+  "https://www.googleapis.com/auth/calendar.events",
+] as const;
+
+/** One Google Calendar event write, gated on its own credential's write scope. */
+const calendarWrite = (): ScopeGatedWrite => ({
+  service: "google_calendar",
+  anyOf: CALENDAR_WRITE,
+  reason: "re-authorise Google Calendar to grant calendar",
+});
 
 export interface ScopeGatedWrite {
   /** The service whose credential's scopes decide (a key of `ModelWritesDeps.grantedScopes`). */
@@ -24,6 +36,11 @@ export const SCOPE_GATED_WRITES: Readonly<Record<string, ScopeGatedWrite>> = Obj
     anyOf: [GMAIL_MODIFY, GMAIL_FULL],
     reason: "re-authorise Gmail to grant gmail.modify",
   },
+  // Connectors 0.20.0: a connection made while the consent asked only `calendar.readonly` lists
+  // none of the three until `nimbus connector auth google_calendar` is run again.
+  gcal_event_create: calendarWrite(),
+  gcal_event_update: calendarWrite(),
+  gcal_event_delete: calendarWrite(),
 });
 
 /**

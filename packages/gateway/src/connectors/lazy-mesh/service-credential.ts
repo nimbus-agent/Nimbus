@@ -41,6 +41,9 @@ async function allPresent(reads: ReadonlyArray<Promise<string | null>>): Promise
 const PREDICATES: Readonly<Record<string, Predicate>> = {
   gmail: async (vault) => (await resolveGoogleOAuthVaultKey(vault, "gmail")) !== null,
   google_drive: async (vault) => (await resolveGoogleOAuthVaultKey(vault, "google_drive")) !== null,
+  // Own key only: the resolver never falls back to `google.oauth` for this service.
+  google_calendar: async (vault) =>
+    (await resolveGoogleOAuthVaultKey(vault, "google_calendar")) !== null,
   outlook: async (vault) => present(await vault.get(sharedOAuthKey("microsoft"))),
   teams: async (vault) => present(await vault.get(sharedOAuthKey("microsoft"))),
   onedrive: async (vault) => present(await vault.get(sharedOAuthKey("microsoft"))),

@@ -198,6 +198,9 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   "apple.mail.draft.create",
   "apple.calendar.event.create",
   "apple.calendar.event.delete",
+  "google_calendar.event.create",
+  "google_calendar.event.update",
+  "google_calendar.event.delete",
   // Wave 4 — comms.
   "slack.chat.post",
   "teams.chat.post",
@@ -285,8 +288,7 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   // Role-pack install (Project 3 PR 2) writes settings to the owner's config layer. Gate site:
   // packs/pack-install.ts, via the same gate-only executor. Never delegable (see tryDelegatedApproval).
   "pack.install",
-  // Connector write opt-in (Phase 9.7 S4): offering a service's writes to the model. Gate site: the
-  // `connector.writes.enable` handler, through the IPC executor. Never delegable (I20).
+  // Phase 9.7 S4 connector write opt-in. Gate site: the `connector.writes.enable` IPC handler (I20).
   "connector.writes.enable",
   // Phase 10 SA3 (I55): creating a standing rule, and resuming a paused one. Gate site: ipc/standing-rpc.ts,
   // no delegation (I20), and refused unless the owner's own prompt answered (`answerSource`).
@@ -305,8 +307,7 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   "vault.delete",
   "teamvault.put",
   "teamvault.delete",
-  // Phase 6 Slice 7 Wave 7c — warehouse/BI writes (kept in sync with the rows in
-  // connectors/connector-writes/warehouse-bi.ts; drift asserted in connector-writes/rows.test.ts).
+  // Phase 6 Slice 7 Wave 7c — warehouse/BI writes, kept in sync with warehouse-bi.ts by rows.test.ts.
   "snowflake.tag.set",
   "snowflake.comment.set",
   "tableau.datasource.refresh",
@@ -319,8 +320,7 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   "montecarlo.incident.resolve",
   "bigeye.issue.acknowledge",
   "bigeye.issue.resolve",
-  // Phase 6 Slice 9 W1 — GitOps + ML writes (kept in sync with the rows in
-  // connectors/connector-writes/gitops-ml.ts; drift asserted in connector-writes/rows.test.ts).
+  // Phase 6 Slice 9 W1 — GitOps + ML writes, kept in sync with gitops-ml.ts by rows.test.ts.
   "argocd.app.sync",
   "argocd.app.rollback",
   "flux.kustomization.reconcile",

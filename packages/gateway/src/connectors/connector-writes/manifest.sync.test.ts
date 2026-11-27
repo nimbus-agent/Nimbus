@@ -124,8 +124,12 @@ describe("connector write manifest", () => {
         : "";
       const call = `${declared}
 ${shape}`;
+      // A key is declared as `key:` or as a shorthand property (`key,` / `key }`: connectors
+      // 0.20.0's Google Calendar schemas take `summary` and `sendUpdates` from consts).
+      const declares = (k: string): boolean =>
+        call.includes(`${k}:`) || new RegExp(String.raw`[{,]\s*${k}\s*[,}]`).test(call);
       return templateKeys(r, extra)
-        .filter((k) => !call.includes(`${k}:`))
+        .filter((k) => !declares(k))
         .map((k) => `${r.toolId}: ${k}`);
     };
     const templated = CONNECTOR_WRITE_ROWS.filter(
