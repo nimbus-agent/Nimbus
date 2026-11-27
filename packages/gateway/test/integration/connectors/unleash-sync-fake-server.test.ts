@@ -1,6 +1,5 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
-import type { Server } from "bun";
 import pino from "pino";
 import {
   createUnleashSyncable,
@@ -36,7 +35,7 @@ interface Harness {
 
 function startHarness(config: FakeConfig, prefix = ""): Harness {
   const requests: RecordedReq[] = [];
-  const server: Server = Bun.serve({
+  const server: ReturnType<typeof Bun.serve> = Bun.serve({
     port: 0,
     hostname: "127.0.0.1",
     fetch: (req) => {
@@ -75,7 +74,9 @@ function startHarness(config: FakeConfig, prefix = ""): Harness {
       rateLimiter: new ProviderRateLimiter({
         unleash: { requestsPerMinute: 600_000, burstSize: 10_000 },
       }),
-    },
+      // The scheduler always sets the run's depth (as `createConnectorSyncFixture` does).
+      depth: "full",
+    } as SyncContext,
   };
 }
 
