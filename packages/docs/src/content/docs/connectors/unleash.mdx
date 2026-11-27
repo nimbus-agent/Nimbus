@@ -45,7 +45,7 @@ Every tool below requires interactive consent through the Gateway HITL gate befo
 
 `unleash_feature_toggle` is a Wave 3 write, offered to the model after `nimbus connector writes enable unleash` and your approval by name. Its prompt names the environment first (`production: web/new_checkout`) and shows, under `Before:`, whether the flag is on now, the change the call makes, the environment's strategies (active and disabled) and, for a call that turns it on, whether Unleash will add a default strategy.
 
-When it enables an environment that has no active strategy (none, or only disabled ones), Unleash itself adds a default strategy, a gradual rollout to 100% unless the project sets another default, and turning the environment off later does not remove it. So `nimbus incident undo` reverses a toggle only when it turned the environment off, or when the environment already had an active strategy; for any other toggle it says the call cannot be reversed from what was recorded. Unleash refuses the toggle, with its own message, while change requests are enabled for the environment.
+When it enables an environment that has no active strategy (none, or only disabled ones), Unleash itself adds a default strategy, a gradual rollout to 100% unless the project sets another default, and turning the environment off later does not remove it. So a toggle is declared reversible only if the environment already has an active strategy, whichever way it goes, and the prompt says so (`reversible only if the environment already has an active strategy`). The inverse is declared, but `nimbus incident undo` does not reach this write yet. Unleash refuses the toggle, with its own message, while change requests are enabled for the environment.
 
 ## See also
 
