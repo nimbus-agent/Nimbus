@@ -136,6 +136,8 @@ type CleanPack = {
   readonly scalars: ReadonlyMap<string, PackScalar>;
   readonly jobNames: readonly string[];
   readonly sourceMap: ReadonlyMap<string, SourceKind>;
+  /** Sets a cost default. Only one installed pack may: the highest pack layer would win whole, silently. */
+  readonly cost: boolean;
 };
 
 type DetailedRead = PackLayersRead & {
@@ -206,21 +208,16 @@ function assertNames(profile: string, packId: string): void {
   if (problems.length > 0) throw new PackLayerRefusedError(problems, "invalid");
 }
 
-function conflicts(
-  packId: string,
-  scalars: ReadonlyMap<string, PackScalar>,
-  jobNames: readonly string[],
-  sourceMap: ReadonlyMap<string, SourceKind>,
-  others: readonly CleanPack[],
-): string[] {
+function conflicts(mine: CleanPack, others: readonly CleanPack[]): string[] {
   const problems: string[] = [];
   for (const other of others) {
-    if (other.id === packId) continue;
+    if (other.id === mine.id) continue;
     problems.push(
-      ...scalarConflicts(other, scalars),
-      ...jobConflicts(other, jobNames),
-      ...sourceMapConflicts(other, sourceMap),
+      ...scalarConflicts(other, mine.scalars),
+      ...jobConflicts(other, mine.jobNames),
+      ...sourceMapConflicts(other, mine.sourceMap),
     );
+    if (mine.cost && other.cost) problems.push(`cost defaults are also set by pack ${other.id}`);
   }
   return problems;
 }
@@ -327,6 +324,7 @@ export function createPackLayerStore(opts: {
         scalars: check.scalars,
         jobNames: check.jobNames,
         sourceMap: sourceMapFromList(check.lists.get("sources.map")),
+        cost: check.cost,
       },
     };
   }
@@ -391,10 +389,13 @@ export function createPackLayerStore(opts: {
     const parsed = checkPackFragment(fragment, checkJobs);
     if (!parsed.ok) return { ok: false, reason: "invalid", problems: parsed.problems };
     const clash = conflicts(
-      packId,
-      parsed.scalars,
-      parsed.jobNames,
-      sourceMapFromList(parsed.lists.get("sources.map")),
+      {
+        id: packId,
+        scalars: parsed.scalars,
+        jobNames: parsed.jobNames,
+        sourceMap: sourceMapFromList(parsed.lists.get("sources.map")),
+        cost: parsed.cost,
+      },
       current.clean,
     );
     if (clash.length > 0) return { ok: false, reason: "conflict", problems: clash };
