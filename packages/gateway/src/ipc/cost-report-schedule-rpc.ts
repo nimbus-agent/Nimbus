@@ -152,8 +152,8 @@ export function handleCostReportSchedule(
     }
     let status: "new" | "replaced" | "unchanged" = "new";
     if (before !== null) {
-      const same = storedHash(before.steps_json) === storedHash(stepsJson);
-      status = same ? "unchanged" : "replaced";
+      const old = storedHash(before.steps_json);
+      status = old !== null && old === storedHash(stepsJson) ? "unchanged" : "replaced";
     }
     out.push({
       kind: ch.kind,

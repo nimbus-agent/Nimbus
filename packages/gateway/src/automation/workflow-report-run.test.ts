@@ -4,10 +4,9 @@
 // executors, real index, a real FOCUS import.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
 import { costReportToolFor } from "../connectors/connector-writes/cost-report-rows.ts";
 import {
   buildUnattendedWorkflowWriteExecutor,
@@ -22,7 +21,8 @@ import {
   runWorkflowExecution,
   type SkippedRunInfo,
 } from "./workflow-runner.ts";
-import { upsertWorkflowByName } from "./workflow-store.ts";
+import { parseWorkflowSteps, workflowStepsSha256 } from "./workflow-steps.ts";
+import { getWorkflowByName, upsertWorkflowByName } from "./workflow-store.ts";
 
 // Thursday 2026-11-26 noon UTC: a `7d` report covers 2026-11-19 to 2026-11-25.
 const NOW = Date.UTC(2026, 10, 26, 12);
@@ -244,5 +244,52 @@ describe("a report step in a run", () => {
     });
     expect(out.status).toBe("error");
     expect(out.stepResults[0]?.error).toContain("cannot run report steps");
+  });
+
+  test("an owner resume of a blocked scheduled report run re-renders the report and posts it", async () => {
+    importDays(["2026-11-20"]);
+    save([REPORT_STEP, POST_STEP]);
+    const h = harness();
+    const common = {
+      db,
+      workflowName: "cost-checkout-weekly-slack",
+      dryRun: false,
+      stream: false,
+      sendChunk: () => {},
+      costConfigDir: dir,
+      now: () => NOW,
+    };
+    const blocked = await runWorkflowExecution({
+      ...common,
+      writeExecutor: h.unattended,
+      trigger: "schedule",
+      triggeredBy: "scheduler",
+    });
+    expect(blocked.status).toBe("blocked_on_approval");
+    const stored = getWorkflowByName(db, "cost-checkout-weekly-slack")?.steps_json ?? "[]";
+    const resumed = await runWorkflowExecution({
+      ...common,
+      writeExecutor: h.attended,
+      trigger: "owner_cli",
+      triggeredBy: "cli",
+      resume: {
+        runId: blocked.runId,
+        blockedStep: 1,
+        expectedSha256: workflowStepsSha256(parseWorkflowSteps(stored)),
+      },
+    });
+    expect(resumed.status).toBe("done");
+    expect(posts(h.dispatched)).toHaveLength(1);
+  });
+
+  test("source pin: both production run paths give the runner the config directory", () => {
+    const main = readFileSync(join(import.meta.dir, "..", "gateway-main.ts"), "utf8");
+    const handler = main.slice(main.indexOf("setWorkflowRunHandler("));
+    const handlerBody = handler.slice(0, handler.indexOf("sendChunk: ctx.sendChunk"));
+    expect(handlerBody).toContain("costConfigDir: platform.paths.configDir");
+    const scheduler = main.slice(main.indexOf("new WorkflowScheduler("));
+    expect(scheduler.slice(0, scheduler.indexOf("onError:"))).toContain(
+      "costConfigDir: platform.paths.configDir",
+    );
   });
 });

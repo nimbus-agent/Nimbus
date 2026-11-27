@@ -363,13 +363,13 @@ export async function main(): Promise<void> {
 
   const learningLogger = pino({ name: "standing-learning" });
   platform.ipc.setWorkflowRunHandler(async (ctx) => {
-    // A `run` step genuinely REQUIRES an agent — unlike `runAsk`, it has no deterministic path
-    // to fall back to. With no `[llm.remote.*]` vendor enabled there is no agent: the runner then
-    // refuses a workflow that has a `run` step with a message that names the fix (a workflow of
-    // query and write steps needs no model, SA2).
+    // A `run` step REQUIRES an agent (unlike `runAsk`, no deterministic fallback). With no `[llm.remote.*]`
+    // vendor there is none: the runner refuses a `run` step, naming the fix (query/write steps need no model, SA2).
+    // `costConfigDir`: an owner run or a resume of a blocked scheduled run renders its `report` step (Phase 7).
     const workflowAgent = resolveEngineAgent(ctx.agent);
     return runWorkflowExecution({
       db: platform.localIndex.getDatabase(),
+      costConfigDir: platform.paths.configDir,
       ...(workflowAgent === undefined ? {} : { agent: workflowAgent }),
       // SA2: a write step asks the owner on the run's own client, through an executor with no
       // delegation and the before-state runner; built per run so consent is bound to this client.
