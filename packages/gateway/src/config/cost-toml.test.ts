@@ -27,6 +27,7 @@ describe("[cost] config", () => {
       internalEnvs: DEFAULT_COST_INTERNAL_ENVS,
       authoritative: {},
       focusDir: null,
+      githubOrgs: [],
       reports: [],
       reportsError: null,
       error: null,
@@ -180,5 +181,35 @@ describe("[[cost.report]] and [[cost.report.channel]]", () => {
     expect(both.error).toContain("nope");
     expect(both.reports).toEqual([]);
     expect(base('[cost.report]\nname = "x"\n').error).toBe("unknown section [cost.report]");
+  });
+});
+
+describe("[cost.github] orgs (Phase 7 slice 5)", () => {
+  test("absent: no org, nothing is synced", () => {
+    expect(base("").githubOrgs).toEqual([]);
+  });
+
+  test("a list of org names, kept as written", () => {
+    const c = base('[cost.github]\norgs = ["acme", "Acme-Labs"]\n');
+    expect(c.error).toBeNull();
+    expect(c.githubOrgs).toEqual(["acme", "Acme-Labs"]);
+    expect(base("[cost.github]\norgs = []\n").githubOrgs).toEqual([]);
+  });
+
+  test("a bad list refuses the whole cost config, naming it", () => {
+    const many = Array.from({ length: 21 }, (_, i) => `"o${String(i)}"`).join(", ");
+    for (const [text, want] of [
+      ['[cost.github]\norgs = "acme"\n', "[cost.github].orgs must be a list"],
+      [`[cost.github]\norgs = [${many}]\n`, "at most 20"],
+      ['[cost.github]\norgs = ["-bad"]\n', "is not a GitHub organization name"],
+      ['[cost.github]\norgs = ["a/b"]\n', "is not a GitHub organization name"],
+      [`[cost.github]\norgs = ["${"a".repeat(40)}"]\n`, "is not a GitHub organization name"],
+      ['[cost.github]\norgs = ["acme", "ACME"]\n', "is listed twice"],
+      ['[cost.github]\norgs = ["acme"]\ntoken = "x"\n', "unknown key"],
+    ] as const) {
+      const c = base(text);
+      expect(c.error, text).toContain(want);
+      expect(c.githubOrgs).toEqual([]);
+    }
   });
 });
