@@ -1,8 +1,10 @@
 /**
- * `ensureGoogleDriveMcp` and the Gmail archive's scope gate (Phase 10 SA2, OR-10-7): the Gmail child
- * ALONE gets `GOOGLE_OAUTH_SCOPES` (the connector lists `gmail_thread_archive` only when the token
- * holds `gmail.modify`); Drive, Photos and Meet get the access token and nothing else. A credential
- * that records no scopes passes none, so the connector hides the scope-gated tool.
+ * `ensureGoogleDriveMcp` and the scope gates (Phase 10 SA2, OR-10-7; connectors 0.20.0): the Gmail
+ * and Google Calendar children ALONE get `GOOGLE_OAUTH_SCOPES` (Gmail lists `gmail_thread_archive`
+ * only when the token holds `gmail.modify`, Calendar its event writes only when it holds
+ * `calendar`); Drive, Photos and Meet get the access token and nothing else. A credential that
+ * records no scopes passes none, so the connector hides the scope-gated tools. Calendar's scopes
+ * come from its OWN key only, never the shared `google.oauth`.
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
@@ -126,5 +128,50 @@ describe("google_calendar is own-key-only at the bundle", () => {
     expect(Object.keys(s)).toContain("google_calendar");
     expect(s["google_calendar"]?.env?.["GOOGLE_OAUTH_ACCESS_TOKEN"]).toBe("cal");
     expect(Object.hasOwn(s["google_calendar"]?.env ?? {}, "GOOGLE_OAUTH_SCOPES")).toBe(false);
+  });
+
+  const CALENDAR = "https://www.googleapis.com/auth/calendar";
+  const READONLY = "https://www.googleapis.com/auth/calendar.readonly";
+  const ownCalendar = async (vault: NimbusVault, scopes: string[] | undefined): Promise<void> => {
+    await vault.set(
+      "google_calendar.oauth",
+      JSON.stringify({
+        accessToken: "cal",
+        refreshToken: "ref",
+        expiresAt: Date.now() + 3_600_000,
+        ...(scopes === undefined ? {} : { scopes }),
+      }),
+    );
+  };
+
+  test("its own key's scopes reach the Calendar child as GOOGLE_OAUTH_SCOPES, so it lists the writes", async () => {
+    const vault = await sharedGoogleVault(undefined);
+    await ownCalendar(vault, [READONLY, CALENDAR]);
+    await ensureGoogleDriveMcp(spawnCtx(vault));
+    const s = servers();
+    expect(s["google_calendar"]?.env?.["GOOGLE_OAUTH_SCOPES"]).toBe(`${READONLY} ${CALENDAR}`);
+    expect(s["google_calendar"]?.env?.["GOOGLE_OAUTH_ACCESS_TOKEN"]).toBe("cal");
+    // Gmail (on the shared key, which records no scopes) is not given Calendar's.
+    expect(Object.hasOwn(s["gmail"]?.env ?? {}, "GOOGLE_OAUTH_SCOPES")).toBe(false);
+  });
+
+  test("never the shared key's scopes: an own key that records none passes none, whatever google.oauth holds", async () => {
+    const vault = await sharedGoogleVault([
+      CALENDAR,
+      "https://www.googleapis.com/auth/gmail.modify",
+    ]);
+    await ownCalendar(vault, undefined);
+    await ensureGoogleDriveMcp(spawnCtx(vault));
+    const s = servers();
+    expect(Object.hasOwn(s["google_calendar"]?.env ?? {}, "GOOGLE_OAUTH_SCOPES")).toBe(false);
+    // The shared key's scopes still reach Gmail, which falls back to it.
+    expect(s["gmail"]?.env?.["GOOGLE_OAUTH_SCOPES"]).toBe(
+      `${CALENDAR} https://www.googleapis.com/auth/gmail.modify`,
+    );
+  });
+
+  test("no own key: a shared google.oauth holding calendar neither starts Calendar nor lends it scopes", async () => {
+    await ensureGoogleDriveMcp(spawnCtx(await sharedGoogleVault([CALENDAR])));
+    expect(Object.keys(servers())).not.toContain("google_calendar");
   });
 });

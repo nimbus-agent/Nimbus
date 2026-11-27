@@ -113,10 +113,12 @@ describe("the Gmail archive row and the token's scopes (status)", () => {
     }
   });
 
-  test("a service other than Gmail makes no claim", async () => {
+  test("a service other than Gmail (and Google Calendar, below) makes no claim", async () => {
     const vault = await vaultHolding([READONLY]);
     const out = (await call("connector.writesStatus", {}, vault)) as { services: StatusService[] };
-    for (const s of out.services.filter((x) => x.service !== "gmail")) {
+    const others = out.services.filter((x) => !["gmail", "google_calendar"].includes(x.service));
+    expect(others.length).toBeGreaterThan(5);
+    for (const s of others) {
       expect(s.notOffered).toBeUndefined();
     }
   });
@@ -160,6 +162,64 @@ describe("the Gmail archive row in the enable prompt", () => {
     );
     expect(prompts[0]).toContain(
       "gmail_thread_archive  gmail.thread.archive  wave 2  (new: offered after you approve)",
+    );
+  });
+});
+
+// Connectors 0.20.0: the Google Calendar event writes are listed only when Google Calendar's OWN
+// credential holds `calendar` (or `calendar.events`); a connection from before 0.20.0 holds only
+// `calendar.readonly`, so `status` and the enable prompt name the re-authorisation.
+describe("the Google Calendar writes and their own credential's scopes", () => {
+  const CAL_READONLY = "https://www.googleapis.com/auth/calendar.readonly";
+  const CALENDAR = "https://www.googleapis.com/auth/calendar";
+  const REASON = "re-authorise Google Calendar to grant calendar";
+  const WRITES = ["gcal_event_create", "gcal_event_update", "gcal_event_delete"];
+
+  async function calendarVault(own: string[] | undefined, shared?: string[]) {
+    const vault = await vaultHolding(shared);
+    if (own !== undefined) {
+      await vault.set(
+        "google_calendar.oauth",
+        JSON.stringify({ accessToken: "a", refreshToken: "r", expiresAt: 1, scopes: own }),
+      );
+    }
+    return vault;
+  }
+
+  async function calendarStatus(vault: ReturnType<typeof createMockVault>) {
+    const out = (await call("connector.writesStatus", {}, vault)) as { services: StatusService[] };
+    const c = out.services.find((s) => s.service === "google_calendar");
+    if (c === undefined) throw new Error("no google_calendar service");
+    return c;
+  }
+
+  test("a read-only connection: none of the three is offered, each with the re-authorise reason", async () => {
+    const c = await calendarStatus(await calendarVault([CAL_READONLY]));
+    expect(c.notOffered).toEqual(WRITES.map((toolId) => ({ toolId, reason: REASON })));
+    expect(c.awaitingApproval).toBe(0);
+  });
+
+  test("its own credential holding calendar: all three await approval", async () => {
+    const c = await calendarStatus(await calendarVault([CAL_READONLY, CALENDAR]));
+    expect(c.notOffered).toBeUndefined();
+    expect(c.awaitingApproval).toBe(3);
+  });
+
+  test("never the shared google.oauth's scopes: no own credential stays not offered", async () => {
+    const c = await calendarStatus(await calendarVault(undefined, [CALENDAR]));
+    expect(c.notOffered?.map((n) => n.toolId)).toEqual(WRITES);
+  });
+
+  test("the enable prompt says what to do", async () => {
+    const prompts: string[] = [];
+    await call(
+      "connector.writesEnable",
+      { service: "google_calendar", wave: 4 },
+      await calendarVault([CAL_READONLY]),
+      executor(prompts),
+    );
+    expect(prompts[0]).toContain(
+      `gcal_event_create  google_calendar.event.create  wave 2  (not offered yet: ${REASON})`,
     );
   });
 });

@@ -14,7 +14,7 @@ export function nullOptionalFieldRefusal(key: string): string {
   return `the field \`${key}\` cannot be null; omit it or give a value`;
 }
 
-/** The optional input keys of each B4a row, the Flagsmith state set (C3), three D3b rows, the Bitbucket comment and three 0.19.0 rows, whose `null` the doors refuse. */
+/** The optional input keys of each B4a row, the Flagsmith state set (C3), three D3b rows, the Bitbucket comment, three 0.19.0 rows and the 0.20.0 Calendar writes, whose `null` the doors refuse. */
 const NULL_REFUSED_OPTIONAL_KEYS: Readonly<Record<string, readonly string[]>> = {
   outlook_calendar_create: ["timeZone", "attendees", "body"],
   apple_calendar_event_create: ["calendar", "attendees", "location", "description", "uid"],
@@ -32,6 +32,29 @@ const NULL_REFUSED_OPTIONAL_KEYS: Readonly<Record<string, readonly string[]>> = 
   github_issue_update: ["title", "body"],
   gitlab_issue_update: ["title", "description"],
   github_pr_review_create: ["comments", "commitId"],
+  // Connectors 0.20.0: every optional key of the Google Calendar writes. A null would render as its
+  // unset line ("(not set: primary ...)", "(not set: unchanged)", the "none" notification line)
+  // yet fail the connector's schema.
+  gcal_event_create: [
+    "calendarId",
+    "description",
+    "location",
+    "attendees",
+    "recurrence",
+    "sendUpdates",
+  ],
+  gcal_event_update: [
+    "calendarId",
+    "summary",
+    "description",
+    "location",
+    "start",
+    "end",
+    "attendees",
+    "recurrence",
+    "sendUpdates",
+  ],
+  gcal_event_delete: ["calendarId", "sendUpdates"],
 };
 
 /** The optional keys whose `null` is refused for `toolId` (read-only, for its drift test). */

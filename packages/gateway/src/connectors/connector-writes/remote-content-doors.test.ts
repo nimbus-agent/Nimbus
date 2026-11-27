@@ -397,6 +397,9 @@ const NOT_SCANNED_REMOTE: Readonly<Record<string, string>> = {
   apple_mail_draft_create: "sent as text/plain",
   outlook_calendar_create: "the connector always sends contentType Text (B4 R4)",
   apple_calendar_event_create: "iCalendar DESCRIPTION text (B4 R4)",
+  gcal_event_create: "owner ruling 0.20.0, as Outlook's; Google may render HTML here (a bound)",
+  gcal_event_update: "owner ruling 0.20.0, as Outlook's; Google may render HTML here (a bound)",
+  gcal_event_delete: "no text field; the schema reader over-reads the sibling schema consts",
   github_file_commit:
     "bound row (I54): the commit message and file text are shown in full as a diff and deliberately not scanned (commit-free-text.test.ts)",
   gitlab_commit_create:
@@ -413,9 +416,8 @@ function schemaTextKeys(toolId: string): readonly string[] {
   for (const r of SCAN.registrations.filter((x) => x.id === toolId)) {
     const file = stripComments(SOURCES.find((src) => src.rel === r.file)?.text ?? "");
     let text = file.slice(r.span[0], r.span[1] + 1);
-    // The schema named in the call (`const <name> = z.object(...)` or `= base.extend(...)`), when
-    // it is defined in the same file.
-    // Followed through `.extend` bases (`outlookDraftCreateArgs = outlookMailSendArgs.extend`).
+    // The schema named in the call (`const <name> = z.object(...)` or `= base.extend(...)`) in the
+    // same file, followed through `.extend` bases (`outlookDraftCreateArgs = outlookMailSendArgs.extend`).
     const seen = new Set<string>();
     let pending = text;
     while (pending !== "") {
@@ -571,10 +573,8 @@ describe("B3r and B3w completeness tripwire", () => {
     }
   });
 
-  /**
-   * Final B3w review, item 4: per KEY, not per tool. Each free-text key an offerable tool's schema
-   * declares is scanned for that tool, unless the whole tool is named as not scanned.
-   */
+  /** Final B3w review, item 4: per KEY. Each free-text key an offerable tool's schema declares is
+   *  scanned for that tool, unless the whole tool is named as not scanned. */
   function unclassifiedKeys(toolId: string, keys: readonly string[]): readonly string[] {
     if (Object.hasOwn(NOT_SCANNED_REMOTE, toolId)) return [];
     const scanned = remoteContentScannedKeys(toolId);

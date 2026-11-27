@@ -36,7 +36,7 @@ describe("I53 — a first-party connector write reaches the model only through t
   test("D0a: every Wave 4 write on every door reaches dispatch only after an exact type-to-confirm match at the executor gate", async () => {
     const { NO_POLICY_OVERLAY, ToolExecutor } = await import("../engine/executor.ts");
     const wave4 = CONNECTOR_WRITE_ROWS.filter((r) => r.wave === 4);
-    expect(wave4).toHaveLength(51);
+    expect(wave4).toHaveLength(52);
     const failures: string[] = [];
     for (const row of wave4) {
       const input = confirmableInput(row);
@@ -126,7 +126,7 @@ describe("I53 — a first-party connector write reaches the model only through t
     const { NO_POLICY_OVERLAY, ToolExecutor } = await import("../engine/executor.ts");
     const { createConnectorDispatcher } = await import("../connectors/registry.ts");
     const wave4 = CONNECTOR_WRITE_ROWS.filter((r) => r.wave === 4 && r.transport === "mesh");
-    expect(wave4).toHaveLength(43);
+    expect(wave4).toHaveLength(44);
     const failures: string[] = [];
     for (const row of wave4) {
       const input = confirmableInput(row);
@@ -242,12 +242,12 @@ describe("I53 — a first-party connector write reaches the model only through t
     );
     const { isReadOnlyToolId } = await import("../share/read-tool-registry.ts");
     const offeredWave4 = CONNECTOR_WRITE_ROWS.filter((r) => r.wave === 4 && isModelOfferableRow(r));
-    // 27 through a before-state (D1), the two bound multi-file commits (D1c) and the Terraform apply
+    // 28 through a before-state (D1, and the 0.20.0 Calendar delete), the two bound commits (D1c), the Terraform apply
     // and CloudFormation deploy (D2) through a prepare step, and the seven deploy-trigger and
     // mobile-release writes (D3b) through a before-state, the Kubernetes apply (D3a) through a
     // prepare step and the Kubernetes restart and scale (D3c) through a before-state; the destroy
     // is bound but never offered.
-    expect(offeredWave4).toHaveLength(41);
+    expect(offeredWave4).toHaveLength(42);
     expect(offeredWave4.filter((r) => r.bound !== undefined).map((r) => r.toolId)).toEqual([
       "github_file_commit",
       "gitlab_commit_create",

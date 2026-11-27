@@ -84,6 +84,8 @@ const WAVE2_LISTING: Readonly<
 > = {
   gmail: { slot: LAZY_MESH.googleBundle, ensure: "ensureGoogleDriveRunning" },
   google_drive: { slot: LAZY_MESH.googleBundle, ensure: "ensureGoogleDriveRunning" },
+  // Connectors 0.20.0: the Google Calendar event writes, in the same bundle (own key only).
+  google_calendar: { slot: LAZY_MESH.googleBundle, ensure: "ensureGoogleDriveRunning" },
   outlook: { slot: LAZY_MESH.microsoftBundle, ensure: "ensureMicrosoftBundleRunning" },
   teams: { slot: LAZY_MESH.microsoftBundle, ensure: "ensureMicrosoftBundleRunning" },
   onedrive: { slot: LAZY_MESH.microsoftBundle, ensure: "ensureMicrosoftBundleRunning" },

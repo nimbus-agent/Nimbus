@@ -26,6 +26,8 @@ export interface PKCEOptions {
   portRange?: [number, number];
   provider: OAuthProvider;
   vault: NimbusVault;
+  /** Save the tokens under this Vault key instead of the provider's shared one (own-key-only services). */
+  vaultKey?: string;
   openUrl: (url: string) => Promise<void>;
   fetchImpl?: PKCEFetch;
   onRandomPortFallback?: () => void;
@@ -252,7 +254,11 @@ async function runOnLocalPort(
       authCode: done.code,
       requestedScopes: options.scopes,
     });
-    await persistOAuthTokensToVaultKey(options.vault, descriptor.vaultKey, result);
+    await persistOAuthTokensToVaultKey(
+      options.vault,
+      options.vaultKey ?? descriptor.vaultKey,
+      result,
+    );
     return result;
   } finally {
     // `abortTimer` is only ever assigned inside the try above, so a throw from `buildAuthorizeUrl`

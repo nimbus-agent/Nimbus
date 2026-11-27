@@ -1,5 +1,6 @@
 import type { OAuthProvider } from "../auth/pkce.ts";
 import * as finops from "./finops-connector-catalog.ts";
+import { GOOGLE_DEFAULT_SCOPES } from "./google-oauth-scopes.ts";
 
 export const CONNECTOR_SERVICE_IDS = [
   "google_drive",
@@ -388,44 +389,12 @@ export function oauthProfileForService(serviceId: ConnectorServiceId): Connector
   }
   switch (serviceId) {
     case "google_drive":
-      return {
-        provider: "google",
-        defaultScopes: ["https://www.googleapis.com/auth/drive.readonly"],
-      };
     case "gmail":
-      return {
-        provider: "google",
-        defaultScopes: [
-          "https://www.googleapis.com/auth/gmail.readonly",
-          "https://www.googleapis.com/auth/gmail.compose",
-          // Phase 10 SA2: backs `gmail_thread_archive` (removes the INBOX label, nothing is
-          // deleted). Only a fresh `nimbus connector auth gmail` requests it: a refresh sends no
-          // `scope` field, so an existing connection keeps the scopes it was granted, and the
-          // connector hides the archive tool while the token lacks it.
-          "https://www.googleapis.com/auth/gmail.modify",
-        ],
-      };
     case "google_photos":
-      return {
-        provider: "google",
-        defaultScopes: [
-          "https://www.googleapis.com/auth/photoslibrary.readonly",
-          "https://www.googleapis.com/auth/photoslibrary.readonly.appcreateddata",
-        ],
-      };
     case "google_meet":
-      return {
-        provider: "google",
-        defaultScopes: ["https://www.googleapis.com/auth/meetings.space.readonly"],
-      };
     case "google_calendar":
-      // Its OWN consent: only the read-only calendar scope. A user who connected Gmail or Drive
-      // is not given calendar access by it: the token lookup never falls back to the shared
-      // `google.oauth` key for this service (`GOOGLE_OWN_KEY_ONLY_SERVICES`).
-      return {
-        provider: "google",
-        defaultScopes: ["https://www.googleapis.com/auth/calendar.readonly"],
-      };
+      // The Google consents' scopes, and why each is requested: `google-oauth-scopes.ts`.
+      return { provider: "google", defaultScopes: [...GOOGLE_DEFAULT_SCOPES[serviceId]] };
     case "onedrive":
       return {
         provider: "microsoft",

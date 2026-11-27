@@ -1,4 +1,5 @@
-// Phase 9.7 D1 through the real door: the 27 Wave 4 rows are offered only at `--wave 4` with each
+// Phase 9.7 D1 through the real door: the 28 Wave 4 rows (the 27 of D1 and, since connectors
+// 0.20.0, the Google Calendar delete) are offered only at `--wave 4` with each
 // write approved by name, read before they prompt, refused when their current state cannot be
 // read, typed to confirm, and run as `origin: "model"` actions through the door's executor. The
 // rows, the listing check, the before-state runner and the executor are the production ones; the
@@ -180,8 +181,8 @@ describe("D1 through the real door", () => {
   const writesOnly = (d: { dispatched: PlannedAction[] }) =>
     d.dispatched.filter((a) => !isBeforeReadActionType(a.type));
 
-  test("the 27 rows are on 13 services, and 27 names are expected", () => {
-    expect(D1_OFFERED).toHaveLength(27);
+  test("the 28 rows are on 14 services, and 28 names are expected", () => {
+    expect(D1_OFFERED).toHaveLength(28);
     expect(D1_SERVICES).toEqual([
       "apple",
       "argocd",
@@ -191,6 +192,7 @@ describe("D1 through the real door", () => {
       "github",
       "github_actions",
       "gitlab",
+      "google_calendar",
       "jenkins",
       "mlflow",
       "onedrive",
@@ -199,7 +201,7 @@ describe("D1 through the real door", () => {
     ]);
   });
 
-  test("at max_wave 3 (the default) none of the 27 is offered, whatever was approved", async () => {
+  test("at max_wave 3 (the default) none of the 28 is offered, whatever was approved", async () => {
     enableAll(3, () => true);
     const d = await door({});
     expect(d.offered.filter((n) => OFFERED_NAMES.includes(n))).toEqual([]);
@@ -208,7 +210,7 @@ describe("D1 through the real door", () => {
     }
   });
 
-  test("at max_wave 4, with each write approved by name, exactly the 27 are offered, under names that fit", async () => {
+  test("at max_wave 4, with each write approved by name, exactly the 28 are offered, under names that fit", async () => {
     enableAll(4, () => true);
     const d = await door({});
     expect(d.offered.filter((n) => OFFERED_NAMES.includes(n))).toEqual(OFFERED_NAMES);
@@ -228,7 +230,7 @@ describe("D1 through the real door", () => {
             .length,
         0,
       ),
-    ).toBe(27);
+    ).toBe(28);
   });
 
   test("an opt-in from before D1 (wave 4, nothing approved by name) offers none; a write not approved is not offered", async () => {

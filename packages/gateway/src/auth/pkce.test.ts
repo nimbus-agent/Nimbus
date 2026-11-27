@@ -445,3 +445,29 @@ describe("an OAuth error reaches the user with its provider code (F18)", () => {
     expect(sink.value?.description).toBe("The client is not enabled");
   });
 });
+
+describe("runPKCEFlow: vaultKey (an own-key-only service's consent, connectors 0.20.0)", () => {
+  const tokenReply = async (input: Request | string | URL): Promise<Response> =>
+    isHttpsTokenEndpoint(requestUrlString(input), "oauth2.googleapis.com", "/token")
+      ? new Response(
+          JSON.stringify({ access_token: "OWN", refresh_token: "R", expires_in: 3600 }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        )
+      : new Response("not found", { status: 404 });
+
+  test("persists to the given key only; the provider's shared key is left exactly as it was", async () => {
+    const vault = createMemoryVault();
+    await vault.set("google.oauth", "PRE-EXISTING");
+    await runPKCEFlow({
+      clientId: "test-client",
+      scopes: ["openid"],
+      provider: "google",
+      vault,
+      vaultKey: "google_calendar.oauth",
+      openUrl: googlePkceOpenUrlCompleter("code", { expectAccountsHost: true }),
+      fetchImpl: tokenReply,
+    });
+    expect(await vault.get("google_calendar.oauth")).toContain("OWN");
+    expect(await vault.get("google.oauth")).toBe("PRE-EXISTING");
+  });
+});
