@@ -245,7 +245,7 @@ describe("parseWorkflowSteps: the { report } value source", () => {
 
 describe("no site reads a { report } value as a constant", () => {
   const steps = () => parseWorkflowSteps(JSON.stringify([REPORT, POST]));
-  test("building the write's actions and deriving a rule scope refuse it until the report step fills it", () => {
+  test("building the write's actions fills it only from the run's report output; the rule scope names the step", () => {
     const parsed = steps();
     const write = parsed[1];
     if (write?.kind !== "write") throw new Error("fixture");
@@ -269,6 +269,9 @@ describe("no site reads a { report } value as a constant", () => {
       mcpToolId: costReportToolFor("slack"),
       input: { channel: "C0123ABC", text: "B" },
     });
-    expect(() => scopeOfStep(write, parsed)).toThrow("a report value");
+    expect(scopeOfStep(write, parsed)).toEqual({
+      channel: { const: "C0123ABC" },
+      text: { report: 0, part: "body" },
+    });
   });
 });

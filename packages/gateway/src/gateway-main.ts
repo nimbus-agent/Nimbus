@@ -482,9 +482,8 @@ export async function main(): Promise<void> {
           });
         })();
 
-  // SA4: scheduled workflows. A demo-rooted gateway never schedules (I41). The scheduler is handed a
-  // FACTORY for an unattended write executor and a notifier; it holds no client and no consent
-  // coordinator, so nothing it runs can ask a person anything (static D44(d)).
+  // SA4: scheduled workflows; never in a demo (I41). Handed an unattended executor FACTORY and a notifier,
+  // with no client and no consent coordinator, nothing it runs can ask a person anything (D44(d)).
   const workflowScheduler =
     platform.paths.demo === true
       ? undefined

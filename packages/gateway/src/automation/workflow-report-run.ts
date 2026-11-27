@@ -54,7 +54,7 @@ export function executeReportStep(
   runId: string,
   stepIndex: number,
   step: ReportWorkflowStep,
-  outputs: ReportOutputs,
+  reports: ReportOutputs,
 ): ReportRunOutcome {
   const label = step.label;
   const fail = (message: string): ReportRunOutcome => {
@@ -106,7 +106,7 @@ export function executeReportStep(
       empty: both.empty,
     });
     const text = renderReportText(r, model);
-    outputs.set(label, { index: stepIndex, body: text.body, subject: text.subject });
+    reports.set(label, { index: stepIndex, body: text.body, subject: text.subject });
     finish(deps, runId, stepIndex, "done", {
       range: [range.fromDay, range.toDay],
       chars: text.body.length,

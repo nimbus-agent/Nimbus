@@ -76,6 +76,7 @@ const D44_V90 = `${D44_SRC}index/standing-suggestion-v90-sql.ts`;
 const D44_RUNNER = `${D44_SRC}automation/workflow-runner.ts`;
 const D44_GUARD = `${D44_SRC}automation/workflow-guard.ts`;
 const D44_DERIVE = `${D44_SRC}standing/standing-rule-derive.ts`;
+const D44_REPORT_RUN = `${D44_SRC}automation/workflow-report-run.ts`;
 /** What the guard module may import: the step types and the text sanitiser, nothing else. */
 const D44_GUARD_IMPORTS: readonly string[] = [
   "./workflow-steps.ts",
@@ -187,6 +188,19 @@ const D44_NAME_RULES: ReadonlyArray<{
     rule: "standing-learning-confined",
     re: /\bhasLiveRuleFor\b/g,
     allowed: [D44_STORE, D44_LEARNING],
+    keepStrings: false,
+  },
+  // (h) Phase 7 slice 4: the report step is the ONLY producer of a report output a `{ report }` value reads.
+  {
+    rule: "standing-report-source-confined",
+    re: /\breports\s*(?:\?\.|\.)\s*set\s*\(/g,
+    allowed: [D44_REPORT_RUN],
+    keepStrings: false,
+  },
+  {
+    rule: "standing-report-source-confined",
+    re: /\bexecuteReportStep\b/g,
+    allowed: [D44_REPORT_RUN, D44_RUNNER],
     keepStrings: false,
   },
   {

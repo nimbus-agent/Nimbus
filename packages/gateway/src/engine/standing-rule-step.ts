@@ -23,6 +23,7 @@
 // Nothing here writes anything but the fire (through the store's `claimFire`, which is also the
 // ceiling). Every dependency is injected, so a test drives each clause alone.
 import type { Database } from "bun:sqlite";
+import { REPORT_BODY_FIELDS } from "../connectors/connector-writes/cost-report-rows.ts";
 import { MODEL_NEVER_OFFERED_TOOL_IDS } from "../connectors/connector-writes/model-offerable.ts";
 import { rowNamedByToolId } from "../connectors/connector-writes/preview.ts";
 import type { ConnectorWriteRow } from "../connectors/connector-writes/types.ts";
@@ -143,8 +144,23 @@ function toolStep(
   return isPlainRecord(input) ? { row, input } : undefined;
 }
 
-/** Step 5. Every dispatched field has a constant or declared-query source; none is unaccounted for. */
-function accountedStep(input: PlainRecord, p: WorkflowProvenance): boolean {
+/** A report source is accounted only on the body or subject field `REPORT_BODY_FIELDS` names for the row. */
+function reportSourceAccounted(toolId: string, field: string, s: object): boolean {
+  if (!("report" in s) || !("part" in s)) return false;
+  const { report, part } = s as { report: unknown; part: unknown };
+  if (typeof report !== "number" || !Number.isInteger(report) || report < 0) return false;
+  const fields = Object.hasOwn(REPORT_BODY_FIELDS, toolId) ? REPORT_BODY_FIELDS[toolId] : undefined;
+  if (fields === undefined) return false;
+  if (part === "body") return fields.body === field;
+  if (part === "subject") return fields.subject !== null && fields.subject === field;
+  return false;
+}
+
+/**
+ * Step 5. Every dispatched field has a constant, declared-query or report source; none is unaccounted
+ * for. A report source fills only the body (or a draft's subject) of the report row it names.
+ */
+function accountedStep(toolId: string, input: PlainRecord, p: WorkflowProvenance): boolean {
   const fields = Object.keys(input);
   const sources = Object.keys(p.fieldSources);
   if (fields.length !== sources.length) return false;
@@ -152,8 +168,10 @@ function accountedStep(input: PlainRecord, p: WorkflowProvenance): boolean {
     if (!Object.hasOwn(p.fieldSources, f)) return false;
     const s = p.fieldSources[f];
     if (s === "constant") continue;
-    // A report source is accounted only by the I55 report extension (slice 4, Task 3); until then, never.
-    if (s !== undefined && typeof s === "object" && "report" in s) return false;
+    if (s !== undefined && typeof s === "object" && "report" in s) {
+      if (!reportSourceAccounted(toolId, f, s)) return false;
+      continue;
+    }
     if (s === undefined || typeof s !== "object" || !Number.isInteger(s.query) || s.query < 0) {
       return false;
     }
@@ -173,6 +191,9 @@ function scopeMatches(rule: StandingRule, input: PlainRecord, p: WorkflowProvena
     if ("const" in entry) {
       if (source !== "constant") return false;
       if (canonicalJson(entry.const) !== canonicalJson(input[field])) return false;
+    } else if ("report" in entry) {
+      if (source === "constant" || !("report" in source)) return false;
+      if (source.report !== entry.report || source.part !== entry.part) return false;
     } else if (
       source === "constant" ||
       "report" in source ||
@@ -256,7 +277,7 @@ export function standingRuleStep(
   const named = toolStep(action, ofType, ctx.rows); // 4
   if (named === undefined) return undefined;
   const { row, input } = named;
-  if (!accountedStep(input, provenance)) return undefined; // 5
+  if (!accountedStep(row.toolId, input, provenance)) return undefined; // 5
   const now = (deps.now ?? Date.now)();
   const live = ruleStep(deps, provenance, row, now); // 6
   const matching = scopeStep(live, input, provenance); // 7

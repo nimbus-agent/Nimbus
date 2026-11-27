@@ -228,6 +228,8 @@ export function reportRulesPart3(files: readonly FileEntry[], mode: Mode): numbe
         "(d) the unattended executor option, its refusal text or the schedule trigger is used outside its confinement",
       "standing-learning-confined":
         "(f) a learning table, writer or the learning pass is reached outside the suggestion store, the pass and the workflow runner",
+      "standing-report-source-confined":
+        "(h) a report output is produced, or the report step run, outside the report step module and the workflow runner",
       "standing-guard-confined":
         "(g) the workflow guard module imports more than the step types and the sanitiser, a guard function is named outside the runner, rule derivation and the standing RPC, or the standing-rule step reads a guard",
     };
