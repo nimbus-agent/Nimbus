@@ -6,7 +6,11 @@ import pino from "pino";
 
 import type { NimbusCostAwsConfig } from "../config/cost-aws-toml.ts";
 import { readCostLines } from "../finops/cost-line-store.ts";
-import { COST_SYNC_CURSOR_PREFIXES, decodeCostSyncCursor } from "../finops/cost-source-gaps.ts";
+import {
+  COST_SYNC_CURSOR_PREFIXES,
+  decodeCostSyncCursor,
+  encodeCostSyncCursor,
+} from "../finops/cost-source-gaps.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import type { ProviderRateLimiter } from "../sync/rate-limiter.ts";
 import { upsertSchedulerRegistration } from "../sync/scheduler-store.ts";
@@ -17,8 +21,10 @@ import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { createAwsBillingCostSyncable } from "./aws-billing-cost-sync.ts";
 import type { AwsBillingCli } from "./aws-billing-export.ts";
 import {
+  AWS_CE_CALL_TIMEOUT_MS,
   AWS_CE_GAPS,
   AWS_CE_MAX_PAGES,
+  AWS_CE_RUN_MAX_REQUESTS,
   type AwsCeCli,
   awsCeCli,
   ceTimePeriod,
@@ -69,21 +75,30 @@ const result = (d: string, svc: string, acct: string, cost: string, estimated = 
 
 class FakeCe implements AwsCeCli {
   readonly calls: string[][] = [];
-  org: "ok" | "denied" = "denied";
+  org: "ok" | "none" | "denied" = "none";
+  delayMs = 0;
   sts: "ok" | "fail" = "ok";
   ceFails = false;
   /** month (YYYY-MM) -> pages */
   pages = new Map<string, unknown[][]>();
   endless = false;
-  async run(args: string[]): Promise<{ ok: boolean; text: string }> {
+  async run(args: string[]): Promise<{ ok: boolean; text: string; stderr?: string }> {
     this.calls.push(args);
+    if (this.delayMs > 0) await new Promise((r) => setTimeout(r, this.delayMs));
     if (args[0] === "organizations") {
       return this.org === "ok"
         ? {
             ok: true,
             text: JSON.stringify({ Organization: { ManagementAccountId: "999999999999" } }),
           }
-        : { ok: false, text: "" };
+        : {
+            ok: false,
+            text: "",
+            stderr:
+              this.org === "none"
+                ? "An error occurred (AWSOrganizationsNotInUseException)"
+                : "An error occurred (AccessDeniedException)",
+          };
     }
     if (args[0] === "sts") {
       return this.sts === "ok"
@@ -115,10 +130,16 @@ const cfg = (over: Partial<NimbusCostAwsConfig> = {}): NimbusCostAwsConfig => ({
   ...over,
 });
 
-async function run(ce: FakeCe, config: NimbusCostAwsConfig | null, cursor: string | null = null) {
+async function run(
+  ce: FakeCe,
+  config: NimbusCostAwsConfig | null,
+  cursor: string | null = null,
+  opts: { now?: number; budget?: number } = {},
+) {
   const out = await createAwsBillingCostSyncable({
     aws: () => config,
-    now: () => NOW,
+    now: () => opts.now ?? NOW,
+    ...(opts.budget === undefined ? {} : { ceBudgetMs: opts.budget }),
     cli: noExportCli,
     ce,
   }).sync(ctx(), cursor);
@@ -164,11 +185,11 @@ describe("aws_billing: the Cost Explorer path", () => {
     expect(nov[0]?.consumedQuantity ?? null).toBeNull();
     const first = ce.ceCalls[0] ?? [];
     expect(first).toContain("--granularity");
-    expect(first.slice(first.indexOf("--metrics") + 1, first.indexOf("--metrics") + 4)).toEqual([
+    expect(first.slice(first.indexOf("--metrics") + 1, first.indexOf("--group-by"))).toEqual([
       "UnblendedCost",
       "AmortizedCost",
-      "UsageQuantity",
     ]);
+    expect(first).not.toContain("UsageQuantity");
     expect(first).toContain("Start=2026-11-01,End=2026-11-21");
     expect(r.cursor.gaps).toEqual({});
     expect(r.cursor.synced[CE_KEY]).toBe("2026-11-20");
@@ -238,7 +259,7 @@ describe("aws_billing: the Cost Explorer path", () => {
     empty.pages.set("2026-11", [[]]);
     const r = await run(empty, cfg());
     expect(stored()).toHaveLength(1);
-    expect(r.cursor.gaps[CE_KEY]).toContain("returned no cost");
+    expect(r.cursor.gaps[CE_KEY]).toContain("covered no day");
     db.exec("DELETE FROM cost_line");
     const fresh = new FakeCe();
     expect((await run(fresh, cfg())).cursor.gaps).toEqual({});
@@ -358,6 +379,104 @@ describe("aws_billing: Cost Explorer replies that cannot be trusted", () => {
       ok: false,
       text: "",
     });
+  });
+});
+
+describe("aws_billing: Cost Explorer money guards", () => {
+  const day = (d: number) => Date.UTC(2026, 10, d, 9);
+
+  test("a month that fails for good is billed once a week (the running month once a day), not every run", async () => {
+    const ce = new FakeCe();
+    const garbage = ce.run.bind(ce);
+    ce.run = async (args) => {
+      const r = await garbage(args);
+      const period = args[args.indexOf("--time-period") + 1] ?? "";
+      return args[0] === "ce" && period.startsWith("Start=2026-10")
+        ? { ok: true, text: "not json" }
+        : r;
+    };
+    const octCalls = () =>
+      ce.ceCalls.filter((c) =>
+        (c[c.indexOf("--time-period") + 1] ?? "").startsWith("Start=2026-10"),
+      ).length;
+    let cursor: string | null = null;
+    for (let d = 20; d <= 26; d++) {
+      cursor = (await run(ce, cfg(), cursor, { now: day(d) })).out.cursor ?? null;
+    }
+    expect(octCalls()).toBe(1); // failed on the 20th; the 21st to the 26th did not bill it
+    const r = await run(ce, cfg(), cursor, { now: day(27) });
+    expect(octCalls()).toBe(2); // seven days later it is tried once more
+    expect(r.cursor.pending[CE_KEY]).toEqual(["2026-10"]);
+    expect(r.cursor.ceFailed?.["2026-10"]).toBe("2026-11-27");
+    // the running month was read every day
+    expect(
+      ce.ceCalls.filter((c) =>
+        (c[c.indexOf("--time-period") + 1] ?? "").startsWith("Start=2026-11"),
+      ),
+    ).toHaveLength(8);
+  });
+
+  test("at most 20 billed requests a run: the remaining months stay pending with a stated gap", async () => {
+    const ce = new FakeCe();
+    ce.endless = true;
+    const start = encodeCostSyncCursor(PREFIX, {
+      gaps: {},
+      synced: { [CE_KEY]: "2026-11-19" },
+      pending: { [CE_KEY]: ["2026-10", "2026-09"] },
+    });
+    const r = await run(ce, cfg(), start);
+    expect(ce.ceCalls).toHaveLength(AWS_CE_RUN_MAX_REQUESTS);
+    expect(r.cursor.gaps[CE_KEY]).toBe(AWS_CE_GAPS.runCap);
+    expect(r.cursor.pending[CE_KEY]).toEqual(["2026-11", "2026-10", "2026-09"]);
+  });
+
+  test("Organizations failing for any reason but 'not in an organization' is a gap, never an sts fallback", async () => {
+    const ce = new FakeCe();
+    ce.org = "denied";
+    const r = await run(ce, cfg());
+    expect(r.cursor.gaps[CE_KEY]).toBe(AWS_CE_GAPS.org);
+    expect(ce.calls.some((c) => c[0] === "sts" || c[0] === "ce")).toBe(false);
+  });
+
+  test("the resolved payer is kept in the cursor and reused when Organizations later fails", async () => {
+    const ce = new FakeCe();
+    ce.org = "ok";
+    ce.pages.set("2026-11", [[result("2026-11-02", "S3", "222222222222", "1")]]);
+    const first = await run(ce, cfg());
+    expect(first.cursor.payer).toBe("999999999999");
+    const later = new FakeCe();
+    later.org = "denied";
+    later.pages.set("2026-11", [[result("2026-11-03", "S3", "222222222222", "2")]]);
+    const r = await run(later, cfg(), first.out.cursor ?? null, { now: day(21) });
+    expect(later.calls.some((c) => c[0] === "organizations" || c[0] === "sts")).toBe(false);
+    expect(r.cursor.gaps).toEqual({});
+    expect(new Set(stored().map((l) => l.billingAccountId))).toEqual(new Set(["999999999999"]));
+    expect(stored()).toHaveLength(2);
+  });
+
+  test("a reply that covers days is authoritative for them, even with no lines", async () => {
+    const ce = new FakeCe();
+    ce.pages.set("2026-11", [[result("2026-11-02", "S3", "222222222222", "4")]]);
+    await run(ce, cfg());
+    expect(stored()).toHaveLength(1);
+    const cleared = new FakeCe();
+    cleared.pages.set("2026-11", [
+      [{ TimePeriod: { Start: "2026-11-02", End: "2026-11-03" }, Estimated: false, Groups: [] }],
+    ]);
+    const r = await run(cleared, cfg());
+    expect(stored()).toHaveLength(0);
+    expect(r.cursor.gaps).toEqual({});
+  });
+
+  test("the Cost Explorer part of a run has a wall-clock budget", async () => {
+    const ce = new FakeCe();
+    ce.endless = true;
+    ce.delayMs = 40;
+    const r = await run(ce, cfg(), null, { budget: 60 });
+    expect(ce.ceCalls.length).toBeLessThan(5);
+    expect(r.cursor.gaps[CE_KEY]).toBe(AWS_CE_GAPS.budget);
+    expect(r.cursor.pending[CE_KEY]).toEqual(["2026-11", "2026-10"]);
+    expect(AWS_CE_CALL_TIMEOUT_MS).toBe(60_000);
   });
 });
 

@@ -35,7 +35,9 @@ import {
 } from "./aws-billing-export.ts";
 import {
   AWS_CE_ACCOUNT_KEY,
-  AWS_CE_GAPS,
+  AWS_CE_RETRY_CURRENT_DAYS,
+  AWS_CE_RETRY_PAST_DAYS,
+  AWS_CE_RUN_BUDGET_MS,
   type AwsCeCli,
   awsCeCli,
   type CeRequestCounter,
@@ -61,6 +63,8 @@ export type AwsBillingCostSyncableOptions = {
   readonly cli?: AwsBillingCli;
   /** Test seam for the Cost Explorer calls (`ce`, `organizations`, `sts`). */
   readonly ce?: AwsCeCli;
+  /** Test seam: the wall-clock budget of the Cost Explorer part of a run. */
+  readonly ceBudgetMs?: number;
 };
 
 type Group = { readonly account: string; readonly lines: CostLine[] };
@@ -140,40 +144,73 @@ function exportMonthFetcher(
   };
 }
 
+/** What the Cost Explorer path remembers between runs (the cursor's `payer` and `ceFailed`). */
+type CeState = { payer: string | undefined; readonly ceFailed: Record<string, string> };
+
+const DAY_MS_ = 86_400_000;
+
+/** A month whose read failed for good is not billed again before its back-off ends: weekly past, daily current. */
+function inBackoff(failedDay: string, month: string, today: string): boolean {
+  const waitDays = month === today.slice(0, 7) ? AWS_CE_RETRY_CURRENT_DAYS : AWS_CE_RETRY_PAST_DAYS;
+  return (Date.parse(today) - Date.parse(failedDay)) / DAY_MS_ < waitDays;
+}
+
 /**
- * The Cost Explorer path (opt-in, no export): the payer account is resolved once per run, then each month is read
- * whole or not at all. The days the API answered for are replaced; other stored days stay. An answer with no cost
- * group at all never clears a month that holds lines. An `Estimated` month is written and stays pending.
+ * The Cost Explorer path (opt-in, no export): the payer account is resolved once (then kept in the cursor), each
+ * month is read whole or not at all. A reply that covers days is authoritative for those days (an empty one
+ * clears them); a reply that covers no day never clears a month that holds lines. An `Estimated` month is written
+ * and stays pending. A month whose read failed for good is not billed again until its back-off ends.
  */
 function ceMonthFetcher(
   ctx: SyncContext,
   ce: AwsCeCli,
   nowMs: number,
   counter: CeRequestCounter,
+  state: CeState,
+  deadlineMs: number,
 ): FetchMonth {
-  let payer: Promise<string | null> | null = null;
+  let payer: Promise<{ id: string } | { gap: string }> | null = null;
+  const today = new Date(nowMs).toISOString().slice(0, 10);
+  const failed = (month: string, outcome: CostMonthOutcome): CostMonthOutcome => {
+    state.ceFailed[month] = today;
+    return outcome;
+  };
   return async (_account, month) => {
-    payer ??= resolvePayerAccount(ctx, ce);
-    const id = await payer;
-    if (id === null) return { kind: "gap", reason: AWS_CE_GAPS.account };
-    const read = await readCeMonth(ctx, ce, id, month, nowMs, counter);
+    const failedDay = own(state.ceFailed, month);
+    if (failedDay !== undefined && inBackoff(failedDay, month, today)) {
+      return {
+        kind: "month_gap",
+        reason: `Cost Explorer for ${month} failed on ${failedDay} and is retried at most weekly (the running month daily); that month was not updated`,
+      };
+    }
+    if (state.payer === undefined) {
+      payer ??= resolvePayerAccount(ctx, ce);
+      const resolved = await payer;
+      if ("gap" in resolved) return { kind: "gap", reason: resolved.gap };
+      state.payer = resolved.id;
+    }
+    const id = state.payer;
+    const read = await readCeMonth(ctx, ce, id, month, nowMs, counter, deadlineMs);
+    if (read.kind === "month_gap") return failed(month, read);
     if (read.kind !== "lines") return read;
-    if (read.lines.length === 0) {
+    if (read.days.size === 0) {
       const held = ctx.readOwnCostLinesForMonth({
         provider: AWS_COST_PROVIDER,
         billingAccountId: id,
         month,
       });
       if (held.length > 0) {
-        return {
+        return failed(month, {
           kind: "month_gap",
-          reason: `Cost Explorer returned no cost for ${month}, which holds stored lines; that month was not updated`,
-        };
+          reason: `Cost Explorer covered no day of ${month}, which holds stored lines; that month was not updated`,
+        });
       }
+      delete state.ceFailed[month];
       return { kind: "ok", lines: 0, bytes: 0, pending: read.estimated };
     }
     const refused = writeGroup(ctx, month, { account: id, lines: [...read.lines] }, read.days);
     if (refused !== null) return refused;
+    delete state.ceFailed[month];
     return { kind: "ok", lines: read.lines.length, bytes: 0, pending: read.estimated };
   };
 }
@@ -224,11 +261,30 @@ export function createAwsBillingCostSyncable(options: AwsBillingCostSyncableOpti
       // No usable credentials: nothing is read, and the gaps recorded earlier are kept, not cleared.
       if (extra === null) return idle(keep(prev.gaps));
       const nowMs = (options.now ?? Date.now)();
+      const ceState: CeState = { payer: prev.payer, ceFailed: { ...(prev.ceFailed ?? {}) } };
       const fetchMonth =
         exportAt === null
-          ? ceMonthFetcher(ctx, options.ce ?? awsCeCli(ctx), nowMs, ceRequests)
+          ? ceMonthFetcher(
+              ctx,
+              options.ce ?? awsCeCli(ctx),
+              nowMs,
+              ceRequests,
+              ceState,
+              Date.now() + (options.ceBudgetMs ?? AWS_CE_RUN_BUDGET_MS),
+            )
           : exportMonthFetcher(ctx, options.cli ?? awsBillingCli(ctx, extra), exportAt, nowMs);
       const run = await runCostAccounts(prev, accounts, nowMs, fetchMonth);
+      const stillPending = new Set(own(run.cursor.pending, AWS_CE_ACCOUNT_KEY) ?? []);
+      const ceFailed = Object.fromEntries(
+        Object.entries(ceState.ceFailed).filter(([m]) => stillPending.has(m)),
+      );
+      const nextCursor = viaCostExplorer
+        ? {
+            ...run.cursor,
+            ...(ceState.payer === undefined ? {} : { payer: ceState.payer }),
+            ...(Object.keys(ceFailed).length > 0 ? { ceFailed } : {}),
+          }
+        : run.cursor;
       if (viaCostExplorer) {
         ctx.logger.info(
           { serviceId: AWS_BILLING_SERVICE_ID, ceRequests: ceRequests.requests },
@@ -238,7 +294,7 @@ export function createAwsBillingCostSyncable(options: AwsBillingCostSyncableOpti
       return syncPassCursorSuccess(
         t0,
         run.bytes,
-        encodeCostSyncCursor(PREFIX, run.cursor),
+        encodeCostSyncCursor(PREFIX, nextCursor),
         run.lines,
       );
     },

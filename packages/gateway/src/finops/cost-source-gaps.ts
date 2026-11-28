@@ -33,6 +33,10 @@ export type CostSyncCursor = {
   readonly pending: Readonly<Record<string, readonly string[]>>;
   /** Slice 8: the fingerprint of the rates the stored lines were priced with (absent: none recorded). */
   readonly rates?: string;
+  /** Slice 11b: the AWS payer account id once resolved, reused by later runs (absent: none recorded). */
+  readonly payer?: string;
+  /** Slice 11b: month -> the UTC day a billed read of it failed for good; it is retried only after a back-off. */
+  readonly ceFailed?: Readonly<Record<string, string>>;
 };
 
 const EMPTY: CostSyncCursor = { gaps: {}, synced: {}, pending: {} };
@@ -75,6 +79,12 @@ export function decodeCostSyncCursor(prefix: string, raw: string | null): CostSy
       synced: stringMap(rec["synced"]),
       pending: monthListMap(rec["pending"]),
       ...(typeof rec["rates"] === "string" ? { rates: rec["rates"] } : {}),
+      ...(typeof rec["payer"] === "string" && /^\d{12}$/.test(rec["payer"])
+        ? { payer: rec["payer"] }
+        : {}),
+      ...(Object.keys(stringMap(rec["ceFailed"])).length > 0
+        ? { ceFailed: stringMap(rec["ceFailed"]) }
+        : {}),
     };
   } catch {
     return EMPTY;

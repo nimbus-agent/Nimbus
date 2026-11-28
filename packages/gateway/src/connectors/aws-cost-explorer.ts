@@ -10,19 +10,22 @@
 import { AWS_CE_PROVIDER, AWS_CE_SOURCE, awsCeLines } from "../finops/aws-ce-lines.ts";
 import type { CostLine } from "../finops/cost-line.ts";
 import type { SyncContext } from "../sync/types.ts";
-import {
-  AWS_CLI_TIMEOUT_MS,
-  awsCliJson,
-  awsNextToken,
-  extractArray,
-  parseJson,
-} from "./_lib/aws-cli.ts";
+import { awsCliJson, awsNextToken, extractArray, parseJson } from "./_lib/aws-cli.ts";
 import type { CostMonthOutcome } from "./cost-month-sync.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
 
 export { AWS_CE_PROVIDER, AWS_CE_SOURCE };
 /** Requests for one month in one run; each is billed (USD 0.01). One day-by-service-by-account page is large. */
 export const AWS_CE_MAX_PAGES = 10;
+/** Billed requests across ALL months of one run; past it the remaining months stay pending (USD 0.20). */
+export const AWS_CE_RUN_MAX_REQUESTS = 20;
+/** One `ce`, `organizations` or `sts` call. */
+export const AWS_CE_CALL_TIMEOUT_MS = 60_000;
+/** The whole Cost Explorer part of one run, wall clock; past it the remaining months stay pending. */
+export const AWS_CE_RUN_BUDGET_MS = 10 * 60_000;
+/** A month whose read failed for good is read again after this many days (the running month: 1). */
+export const AWS_CE_RETRY_PAST_DAYS = 7;
+export const AWS_CE_RETRY_CURRENT_DAYS = 1;
 /** The month loop's account key while Cost Explorer is the source (the cursor keeps no AWS account id). */
 export const AWS_CE_ACCOUNT_KEY = "aws-cost-explorer";
 const ACCOUNT_ID_RE = /^\d{12}$/;
@@ -30,16 +33,19 @@ const ACCOUNT_ID_RE = /^\d{12}$/;
 export const AWS_CE_GAPS = {
   account:
     "the AWS account id could not be read (aws sts get-caller-identity failed); Cost Explorer was not queried",
+  org: "cannot read the Organizations management account; retrying next run",
+  runCap: `Cost Explorer reached its limit of ${String(AWS_CE_RUN_MAX_REQUESTS)} billed requests for this run; the remaining months stay pending`,
+  budget: "Cost Explorer reached its time budget for this run; the remaining months stay pending",
   read: "AWS Cost Explorer could not be read (check Cost Explorer is enabled and the credentials allow ce:GetCostAndUsage)",
 } as const;
 
 /** What the sync needs of the AWS CLI for Cost Explorer; credentials are bound in, and a test passes a fake. */
 export interface AwsCeCli {
-  run(args: string[]): Promise<{ ok: boolean; text: string }>;
+  run(args: string[]): Promise<{ ok: boolean; text: string; stderr?: string }>;
 }
 
 export function awsCeCli(ctx: SyncContext): AwsCeCli {
-  return { run: (args) => awsCliJson(ctx, args, AWS_CLI_TIMEOUT_MS) };
+  return { run: (args) => awsCliJson(ctx, args, AWS_CE_CALL_TIMEOUT_MS) };
 }
 
 /** Counts every billed request of a run (the Cost Explorer ones). */
@@ -51,7 +57,7 @@ async function call(
   ctx: SyncContext,
   cli: AwsCeCli,
   args: string[],
-): Promise<{ ok: boolean; text: string }> {
+): Promise<{ ok: boolean; text: string; stderr?: string }> {
   await ctx.rateLimiter.acquire("aws"); // NOSONAR S9382: one CLI call at a time through the AWS limiter
   return cli.run(args); // NOSONAR S9382
 }
@@ -66,15 +72,26 @@ function idOf(text: string, ...fields: string[]): string | null {
   return null;
 }
 
-/** The management account when Organizations is readable, else the caller's account; null when neither is. */
-export async function resolvePayerAccount(ctx: SyncContext, cli: AwsCeCli): Promise<string | null> {
+/**
+ * The management account when Organizations is readable; the caller's account ONLY when AWS says the account is
+ * not in an organization (any other failure is a gap, never a fallback: the two ids would be two billing accounts
+ * and the same costs would count twice once an export is set).
+ */
+export async function resolvePayerAccount(
+  ctx: SyncContext,
+  cli: AwsCeCli,
+): Promise<{ readonly id: string } | { readonly gap: string }> {
   const org = await call(ctx, cli, ["organizations", "describe-organization"]);
   if (org.ok) {
     const id = idOf(org.text, "ManagementAccountId", "MasterAccountId");
-    if (id !== null) return id;
+    return id === null ? { gap: AWS_CE_GAPS.org } : { id };
+  }
+  if (!(org.stderr ?? "").includes("AWSOrganizationsNotInUseException")) {
+    return { gap: AWS_CE_GAPS.org };
   }
   const who = await call(ctx, cli, ["sts", "get-caller-identity"]);
-  return who.ok ? idOf(who.text, "Account") : null;
+  const id = who.ok ? idOf(who.text, "Account") : null;
+  return id === null ? { gap: AWS_CE_GAPS.account } : { id };
 }
 
 export type CeMonthRead =
@@ -115,12 +132,17 @@ export async function readCeMonth(
   month: string,
   nowMs: number,
   counter: CeRequestCounter,
+  deadlineMs: number,
 ): Promise<CeMonthRead> {
   const { start, end } = ceTimePeriod(month, nowMs);
   if (end <= start) return { kind: "ok", lines: 0, bytes: 0 };
   const results: unknown[] = [];
   let token: string | null = null;
   for (let page = 0; page < AWS_CE_MAX_PAGES; page++) {
+    if (counter.requests >= AWS_CE_RUN_MAX_REQUESTS) {
+      return { kind: "gap", reason: AWS_CE_GAPS.runCap };
+    }
+    if (Date.now() > deadlineMs) return { kind: "gap", reason: AWS_CE_GAPS.budget };
     counter.requests++;
     const res = await call(ctx, cli, [
       "ce",
@@ -132,7 +154,6 @@ export async function readCeMonth(
       "--metrics",
       "UnblendedCost",
       "AmortizedCost",
-      "UsageQuantity",
       "--group-by",
       "Type=DIMENSION,Key=SERVICE",
       "Type=DIMENSION,Key=LINKED_ACCOUNT",

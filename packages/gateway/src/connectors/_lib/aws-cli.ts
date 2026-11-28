@@ -117,7 +117,7 @@ export async function awsCliJson(
   ctx: SyncContext,
   args: string[],
   timeoutMs?: number,
-): Promise<{ ok: boolean; text: string }> {
+): Promise<{ ok: boolean; text: string; stderr?: string }> {
   const extra = await awsCredentialsExtra(ctx);
   if (extra === null) {
     return { ok: false, text: "" };
@@ -130,7 +130,7 @@ export async function awsCliJson(
     env: extensionProcessEnv({ ...cliEnvFor("aws", process.env), ...extra }),
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
   });
-  return { ok: r.ok, text: r.stdout };
+  return { ok: r.ok, text: r.stdout, stderr: r.stderr };
 }
 
 /** A download or a listing call that has not finished after this long is killed and counts as failed. */
