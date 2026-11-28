@@ -65,6 +65,7 @@ export type Provider =
   | "vantage"
   | "openai_billing"
   | "anthropic_billing"
+  | "gcp_billing"
   | "opencost"
   | "kubecost"
   | "zoom"
@@ -166,6 +167,8 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   // Daily cost reports: a few paged requests per run. Anthropic asks for at most one request a minute sustained.
   openai_billing: { requestsPerMinute: 10, burstSize: 3 },
   anthropic_billing: { requestsPerMinute: 1, burstSize: 5 },
+  // One query, a few polls and result pages per month read; BigQuery REST allows far more.
+  gcp_billing: { requestsPerMinute: 30, burstSize: 5 },
   // The owner's own cluster service: one paged request per sync, so a low limit is plenty.
   opencost: { requestsPerMinute: 30, burstSize: 5 },
   kubecost: { requestsPerMinute: 30, burstSize: 5 },
