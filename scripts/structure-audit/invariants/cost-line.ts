@@ -9,7 +9,7 @@ import type { FileEntry, Violation } from "./_shared.ts";
 // store's five mutators are named only where they belong: `replaceCostLines` in the store,
 // `finops/cost-import.ts` (the owner's import, which reconciles a file's totals before it replaces a tuple's
 // days and records the import) and `finops/cost-sync-intake.ts` (slice 5: a sync's month of lines for its OWN
-// source, whose `ingestSyncedCostLines` is named only there and in `sync/sync-capabilities.ts`, the
+// source, whose `ingestSyncedCostLines` is named only there and in `sync/cost-sync-capabilities.ts`, the
 // `replaceCostLinesForMonth` capability that binds the source to the syncable's service);
 // `deleteCostImport` and `recordCostImport` in the store and the import; `deleteCostLinesBySource` in
 // the store, `index/item-store.ts` (`deleteAllItemsForService`, which `connector remove` reaches through
@@ -25,7 +25,7 @@ const STORE = `${SRC}finops/cost-line-store.ts`;
 const DDL = `${SRC}index/cost-line-v109-sql.ts`;
 const IMPORT = `${SRC}finops/cost-import.ts`;
 const INTAKE = `${SRC}finops/cost-sync-intake.ts`;
-const CAPABILITIES = `${SRC}sync/sync-capabilities.ts`;
+const CAPABILITIES = `${SRC}sync/cost-sync-capabilities.ts`;
 const RULE = "cost-line-confined";
 
 const WRITE_RE =
@@ -34,6 +34,9 @@ const WRITE_RE =
 const NAME_RULES: ReadonlyArray<{ re: RegExp; allowed: readonly string[] }> = [
   { re: /\breplaceCostLines\b/g, allowed: [STORE, IMPORT, INTAKE] },
   { re: /\bingestSyncedCostLines\b/g, allowed: [INTAKE, CAPABILITIES] },
+  // Slice 8: the re-price rewrites a source's lines, so it is a mutator like the others.
+  { re: /\brepriceCostLines\b/g, allowed: [STORE, INTAKE] },
+  { re: /\brepriceSyncedCostLines\b/g, allowed: [INTAKE, CAPABILITIES] },
   { re: /\bdeleteCostImport\b/g, allowed: [STORE, IMPORT] },
   { re: /\brecordCostImport\b/g, allowed: [STORE, IMPORT] },
   {

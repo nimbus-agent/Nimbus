@@ -12,9 +12,12 @@ import {
   type CostLine,
   type CostLineKey,
   costLineGrainHash,
+  mergeMeasures,
   setTag,
   sortedTags,
+  tagOf,
 } from "./cost-line.ts";
+import { COST_RATE_KEY_TAG, type CostRates, pricedFields, rateForKey } from "./cost-rate-price.ts";
 
 export interface ReplaceCostLinesResult {
   /** Lines whose grain was not stored on that day. */
@@ -286,6 +289,101 @@ export function readCostLines(db: Database, q: ReadCostLinesQuery): CostLine[] {
     )
     .all(q.fromDay, q.toDay, ...(q.sources ?? [])) as Row[];
   return rows.map(rowToLine);
+}
+
+/** One source's stored lines of one (provider, billing account, billing period), by day. Read only. */
+export function readCostLinesForAccountMonth(
+  db: Database,
+  source: string,
+  target: { readonly provider: string; readonly billingAccountId: string; readonly month: string },
+): CostLine[] {
+  const rows = db
+    .query(
+      `SELECT ${COLUMNS} FROM cost_line
+        WHERE source = ? AND provider = ? AND billing_account_id = ? AND billing_period = ?
+        ORDER BY charge_day, id`,
+    )
+    .all(source, target.provider, target.billingAccountId, target.month) as Row[];
+  return rows.map(rowToLine);
+}
+
+export interface RepriceCostLinesResult {
+  /** Lines priced again (their cost, currency or priced flag may be unchanged). */
+  readonly repriced: number;
+  /** Lines left as stored: no `rate_key` tag or no quantity to price. */
+  readonly skipped: number;
+}
+
+/** A line priced again with `rates`; null when it carries nothing to price from. */
+function repricedLine(l: CostLine, rates: CostRates): CostLine | null {
+  const key = tagOf(l.tags, COST_RATE_KEY_TAG);
+  const q = l.consumedQuantity ?? null;
+  if (key === undefined || q === null) return null;
+  return { ...l, ...pricedFields(q, rateForKey(rates, key)), currency: rates.currency };
+}
+
+/**
+ * Price `source`'s stored lines again with `rates` (Phase 7 slice 8: a CI source after the owner changed a rate
+ * or the currency), from each line's stored quantity and `rate_key`, with no API call. The currency is part of the
+ * grain, so each (provider, account, period) is rewritten through {@link replaceCostLines}, which recomputes the
+ * grain; lines that come to share a grain are merged (summed). One transaction: a failure leaves every line as it
+ * was. Only the caller's own source is touched (the capability binds it).
+ */
+export function repriceCostLines(
+  db: Database,
+  source: string,
+  rates: CostRates,
+): RepriceCostLinesResult {
+  return db.transaction((): RepriceCostLinesResult => {
+    const rows = db
+      .query(`SELECT ${COLUMNS} FROM cost_line WHERE source = ? ORDER BY id`)
+      .all(source) as Row[];
+    const groups = new Map<string, { key: CostLineKey; lines: CostLine[] }>();
+    for (const l of rows.map(rowToLine)) {
+      const g = JSON.stringify([l.provider, l.billingAccountId, l.billingPeriod]);
+      const entry = groups.get(g) ?? {
+        key: {
+          source,
+          provider: l.provider,
+          billingAccountId: l.billingAccountId,
+          billingPeriod: l.billingPeriod,
+        },
+        lines: [],
+      };
+      entry.lines.push(l);
+      groups.set(g, entry);
+    }
+    let repriced = 0;
+    let skipped = 0;
+    for (const { key, lines } of groups.values()) {
+      const merged = new Map<string, CostLine>();
+      for (const l of lines) {
+        const next = repricedLine(l, rates);
+        if (next === null) skipped++;
+        else repriced++;
+        const line = next ?? l;
+        const k = `${line.chargeDay}|${costLineGrainHash(line)}`;
+        const prior = merged.get(k);
+        merged.set(
+          k,
+          prior === undefined
+            ? line
+            : {
+                ...prior,
+                billedCost: prior.billedCost + line.billedCost,
+                effectiveCost:
+                  prior.effectiveCost === null && line.effectiveCost === null
+                    ? null
+                    : (prior.effectiveCost ?? 0) + (line.effectiveCost ?? 0),
+                ...mergeMeasures(prior, line),
+              },
+        );
+      }
+      const days = [...new Set(lines.map((l) => l.chargeDay))];
+      replaceCostLines(db, key, days, [...merged.values()]);
+    }
+    return { repriced, skipped };
+  })();
 }
 
 /** The newest stored charge day per source (`null` when the source has no lines). */

@@ -11,7 +11,7 @@ const RULE = "cost-line-confined";
 const GOOD: FileEntry[] = [
   file(
     STORE,
-    'export function replaceCostLines() { dbRun(db, "DELETE FROM cost_line WHERE source = ?"); dbRun(db, "INSERT INTO cost_line (a) VALUES (1)"); }\nexport function deleteCostImport() {}\nexport function deleteCostLinesBySource() {}\nexport function pruneCostLinesBefore() {}\nexport function recordCostImport() { dbRun(db, "INSERT INTO cost_import (a) VALUES (1)"); }\n',
+    'export function replaceCostLines() { dbRun(db, "DELETE FROM cost_line WHERE source = ?"); dbRun(db, "INSERT INTO cost_line (a) VALUES (1)"); }\nexport function deleteCostImport() {}\nexport function deleteCostLinesBySource() {}\nexport function pruneCostLinesBefore() {}\nexport function repriceCostLines() {}\nexport function recordCostImport() { dbRun(db, "INSERT INTO cost_import (a) VALUES (1)"); }\n',
   ),
   file(
     `${SRC}index/cost-line-v109-sql.ts`,
@@ -23,11 +23,11 @@ const GOOD: FileEntry[] = [
   ),
   file(
     `${SRC}finops/cost-sync-intake.ts`,
-    "export function ingestSyncedCostLines() { return replaceCostLines(db, k, d, l); }\n",
+    "export function ingestSyncedCostLines() { return replaceCostLines(db, k, d, l); }\nexport function repriceSyncedCostLines() { return repriceCostLines(db, s, r); }\n",
   ),
   file(
-    `${SRC}sync/sync-capabilities.ts`,
-    "ingestSyncedCostLines(deps.db, serviceId, t, l, now);\n",
+    `${SRC}sync/cost-sync-capabilities.ts`,
+    "ingestSyncedCostLines(db, serviceId, t, l, now); repriceSyncedCostLines(db, serviceId, r);\n",
   ),
   file(`${SRC}index/item-store.ts`, "deleteCostLinesBySource(db, service);\n"),
   file(`${SRC}commands/data-delete.ts`, "deleteCostLinesBySource(db, service);\n"),
@@ -131,6 +131,12 @@ describe("D24 - cost_line is written only by its store (schema V109)", () => {
         "ingestSyncedCostLines(db, 'focus', t, l, 0);",
       ],
       [`${SRC}sync/sync-capabilities.ts`, "replaceCostLines(deps.db, k, d, l);"],
+      [`${SRC}sync/sync-capabilities.ts`, "ingestSyncedCostLines(deps.db, s, t, l, 0);"],
+      // Slice 8: the re-price is a mutator; only the store, the intake and the capabilities name it.
+      [`${SRC}sync/cost-sync-capabilities.ts`, "repriceCostLines(db, s, r);"],
+      [`${SRC}connectors/gitlab-cost-sync.ts`, "repriceCostLines(db, 'focus', r);"],
+      [`${SRC}connectors/gitlab-cost-sync.ts`, "repriceSyncedCostLines(db, 'focus', r);"],
+      [`${SRC}connectors/gitlab-cost-sync.ts`, 'db.run("UPDATE cost_line SET billed_cost = 0");'],
       [`${SRC}finops/cost-sync-intake.ts`, "recordCostImport(db, r);"],
     ] as const) {
       const files = [...GOOD.filter((f) => f.relPath !== path), file(path, `${body}\n`)];

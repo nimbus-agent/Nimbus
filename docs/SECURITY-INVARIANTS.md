@@ -1299,12 +1299,21 @@ anywhere else is a violation. Its five mutators are named only where they belong
 which replaces a tuple's lines on exactly the days a file covers, records the import and reports the
 file's totals),
 and, since Phase 7 slice 5, `replaceCostLines` also by `finops/cost-sync-intake.ts`, whose
-`ingestSyncedCostLines` is named only there and in `sync/sync-capabilities.ts`: a syncable writes cost lines
-only through the `replaceCostLinesForMonth` capability, which binds the line `source` to the syncable's own
-service id (never a parameter), is granted only to the cost-sync services (`github_billing`; since slice 6 `openai_billing` and `anthropic_billing`), refuses a line of
-any other source, provider, billing account or month, and replaces exactly that month's UTC days (to today for
-the current month), so a sync can neither write nor clear another source's lines; it writes no `cost_import`
-row (that ledger is the owner's file imports);
+`ingestSyncedCostLines` is named only there and in `sync/cost-sync-capabilities.ts` (since slice 8; the
+cost capabilities moved there from `sync/sync-capabilities.ts`, which spreads them in): a syncable writes cost
+lines only through the `replaceCostLinesForMonth` capability, which binds the line `source` to the syncable's
+own service id (never a parameter), is granted only to the cost-sync services (`github_billing`; since slice 6
+`openai_billing` and `anthropic_billing`; since slice 8 `gitlab_billing`), refuses a line of any other source,
+provider, billing account or month, and replaces exactly that month's UTC days (to today for the current
+month), so a sync can neither write nor clear another source's lines; it writes no `cost_import` row (that
+ledger is the owner's file imports). Since slice 8 the same services hold two more bound capabilities:
+`readOwnCostLinesForMonth` (read only: its own lines of one account and month, what GitLab's daily delta builds
+on) and `repriceOwnCostLines`, which prices the service's OWN stored lines again from their V110
+`consumed_quantity` and `rate_key` tag when the owner changed a rate or the currency (no API call). The
+re-price is a mutator: `repriceCostLines` is named only by the store and the intake, whose
+`repriceSyncedCostLines` is named only there and in `sync/cost-sync-capabilities.ts`; it rewrites each
+(provider, account, period) through `replaceCostLines` in one transaction, so the grain (which holds the
+currency) is recomputed and a failure leaves every line as it was;
 `deleteCostLinesBySource` by the store, `index/item-store.ts` (`deleteAllItemsForService`, reached by `connector remove`) and `commands/data-delete.ts` (the two owner
 erasures), and `pruneCostLinesBefore` by the store and `finops/cost-retention.ts`. Reads are unrestricted.
 The point is reconciliation: every stored line came from an import or sync whose totals were reported, so

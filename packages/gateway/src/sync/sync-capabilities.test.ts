@@ -1,7 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { LocalIndex } from "../index/local-index.ts";
-
 import {
   buildLocalOnlySyncCapabilities,
   buildSyncCapabilities,
@@ -57,8 +56,7 @@ describe("getSecret is scoped to the calling service", () => {
 describe("the capability set exposes no raw handle", () => {
   test("neither vault nor db is reachable from the returned object", () => {
     const caps = buildSyncCapabilities(deps({}), "jira");
-    // Pinned: adding a capability is a considered act, so this list is the review surface (`getSharedSecret`
-    // for shared gcp/github credentials; `replaceCostLinesForMonth` for the Phase 7 cost sync, D24).
+    // Pinned: adding a capability is a considered act; this list is the review surface (cost ones: D24).
     expect(Object.keys(caps).sort()).toEqual([
       "accessToken",
       "bodyFetchState",
@@ -73,10 +71,12 @@ describe("the capability set exposes no raw handle", () => {
       "prEnrichCandidates",
       "prFileCandidates",
       "pruneBlameForFile",
+      "readOwnCostLinesForMonth",
       "recordPrChangedFiles",
       "replaceCostLinesForMonth",
       "replaceItemSet",
       "replaceWorkSnapshot",
+      "repriceOwnCostLines",
       "resolvePerson",
       "scopedVaultView",
       "setChatReadMarkers",
