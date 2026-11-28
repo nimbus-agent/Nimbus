@@ -63,14 +63,18 @@ export type GitlabCostSyncableOptions = {
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
-/** One usage node as `{ projectFullPath, minutes }`, or null when it is not the documented shape. */
-function usageOf(n: unknown): { projectFullPath: string; minutes: number } | null {
+/** One usage node as `{ projectId, projectFullPath, minutes }`, or null when it is not the documented shape. */
+function usageOf(
+  n: unknown,
+): { projectId: string; projectFullPath: string; minutes: number } | null {
   if (!isRecord(n) || !isRecord(n["project"])) return null;
   const path = n["project"]["fullPath"];
   const minutes = n["minutes"];
   if (typeof path !== "string" || path.length === 0) return null;
   if (typeof minutes !== "number" || !Number.isFinite(minutes) || minutes < 0) return null;
-  return { projectFullPath: path, minutes };
+  const id = n["project"]["id"];
+  if (typeof id !== "string" || id.length === 0) return null;
+  return { projectId: id, projectFullPath: path, minutes };
 }
 
 type RunState = {
@@ -187,6 +191,17 @@ async function selfManagedMonth(
   const all = await groupJobs(s, group);
   if (all.kind !== "jobs") return all;
   const perProject = all.perProject;
+  // An empty listing is not a report of zero minutes: it must never clear a month that holds lines.
+  if (
+    perProject.length === 0 &&
+    s.c.ctx.readOwnCostLinesForMonth({
+      provider: GITLAB_COST_PROVIDER,
+      billingAccountId: group,
+      month,
+    }).length > 0
+  ) {
+    return { kind: "month_gap", reason: GITLAB_COST_GAPS.noProjects(group) };
+  }
   const mapped = gitlabJobLines(group, month, perProject, s.rates, s.today);
   const dropped = Object.values(mapped.dropped).reduce((a, b) => a + b, 0);
   if (dropped > 0) {
@@ -237,7 +252,8 @@ export function createGitlabCostSyncable(options: GitlabCostSyncableOptions): Sy
         );
       if (groups.length === 0) return idle();
       const pat = (await ctx.getSharedSecret("gitlab", "pat"))?.trim() ?? "";
-      if (pat === "") return idle();
+      // No token: nothing is read, and the gaps recorded earlier are kept, not cleared.
+      if (pat === "") return idle(keep(prev.gaps));
       const apiBase = normalisedApiBase(await ctx.getSharedSecret("gitlab", "api_base"));
       const dotCom = new URL(apiBase).host === "gitlab.com";
       if (dotCom && cfg.runnerRates.length > 0) {
@@ -246,7 +262,9 @@ export function createGitlabCostSyncable(options: GitlabCostSyncableOptions): Sy
         );
       }
       const fingerprint = costRatesFingerprint(rates);
-      if (prev.rates !== undefined && prev.rates !== fingerprint) {
+      // No recorded fingerprint (a first run, or a cursor that did not decode) re-prices too: it is local and cheap,
+      // and lines priced at an unknown rate must not stay as they are.
+      if (prev.rates !== fingerprint) {
         try {
           const r = ctx.repriceOwnCostLines(rates);
           ctx.logger.info(

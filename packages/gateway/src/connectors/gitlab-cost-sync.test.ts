@@ -79,7 +79,7 @@ function dotCom(
     const month = String(vars["d"]).slice(0, 7);
     const nodes = Object.entries(totals[month] ?? {}).map(([fullPath, minutes]) => ({
       minutes,
-      project: { fullPath },
+      project: { id: `gid://${fullPath}`, fullPath },
     }));
     return {
       status: 200,
@@ -117,10 +117,31 @@ async function sync(
 
 const stored = () =>
   readCostLines(db, { fromDay: "2026-01-01", toDay: "2026-12-31" })
-    .map((l) => [l.subAccountId, l.chargeDay, l.consumedQuantity, l.billedCost, l.priced] as const)
+    .map(
+      (l) =>
+        [
+          l.subAccountName ?? l.subAccountId,
+          l.chargeDay,
+          l.consumedQuantity,
+          l.billedCost,
+          l.priced,
+        ] as const,
+    )
     .sort();
 
 describe("gitlab_billing sync: what it fetches", () => {
+  test("a removed PAT keeps the gaps recorded earlier", async () => {
+    const missing = dotCom({}, (q) =>
+      q.includes("group(fullPath") ? { status: 200, body: { data: { group: null } } } : undefined,
+    );
+    const first = await sync(missing, cfg());
+    await vault.delete("gitlab.pat");
+    const r = await sync(dotCom({}), cfg(), first.cursor ?? null);
+    expect(decodeCostSyncCursor(PREFIX, r.cursor ?? null).gaps).toEqual({
+      acme: GITLAB_COST_GAPS.notFound("acme"),
+    });
+  });
+
   test("no groups, or no PAT, makes no request", async () => {
     const gl = dotCom({});
     await sync(gl, cfg({ groups: [] }));
@@ -302,6 +323,23 @@ describe("gitlab_billing sync: self-managed", () => {
     // Paged once per run: the two months share one jobs listing.
     expect(gl.calls.filter((c) => c.url.includes("/jobs"))).toHaveLength(1);
     expect(gl.calls.every((c) => c.headers["PRIVATE-TOKEN"] === "glpat-secret")).toBe(true);
+  });
+
+  test("an empty project listing never clears a month that holds lines", async () => {
+    const one = fakeGitlab((url) =>
+      url.pathname.endsWith("/projects")
+        ? { status: 200, body: [{ id: 11, path_with_namespace: "acme/web" }] }
+        : { status: 200, body: [job(1, "2026-11-19T10:00:00Z", 120)] },
+    );
+    const first = await sync(one, cfg());
+    const none = fakeGitlab((url) =>
+      url.pathname.endsWith("/projects") ? { status: 200, body: [] } : { status: 404 },
+    );
+    const r = await sync(none, cfg(), first.cursor ?? null, NOW + DAY);
+    expect(stored()).toEqual([["acme/web", "2026-11-19", 2, 0, false]]);
+    expect(decodeCostSyncCursor(PREFIX, r.cursor ?? null).gaps).toEqual({
+      acme: GITLAB_COST_GAPS.noProjects("acme"),
+    });
   });
 
   test("more jobs than the cap is a month gap that keeps the stored month", async () => {

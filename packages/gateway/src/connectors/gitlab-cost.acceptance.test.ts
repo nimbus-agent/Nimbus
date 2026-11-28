@@ -50,7 +50,10 @@ function gitlabFake(totals: Record<string, number>) {
     }
     // Only the current month has usage; the previous month (read on a first sync) is empty.
     const nodes = String(body.variables["d"]).startsWith("2026-11")
-      ? Object.entries(totals).map(([fullPath, minutes]) => ({ minutes, project: { fullPath } }))
+      ? Object.entries(totals).map(([fullPath, minutes]) => ({
+          minutes,
+          project: { id: `gid://${fullPath}`, fullPath },
+        }))
       : [];
     return new Response(
       JSON.stringify({

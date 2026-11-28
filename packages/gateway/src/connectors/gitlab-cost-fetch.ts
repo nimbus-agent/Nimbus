@@ -3,7 +3,7 @@
 // written.
 //
 // GitLab.com: GraphQL `group(fullPath:) { id }`, then `ciMinutesProjectMonthlyUsage(namespaceId:, date:)` (Relay
-// pages of `nodes { minutes project { fullPath } }`; `minutes` already includes the runner cost factor). The
+// pages of `nodes { minutes project { id fullPath } }`; `minutes` already includes the runner cost factor). The
 // reference states no permission or token scope for the usage query, so a refusal is a stated gap, never a retry.
 // Self-managed: `GET /groups/:id/projects?include_subgroups=true`, then `GET /projects/:id/jobs`, newest first,
 // until the jobs are older than the month being read.
@@ -34,6 +34,8 @@ export const GITLAB_COST_GAPS = {
     `GitLab refused the usage query for ${group}: ${message.slice(0, 200)}`,
   redirect: (group: string): string =>
     `GitLab redirected the request for ${group} to another host; the token is never sent there`,
+  noProjects: (group: string): string =>
+    `GitLab listed no projects for ${group}, though its stored minutes say it had some; the stored month is kept`,
   runnerRatesOnDotCom:
     "[cost.gitlab] runner_rates applies to self-managed GitLab only: GitLab.com minutes already include the runner cost factor; remove it",
   projectCap: (group: string): string =>

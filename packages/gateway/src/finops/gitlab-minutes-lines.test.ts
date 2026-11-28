@@ -28,9 +28,9 @@ const held = (lines: readonly CostLine[]): Record<string, number> =>
   Object.fromEntries(
     [...lines]
       .sort((a, b) =>
-        `${a.subAccountId}${a.chargeDay}` < `${b.subAccountId}${b.chargeDay}` ? -1 : 1,
+        `${a.subAccountName}${a.chargeDay}` < `${b.subAccountName}${b.chargeDay}` ? -1 : 1,
       )
-      .map((l) => [`${l.subAccountId ?? ""}@${l.chargeDay}`, l.consumedQuantity ?? 0]),
+      .map((l) => [`${l.subAccountName ?? ""}@${l.chargeDay}`, l.consumedQuantity ?? 0]),
   );
 
 /** One sync after another: each sync's output is the next one's stored lines. */
@@ -44,6 +44,7 @@ function days(
       stored,
       rates: s.rates ?? CENT,
       fetched: Object.entries(s.totals).map(([projectFullPath, minutes]) => ({
+        projectId: `gid://${projectFullPath}`,
         projectFullPath,
         minutes,
       })),
@@ -54,7 +55,9 @@ function days(
 
 describe("gitlabMinutesLines: the daily delta", () => {
   test("a first sync puts the whole month-to-date total on the observed day", () => {
-    const { lines } = run({ fetched: [{ projectFullPath: "acme/web", minutes: 100 }] });
+    const { lines } = run({
+      fetched: [{ projectId: "gid://acme/web", projectFullPath: "acme/web", minutes: 100 }],
+    });
     expect(lines).toHaveLength(1);
     const [l] = lines;
     expect(l).toMatchObject({
@@ -63,7 +66,8 @@ describe("gitlabMinutesLines: the daily delta", () => {
       billingAccountId: "acme",
       billingPeriod: "2026-11",
       chargeDay: "2026-11-02",
-      subAccountId: "acme/web",
+      subAccountId: "gid://acme/web",
+      subAccountName: "acme/web",
       repo: "acme/web",
       serviceName: "GitLab CI",
       skuId: "compute_minutes",
@@ -112,7 +116,7 @@ describe("gitlabMinutesLines: the daily delta", () => {
     const r = run({
       observedDay: "2026-11-04",
       stored: before,
-      fetched: [{ projectFullPath: "acme/web", minutes: 30 }],
+      fetched: [{ projectId: "gid://acme/web", projectFullPath: "acme/web", minutes: 30 }],
     });
     // 180 held; the total is now 30: lower day 3 (100) to 0 and day 2 (80) by the remaining 50.
     expect(held(r.lines)).toEqual({ "acme/web@2026-11-02": 30 });
@@ -120,21 +124,56 @@ describe("gitlabMinutesLines: the daily delta", () => {
     expect(r.lines[0]?.billedCost).toBeCloseTo(0.3, 9);
   });
 
+  test("a renamed project keeps its history: its minutes are never counted twice", () => {
+    const before = run({
+      fetched: [{ projectId: "gid://p/1", projectFullPath: "acme/old", minutes: 300 }],
+    }).lines;
+    const r = run({
+      observedDay: "2026-11-03",
+      stored: before,
+      fetched: [{ projectId: "gid://p/1", projectFullPath: "acme/new", minutes: 320 }],
+    });
+    expect(r.lines.reduce((s, l) => s + (l.consumedQuantity ?? 0), 0)).toBe(320);
+    expect(r.lines.map((l) => [l.chargeDay, l.repo, l.consumedQuantity])).toEqual([
+      ["2026-11-02", "acme/old", 300],
+      ["2026-11-03", "acme/new", 20],
+    ]);
+  });
+
+  test("float noise below a millionth of a minute is neither usage nor a restatement", () => {
+    const before = days([
+      { day: "2026-11-02", totals: { "acme/web": 0.1 } },
+      { day: "2026-11-03", totals: { "acme/web": 0.3 } },
+    ]);
+    const r = run({
+      observedDay: "2026-11-04",
+      stored: before,
+      fetched: [
+        { projectId: "gid://acme/web", projectFullPath: "acme/web", minutes: 0.30000000000000004 },
+      ],
+    });
+    expect(r.restated).toEqual([]);
+    expect(r.lines.filter((l) => l.chargeDay === "2026-11-04")).toEqual([]);
+  });
+
   test("a stored project missing from the fetch keeps its lines", () => {
     const before = days([{ day: "2026-11-02", totals: { "acme/web": 100, "acme/gone": 20 } }]);
     const r = run({
       observedDay: "2026-11-03",
       stored: before,
-      fetched: [{ projectFullPath: "acme/web", minutes: 100 }],
+      fetched: [{ projectId: "gid://acme/web", projectFullPath: "acme/web", minutes: 100 }],
     });
     expect(held(r.lines)).toEqual({ "acme/gone@2026-11-02": 20, "acme/web@2026-11-02": 100 });
   });
 
   test("a project with no new minutes writes no line, and with no rate every line is unpriced", () => {
-    expect(run({ fetched: [{ projectFullPath: "acme/web", minutes: 0 }] }).lines).toEqual([]);
+    expect(
+      run({ fetched: [{ projectId: "gid://acme/web", projectFullPath: "acme/web", minutes: 0 }] })
+        .lines,
+    ).toEqual([]);
     const [l] = run({
       rates: NO_RATE,
-      fetched: [{ projectFullPath: "acme/web", minutes: 5 }],
+      fetched: [{ projectId: "gid://acme/web", projectFullPath: "acme/web", minutes: 5 }],
     }).lines;
     expect(l).toMatchObject({
       billedCost: 0,
