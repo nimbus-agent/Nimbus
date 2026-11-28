@@ -84,6 +84,7 @@ function unregisterConnectorFromSyncScheduler(
     syncScheduler.unregister("github_actions");
     syncScheduler.unregister("github_billing");
   }
+  if (id === "gitlab") syncScheduler.unregister("gitlab_billing");
   syncScheduler.unregister(id);
 }
 
@@ -94,6 +95,8 @@ function removeConnectorIndexEntries(localIndex: LocalIndex, id: string): number
     // Phase 7 slice 5: the GitHub billing cost lines (`deleteCostLinesBySource("github_billing")`).
     itemsDeleted += localIndex.removeConnectorIndexData("github_billing");
   }
+  // Phase 7 slice 8: the GitLab compute-minute cost lines go with the GitLab connector.
+  if (id === "gitlab") itemsDeleted += localIndex.removeConnectorIndexData("gitlab_billing");
   itemsDeleted += localIndex.removeConnectorIndexData(id);
   return itemsDeleted;
 }

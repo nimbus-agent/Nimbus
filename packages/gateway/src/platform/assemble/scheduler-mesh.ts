@@ -461,6 +461,7 @@ export async function createSchedulerWithMesh(
   const finops = {
     maxSeries: (): number => loadNimbusFinopsFromConfigDir(paths.configDir).maxSeries,
     githubOrgs: (): readonly string[] => loadNimbusCostFromConfigDir(paths.configDir).githubOrgs,
+    gitlab: () => loadNimbusCostFromConfigDir(paths.configDir).gitlab,
   };
   if (syncEnabled) {
     registerConnectorMeshSyncables(policyFilteredRegistrar, connectorMesh, {

@@ -54,6 +54,12 @@ async function isGithubPatConfigured(vault: NimbusVault): Promise<boolean> {
   return pat !== null && pat.trim() !== "";
 }
 
+/** `gitlab_billing` (Phase 7 slice 8) syncs with the GitLab connector's PAT. */
+async function isGitlabPatConfigured(vault: NimbusVault): Promise<boolean> {
+  const pat = await readConnectorSecret(vault, "gitlab", "pat");
+  return pat !== null && pat.trim() !== "";
+}
+
 /** Whether any one of `keys` holds a non-blank value: the manifest rule, which `teams` reuses. */
 async function hasAnyNonBlankKey(vault: NimbusVault, keys: readonly string[]): Promise<boolean> {
   for (const key of keys) {
@@ -160,6 +166,7 @@ const DERIVED_CONFIGURED_CHECKS: Readonly<
   teams: isTeamsConfigured,
   github_actions: isGithubPatConfigured,
   github_billing: isGithubPatConfigured,
+  gitlab_billing: isGitlabPatConfigured,
   bigquery: isGcpCredentialConfigured,
   cloud_logging: isGcpCredentialConfigured,
   vertex_ai: isGcpCredentialConfigured,

@@ -21,6 +21,8 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   openai_billing: ["openai_billing.admin_key"],
   anthropic_billing: ["anthropic_billing.admin_key"],
   gitlab: ["gitlab.pat", "gitlab.api_base"],
+  // Phase 7 slice 8: the compute-minute cost sync reads `gitlab.pat` and `gitlab.api_base` through its grant.
+  gitlab_billing: [],
   bitbucket: ["bitbucket.username", "bitbucket.app_password"],
   linear: ["linear.api_key"],
   // `jira.cloud_id` is OPTIONAL and non-secret in effect (the Atlassian site UUID the Operations alert

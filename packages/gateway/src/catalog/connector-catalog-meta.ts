@@ -89,6 +89,11 @@ export const CONNECTOR_CATALOG_META = Object.freeze({
     "GitHub's metered usage report for an organization (Actions, Packages, Copilot and more)",
   ),
   gitlab: m("GitLab", "code", "A code hosting and DevOps platform built on Git"),
+  gitlab_billing: m(
+    "GitLab compute minutes",
+    "cloud",
+    "GitLab CI compute minutes per group and project, priced at the rate you configure",
+  ),
   bitbucket: m("Bitbucket", "code", "Atlassian's Git code hosting service"),
   linear: m("Linear", "issues", "An issue and project tracker for software teams"),
   jira: m("Jira", "issues", "Atlassian's issue and project tracker"),
