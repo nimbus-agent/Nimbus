@@ -108,8 +108,17 @@ export function migrateIndexedV94ToV95(db: Database, now: number): void {
 /** V110 - `cost_line.consumed_quantity`, `consumed_unit` and `priced` (Phase 7, the Cost Pack, slice 8). */
 export function migrateIndexedV109ToV110(db: Database, now: number): void {
   db.transaction(() => {
+    // The columns are read ONCE, before any ALTER, by a statement finalized here: a cached statement run again
+    // after an ALTER changed the table left the connection unable to close on Windows (the file stayed locked).
+    const probe = db.prepare("PRAGMA table_info(cost_line)");
+    let present: Set<string>;
+    try {
+      present = new Set((probe.all() as Array<{ name: string }>).map((r) => r.name));
+    } finally {
+      probe.finalize();
+    }
     for (const c of COST_LINE_QUANTITY_V110_COLUMNS) {
-      if (!hasColumn(db, "cost_line", c.name)) dbExec(db, c.sql);
+      if (!present.has(c.name)) dbExec(db, c.sql);
     }
     dbExec(db, "PRAGMA user_version = 110");
     recordMigration(db, 110, COST_LINE_QUANTITY_V110_DESCRIPTION, now);
