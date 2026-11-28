@@ -666,7 +666,6 @@ async function connectorAuthBitbucket(ctx: ConnectorRpcHandlerContext): Promise<
   if (token === "") {
     throw new ConnectorRpcError(-32602, "Missing API token for bitbucket (use token field)");
   }
-  // An Atlassian API token pair; Atlassian removed app passwords on 2026-07-28 (the old pair is only read, never written).
   const verified = await verifyBeforeStore(ctx, "bitbucket", { email: user, api_token: token });
   await writeConnectorSecret(ctx.vault, "bitbucket", "email", user);
   await writeConnectorSecret(ctx.vault, "bitbucket", "api_token", token);
