@@ -2,6 +2,24 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [11.23.0](https://github.com/nimbus-agent/Nimbus/compare/v11.22.0...v11.23.0) (2026-11-28)
+
+
+### Features
+
+* AWS Cost Explorer as an opt-in fallback for AWS cost (Phase 7, slice 11b) ([#2208](https://github.com/nimbus-agent/Nimbus/issues/2208)) ([80facff](https://github.com/nimbus-agent/Nimbus/commit/80facffaa4f95291e7e6b64be634ee9b9103f740))
+* AWS cost from a FOCUS Data Export in S3, one source per provider (Phase 7, slice 11a) ([#2204](https://github.com/nimbus-agent/Nimbus/issues/2204)) ([a0372ac](https://github.com/nimbus-agent/Nimbus/commit/a0372ac98644224c509fc0a78740207ab9945652))
+* Bitbucket Pipelines minutes as cost lines, and the connector on API tokens (Phase 7, slice 9) ([#2205](https://github.com/nimbus-agent/Nimbus/issues/2205)) ([12bf66f](https://github.com/nimbus-agent/Nimbus/commit/12bf66fad30e2518ec328d841ec99a5aefe1da2c))
+* GCP cost from the BigQuery billing export (Phase 7, slice 13) ([#2209](https://github.com/nimbus-agent/Nimbus/issues/2209)) ([242abda](https://github.com/nimbus-agent/Nimbus/commit/242abdafd562837ad05f5e24a720d5e83dca1143))
+* Jenkins build minutes as cost lines at your agent rates (Phase 7, slice 10) ([#2211](https://github.com/nimbus-agent/Nimbus/issues/2211)) ([d02270e](https://github.com/nimbus-agent/Nimbus/commit/d02270eef6f89686e144a75f33fc7e51134743f0))
+* LaunchDarkly flag changes in nimbus cost why (Phase 7, slice 14) ([#2203](https://github.com/nimbus-agent/Nimbus/issues/2203)) ([4625b9d](https://github.com/nimbus-agent/Nimbus/commit/4625b9dda4a972c01c430916d60b1c37de5daaab))
+
+
+### Bug Fixes
+
+* **gateway:** pin @nimbus-dev/connectors 0.23.2 (guarded requests, every mail recipient scoped) ([#2202](https://github.com/nimbus-agent/Nimbus/issues/2202)) ([667ce1b](https://github.com/nimbus-agent/Nimbus/commit/667ce1b07f0bc8b87fb849842f1a99ea82c2f795))
+* **gateway:** pin @nimbus-dev/connectors 0.23.4 (no credential leaves its origin) ([#2207](https://github.com/nimbus-agent/Nimbus/issues/2207)) ([4c47669](https://github.com/nimbus-agent/Nimbus/commit/4c47669dabfa6ff6a52211950ab90fd4a5b2515e))
+
 ## [11.22.0](https://github.com/nimbus-agent/Nimbus/compare/v11.21.0...v11.22.0) (2026-11-28)
 
 
