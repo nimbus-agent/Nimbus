@@ -80,8 +80,9 @@ type HostData =
         fullName: string;
         builds: unknown[];
         complete: boolean;
-        oldestDay: string | null;
+        oldestMs: number | null;
         gap: string | null;
+        permanent: boolean;
       }[];
     }
   | Exclude<CostMonthOutcome, { kind: "ok" }>;
@@ -115,8 +116,9 @@ async function hostData(s: RunState, host: string): Promise<HostData> {
         fullName: job.fullName,
         builds: r.builds,
         complete: r.complete,
-        oldestDay: r.oldestDay,
+        oldestMs: r.oldestMs,
         gap: r.gap,
+        permanent: r.permanent,
       });
     }
   } else {
@@ -167,16 +169,13 @@ async function hostMonth(s: RunState, host: string, month: string): Promise<Cost
   // A job whose builds were capped or refused is incomplete for the months its read does not reach: for those it
   // is treated like a job the listing no longer shows (its stored lines are kept) and says so in one gap, while
   // every other job is still written.
-  const monthFloor = new Date(
-    Date.parse(`${month}-01T00:00:00Z`) - JENKINS_BUILD_LOOKBACK_DAYS * DAY_MS,
-  )
-    .toISOString()
-    .slice(0, 10);
+  // The read reaches the month only if it went strictly back past the month's lookback start (compared in ms).
+  const monthFloorMs = Date.parse(`${month}-01T00:00:00Z`) - JENKINS_BUILD_LOOKBACK_DAYS * DAY_MS;
   const complete = all.read.filter(
-    (r) => r.complete || (r.oldestDay !== null && r.oldestDay <= monthFloor),
+    (r) => r.complete || (r.oldestMs !== null && r.oldestMs < monthFloorMs),
   );
-  const note = all.read
-    .filter((r) => !complete.includes(r))
+  const incomplete = all.read.filter((r) => !complete.includes(r));
+  const note = incomplete
     .map((r) => r.gap)
     .filter((g): g is string => g !== null)
     .join("; ")
@@ -195,7 +194,12 @@ async function hostMonth(s: RunState, host: string, month: string): Promise<Cost
     );
   }
   const written = write(s, host, month, [...kept, ...mapped.lines]);
-  return written.kind === "ok" && note !== "" ? { ...written, note } : written;
+  if (written.kind !== "ok") return written;
+  // The healthy jobs are written; the month stays PENDING until every job that failed transiently (a server error,
+  // an unreadable body, a thrown request, or a read that did not reach the month) has been read. A refusal
+  // (401/403) is permanent and does not hold it.
+  const pending = incomplete.some((r) => !r.permanent);
+  return { ...written, ...(pending ? { pending } : {}), ...(note === "" ? {} : { note }) };
 }
 
 /** The base as `{ root, host }` when it is https (http only to this machine), else null. */

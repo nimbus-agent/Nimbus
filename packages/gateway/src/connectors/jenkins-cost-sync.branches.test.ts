@@ -320,3 +320,107 @@ describe("jenkins_billing sync: failures inside a run", () => {
     expect(gaps(r)[HOST]).toContain("a: more than 1,000 builds");
   });
 });
+
+describe("jenkins_billing sync: a transient job failure holds the month", () => {
+  const listing = (...names: string[]) => json({ jobs: names.map((name) => ({ name })) });
+  const run = (
+    f: { fetch: never },
+    cursor: string | null = null,
+    extra: { maxBuildPages?: number } = {},
+  ) =>
+    createJenkinsCostSyncable({
+      jenkins: () => cfg(),
+      now: () => NOW,
+      fetch: f.fetch,
+      ...extra,
+    }).sync(ctx(), cursor);
+
+  test("a thrown request is that job's gap, the healthy job is written, and the month stays pending", async () => {
+    const f = fakeFetch((url) => {
+      if (url.pathname === "/api/json") return listing("a", "b");
+      if (url.pathname.includes("/job/a/")) throw new Error("ECONNRESET");
+      return json({ builds: [build(1, 5)] });
+    });
+    const r = await run(f);
+    expect(stored()).toEqual([["b", 5]]);
+    expect(gaps(r)[HOST]).toBe(JENKINS_COST_GAPS.jobFailed("a"));
+    expect(pending(r)).toContain("2026-11");
+  });
+
+  test("the pending month is read again, and leaves pending once every job reads", async () => {
+    let healthy = false;
+    const f = fakeFetch((url) => {
+      if (url.pathname === "/api/json") return listing("a", "b");
+      if (url.pathname.includes("/job/a/") && !healthy) return new Response("", { status: 503 });
+      return json({ builds: [build(1, 5)] });
+    });
+    const first = await run(f);
+    expect(pending(first)).toContain("2026-11");
+    healthy = true;
+    const second = await run(f, first.cursor ?? null);
+    expect(stored()).toEqual([
+      ["a", 5],
+      ["b", 5],
+    ]);
+    expect(pending(second)).toBeUndefined();
+    expect(gaps(second)).toEqual({});
+  });
+
+  test("a refusal (401/403) on one job is permanent: its gap is shown, the month does not stay pending", async () => {
+    const f = fakeFetch((url) => {
+      if (url.pathname === "/api/json") return listing("a", "b");
+      return url.pathname.includes("/job/a/")
+        ? new Response("", { status: 403 })
+        : json({ builds: [build(1, 5)] });
+    });
+    const r = await run(f);
+    expect(stored()).toEqual([["b", 5]]);
+    expect(gaps(r)[HOST]).toBe(JENKINS_COST_GAPS.jobDenied("a"));
+    expect(pending(r)).toBeUndefined();
+  });
+
+  test("a missing, null or non-list builds is not an empty job; an explicit empty list is", async () => {
+    for (const body of [{}, { builds: null }, { builds: "x" }]) {
+      const f = fakeFetch((url) => (url.pathname === "/api/json" ? listing("a") : json(body)));
+      const r = await run(f);
+      expect(gaps(r)[HOST]).toBe(JENKINS_COST_GAPS.jobFailed("a"));
+      expect(pending(r)).toContain("2026-11");
+    }
+    const empty = fakeFetch((url) =>
+      url.pathname === "/api/json" ? listing("a") : json({ builds: [] }),
+    );
+    const r = await run(empty);
+    expect(gaps(r)).toEqual({});
+    expect(pending(r)).toBeUndefined();
+  });
+
+  test("a timestamp outside the Date range is ignored for paging, so the read keeps going", async () => {
+    const bad = Array.from({ length: 200 }, (_, i) => ({ ...build(900 - i, 1), timestamp: 1e20 }));
+    const f = fakeFetch((url) =>
+      url.pathname === "/api/json" ? listing("a") : json({ builds: bad }),
+    );
+    await run(f, null, { maxBuildPages: 2 });
+    expect(f.calls.filter((c) => c.includes("/job/a/"))).toHaveLength(2);
+  });
+
+  test("an incomplete read covers a month only if it went strictly back past the month's lookback start", async () => {
+    // November's lookback starts 2026-10-25T00:00Z. 200 builds fill the one page the cap allows.
+    const page = (oldest: number) => [
+      build(999, 3), // ends 2026-11-02
+      ...Array.from({ length: 199 }, (_, i) => ({ ...build(900 - i, 1), timestamp: oldest })),
+    ];
+    const floor = Date.UTC(2026, 9, 25);
+    for (const [oldest, written] of [
+      [floor, false],
+      [floor - 1, true],
+    ] as const) {
+      db.run("DELETE FROM cost_line");
+      const f = fakeFetch((url) =>
+        url.pathname === "/api/json" ? listing("a") : json({ builds: page(oldest) }),
+      );
+      const r = await run(f, null, { maxBuildPages: 1 });
+      expect(stored().some(([name]) => name === "a")).toBe(written);
+      expect(gaps(r)[HOST]).toContain("a: more than");
+    }
+  });
+});

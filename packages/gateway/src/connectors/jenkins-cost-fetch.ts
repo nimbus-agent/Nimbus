@@ -185,8 +185,11 @@ export function jenkinsJobRootUrl(base: string, fullName: string): string {
 const buildsTree = (from: number): string =>
   `builds[number,timestamp,duration,builtOn,result,building]{${String(from)},${String(from + JENKINS_BUILDS_PAGE)}}`;
 
-const dayOf = (ms: number | null): string | null =>
-  ms === null ? null : new Date(ms).toISOString().slice(0, 10);
+const dayOf = (ms: number | null): string => new Date(ms ?? 0).toISOString().slice(0, 10);
+/** The largest millisecond timestamp a JavaScript Date holds. */
+const MAX_DATE_MS = 8.64e15;
+const usableTimestamp = (v: unknown): v is number =>
+  typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= MAX_DATE_MS;
 
 export type JenkinsJobRead =
   | {
@@ -194,10 +197,12 @@ export type JenkinsJobRead =
       builds: unknown[];
       /** True when the listing ended on its own or reached `sinceMs`: every month from there on is complete. */
       complete: boolean;
-      /** The oldest start day reached (null: none), which bounds the months an incomplete read covers. */
-      oldestDay: string | null;
+      /** The oldest start time reached (ms; null: none), which bounds the months an incomplete read covers. */
+      oldestMs: number | null;
       /** Why the job is incomplete (a stated gap), else null. */
       gap: string | null;
+      /** True when the job's refusal is permanent (401/403): it does not hold a month pending. */
+      permanent: boolean;
     }
   | { kind: "unavailable" }
   | Exclude<CostMonthOutcome, { kind: "ok" }>;
@@ -222,22 +227,29 @@ export async function jenkinsJobBuilds(
     kind: "builds",
     builds,
     complete: false,
-    oldestDay: dayOf(oldestMs),
+    oldestMs,
     gap: JENKINS_COST_GAPS.jobFailed(job.fullName),
+    permanent: false,
   });
   for (let page = 0; page < pages; page++) {
     const tree = encodeURIComponent(buildsTree(page * JENKINS_BUILDS_PAGE));
-    const r = await request(c, `${root}/api/json?tree=${tree}`, host); // NOSONAR S9382: one request at a time through the limiter
+    let r: Reply;
+    try {
+      r = await request(c, `${root}/api/json?tree=${tree}`, host); // NOSONAR S9382: one request at a time through the limiter
+    } catch {
+      // A thrown request or body read is this job's transient failure, never the whole host's.
+      return incomplete();
+    }
     if (r.kind === "limited") return { kind: "retry" };
     if (r.kind === "not_found") return { kind: "unavailable" };
     if (r.kind === "denied") {
       const gap = JENKINS_COST_GAPS.jobDenied(job.fullName);
-      return { kind: "builds", builds: [], complete: false, oldestDay: null, gap };
+      return { kind: "builds", builds: [], complete: false, oldestMs: null, gap, permanent: true };
     }
     if (r.kind !== "body") return incomplete();
     if (!isRecord(r.body)) return incomplete();
-    // A `builds` that is not a list is not the documented shape.
-    const values = r.body["builds"] ?? [];
+    // Only an explicit list is a read: a missing, null or non-list `builds` is not the documented shape.
+    const values = r.body["builds"];
     if (!Array.isArray(values)) return incomplete();
     for (const b of values as unknown[]) {
       const n = isRecord(b) && typeof b["number"] === "number" ? String(b["number"]) : null;
@@ -247,15 +259,15 @@ export async function jenkinsJobBuilds(
       }
       builds.push(b);
       const ts = isRecord(b) ? b["timestamp"] : null;
-      if (typeof ts === "number" && Number.isFinite(ts) && (oldestMs === null || ts < oldestMs)) {
+      if (usableTimestamp(ts) && (oldestMs === null || ts < oldestMs)) {
         oldestMs = ts;
       }
     }
     if (values.length < JENKINS_BUILDS_PAGE || (oldestMs !== null && oldestMs < sinceMs)) {
-      return { kind: "builds", builds, complete: true, oldestDay: dayOf(oldestMs), gap: null };
+      return { kind: "builds", builds, complete: true, oldestMs, gap: null, permanent: false };
     }
   }
-  const since = (dayOf(oldestMs) ?? dayOf(sinceMs) ?? "").slice(0, 7);
+  const since = dayOf(oldestMs ?? sinceMs).slice(0, 7);
   const gap = JENKINS_COST_GAPS.buildCap(job.fullName, since);
-  return { kind: "builds", builds, complete: false, oldestDay: dayOf(oldestMs), gap };
+  return { kind: "builds", builds, complete: false, oldestMs, gap, permanent: false };
 }

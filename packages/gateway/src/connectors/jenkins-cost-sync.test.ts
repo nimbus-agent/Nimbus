@@ -331,7 +331,8 @@ describe("jenkins_billing sync: what it fetches", () => {
     expect(stored()).toContainEqual(["a", "2026-11-02", 2, 0, false]);
     expect(stored()).toContainEqual(["b", "2026-11-02", 4, 0, false]);
     expect(gaps(r)[HOST]).toContain("a: more than 1,000 builds");
-    expect(pending(r)).toBeUndefined();
+    // The cap is not permanent: the month stays pending (its other jobs were written).
+    expect(pending(r)).toContain("2026-11");
   });
 
   test("the job cap is a month gap for every month: no write", async () => {
@@ -372,7 +373,8 @@ describe("jenkins_billing sync: what it fetches", () => {
       ["good", "2026-11-02", 3, 0, false],
     ]);
     expect(gaps(r)[HOST]).toBe(JENKINS_COST_GAPS.jobFailed("bad"));
-    expect(pending(r)).toBeUndefined();
+    // A 500 is transient: the healthy job is written, the month stays pending until `bad` is read.
+    expect(pending(r)).toContain("2026-11");
     const odd = fake((url) =>
       url.pathname === "/api/json"
         ? { status: 200, body: { jobs: [node("a"), node("b")] } }
