@@ -986,6 +986,26 @@ Branch `dev/asaf/phase7-s15-jenkins-cloud`.
 
 ---
 
+### Fixes from the Antigravity review (slices 9 to 15, 2026-11-28: APPROVED WITH FIXES; each verified). These override the tasks where they differ.
+
+1. **Not applied: finding 1.** The eight Task 9.1 files it called missing exist on `origin/main`. They were absent from its review bundle, and a `git grep app_password` confirms each one. The `connector-spawns.ts` reads are at lines 430–446.
+2. **Bitbucket repository cap (9.4).** Hitting the 20-page repository cap is a `month_gap` for the workspace, for every month of the run, with no write.
+3. **Jenkins builds are paged (10.2).** `builds[…]{0,200}`, then `{200,400}` and so on, up to 1,000 builds per job per run. If the oldest build fetched is still newer than the lookback when the cap is hit, that job's months are a `month_gap`, with no write for the host-month.
+4. **S3 bytes (11a).** A new `awsCliDownload(s3Url, creds)` in `connectors/_lib/aws-cli.ts` runs `aws s3 cp <url> <tmpfile>` (no `--output json`), reads the file with `Bun.file(tmp).bytes()`, and unlinks it in `finally`. The export bytes never pass through UTF-8 stdout capture.
+5. **Azure session and blob download (12a).**
+   - `AZURE_CONFIG_DIR` is created once per sync run, `az login --service-principal` runs once in it (the secret through the environment or stdin, never in argv), and the directory is removed in `finally` at the end of the run.
+   - Blobs are fetched with `az storage blob download --account-name --container-name --name --file <tmp> --auth-mode login`, then `Bun.file(tmp).bytes()`, then the temp file is unlinked.
+6. **BigQuery (13).**
+   - `export_table` must match `^[A-Za-z0-9_-]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+$` (otherwise the cost config is refused), because the table name is interpolated into the SQL.
+   - `getQueryResults` is polled with the job's own project id and location from the `jobs.query` reply.
+   - The SQL uses `UNNEST(IFNULL(labels, []))` and `UNNEST(IFNULL(credits, []))`.
+7. **LaunchDarkly environments (14.2).** The mapping keeps no per-environment change time: `env_states` maps environment → boolean, and `extractEnvironments` is private. A listed flag shows `metadata.environments` (the environments it has), and the output says per-environment change times are not recorded. Changing the mapping is out of scope.
+8. **Slice 15's split (15.2).**
+   - `dayMinutes` = 1,440. Build line *i* gets `mᵢ / 1440 × C`. When the build minutes M exceed 1,440 (concurrent builds), shares become `mᵢ / M × C` and the idle share is 0. Otherwise idle = `(1 − M/1440) × C`, tagged `idle = "true"`.
+   - `splitAgentMachineCost` is called inside `gatherCostViewInput` (`finops/cost-view-input.ts`), so every view shares it: products, internal, why, rules check and report.
+9. **Advisory, adopted (10.1).** The built-in node carries `rate_key: agent:built-in`, so a rate can be set for it.
+10. **Advisory, adopted (12b).** A scope's leading and trailing slashes are stripped before the URL is built. A 429 with no retry-after header waits 60 s.
+
 **After slice 15:** Phase 7's remaining item is the owner's launch of the agent-door copy (roadmap row). Delete this plan and its specs from `dev/asaf/phase7-cost-pack` only after the owner closes the phase.
 
 ## Slices 2–8 (each gets a detailed task list here before its code starts)
