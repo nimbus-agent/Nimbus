@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 
+import { reversibleIfOf } from "../connectors/connector-writes/reversibility.ts";
 import { verifyAuditChain } from "../db/audit-verify.ts";
 import { verifyEgressChain } from "../egress/egress-verify.ts";
 import {
@@ -110,6 +111,8 @@ export type ReplayProposal = {
   readonly recordVersion: number;
   readonly confidence: number | null;
   readonly reversibility: string;
+  /** The condition a conditionally reversible row's undo rests on (the Unleash toggle), else absent. */
+  readonly reversibleIf?: string;
   readonly createdAtMs: number;
   readonly expiresAtMs: number;
   readonly actionId: string | null;
@@ -136,6 +139,7 @@ function replayProposals(db: Database, recordId: string): ReplayProposal[] {
     recordVersion: p.record_version,
     confidence: p.confidence,
     reversibility: p.reversibility,
+    ...reversibleIfOf(p.tool_id),
     createdAtMs: p.created_at_ms,
     expiresAtMs: p.expires_at_ms,
     actionId: p.action_id,
