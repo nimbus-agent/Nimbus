@@ -79,7 +79,10 @@ function dotCom(
     const month = String(vars["d"]).slice(0, 7);
     const nodes = Object.entries(totals[month] ?? {}).map(([fullPath, minutes]) => ({
       minutes,
-      project: { id: `gid://${fullPath}`, fullPath },
+      // Like GraphQL, a field is returned only when the query selects it.
+      project: q.includes("project { id fullPath }")
+        ? { id: `gid://${fullPath}`, fullPath }
+        : { fullPath },
     }));
     return {
       status: 200,
@@ -130,6 +133,23 @@ const stored = () =>
     .sort();
 
 describe("gitlab_billing sync: what it fetches", () => {
+  test("an unreadable cost config keeps the cursor whole, so a pending month is still fetched later", async () => {
+    const refused = await sync(
+      fakeGitlab(() => ({ status: 503 })),
+      cfg(),
+    );
+    const pending = decodeCostSyncCursor(PREFIX, refused.cursor ?? null).pending["acme"];
+    expect(pending).toContain("2026-10");
+    const gl = dotCom({});
+    const r = await createGitlabCostSyncable({
+      gitlab: () => null,
+      now: () => NOW,
+      fetch: gl.fetch,
+    }).sync(ctx(), refused.cursor ?? null);
+    expect(gl.calls).toEqual([]);
+    expect(r.cursor).toBe(refused.cursor);
+  });
+
   test("a removed PAT keeps the gaps recorded earlier", async () => {
     const missing = dotCom({}, (q) =>
       q.includes("group(fullPath") ? { status: 200, body: { data: { group: null } } } : undefined,
@@ -323,6 +343,35 @@ describe("gitlab_billing sync: self-managed", () => {
     // Paged once per run: the two months share one jobs listing.
     expect(gl.calls.filter((c) => c.url.includes("/jobs"))).toHaveLength(1);
     expect(gl.calls.every((c) => c.headers["PRIVATE-TOKEN"] === "glpat-secret")).toBe(true);
+  });
+
+  test("a project the listing no longer shows keeps its stored lines", async () => {
+    const both = fakeGitlab((url) => {
+      if (url.pathname.endsWith("/projects")) {
+        return {
+          status: 200,
+          body: [
+            { id: 11, path_with_namespace: "acme/web" },
+            { id: 12, path_with_namespace: "acme/api" },
+          ],
+        };
+      }
+      return {
+        status: 200,
+        body: [job(url.pathname.includes("/11/") ? 1 : 2, "2026-11-19T10:00:00Z", 60)],
+      };
+    });
+    const first = await sync(both, cfg());
+    const webOnly = fakeGitlab((url) =>
+      url.pathname.endsWith("/projects")
+        ? { status: 200, body: [{ id: 11, path_with_namespace: "acme/web" }] }
+        : { status: 200, body: [job(1, "2026-11-19T10:00:00Z", 120)] },
+    );
+    await sync(webOnly, cfg(), first.cursor ?? null, NOW + DAY);
+    expect(stored()).toEqual([
+      ["acme/api", "2026-11-19", 1, 0, false],
+      ["acme/web", "2026-11-19", 2, 0, false],
+    ]);
   });
 
   test("an empty project listing never clears a month that holds lines", async () => {

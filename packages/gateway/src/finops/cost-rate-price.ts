@@ -24,11 +24,13 @@ export interface CostRates {
 
 export const runnerRateKey = (description: string): string => `${RUNNER_PREFIX}${description}`;
 
-/** The rate key a self-managed job's line carries: its runner's when that runner is listed, else `default`. */
-export function rateKeyForRunner(rates: CostRates, description: string | null): string {
-  return description !== null && rates.runnerRates.some(([d]) => d === description)
-    ? runnerRateKey(description)
-    : COST_RATE_KEY_DEFAULT;
+/**
+ * The rate key a self-managed job's line carries: its runner's whenever it has a description (an unlisted runner
+ * prices at the default rate through {@link rateForKey}, and a runner rate added later re-prices its stored lines),
+ * else `default`.
+ */
+export function rateKeyForRunner(description: string | null): string {
+  return description === null ? COST_RATE_KEY_DEFAULT : runnerRateKey(description);
 }
 
 /** The rate per minute a rate key prices at now, or null (the line is unpriced). */

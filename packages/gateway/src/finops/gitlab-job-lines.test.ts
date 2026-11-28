@@ -58,7 +58,7 @@ describe("gitlabJobLines", () => {
       [{ projectFullPath: "p", jobs: [small] }],
       RATES,
     ).lines;
-    expect(l).toMatchObject({ billedCost: 0.02, tags: { rate_key: "default" } });
+    expect(l).toMatchObject({ billedCost: 0.02, tags: { rate_key: "runner:small" } });
     const [u] = gitlabJobLines("acme", "2026-11", [{ projectFullPath: "p", jobs: [small] }], {
       ...RATES,
       ratePerMinute: null,

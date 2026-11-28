@@ -52,7 +52,9 @@ function gitlabFake(totals: Record<string, number>) {
     const nodes = String(body.variables["d"]).startsWith("2026-11")
       ? Object.entries(totals).map(([fullPath, minutes]) => ({
           minutes,
-          project: { id: `gid://${fullPath}`, fullPath },
+          project: body.query.includes("project { id fullPath }")
+            ? { id: `gid://${fullPath}`, fullPath }
+            : { fullPath },
         }))
       : [];
     return new Response(

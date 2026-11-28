@@ -77,7 +77,7 @@ function parseJob(
   if (day.slice(0, 7) !== month || day > lastDay) return "outside_month";
   const description = text(runner["description"]);
   const tags: Record<string, string> = {};
-  setTag(tags, COST_RATE_KEY_TAG, rateKeyForRunner(rates, description));
+  setTag(tags, COST_RATE_KEY_TAG, rateKeyForRunner(description));
   setTag(tags, GITLAB_DEPLOYMENT_TAG, "self-managed");
   const runnerType = text(runner["runner_type"]);
   if (runnerType !== null) setTag(tags, "runner_type", runnerType);

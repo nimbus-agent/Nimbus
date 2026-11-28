@@ -49,11 +49,21 @@ import { fetchSameOriginOnly } from "./same-origin-fetch.ts";
 
 export const GITLAB_BILLING_SERVICE_ID = GITLAB_COST_SOURCE;
 const DAY_MS = 86_400_000;
+/**
+ * Jobs are listed newest first by id (creation order) but counted by `finished_at`, so the listing reaches this many
+ * days before the earliest month: a job created earlier that finishes inside the month is not counted (a stated
+ * bound; no creation boundary can guarantee it short of listing every job).
+ */
+export const GITLAB_JOB_LOOKBACK_DAYS = 7;
 const PREFIX = COST_SYNC_CURSOR_PREFIXES.gitlab_billing;
+const prev0 = () => ({ gaps: {}, synced: {}, pending: {} });
 
 export type GitlabCostSyncableOptions = {
-  /** `[cost.gitlab]`, read at every run so a config edit takes effect on the next one. */
-  readonly gitlab: () => NimbusCostGitlabConfig;
+  /**
+   * `[cost.gitlab]`, read at every run so a config edit takes effect on the next one; null when the cost config
+   * could not be read (the run then keeps its cursor whole: pending months and gaps survive the bad config).
+   */
+  readonly gitlab: () => NimbusCostGitlabConfig | null;
   /** Test seams. */
   readonly now?: () => number;
   readonly fetch?: GitlabFetch;
@@ -97,7 +107,7 @@ async function groupJobs(s: RunState, group: string): Promise<GroupJobs> {
   const cached = s.jobs.get(group);
   if (cached !== undefined) return cached;
   const earliest = s.earliestMonth(group);
-  const since = new Date(Date.parse(`${earliest}-01T00:00:00Z`) - DAY_MS)
+  const since = new Date(Date.parse(`${earliest}-01T00:00:00Z`) - GITLAB_JOB_LOOKBACK_DAYS * DAY_MS)
     .toISOString()
     .slice(0, 10);
   let out: GroupJobs = { kind: "jobs", perProject: [] };
@@ -192,17 +202,19 @@ async function selfManagedMonth(
   if (all.kind !== "jobs") return all;
   const perProject = all.perProject;
   // An empty listing is not a report of zero minutes: it must never clear a month that holds lines.
-  if (
-    perProject.length === 0 &&
-    s.c.ctx.readOwnCostLinesForMonth({
-      provider: GITLAB_COST_PROVIDER,
-      billingAccountId: group,
-      month,
-    }).length > 0
-  ) {
+  const stored = s.c.ctx.readOwnCostLinesForMonth({
+    provider: GITLAB_COST_PROVIDER,
+    billingAccountId: group,
+    month,
+  });
+  if (perProject.length === 0 && stored.length > 0) {
     return { kind: "month_gap", reason: GITLAB_COST_GAPS.noProjects(group) };
   }
   const mapped = gitlabJobLines(group, month, perProject, s.rates, s.today);
+  // A project the listing no longer shows (the token lost it, it moved away) keeps its stored lines: the month is
+  // replaced only for the projects whose jobs were read.
+  const listed = new Set(perProject.map((p) => p.projectFullPath));
+  const kept = stored.filter((l) => l.subAccountId === null || !listed.has(l.subAccountId));
   const dropped = Object.values(mapped.dropped).reduce((a, b) => a + b, 0);
   if (dropped > 0) {
     s.c.ctx.logger.info(
@@ -210,7 +222,7 @@ async function selfManagedMonth(
       "gitlab_billing sync: jobs not counted (no runner, unfinished, or outside the month)",
     );
   }
-  return write(s, group, month, mapped.lines);
+  return write(s, group, month, [...kept, ...mapped.lines]);
 }
 
 export function createGitlabCostSyncable(options: GitlabCostSyncableOptions): Syncable {
@@ -222,6 +234,9 @@ export function createGitlabCostSyncable(options: GitlabCostSyncableOptions): Sy
     async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
       const t0 = performance.now();
       const cfg = options.gitlab();
+      if (cfg === null) {
+        return syncPassCursorSuccess(t0, 0, cursor ?? encodeCostSyncCursor(PREFIX, prev0()), 0);
+      }
       const groups = cfg.groups;
       const prev = decodeCostSyncCursor(PREFIX, cursor);
       const keep = <T>(m: Readonly<Record<string, T>>): Record<string, T> => {

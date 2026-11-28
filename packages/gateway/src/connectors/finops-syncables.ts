@@ -17,7 +17,7 @@ export type FinopsSyncOptions = {
   /** `[cost.github] orgs` (Phase 7 slice 5); absent or empty means no GitHub billing sync. */
   readonly githubOrgs?: () => readonly string[];
   /** `[cost.gitlab]` (Phase 7 slice 8); absent or no groups means no GitLab compute-minute sync. */
-  readonly gitlab?: () => NimbusCostGitlabConfig;
+  readonly gitlab?: () => NimbusCostGitlabConfig | null;
 };
 
 /**

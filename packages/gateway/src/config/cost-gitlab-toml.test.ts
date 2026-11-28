@@ -80,9 +80,11 @@ describe("rate prices", () => {
   };
 
   test("a runner key prices at its runner's rate, and falls back to the default when unlisted", () => {
-    expect(rateKeyForRunner(rates, "big")).toBe("runner:big");
-    expect(rateKeyForRunner(rates, "small")).toBe("default");
-    expect(rateKeyForRunner(rates, null)).toBe("default");
+    expect(rateKeyForRunner("big")).toBe("runner:big");
+    // An unlisted runner keeps its own key, and prices at the default until a rate is added for it.
+    expect(rateKeyForRunner("small")).toBe("runner:small");
+    expect(rateForKey(rates, "runner:small")).toBe(0.01);
+    expect(rateKeyForRunner(null)).toBe("default");
     expect(rateForKey(rates, "runner:big")).toBe(0.05);
     expect(rateForKey(rates, "runner:gone")).toBe(0.01);
     expect(rateForKey({ ...rates, ratePerMinute: null }, "runner:gone")).toBeNull();

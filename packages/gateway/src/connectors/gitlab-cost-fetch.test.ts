@@ -198,6 +198,21 @@ describe("gitlabProjectJobs", () => {
   const p = { id: 11, fullPath: "acme/web" };
   const job = (created: unknown) => ({ id: 1, created_at: created });
 
+  test("a job repeated on the next offset page is kept once; a job with no id is kept", async () => {
+    const page1 = Array.from({ length: 100 }, (_, i) => ({
+      id: 1000 - i,
+      created_at: "2026-11-02T00:00:00Z",
+    }));
+    const page2 = [
+      { id: 901, created_at: "2026-11-02T00:00:00Z" },
+      { id: 900, created_at: "2026-11-02T00:00:00Z" },
+      { created_at: "2026-11-02T00:00:00Z" },
+    ];
+    const { c } = conn((_u, n) => ({ status: 200, body: n === 1 ? page1 : page2 }));
+    const r = await gitlabProjectJobs(c, "acme", p, "2026-10-25", "2026-11");
+    expect(r.kind === "jobs" ? r.jobs.length : -1).toBe(102);
+  });
+
   test("stops at a page whose last job was created before the day asked for", async () => {
     const page = Array.from({ length: 100 }, () => job("2026-11-02T00:00:00Z"));
     page[99] = job("2026-10-01T00:00:00Z");

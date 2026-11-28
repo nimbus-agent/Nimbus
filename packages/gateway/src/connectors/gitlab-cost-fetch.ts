@@ -137,7 +137,7 @@ async function graphql(
 
 const GROUP_QUERY = "query($p: ID!) { group(fullPath: $p) { id } }";
 const USAGE_QUERY =
-  "query($ns: NamespaceID!, $d: Date!, $after: String) { ciMinutesProjectMonthlyUsage(namespaceId: $ns, date: $d, first: 100, after: $after) { nodes { minutes project { fullPath } } pageInfo { hasNextPage endCursor } } }";
+  "query($ns: NamespaceID!, $d: Date!, $after: String) { ciMinutesProjectMonthlyUsage(namespaceId: $ns, date: $d, first: 100, after: $after) { nodes { minutes project { id fullPath } } pageInfo { hasNextPage endCursor } } }";
 
 /** A group's GraphQL global id, or what to do instead. */
 export async function gitlabGroupId(
@@ -246,6 +246,7 @@ export async function gitlabProjectJobs(
 ): Promise<{ kind: "jobs"; jobs: unknown[] } | Exclude<CostMonthOutcome, { kind: "ok" }>> {
   const jobs: unknown[] = [];
   const maxPages = c.maxJobPages ?? GITLAB_MAX_JOB_PAGES;
+  const seen = new Set<number>();
   for (let page = 1; page <= maxPages; page++) {
     const r = await rest(c, group, `/projects/${String(project.id)}/jobs`, [
       ["scope[]", "success"],
@@ -257,7 +258,15 @@ export async function gitlabProjectJobs(
     if (r.kind !== "body") return r;
     if (!Array.isArray(r.body)) return { kind: "retry" };
     const batch = r.body as unknown[];
-    jobs.push(...batch);
+    // Offset pages can overlap while jobs finish: a job seen twice is counted once.
+    for (const j of batch) {
+      const id = isRecord(j) && typeof j["id"] === "number" ? j["id"] : null;
+      if (id !== null) {
+        if (seen.has(id)) continue;
+        seen.add(id);
+      }
+      jobs.push(j);
+    }
     const oldest = createdDay(batch[batch.length - 1]);
     if (batch.length < 100 || (oldest !== null && oldest < sinceDay)) return { kind: "jobs", jobs };
   }
