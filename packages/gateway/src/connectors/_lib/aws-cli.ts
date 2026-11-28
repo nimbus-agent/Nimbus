@@ -130,7 +130,10 @@ export async function awsCliJson(
     env: extensionProcessEnv({ ...cliEnvFor("aws", process.env), ...extra }),
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
   });
-  return { ok: r.ok, text: r.stdout, stderr: r.stderr };
+  // `stderr` only when the CLI wrote one, so callers comparing a plain result are unaffected.
+  return r.stderr === ""
+    ? { ok: r.ok, text: r.stdout }
+    : { ok: r.ok, text: r.stdout, stderr: r.stderr };
 }
 
 /** A download or a listing call that has not finished after this long is killed and counts as failed. */
