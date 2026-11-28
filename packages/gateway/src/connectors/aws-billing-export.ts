@@ -41,8 +41,6 @@ export const AWS_EXPORT_MAX_TEXT_BYTES = 512 * 1024 * 1024;
 
 export const AWS_COST_GAPS = {
   notConfigured: "AWS cost is not configured: set [cost.aws] export, or cost_explorer = true",
-  costExplorerOnly:
-    "AWS cost is not configured: [cost.aws] cost_explorer is not read by this version; set [cost.aws] export",
   list: "the AWS cost export could not be listed (check the bucket name, the prefix and the AWS credentials)",
   listCap: `the export holds more than ${String(AWS_LIST_MAX_PAGES * LIST_PAGE_SIZE)} files under its prefix; point [cost.aws] export at the export's own folder`,
   empty:

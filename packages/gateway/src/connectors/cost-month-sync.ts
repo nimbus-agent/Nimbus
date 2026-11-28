@@ -11,7 +11,13 @@ const RESTATEMENT_DAYS = 5;
 
 /** What fetching one month of one account came to. */
 export type CostMonthOutcome =
-  | { readonly kind: "ok"; readonly lines: number; readonly bytes: number }
+  | {
+      readonly kind: "ok";
+      readonly lines: number;
+      readonly bytes: number;
+      /** The month was written but its source may still restate it (AWS `Estimated`): it stays pending. */
+      readonly pending?: boolean;
+    }
   /** A stated gap for the ACCOUNT (no access, refused): shown; no write; this and older months stay pending. */
   | { readonly kind: "gap"; readonly reason: string }
   /**
@@ -89,6 +95,7 @@ export async function runCostAccounts(
       if (r.kind === "ok") {
         lines += r.lines;
         bytes += r.bytes;
+        if (r.pending === true) unfinished.push(month);
         continue;
       }
       if (r.kind === "month_gap") {
