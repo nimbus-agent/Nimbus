@@ -6,7 +6,7 @@ import { gitlabJobLines } from "./gitlab-job-lines.ts";
 const RATES: CostRates = {
   ratePerMinute: 0.01,
   currency: "USD",
-  runnerRates: [["big-linux", 0.05]],
+  keyedRates: [["runner:big-linux", 0.05]],
 };
 
 /** A documentation-shaped job (`GET /projects/:id/jobs`). */

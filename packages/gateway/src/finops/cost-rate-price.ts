@@ -2,45 +2,39 @@
 // configured rate. GitLab (and the later CI sources) report minutes, never money, so a line's cost is
 // `consumed_quantity × rate`; with no rate the line is stored unpriced (V110 `priced` 0, cost 0).
 //
-// Every priced line carries the tag `rate_key` naming the rate it was priced with: `default`
-// (`rate_per_minute`) or `runner:<description>` (a `runner_rates` entry). A re-price (`repriceCostLines`)
-// reads that key, so changing a rate re-prices the stored lines locally with no API call. A `runner:` key whose
-// runner is no longer listed falls back to the default rate, exactly as a fresh sync of that job would.
+// Every line carries the tag `rate_key` naming the identity its rate is looked up by: `default`, or a prefixed key
+// (`runner:<description>`, `size:<n>x`, `agent:<name>`, `label:<name>`). A re-price (`repriceCostLines`) reads that
+// key, so changing a rate re-prices the stored lines locally with no API call, and a rate added LATER prices lines
+// that were stored before it existed (a line keeps its key even when no rate is listed for it). A key with no
+// listed rate falls back to the default rate, exactly as a fresh sync of that line would.
 //
 // Confined by static rule D48 (no network, no connector, no model). Pure.
 import { createHash } from "node:crypto";
 
 export const COST_RATE_KEY_TAG = "rate_key";
 export const COST_RATE_KEY_DEFAULT = "default";
-const RUNNER_PREFIX = "runner:";
+export type CostRateKeyPrefix = "runner" | "size" | "agent" | "label";
 
 export interface CostRates {
   /** Null: no default rate. */
   readonly ratePerMinute: number | null;
   readonly currency: string;
-  /** Runner description → rate per minute. */
-  readonly runnerRates: readonly (readonly [string, number])[];
+  /** Full rate key (prefix included, e.g. `runner:big`, `size:4x`) → rate per minute. */
+  readonly keyedRates: readonly (readonly [string, number])[];
 }
-
-export const runnerRateKey = (description: string): string => `${RUNNER_PREFIX}${description}`;
 
 /**
- * The rate key a self-managed job's line carries: its runner's whenever it has a description (an unlisted runner
- * prices at the default rate through {@link rateForKey}, and a runner rate added later re-prices its stored lines),
- * else `default`.
+ * The rate key a line carries: `<prefix>:<value>` whenever its source gave it that identity (an unlisted one prices
+ * at the default rate through {@link rateForKey}, and a rate added later re-prices its stored lines), else `default`.
  */
-export function rateKeyForRunner(description: string | null): string {
-  return description === null ? COST_RATE_KEY_DEFAULT : runnerRateKey(description);
+export function rateKeyFor(prefix: CostRateKeyPrefix, value: string | null): string {
+  return value === null ? COST_RATE_KEY_DEFAULT : `${prefix}:${value}`;
 }
 
-/** The rate per minute a rate key prices at now, or null (the line is unpriced). */
+/** The rate per minute a rate key prices at now: its own listed rate, else the default, else null (unpriced). */
 export function rateForKey(rates: CostRates, key: string): number | null {
-  if (key.startsWith(RUNNER_PREFIX)) {
-    const desc = key.slice(RUNNER_PREFIX.length);
-    const hit = rates.runnerRates.find(([d]) => d === desc);
-    if (hit !== undefined) return hit[1];
-  }
-  return rates.ratePerMinute;
+  const hit = rates.keyedRates.find(([k]) => k === key);
+  return hit === undefined ? rates.ratePerMinute : hit[1];
 }
 
 /** `quantity × rate`, rounded to 1e-9 so a re-price of the same numbers stores the same value. */
@@ -60,6 +54,6 @@ export function pricedFields(
 
 /** A stable fingerprint of the rates: a change of any rate or of the currency changes it. */
 export function costRatesFingerprint(rates: CostRates): string {
-  const canonical = JSON.stringify([rates.ratePerMinute, rates.currency, rates.runnerRates]);
+  const canonical = JSON.stringify([rates.ratePerMinute, rates.currency, rates.keyedRates]);
   return createHash("sha256").update(canonical).digest("hex");
 }

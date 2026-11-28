@@ -16,7 +16,7 @@ import {
 import { upsertSchedulerRegistration } from "./scheduler-store.ts";
 
 const MONTH = { provider: "gitlab", billingAccountId: "acme", month: "2026-11" } as const;
-const CENT: CostRates = { ratePerMinute: 0.01, currency: "USD", runnerRates: [] };
+const CENT: CostRates = { ratePerMinute: 0.01, currency: "USD", keyedRates: [] };
 
 function line(source: string, over: Partial<CostLine> = {}): CostLine {
   return {

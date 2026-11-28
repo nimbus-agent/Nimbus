@@ -159,18 +159,19 @@ export function applyBitbucketConnectorAuth(
   username: string | undefined,
 ): void {
   const u =
-    username ??
-    process.env["NIMBUS_BITBUCKET_USERNAME"]?.trim() ??
-    process.env["BITBUCKET_USERNAME"]?.trim();
-  if (u === undefined || u === "") {
+    username?.trim() ||
+    firstEnvTrimmed(["NIMBUS_BITBUCKET_EMAIL", "NIMBUS_BITBUCKET_USERNAME", "BITBUCKET_USERNAME"]);
+  if (u === "") {
     throw new Error(
-      "Bitbucket requires username: nimbus connector auth bitbucket --username <atlassian_username> --token <app_password>  (or set NIMBUS_BITBUCKET_USERNAME)",
+      "Bitbucket requires your Atlassian email: nimbus connector auth bitbucket --username <atlassian_email> --token <api_token>  (or set NIMBUS_BITBUCKET_EMAIL)",
     );
   }
-  const appPass = token ?? process.env["NIMBUS_BITBUCKET_APP_PASSWORD"]?.trim();
-  if (appPass === undefined || appPass === "") {
+  const appPass =
+    token?.trim() ||
+    firstEnvTrimmed(["NIMBUS_BITBUCKET_API_TOKEN", "NIMBUS_BITBUCKET_APP_PASSWORD"]);
+  if (appPass === "") {
     throw new Error(
-      "Bitbucket requires an app password: nimbus connector auth bitbucket --username ... --token <app_password>  (or set NIMBUS_BITBUCKET_APP_PASSWORD)",
+      "Bitbucket requires an Atlassian API token (app passwords stopped working on 2026-07-28): nimbus connector auth bitbucket --username <atlassian_email> --token <api_token>  (or set NIMBUS_BITBUCKET_API_TOKEN)",
     );
   }
   p.bitbucketUsername = u;

@@ -391,7 +391,7 @@ describe("handleConnectorAuth — bitbucket", () => {
     db.close();
   });
 
-  test("happy path: writes bitbucket.username + bitbucket.app_password and scheduler row", async () => {
+  test("happy path: writes bitbucket.email + bitbucket.api_token and scheduler row", async () => {
     const fixture = "fixture-bb";
     const ctx = makeCtx(
       { service: "bitbucket", bitbucketUsername: "acme_user", personalAccessToken: fixture },
@@ -401,8 +401,8 @@ describe("handleConnectorAuth — bitbucket", () => {
     const result = await handleConnectorAuth(ctx);
 
     expect((result.value as Record<string, unknown>).ok).toBe(true);
-    await assertVaultKey(vault, "bitbucket.username", "acme_user");
-    await assertVaultKey(vault, "bitbucket.app_password", fixture);
+    await assertVaultKey(vault, "bitbucket.email", "acme_user");
+    await assertVaultKey(vault, "bitbucket.api_token", fixture);
     assertSchedulerRow(db, "bitbucket");
   });
 
@@ -415,8 +415,8 @@ describe("handleConnectorAuth — bitbucket", () => {
     );
     await handleConnectorAuth(ctx);
 
-    await assertVaultKey(vault, "bitbucket.username", "atlassian_user");
-    await assertVaultKey(vault, "bitbucket.app_password", fixture);
+    await assertVaultKey(vault, "bitbucket.email", "atlassian_user");
+    await assertVaultKey(vault, "bitbucket.api_token", fixture);
   });
 
   test("error path: missing username throws -32602", async () => {

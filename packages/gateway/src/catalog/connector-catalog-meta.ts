@@ -100,6 +100,11 @@ export const CONNECTOR_CATALOG_META = Object.freeze({
     "AWS cost lines from a FOCUS Data Export you create in S3, per billing account and service",
   ),
   bitbucket: m("Bitbucket", "code", "Atlassian's Git code hosting service"),
+  bitbucket_billing: m(
+    "Bitbucket Pipelines minutes",
+    "cloud",
+    "Bitbucket Pipelines build minutes per workspace and repository, priced at the rate you configure",
+  ),
   linear: m("Linear", "issues", "An issue and project tracker for software teams"),
   jira: m("Jira", "issues", "Atlassian's issue and project tracker"),
   notion: m("Notion", "docs", "A workspace for notes, documents and databases"),

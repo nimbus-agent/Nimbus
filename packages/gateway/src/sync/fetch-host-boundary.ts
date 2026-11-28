@@ -1,3 +1,4 @@
+import { readBitbucketVaultCredential } from "../connectors/bitbucket-credential.ts";
 import { readConnectorSecret } from "../connectors/connector-vault.ts";
 import { resolveGithubBase } from "../connectors/github-api-base.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
@@ -67,8 +68,11 @@ async function credentialSecret(
       return readConnectorSecret(vault, "github", "pat");
     case "gitlab":
       return readConnectorSecret(vault, "gitlab", "pat");
-    case "bitbucket":
-      return readConnectorSecret(vault, "bitbucket", "app_password");
+    case "bitbucket": {
+      // A complete pair (API token, or the deprecated app password) or nothing: `fetchOne` needs both halves.
+      const cred = await readBitbucketVaultCredential(vault);
+      return cred.kind === "none" ? null : cred.secret;
+    }
     case "jenkins":
       return readConnectorSecret(vault, "jenkins", "api_token");
     case "jira":
@@ -79,7 +83,7 @@ async function credentialSecret(
 /**
  * Extra Vault keys `fetchOne` reads BEYOND `credentialSecret`'s single primary key, that this
  * boundary must ALSO prove present before claiming a host — otherwise a partially-configured
- * service (e.g. `bitbucket.app_password` set but `bitbucket.username` absent) is claimed
+ * service (e.g. `jenkins.api_token` set but `jenkins.username` absent) is claimed
  * "configured" here while `fetchOne` still declines for missing credentials with zero network
  * activity: a deterministic egress-ledger over-claim, repeatable on EVERY request (I29
  * Critical 2). Mirrors exactly the keys each connector's own `fetchOne` reads before making a
@@ -90,10 +94,6 @@ async function extraRequiredSecretsPresent(
   service: FetchableService,
 ): Promise<boolean> {
   switch (service) {
-    case "bitbucket": {
-      const username = await readConnectorSecret(vault, "bitbucket", "username");
-      return username !== null && username.trim() !== "";
-    }
     case "jenkins": {
       const username = await readConnectorSecret(vault, "jenkins", "username");
       return username !== null && username.trim() !== "";
@@ -104,6 +104,7 @@ async function extraRequiredSecretsPresent(
     }
     case "github":
     case "gitlab":
+    case "bitbucket": // `credentialSecret` already proved the whole pair
       return true;
   }
 }

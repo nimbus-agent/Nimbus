@@ -121,6 +121,29 @@ test("bitbucket falls back to an empty username/app_password when both are missi
   expect(req?.headers["Authorization"]).toBe(basicAuthHeader("", ""));
 });
 
+test("bitbucket probes with the API token pair, and the old pair as a fallback", () => {
+  const probe = CREDENTIAL_PROBES["bitbucket"];
+  expect(probe?.({ email: "a@b.c", api_token: "t" })?.headers["Authorization"]).toBe(
+    basicAuthHeader("a@b.c", "t"),
+  );
+  expect(probe?.({ username: "u", app_password: "p" })?.headers["Authorization"]).toBe(
+    basicAuthHeader("u", "p"),
+  );
+});
+
+test("bitbucket never mixes the halves of two pairs, and treats blanks as unset", () => {
+  const probe = CREDENTIAL_PROBES["bitbucket"];
+  const auth = (c: Record<string, string>) => probe?.(c)?.headers["Authorization"];
+  expect(auth({ email: "a@b.c", app_password: "p" })).toBe(basicAuthHeader("", ""));
+  expect(auth({ api_token: "t", username: "u" })).toBe(basicAuthHeader("", ""));
+  expect(auth({ email: " ", api_token: "t", username: "u", app_password: "p" })).toBe(
+    basicAuthHeader("u", "p"),
+  );
+  expect(auth({ email: " a@b.c ", api_token: " t ", username: "u", app_password: "p" })).toBe(
+    basicAuthHeader("a@b.c", "t"),
+  );
+});
+
 test("jira falls back to an empty base_url/email/api_token when all three are missing", () => {
   const req = CREDENTIAL_PROBES["jira"]?.({});
   expect(req?.url).toBe("/rest/api/3/myself");

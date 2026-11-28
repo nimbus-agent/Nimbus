@@ -12,6 +12,8 @@ import {
   type SyncResult,
   syncNoopResult,
 } from "../sync/types.ts";
+import { basicAuthHeader } from "./atlassian-api-sync-helpers.ts";
+import { readBitbucketCredential } from "./bitbucket-credential.ts";
 import { fetchOneMissForResponse } from "./fetch-miss-reason.ts";
 import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { buildPrMetadata, canonicalEpochMs, normalizeBitbucketPrState } from "./pr-meta.ts";
@@ -68,11 +70,6 @@ function decodeCursor(raw: string | null): BitbucketCursorV1 | null {
     prNext: typeof prNext === "string" ? prNext : null,
     repositoryPagesExhausted,
   };
-}
-
-function basicAuthHeader(user: string, pass: string): string {
-  const b = Buffer.from(`${user}:${pass}`, "utf8").toString("base64");
-  return `Basic ${b}`;
 }
 
 function htmlHref(rec: Record<string, unknown>): string | null {
@@ -343,9 +340,8 @@ async function fetchOnePullRequest(ctx: SyncContext, url: string): Promise<Fetch
     return { status: "unsupported_url" };
   }
   const { workspace, repoSlug, num: requestedNum } = parsedUrl;
-  const user = await ctx.getSecret("username");
-  const pass = await ctx.getSecret("app_password");
-  if (user === null || user === "" || pass === null || pass === "") {
+  const cred = await readBitbucketCredential((k) => ctx.getSecret(k));
+  if (cred.kind === "none") {
     return { status: "not_found", reason: "no_credential" };
   }
   const repoFull = `${workspace}/${repoSlug}`;
@@ -353,7 +349,10 @@ async function fetchOnePullRequest(ctx: SyncContext, url: string): Promise<Fetch
   let res: Response;
   try {
     res = await fetch(detailUrl, {
-      headers: { Authorization: basicAuthHeader(user, pass), Accept: "application/json" },
+      headers: {
+        Authorization: basicAuthHeader(cred.user, cred.secret),
+        Accept: "application/json",
+      },
       // Bounds this single-item fetch so `POST /v1/items/fetch` can never hang on a stalled
       // upstream response (see `FETCH_ONE_TIMEOUT_MS`'s doc comment in `sync/types.ts`). Covers
       // the body read below too — an abort mid-stream rejects `res.text()`, caught by the same
@@ -493,12 +492,11 @@ export function createBitbucketSyncable(options: BitbucketSyncableOptions): Sync
     async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
       const t0 = performance.now();
       await options.ensureBitbucketMcpRunning();
-      const user = await ctx.getSecret("username");
-      const pass = await ctx.getSecret("app_password");
-      if (user === null || user === "" || pass === null || pass === "") {
+      const cred = await readBitbucketCredential((k) => ctx.getSecret(k));
+      if (cred.kind === "none") {
         return syncNoopResult(cursor, t0);
       }
-      const auth = basicAuthHeader(user, pass);
+      const auth = basicAuthHeader(cred.user, cred.secret);
 
       const syncStartedIso = new Date().toISOString();
       const prev = decodeCursor(cursor);
