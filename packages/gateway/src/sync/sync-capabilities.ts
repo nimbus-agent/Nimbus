@@ -72,6 +72,7 @@ export const SHARED_CREDENTIAL_GRANTS = {
   github_billing: ["github"],
   gitlab_billing: ["gitlab"],
   aws_billing: ["aws"],
+  azure_billing: ["azure"],
   athena: ["aws"],
   cloudwatch: ["aws"],
   sagemaker: ["aws"],

@@ -19,6 +19,7 @@ export const COST_SYNC_CURSOR_PREFIXES = Object.freeze({
   anthropic_billing: "nimbus-ant1:",
   gitlab_billing: "nimbus-glb1:",
   aws_billing: "nimbus-awb1:",
+  azure_billing: "nimbus-azb1:",
 } as const);
 export type CostSyncServiceId = keyof typeof COST_SYNC_CURSOR_PREFIXES;
 

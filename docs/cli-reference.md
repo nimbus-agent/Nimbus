@@ -1418,6 +1418,36 @@ Stated bounds:
 - **Re-delivered exports.** A day that an export no longer contains is not cleared (only the days a delivery covers are replaced), and the previous month is re-read only until the 5th of the month and on the first sync. A row dated after today makes its month a gap.
 - **One source per provider, per day.** On each day the AWS sync has lines for, a `[cost.focus] dir` import's AWS lines of that day are set aside, and the views list how many days; days only the file covers keep its lines. The views use the sync and list the file import as set aside (`[cost] authoritative = { aws = "focus" }` chooses the file instead).
 
+### Azure cost from a FOCUS export (`[cost.azure]`)
+
+Create a Cost Management export in Azure (Cost Management, Exports: **Cost and usage details (FOCUS)**, format **CSV**, none or gzip compression, delivered to a storage container you own), then point Nimbus at it; nothing is fetched until `export` is set:
+
+```toml
+[cost.azure]
+export = { account = "acmecost", container = "exports", path = "focus/monthly" }
+scopes = []   # parsed now; read by the Query API fallback (a later slice)
+```
+
+| Key | Meaning |
+| --- | --- |
+| `export.account` | The storage account name (3 to 24 lowercase letters and digits). |
+| `export.container` | The blob container name. |
+| `export.path` | The folder inside the container that holds the export's date-range folders: the export's storage directory plus its name (`<directory>/<export-name>`). |
+| `scopes` | Cost Management scope resource ids (at most 50). Parsed only. |
+
+The gateway syncs once a day as source `azure_billing`, provider `azure`, with the `azure.tenant_id`, `azure.client_id` and `azure.client_secret` you stored for the Azure connector. It signs in over HTTPS (OAuth client credentials; the Azure CLI is not used and the secret never appears in a command line), lists `<path>/<YYYYMMDD-YYYYMMDD>/<run-id>/`, reads each billing month's newest run that has a `manifest.json`, downloads the parts the manifest lists (gzip is handled) and stores one line per day and grain under each file's `BillingAccountId`. A newer run replaces only the days its files cover.
+
+**The service principal needs the Storage Blob Data Reader role on the container.** A 401 or 403 shows as a gap saying so.
+
+Stated bounds:
+
+- **Management-group scope is not supported for FOCUS exports** (Microsoft's statement); create the export at a subscription, resource group, enrollment, billing-account or billing-profile scope. You create the export; the storage cost is yours.
+- **Documentation-verified only.** The folder layout and manifest fields follow Microsoft's export documentation; no live account was read.
+- **CSV only.** A Parquet export is a stated gap: `the export is Parquet; recreate it as CSV`. A run folder with no manifest yet is ignored. A date range that spans two months is not read.
+- **Whole periods only.** A part that cannot be downloaded, decoded or parsed, a row that cannot be read, an empty export or a row outside the period makes that month a gap and writes nothing; the stored month stays. At most 200 files per month, 256 MiB per file, 100,000 listed blobs.
+- **No export:** the freshness line shows `Azure cost is not configured: set [cost.azure] export, or scopes`.
+- **One source per provider, per day.** On each day the Azure sync has lines for, a `[cost.focus] dir` import's Azure lines of that day are set aside (`[cost] authoritative = { azure = "focus" }` chooses the file instead).
+
 ### `nimbus cost products` and `nimbus cost internal`
 
 Cost per product (with its parts: the service and provider, and the env), and the internal cost (CI and the dev and test environments), computed from the local cost lines (`nimbus cost import`), the indexed Vantage rows for a provider with no raw lines, and your `[[cost.rule]]` allocation rules. Local index only: **no network call, no model, no egress row**.

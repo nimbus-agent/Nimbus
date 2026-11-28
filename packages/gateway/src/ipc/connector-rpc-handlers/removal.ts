@@ -86,6 +86,7 @@ function unregisterConnectorFromSyncScheduler(
   }
   if (id === "gitlab") syncScheduler.unregister("gitlab_billing");
   if (id === "aws") syncScheduler.unregister("aws_billing");
+  if (id === "azure") syncScheduler.unregister("azure_billing");
   syncScheduler.unregister(id);
 }
 
@@ -100,6 +101,8 @@ function removeConnectorIndexEntries(localIndex: LocalIndex, id: string): number
   if (id === "gitlab") itemsDeleted += localIndex.removeConnectorIndexData("gitlab_billing");
   // Phase 7 slice 11a: the AWS cost lines go with the AWS connector.
   if (id === "aws") itemsDeleted += localIndex.removeConnectorIndexData("aws_billing");
+  // Phase 7 slice 12a: the Azure cost lines go with the Azure connector.
+  if (id === "azure") itemsDeleted += localIndex.removeConnectorIndexData("azure_billing");
   itemsDeleted += localIndex.removeConnectorIndexData(id);
   return itemsDeleted;
 }

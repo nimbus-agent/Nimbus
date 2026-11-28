@@ -17,5 +17,9 @@ export function finopsSyncOptions(configDir: string): Required<FinopsSyncOptions
       const c = loadNimbusCostFromConfigDir(configDir);
       return c.error === null ? c.aws : null;
     },
+    azure: () => {
+      const c = loadNimbusCostFromConfigDir(configDir);
+      return c.error === null ? c.azure : null;
+    },
   };
 }

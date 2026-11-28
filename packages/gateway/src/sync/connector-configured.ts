@@ -3,6 +3,7 @@
 import { resolveGoogleOAuthVaultKey } from "../auth/google-access-token.ts";
 import { TEAM_CREDENTIAL_SYNC_CONNECTORS } from "../config/nimbus-toml-connectors.ts";
 import { hasUsableAwsCredentials } from "../connectors/_lib/aws-cli.ts";
+import { hasAzureCredentials } from "../connectors/_lib/azure-token.ts";
 import { loadGcpAuthFromVault } from "../connectors/_lib/gcp-auth.ts";
 import {
   CONNECTOR_VAULT_SECRET_KEYS,
@@ -173,6 +174,8 @@ const DERIVED_CONFIGURED_CHECKS: Readonly<
   athena: hasUsableAwsCredentials,
   // Phase 7 slice 11a: configured whenever AWS credentials exist; a missing `[cost.aws]` shows as a stated gap.
   aws_billing: hasUsableAwsCredentials,
+  // Phase 7 slice 12a: configured whenever the Azure service principal exists; a missing `[cost.azure]` shows as a stated gap.
+  azure_billing: hasAzureCredentials,
   cloudwatch: hasUsableAwsCredentials,
   sagemaker: hasUsableAwsCredentials,
 };

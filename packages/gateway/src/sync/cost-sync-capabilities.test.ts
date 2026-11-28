@@ -78,6 +78,7 @@ afterEach(() => {
 describe("cost sync capabilities", () => {
   test("gitlab_billing and aws_billing are cost-sync services", () => {
     expect(COST_SYNC_SERVICES.has("aws_billing")).toBe(true);
+    expect(COST_SYNC_SERVICES.has("azure_billing")).toBe(true);
     expect(COST_SYNC_SERVICES.has("gitlab_billing")).toBe(true);
   });
 

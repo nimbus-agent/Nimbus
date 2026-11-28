@@ -138,8 +138,8 @@ export async function listExport(
   return { kind: "gap", reason: AWS_COST_GAPS.listCap };
 }
 
-const monthGap = (reason: string): CostMonthOutcome => ({ kind: "month_gap", reason });
-const short = (s: string): string => s.slice(0, 120);
+export const monthGap = (reason: string): CostMonthOutcome => ({ kind: "month_gap", reason });
+export const short = (s: string): string => s.slice(0, 120);
 
 /** The data files a manifest names, each checked to sit under the configured bucket and prefix. */
 function manifestFiles(
@@ -180,8 +180,8 @@ const firstLine = (text: string): string => {
 };
 
 /** Every data file, decoded and joined under ONE header; an empty chunk is skipped, a differing header refused. */
-async function exportText(
-  cli: AwsBillingCli,
+export async function exportText(
+  cli: Pick<AwsBillingCli, "download">,
   urls: readonly string[],
   month: string,
   maxTextBytes: number,
@@ -249,11 +249,24 @@ export async function readExportMonth(
   if (isOutcome(urls)) return urls;
   const text = await exportText(cli, urls, month, maxTextBytes);
   if (typeof text !== "string") return text;
+  return focusLinesFromText(text, AWS_COST_PROVIDER, AWS_BILLING_SOURCE, month);
+}
+
+/**
+ * The decoded text of one period, parsed whole or not at all: any row that could not be read, a row outside the
+ * period or with no `BillingAccountId`, or no rows, is a `month_gap`. Lines are re-sourced to `source`.
+ */
+export function focusLinesFromText(
+  text: string,
+  provider: "aws" | "azure",
+  source: string,
+  month: string,
+): CostLine[] | CostMonthOutcome {
   let parsed: ReturnType<typeof parseFocusCsv>;
   try {
     parsed = parseFocusCsv(text, {
-      provider: AWS_COST_PROVIDER,
-      importId: `${AWS_BILLING_SOURCE}:${month}`,
+      provider,
+      importId: `${source}:${month}`,
     });
   } catch (e) {
     const why = e instanceof FocusCsvError ? e.message : String(e);
@@ -274,5 +287,5 @@ export async function readExportMonth(
       `the ${month} export has ${stray > 0 ? `${String(stray)} rows outside the period or with no BillingAccountId` : "no rows"}; that month was not updated`,
     );
   }
-  return parsed.lines.map((l) => ({ ...l, source: AWS_BILLING_SOURCE }));
+  return parsed.lines.map((l) => ({ ...l, source }));
 }

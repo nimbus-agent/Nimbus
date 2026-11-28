@@ -227,6 +227,22 @@ describe("isConnectorConfigured", () => {
     }
   });
 
+  test("azure_billing is configured only with the whole Azure service principal", async () => {
+    expect(await isConnectorConfigured(fakeVault({}), "azure_billing")).toBe(false);
+    expect(
+      await isConnectorConfigured(
+        fakeVault({ "azure.tenant_id": "t", "azure.client_id": "c" }),
+        "azure_billing",
+      ),
+    ).toBe(false);
+    expect(
+      await isConnectorConfigured(
+        fakeVault({ "azure.tenant_id": "t", "azure.client_id": "c", "azure.client_secret": "s" }),
+        "azure_billing",
+      ),
+    ).toBe(true);
+  });
+
   test("fail-closed: a throwing vault rejects rather than treating the service as configured", async () => {
     await expect(isConnectorConfigured(throwingVault(), "github_actions")).rejects.toThrow();
     await expect(isConnectorConfigured(throwingVault(), "bigquery")).rejects.toThrow();
@@ -267,6 +283,7 @@ describe("isConnectorConfigured", () => {
         "github_billing",
         "gitlab_billing",
         "aws_billing",
+        "azure_billing",
         "bigquery",
         "athena",
         "cloudwatch",
