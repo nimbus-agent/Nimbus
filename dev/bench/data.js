@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795845586782,
+  "lastUpdate": 1795847036871,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "32774e778c7d28cf5178b68851dd2a861890a787",
-          "message": "chore(deps): drop the redundant @mastra/core and @mastra/mcp root overrides (#1581)\n\n## Why\n\nRoot `overrides` exists to force a *transitive* dependency onto a chosen\nversion. `@mastra/core` and `@mastra/mcp` have exactly one consumer in\nthe tree: `packages/gateway`, which declares both directly. The only\nother edge is `@mastra/mcp`'s peer on `@mastra/core`, which resolves to\nthat same single copy. So these two overrides lift nothing. The lockfile\nalready pins the exact versions.\n\nWhat they *did* do was break every Dependabot PR that touched Mastra.\nDependabot edits `dependencies` but has no notion of `overrides`, so\neach bump tripped `audit:override-drift` and needed the same hand-pushed\ncommit, \"move the @mastra override pin with the declaration\": #1144,\n#1238, #1331, #1515, and now #1574 (superseded by #1580) and #1575.\nWorse, Dependabot regenerates grouped PRs whenever `main`'s lockfile\nmoves. #1574 was closed as superseded minutes after a fixup was pushed\nto it, and the fixup went with it.\n\nThe drift gate's own header lists this resolution: \"delete an override\nthat has no reason to exist\".\n\n## Effect\n\n- Installed tree unchanged: `bun.lock` loses only the two override\nentries; `@mastra/core@1.67.0` and `@mastra/mcp@1.18.0` still resolve\nexactly as before.\n- `audit:override-drift` OK, `bun audit` clean, `preflight:fast` PASSED.\n\nAfter this lands, the Mastra bumps in #1580 and #1575 pass the drift\ngate with no manual commit.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Chores**\n  * Removed version overrides for `@mastra/core` and `@mastra/mcp`.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5.5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-30T01:59:25Z",
-          "tree_id": "b2f257bb19aff93883984c3349ceee78b4c3ba9c",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/32774e778c7d28cf5178b68851dd2a861890a787"
-        },
-        "date": 1790734373371,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 351.98007605000276,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 347.2620213499998,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 185.8754229000042,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4ae534a6bf198bed9e631ba64783cc455785f3a2",
+          "message": "fix(iac): the CloudFormation reads reach AWS, and an init removes the module .git it cloned (#2197)\n\n## Summary\n\nTwo follow-ups to connectors 0.21.0 (Nimbus#2188) in the IaC runner.\n\n### 1. The CloudFormation reads now reach AWS\n\n`iac_cloudformation_stack_get`, `iac_cloudformation_changesets_list` and\n`iac_cloudformation_changeset_get` sat in the `iac` listing slot, which\nhas no network. They were offered but failed when called. They now run\nin the runner's `cfn` profile, following the `KUBE_TOOL_PROFILE`\nprecedent (\"the listing slot has no network\").\n- **No write grants:** a read gets no scratch directory (`write: []`),\nno workdir lock, no exit wait, and none of the write branches. The\ndiscard's `isOurChangeSet` check stays keyed on the discard alone.\n- **Region pinning:** the region comes only from the approved list and\nis pinned through `AWS_DEFAULT_REGION` and `AWS_REGION`, with the\nnetwork limited to `iacCfnHosts(region)`. The account is the stored\ncredential's.\n- **Unchanged classification:** the reads stay outside the\ncode-execution and write sets, which `iac-tool-profile.test.ts` pins.\nThey get dispatcher budgets.\n- **No broken before-read:** no write row's before-state used these\nreads, so none was failing in production.\n- **New requirement:** a read now needs `nimbus connector writes enable\niac --wave 4 --cloud aws --region <region>`. Before, it needed nothing\nbut never worked. The reads have their own refusal texts\n(`CFN_READ_REFUSALS`), which name that command, warn that enabling\nreplaces the scope (so repeat any approved `--workdir`), or point to\n`nimbus vault set`.\n- **Not new:** with `aws.profile` credentials the cfn child is not\ngranted `~/.aws/config`, so only access-key credentials work in the\nsandbox.\n\n### 2. Git-sourced Terraform modules (owner ruling 2026-11-27)\n\n`terraform init` clones git-sourced modules, and most registry modules,\ninto `<workdir>/.terraform/modules/<key>/` together with their `.git`,\nwhich the OR-D2-8 scan refuses. #2188 refused them with a clear message.\nNow, after a **successful** init, the runner removes only the `.git`\ndirectories this init created.\n- **What it removes:** a `.git` directly at\n`.terraform/modules/<key>/.git` that was absent before the child started\n(a before/after comparison). It must be a real directory, not a link or\na junction, re-`lstat`ed right before it is acted on, and its realpath\nmust equal that folder byte for byte.\n- **What it never removes:** anything after a failed or timed-out init.\nOdd key names (`..`, separators, NUL) are filtered, and links at `.git`,\n`<key>`, `modules` or `.terraform` are refused.\n- **Links inside the removed tree:**\n  - They are never followed or entered.\n- Nothing is chmodded on POSIX, since unlink needs only write on the\nparent.\n- On Windows, the read-only-bit walk `lstat`s each path immediately\nbefore changing or listing it, and skips a link or junction without\nentering it.\n- **Fail closed:** a removal error keeps the folder, and the refusal\nfollows.\n- **OR-D2-8 is unchanged.** The real scan runs again afterwards and\nrefuses anything left, a `.git` anywhere else included.\n- **Stated bound (macOS), written into `SECURITY-INVARIANTS.md` beside\nOR-D2-8:** a process that outlives the init child can swap a path\ncomponent, or a folder inside the `.git`, for a link while the removal\nruns. The removal then deletes what that link points to. No mode is ever\nchanged on macOS. On Linux and Windows the child's process tree dies\nwith it.\n\n## Related Issue\n\nPhase 9.7 follow-ups to Nimbus#2188.\n\n## Type of Change\n\n- [x] Bug fix (the CloudFormation reads)\n- [x] New feature (module `.git` removal)\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors (`bun run\npreflight:fast` PASSED, including `typecheck:tests` with 0 new errors\nand `audit:file-size`)\n- [x] `bun run lint` passes\n- [x] All existing tests pass:\n  - lazy-mesh: 1029 pass, 4 fail\n  - connector-writes: 4449 pass\n  - engine: 1923 pass\n  - security-invariants: 726 pass, 1 fail\n  - `test/integration/connectors`: 337 pass\n\nThe 5 failures are the known I15 and 4 `mesh-user-mcp-write-grant`\ntests, in a worktree under `.claude/`. `test/integration/iac` skipped\nlocally (no Terraform binary).\n- [x] New behaviour is covered by tests (`iac-runner.cfn-reads.test.ts`;\n`iac-runner.module-git.test.ts` with the real OR-D2-8 scan and real\ndisk: a removed module clone, then a passing plan preflight; a deeper,\nsymlinked, pre-existing or outside `.git` kept and refused; a failed\ninit; traversal keys; a case-variant link; a junction or symlink inside\nthe `.git` whose target is untouched)\n- [x] No `any` types introduced\n- [x] No credentials, tokens, or secret values appear\n- [x] Platform-specific code is behind `PlatformServices` (the\nWindows-only read-only walk is gated on the platform)\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable\n- [x] Does not touch `docs/README.md`\n\nOnly Windows was exercised locally. The Linux and macOS symlink cases\nand the Istanbul branch floor run in CI.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-28T06:16:26Z",
+          "tree_id": "c5318d81c32f6e0ebee4c0c84d29cdaee00f4c0e",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/4ae534a6bf198bed9e631ba64783cc455785f3a2"
+        },
+        "date": 1795847032979,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 188.6538036500022,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 189.26795960000055,
             "unit": "ms"
           }
         ]
