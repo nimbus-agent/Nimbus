@@ -40,8 +40,9 @@ export const BITBUCKET_COST_GAPS = {
     "no Bitbucket credential is stored: run `nimbus connector auth bitbucket` with your Atlassian email and an API token",
   repoCap: (workspace: string): string =>
     `${workspace} has more than ${String(BITBUCKET_MAX_REPO_PAGES * 100)} repositories; its minutes were not updated`,
-  pipelineCap: (repo: string, month: string): string =>
-    `more than ${String(BITBUCKET_MAX_PIPELINE_PAGES * 100)} pipelines reached back to ${month} for ${repo}: that month is kept as stored`,
+  pipelineCap: (repo: string, since: string): string =>
+    `${repo}: more than ${(BITBUCKET_MAX_PIPELINE_PAGES * 100).toLocaleString("en-US")} pipelines since ${since}; its older months are kept as stored`,
+  repoDenied: (repo: string): string => `${repo}: no access to its pipelines`,
 } as const;
 
 /** A request's outcome: a parsed body, or what the month loop does about it. */
@@ -68,7 +69,7 @@ async function request(
   c: BitbucketConn,
   url: string,
   workspace: string,
-): Promise<BitbucketReply | { kind: "not_found" }> {
+): Promise<BitbucketReply | { kind: "not_found" } | { kind: "denied" }> {
   await c.ctx.rateLimiter.acquire("bitbucket");
   let res: Response;
   try {
@@ -85,8 +86,7 @@ async function request(
     c.ctx.rateLimiter.penalise("bitbucket", Number.isFinite(sec) && sec > 0 ? sec * 1000 : 60_000);
     return { kind: "retry" };
   }
-  if (res.status === 401 || res.status === 403)
-    return { kind: "gap", reason: BITBUCKET_COST_GAPS.access(workspace) };
+  if (res.status === 401 || res.status === 403) return { kind: "denied" };
   if (res.status === 404) return { kind: "not_found" };
   if (!res.ok) return { kind: "retry" };
   try {
@@ -130,6 +130,7 @@ async function pages(
   | { kind: "done" }
   | { kind: "capped" }
   | { kind: "not_found" }
+  | { kind: "denied" }
   | Exclude<CostMonthOutcome, { kind: "ok" }>
 > {
   const requested = new Set<string>();
@@ -137,7 +138,7 @@ async function pages(
   for (let page = 0; page < maxPages && url !== null; page++) {
     requested.add(new URL(url).toString());
     const r = await request(c, url, workspace);
-    if (r.kind === "not_found") return r;
+    if (r.kind === "not_found" || r.kind === "denied") return r;
     if (r.kind !== "body") return r;
     const body = r.body;
     if (!isRecord(body) || !Array.isArray(body["values"])) return { kind: "retry" };
@@ -177,6 +178,7 @@ export async function bitbucketWorkspaceRepos(
     return "more";
   });
   if (r.kind === "done") return { kind: "repos", repos };
+  if (r.kind === "denied") return { kind: "gap", reason: BITBUCKET_COST_GAPS.access(workspace) };
   if (r.kind === "not_found")
     return { kind: "gap", reason: BITBUCKET_COST_GAPS.notFound(workspace) };
   if (r.kind === "capped")
@@ -202,12 +204,21 @@ export async function bitbucketRepoPipelines(
   workspace: string,
   repo: BitbucketRepo,
   sinceDay: string,
-  month: string,
 ): Promise<
-  | { kind: "pipelines"; pipelines: unknown[] }
+  | {
+      kind: "pipelines";
+      pipelines: unknown[];
+      /** True when the listing ended on its own or reached `sinceDay`: every month from `sinceDay` on is complete. */
+      complete: boolean;
+      /** The oldest `created_on` day reached (null: none), which bounds the months an incomplete read covers. */
+      oldestDay: string | null;
+      /** Why the repository is incomplete (a stated gap), else null. */
+      gap: string | null;
+    }
   | { kind: "unavailable" }
   | Exclude<CostMonthOutcome, { kind: "ok" }>
 > {
+  let oldestDay: string | null = null;
   const pipelines: unknown[] = [];
   const seen = new Set<string>();
   const slash = repo.fullName.indexOf("/");
@@ -228,12 +239,22 @@ export async function bitbucketRepoPipelines(
         pipelines.push(p);
       }
       const oldest = createdDay(values[values.length - 1]);
+      if (oldest !== null && (oldestDay === null || oldest < oldestDay)) oldestDay = oldest;
       return values.length === 0 || (oldest !== null && oldest < sinceDay) ? "stop" : "more";
     },
   );
-  if (r.kind === "done") return { kind: "pipelines", pipelines };
+  if (r.kind === "done") {
+    return { kind: "pipelines", pipelines, complete: true, oldestDay, gap: null };
+  }
   if (r.kind === "not_found") return { kind: "unavailable" };
-  if (r.kind === "capped")
-    return { kind: "month_gap", reason: BITBUCKET_COST_GAPS.pipelineCap(repo.fullName, month) };
+  // One repository's cap or refusal is that repository's gap: the others are still read and written.
+  if (r.kind === "capped") {
+    const gap = BITBUCKET_COST_GAPS.pipelineCap(repo.fullName, (oldestDay ?? sinceDay).slice(0, 7));
+    return { kind: "pipelines", pipelines, complete: false, oldestDay, gap };
+  }
+  if (r.kind === "denied") {
+    const gap = BITBUCKET_COST_GAPS.repoDenied(repo.fullName);
+    return { kind: "pipelines", pipelines: [], complete: false, oldestDay: null, gap };
+  }
   return r;
 }

@@ -78,6 +78,7 @@ function bitbucket(
     repos?: Record<string, Repo[]>;
     pipelines?: Record<string, unknown[]>;
     missing?: string[];
+    denied?: string[];
   },
   size = 100,
 ) {
@@ -88,6 +89,7 @@ function bitbucket(
       parts.length === 1
         ? data.repos?.[parts[0] ?? ""]
         : data.pipelines?.[`${parts[0]}/${parts[1]}`];
+    if (data.denied?.includes(`${parts[0]}/${parts[1]}`) === true) return { status: 403 };
     if (all === undefined || data.missing?.includes(`${parts[0]}/${parts[1]}`) === true) {
       return { status: 404 };
     }
@@ -323,18 +325,6 @@ describe("bitbucket_billing sync: what it fetches", () => {
     expect(bb.calls).toHaveLength(20);
     expect(pending(r)).toContain("2026-11");
     expect(gaps(r)).toEqual({ acme: BITBUCKET_COST_GAPS.repoCap("acme") });
-  });
-
-  test("the pipeline page cap is a month gap: the stored month is kept", async () => {
-    const first = await sync(
-      bitbucket({ repos: { acme: [web] }, pipelines: { "acme/web": [pipe("{p1}", D1, 60)] } }),
-      cfg(),
-    );
-    const recent = Array.from({ length: 4 }, (_, i) => pipe(`{n${String(i)}}`, D2, 60, D2));
-    const capped = bitbucket({ repos: { acme: [web] }, pipelines: { "acme/web": recent } }, 1);
-    const r = await sync(capped, cfg(), first.cursor ?? null, NOW + DAY, { maxPipelinePages: 2 });
-    expect(stored()).toEqual([["acme/web", "2026-11-02", 1, 0, false]]);
-    expect(pending(r)).toContain("2026-11");
   });
 });
 

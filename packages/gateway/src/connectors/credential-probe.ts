@@ -2,6 +2,7 @@
 
 import { stripTrailingSlashes } from "../string/strip-trailing-slashes.ts";
 import { basicAuthHeader } from "./atlassian-api-sync-helpers.ts";
+import { pickBitbucketCredential } from "./bitbucket-credential.ts";
 import type { ConnectorServiceId } from "./connector-catalog.ts";
 import { resolveGithubBase } from "./github-api-base.ts";
 import { fetchSameOriginOnly } from "./same-origin-fetch.ts";
@@ -55,17 +56,20 @@ export const CREDENTIAL_PROBES: Partial<Record<ConnectorServiceId, CredentialPro
     url: `${stripTrailingSlashes(c["api_base"] ?? "https://gitlab.com/api/v4")}/user`,
     headers: { "PRIVATE-TOKEN": c["pat"] ?? "" },
   }),
-  bitbucket: (c) => ({
-    url: "https://api.bitbucket.org/2.0/user",
-    headers: {
-      // The API token pair (`email` + `api_token`) first; the deprecated app password pair as a fallback.
-      Authorization: basicAuthHeader(
-        c["email"] ?? c["username"] ?? "",
-        c["api_token"] ?? c["app_password"] ?? "",
-      ),
-      Accept: "application/json",
-    },
-  }),
+  bitbucket: (c) => {
+    // One complete pair, never a mix of halves: the API token pair first, the deprecated app password pair next.
+    const cred = pickBitbucketCredential(c);
+    return {
+      url: "https://api.bitbucket.org/2.0/user",
+      headers: {
+        Authorization: basicAuthHeader(
+          cred.kind === "none" ? "" : cred.user,
+          cred.kind === "none" ? "" : cred.secret,
+        ),
+        Accept: "application/json",
+      },
+    };
+  },
   jira: (c) => ({
     url: `${stripTrailingSlashes(c["base_url"] ?? "")}/rest/api/3/myself`,
     headers: {

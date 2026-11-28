@@ -25,14 +25,26 @@ function pair(user: string | null, secret: string | null): { user: string; secre
 }
 
 /** The API token pair when both halves are non-blank, else the app password pair, else `none`. Values are trimmed. */
+export function pickBitbucketCredential(
+  values: Partial<Record<BitbucketCredentialKey, string | null | undefined>>,
+): BitbucketCredential {
+  const token = pair(values.email ?? null, values.api_token ?? null);
+  if (token !== null) return { kind: "token", ...token };
+  const legacy = pair(values.username ?? null, values.app_password ?? null);
+  if (legacy !== null) return { kind: "app_password", ...legacy };
+  return { kind: "none" };
+}
+
+/** {@link pickBitbucketCredential} over an async reader (the Vault, or a sync context). */
 export async function readBitbucketCredential(
   read: (key: BitbucketCredentialKey) => Promise<string | null>,
 ): Promise<BitbucketCredential> {
-  const token = pair(await read("email"), await read("api_token"));
-  if (token !== null) return { kind: "token", ...token };
-  const legacy = pair(await read("username"), await read("app_password"));
-  if (legacy !== null) return { kind: "app_password", ...legacy };
-  return { kind: "none" };
+  return pickBitbucketCredential({
+    email: await read("email"),
+    api_token: await read("api_token"),
+    username: await read("username"),
+    app_password: await read("app_password"),
+  });
 }
 
 /** {@link readBitbucketCredential} over the Vault. */

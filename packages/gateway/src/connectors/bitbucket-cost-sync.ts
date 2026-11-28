@@ -77,7 +77,14 @@ type WorkspaceData =
       readonly kind: "data";
       /** Every listed repository (a repository whose pipelines were unavailable is not in `read`). */
       readonly repos: readonly BitbucketRepo[];
-      readonly read: { repoUuid: string; fullName: string; pipelines: unknown[] }[];
+      readonly read: {
+        repoUuid: string;
+        fullName: string;
+        pipelines: unknown[];
+        complete: boolean;
+        oldestDay: string | null;
+        gap: string | null;
+      }[];
     }
   | Exclude<CostMonthOutcome, { kind: "ok" }>;
 
@@ -105,13 +112,20 @@ async function workspaceData(s: RunState, workspace: string): Promise<WorkspaceD
   if (listing.kind === "repos") {
     out = { kind: "data", repos: listing.repos, read: [] };
     for (const repo of listing.repos) {
-      const r = await bitbucketRepoPipelines(s.c, workspace, repo, since, earliest);
+      const r = await bitbucketRepoPipelines(s.c, workspace, repo, since);
       if (r.kind === "unavailable") continue;
       if (r.kind !== "pipelines") {
         out = r;
         break;
       }
-      out.read.push({ repoUuid: repo.uuid, fullName: repo.fullName, pipelines: r.pipelines });
+      out.read.push({
+        repoUuid: repo.uuid,
+        fullName: repo.fullName,
+        pipelines: r.pipelines,
+        complete: r.complete,
+        oldestDay: r.oldestDay,
+        gap: r.gap,
+      });
     }
   } else {
     out = listing;
@@ -162,10 +176,26 @@ async function workspaceMonth(
   if (all.repos.length === 0 && stored.length > 0) {
     return { kind: "month_gap", reason: BITBUCKET_COST_GAPS.noRepos(workspace) };
   }
-  const mapped = bitbucketPipelineLines(workspace, month, all.read, s.rates, s.today);
+  // A repository whose pipelines were capped or refused is incomplete for the months its read does not reach (a
+  // pipeline can complete a few days after it was created): for those it is treated like a repository the listing
+  // no longer shows, and says so in one gap, while every other repository is still written.
+  const monthFloor = new Date(
+    Date.parse(`${month}-01T00:00:00Z`) - BITBUCKET_PIPELINE_LOOKBACK_DAYS * DAY_MS,
+  )
+    .toISOString()
+    .slice(0, 10);
+  const complete = all.read.filter(
+    (r) => r.complete || (r.oldestDay !== null && r.oldestDay <= monthFloor),
+  );
+  const notes = all.read.filter((r) => !complete.includes(r)).map((r) => r.gap);
+  const note = notes
+    .filter((g): g is string => g !== null)
+    .join("; ")
+    .slice(0, 600);
+  const mapped = bitbucketPipelineLines(workspace, month, complete, s.rates, s.today);
   // A repository the listing no longer shows (the token lost it, it moved away), or whose pipelines were not
   // available, keeps its stored lines: the month is replaced only for the repositories whose pipelines were read.
-  const read = new Set(all.read.map((r) => r.repoUuid));
+  const read = new Set(complete.map((r) => r.repoUuid));
   const kept = stored.filter((l) => l.subAccountId === null || !read.has(l.subAccountId));
   if (mapped.lines.length === 0 && stored.length > kept.length) {
     return { kind: "month_gap", reason: BITBUCKET_COST_GAPS.noPipelines(workspace, month) };
@@ -177,7 +207,8 @@ async function workspaceMonth(
       "bitbucket_billing sync: pipelines not counted (unfinished, unreadable seconds, or outside the month)",
     );
   }
-  return write(s, workspace, month, [...kept, ...mapped.lines]);
+  const written = write(s, workspace, month, [...kept, ...mapped.lines]);
+  return written.kind === "ok" && note !== "" ? { ...written, note } : written;
 }
 
 /** The API root when it is https (http only to this machine), else null. */
