@@ -1447,6 +1447,18 @@ CREATE TABLE IF NOT EXISTS incident_record_version (
 
 Why the shape: there is NO foreign key to `item` (an upstream deletion must not erase the record that says the incident existed, as for `item_history`); every list query orders `opened_at_ms DESC, id` and each index ends in `id`, so SQLite sorts NULL last with no temporary B-tree (the migration test asserts the plans); the retention predicate is written as two arms (`opened_at_ms IS NOT NULL AND opened_at_ms < ?` OR `opened_at_ms IS NULL AND assembled_at_ms < ?`), never a `COALESCE`, which defeats the index; the engine's refresh selection reads `incident_record_checked` once per status, since an `IN (...)` of two statuses needs a sort; version N's `record_json` is immutable once written, the version table keeps no Markdown (re-rendered by the same pure renderer), and the store deletes versions itself before the record because `PRAGMA foreign_keys` is set per connection and the cascade is only a backstop. A pushed brief is tied to a record by `pushed_brief.incident_id = incident_record.trigger_item_id` (the V64 primary key), so the push needs no schema change.
 
+## V110 — cost line consumed quantity and priced flag (Phase 7, the Cost Pack, slice 8, 2026-11-28)
+
+Authoritative source: `packages/gateway/src/index/cost-line-quantity-v110-sql.ts` (the step is `migrateIndexedV109ToV110` in `index/migrations/column-steps.ts`, which reads the columns once and adds only the missing ones, so it is re-runnable).
+
+```sql
+ALTER TABLE cost_line ADD COLUMN consumed_quantity REAL;   -- FOCUS ConsumedQuantity; a measure, not in the grain
+ALTER TABLE cost_line ADD COLUMN consumed_unit TEXT CHECK (consumed_unit IS NULL OR length(consumed_unit) BETWEEN 1 AND 32);
+ALTER TABLE cost_line ADD COLUMN priced INTEGER NOT NULL DEFAULT 1 CHECK (priced IN (0, 1));
+```
+
+No backfill: a line from before V110 is priced and has no quantity. A `priced = 0` line (a CI source with no owner-set rate) has `billed_cost` 0 and `effective_cost` NULL (the store refuses anything else), and the cost views name its quantity as unpriced instead of adding it to a money total. Written only by `finops/cost-line-store.ts` (D24 `cost-line-confined`).
+
 ## V109 — cost lines (Phase 7, the Cost Pack, 2026-11-26)
 
 Authoritative source: `packages/gateway/src/index/cost-line-v109-sql.ts`. One normalised, FOCUS-shaped DAILY cost line per (source, provider, billing account, billing period, charge day, grain); `grain_hash` is SHA-256 of the canonical JSON of (sub-account, service, region, resource-or-sku, charge category, currency, sorted tags, repo, workflow, model). Both tables are written only by `finops/cost-line-store.ts` (static D24 rule `cost-line-confined`): `nimbus cost import` replaces, per (source, provider, billing account, billing period), every stored line on exactly the charge days the file contains, and records the accepted import in `cost_import` in the same transaction; an import whose id `cost_import` already holds writes nothing (so replaying an older export never overwrites a later restatement). Lines are deleted by `connector remove` and `nimbus data delete` (by source, with that source's `cost_import` rows), `nimbus cost import --remove <importId>` (its lines and its `cost_import` row, so it can be imported again), and pruned by `[finops] retain_days` (the prune keeps the `cost_import` rows, so a replay of a pruned export stays a no-op). Not the `item` table, never embedded, never full-text indexed. No foreign key, no trigger, no backfill; re-runnable. Chains after V108.

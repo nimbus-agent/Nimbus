@@ -66,6 +66,8 @@ describe("openaiCostLines", () => {
         workflow: null,
         model: "gpt-6.2-astra",
         importId: "openai_billing:openai:2026-11",
+        consumedQuantity: 1000,
+        consumedUnit: "tokens",
       },
     ]);
   });

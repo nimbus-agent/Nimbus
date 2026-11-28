@@ -10,7 +10,7 @@
 // (`cost_line_grain`) never collides. A row that is malformed, outside the requested month, or names another
 // organization is DROPPED and counted, never thrown: one odd row must not stop a month's sync. The
 // organization comes from the request, never from `organizationName`.
-import { type CostLine, costLineGrainHash } from "./cost-line.ts";
+import { type CostLine, costLineGrainHash, measureUnit, mergeMeasures } from "./cost-line.ts";
 
 export const GITHUB_BILLING_SOURCE = "github_billing";
 export const GITHUB_BILLING_PROVIDER = "github";
@@ -92,6 +92,8 @@ function parseItem(
     workflow: null,
     model: null,
     importId: `${GITHUB_BILLING_SOURCE}:${org}:${month}`,
+    consumedQuantity: finite(raw["quantity"]),
+    consumedUnit: measureUnit(unit),
   };
   return { day, line };
 }
@@ -129,6 +131,7 @@ export function githubBillingLines(
             ...prior,
             billedCost: prior.billedCost + p.line.billedCost,
             effectiveCost: (prior.effectiveCost ?? 0) + (p.line.effectiveCost ?? 0),
+            ...mergeMeasures(prior, p.line),
           },
     );
   }

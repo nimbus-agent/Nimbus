@@ -18,6 +18,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "github_billing",
   "openai_billing",
   "anthropic_billing",
+  "gitlab_billing",
   "gitlab",
   "bitbucket",
   "linear",
@@ -162,6 +163,8 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   // Phase 7 slice 6: OpenAI and Anthropic organization costs, daily reports.
   openai_billing: 24 * 60 * MIN1,
   anthropic_billing: 24 * 60 * MIN1,
+  // Phase 7 slice 8: GitLab compute minutes, daily.
+  gitlab_billing: 24 * 60 * MIN1,
   gitlab: MIN1,
   bitbucket: MIN1,
   linear: MIN1,
@@ -278,6 +281,7 @@ function oauthUnsupported(serviceId: ConnectorServiceId, detail: string): never 
 const CREDENTIALS_REUSED_FROM: Partial<Record<ConnectorServiceId, ConnectorServiceId>> = {
   github_actions: "github",
   github_billing: "github",
+  gitlab_billing: "gitlab",
   bigquery: "gcp",
   cloud_logging: "gcp",
   vertex_ai: "gcp",

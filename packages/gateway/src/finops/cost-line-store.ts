@@ -12,9 +12,12 @@ import {
   type CostLine,
   type CostLineKey,
   costLineGrainHash,
+  mergeMeasures,
   setTag,
   sortedTags,
+  tagOf,
 } from "./cost-line.ts";
+import { COST_RATE_KEY_TAG, type CostRates, pricedFields, rateForKey } from "./cost-rate-price.ts";
 
 export interface ReplaceCostLinesResult {
   /** Lines whose grain was not stored on that day. */
@@ -51,10 +54,14 @@ type Row = {
   model: string | null;
   import_id: string;
   grain_hash: string;
+  consumed_quantity: number | null;
+  consumed_unit: string | null;
+  priced: number;
 };
 
 const COLUMNS =
-  "source, provider, billing_account_id, billing_period, charge_day, sub_account_id, sub_account_name, service_name, service_category, region_id, resource_id, resource_name, sku_id, charge_category, billed_cost, effective_cost, currency, tags_json, repo, workflow, model, import_id, grain_hash";
+  "source, provider, billing_account_id, billing_period, charge_day, sub_account_id, sub_account_name, service_name, service_category, region_id, resource_id, resource_name, sku_id, charge_category, billed_cost, effective_cost, currency, tags_json, repo, workflow, model, import_id, grain_hash, consumed_quantity, consumed_unit, priced";
+const COLUMN_COUNT = 26;
 
 function parseTags(text: string): Record<string, string> {
   try {
@@ -100,6 +107,9 @@ function rowToLine(r: Row): CostLine {
     workflow: r.workflow,
     model: r.model,
     importId: r.import_id,
+    consumedQuantity: r.consumed_quantity,
+    consumedUnit: r.consumed_unit,
+    priced: r.priced !== 0,
   };
 }
 
@@ -130,6 +140,9 @@ function storedValue(l: CostLine): string {
     l.repo,
     l.workflow,
     l.model,
+    l.consumedQuantity ?? null,
+    l.consumedUnit ?? null,
+    l.priced !== false,
   ]);
 }
 
@@ -152,6 +165,24 @@ function checkLine(key: CostLineKey, days: ReadonlySet<string>, l: CostLine): vo
     (l.effectiveCost !== null && !Number.isFinite(l.effectiveCost))
   ) {
     throw new Error(`cost line ${l.chargeDay} ${l.serviceName} has a cost that is not finite`);
+  }
+  checkMeasure(l);
+}
+
+/** V110: a finite quantity, a 1-32 character unit, and an unpriced line that carries no cost. */
+function checkMeasure(l: CostLine): void {
+  const q = l.consumedQuantity ?? null;
+  if (q !== null && !Number.isFinite(q)) {
+    throw new Error(`cost line ${l.chargeDay} ${l.serviceName} has a quantity that is not finite`);
+  }
+  const u = l.consumedUnit ?? null;
+  if (u !== null && (u.length === 0 || u.length > 32)) {
+    throw new Error(
+      `cost line ${l.chargeDay} ${l.serviceName} has a unit that is not 1 to 32 characters`,
+    );
+  }
+  if (l.priced === false && (l.billedCost !== 0 || l.effectiveCost !== null)) {
+    throw new Error(`cost line ${l.chargeDay} ${l.serviceName} is unpriced but carries a cost`);
   }
 }
 
@@ -183,7 +214,9 @@ export function replaceCostLines(
       existing.set(`${r.charge_day}|${r.grain_hash}`, storedValue(rowToLine(r)));
     }
     dbRun(db, `DELETE FROM cost_line WHERE ${where}`, params);
-    const insert = db.prepare(`INSERT INTO cost_line (${COLUMNS}) VALUES (${placeholders(23)})`);
+    const insert = db.prepare(
+      `INSERT INTO cost_line (${COLUMNS}) VALUES (${placeholders(COLUMN_COUNT)})`,
+    );
     let inserted = 0;
     let replaced = 0;
     let unchanged = 0;
@@ -222,6 +255,9 @@ export function replaceCostLines(
           l.model,
           l.importId,
           grain,
+          l.consumedQuantity ?? null,
+          l.consumedUnit ?? null,
+          l.priced === false ? 0 : 1,
         );
       }
     } finally {
@@ -253,6 +289,101 @@ export function readCostLines(db: Database, q: ReadCostLinesQuery): CostLine[] {
     )
     .all(q.fromDay, q.toDay, ...(q.sources ?? [])) as Row[];
   return rows.map(rowToLine);
+}
+
+/** One source's stored lines of one (provider, billing account, billing period), by day. Read only. */
+export function readCostLinesForAccountMonth(
+  db: Database,
+  source: string,
+  target: { readonly provider: string; readonly billingAccountId: string; readonly month: string },
+): CostLine[] {
+  const rows = db
+    .query(
+      `SELECT ${COLUMNS} FROM cost_line
+        WHERE source = ? AND provider = ? AND billing_account_id = ? AND billing_period = ?
+        ORDER BY charge_day, id`,
+    )
+    .all(source, target.provider, target.billingAccountId, target.month) as Row[];
+  return rows.map(rowToLine);
+}
+
+export interface RepriceCostLinesResult {
+  /** Lines priced again (their cost, currency or priced flag may be unchanged). */
+  readonly repriced: number;
+  /** Lines left as stored: no `rate_key` tag or no quantity to price. */
+  readonly skipped: number;
+}
+
+/** A line priced again with `rates`; null when it carries nothing to price from. */
+function repricedLine(l: CostLine, rates: CostRates): CostLine | null {
+  const key = tagOf(l.tags, COST_RATE_KEY_TAG);
+  const q = l.consumedQuantity ?? null;
+  if (key === undefined || q === null) return null;
+  return { ...l, ...pricedFields(q, rateForKey(rates, key)), currency: rates.currency };
+}
+
+/**
+ * Price `source`'s stored lines again with `rates` (Phase 7 slice 8: a CI source after the owner changed a rate
+ * or the currency), from each line's stored quantity and `rate_key`, with no API call. The currency is part of the
+ * grain, so each (provider, account, period) is rewritten through {@link replaceCostLines}, which recomputes the
+ * grain; lines that come to share a grain are merged (summed). One transaction: a failure leaves every line as it
+ * was. Only the caller's own source is touched (the capability binds it).
+ */
+export function repriceCostLines(
+  db: Database,
+  source: string,
+  rates: CostRates,
+): RepriceCostLinesResult {
+  return db.transaction((): RepriceCostLinesResult => {
+    const rows = db
+      .query(`SELECT ${COLUMNS} FROM cost_line WHERE source = ? ORDER BY id`)
+      .all(source) as Row[];
+    const groups = new Map<string, { key: CostLineKey; lines: CostLine[] }>();
+    for (const l of rows.map(rowToLine)) {
+      const g = JSON.stringify([l.provider, l.billingAccountId, l.billingPeriod]);
+      const entry = groups.get(g) ?? {
+        key: {
+          source,
+          provider: l.provider,
+          billingAccountId: l.billingAccountId,
+          billingPeriod: l.billingPeriod,
+        },
+        lines: [],
+      };
+      entry.lines.push(l);
+      groups.set(g, entry);
+    }
+    let repriced = 0;
+    let skipped = 0;
+    for (const { key, lines } of groups.values()) {
+      const merged = new Map<string, CostLine>();
+      for (const l of lines) {
+        const next = repricedLine(l, rates);
+        if (next === null) skipped++;
+        else repriced++;
+        const line = next ?? l;
+        const k = `${line.chargeDay}|${costLineGrainHash(line)}`;
+        const prior = merged.get(k);
+        merged.set(
+          k,
+          prior === undefined
+            ? line
+            : {
+                ...prior,
+                billedCost: prior.billedCost + line.billedCost,
+                effectiveCost:
+                  prior.effectiveCost === null && line.effectiveCost === null
+                    ? null
+                    : (prior.effectiveCost ?? 0) + (line.effectiveCost ?? 0),
+                ...mergeMeasures(prior, line),
+              },
+        );
+      }
+      const days = [...new Set(lines.map((l) => l.chargeDay))];
+      replaceCostLines(db, key, days, [...merged.values()]);
+    }
+    return { repriced, skipped };
+  })();
 }
 
 /** The newest stored charge day per source (`null` when the source has no lines). */

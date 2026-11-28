@@ -15,6 +15,7 @@
 // The template's own literal text is the owner's and is never escaped.
 import { FORMAT_INVISIBLE_RANGES, rangesRegExp } from "../util/invisible-text.ts";
 import type { CostReportCurrency, CostReportModel } from "./cost-report-model.ts";
+import { unpricedText } from "./cost-unpriced.ts";
 
 export type CostChannelKind = "slack" | "teams" | "gmail" | "outlook";
 export type CostChannelFormat = "text" | "markdown" | "html";
@@ -128,7 +129,11 @@ function freshnessText(m: CostReportModel, t: CostRenderTarget): string {
   if (m.freshness.length === 0) return "no cost data";
   const lines = m.freshness.map((f) => {
     const prov = f.provisionalFrom === null ? "" : ` (provisional from ${f.provisionalFrom})`;
-    return `${escapeValue(f.source, t)}: data up to ${f.lastDay ?? "none"}${prov}`;
+    const unpriced =
+      f.unpriced === undefined
+        ? ""
+        : `; ${unpricedText(f.source, f.unpriced, (s) => escapeValue(s, t))}`;
+    return `${escapeValue(f.source, t)}: data up to ${f.lastDay ?? "none"}${prov}${unpriced}`;
   });
   return lines.join(t.format === "html" ? "<br>" : "\n");
 }

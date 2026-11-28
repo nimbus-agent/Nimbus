@@ -28,6 +28,7 @@ describe("[cost] config", () => {
       authoritative: {},
       focusDir: null,
       githubOrgs: [],
+      gitlab: { groups: [], ratePerMinute: null, currency: "USD", runnerRates: [] },
       reports: [],
       reportsError: null,
       error: null,

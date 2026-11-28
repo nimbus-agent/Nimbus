@@ -10,7 +10,14 @@
 import type { Database } from "bun:sqlite";
 
 import type { CostLine } from "./cost-line.ts";
-import { type ReplaceCostLinesResult, replaceCostLines } from "./cost-line-store.ts";
+import {
+  type ReplaceCostLinesResult,
+  type RepriceCostLinesResult,
+  readCostLinesForAccountMonth,
+  replaceCostLines,
+  repriceCostLines,
+} from "./cost-line-store.ts";
+import type { CostRates } from "./cost-rate-price.ts";
 
 export interface CostSyncTarget {
   readonly provider: string;
@@ -74,4 +81,22 @@ export function ingestSyncedCostLines(
     days,
     lines,
   );
+}
+
+/** `source`'s own stored lines of one (provider, account, month): what a delta sync builds on. Read only. */
+export function readOwnSyncedCostLines(
+  db: Database,
+  source: string,
+  target: CostSyncTarget,
+): CostLine[] {
+  return readCostLinesForAccountMonth(db, source, target);
+}
+
+/** Price `source`'s own stored lines again with `rates` (a changed rate or currency; no API call). */
+export function repriceSyncedCostLines(
+  db: Database,
+  source: string,
+  rates: CostRates,
+): RepriceCostLinesResult {
+  return repriceCostLines(db, source, rates);
 }

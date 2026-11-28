@@ -166,6 +166,15 @@ export async function ensureGithubCircleCiSchedulerCompanions(
       Date.now(),
     );
   }
+  // Phase 7 slice 8: the compute-minute cost sync is a companion of gitlab (idle until `[cost.gitlab] groups`).
+  const glPat = await readConnectorSecret(vault, "gitlab", "pat");
+  if (glPat !== null && glPat.trim() !== "") {
+    localIndex.ensureConnectorSchedulerRegistration(
+      "gitlab_billing",
+      defaultSyncIntervalMsForService("gitlab_billing"),
+      Date.now(),
+    );
+  }
   const cciTok = await readConnectorSecret(vault, "circleci", "api_token");
   localIndex.ensureCircleciSchedulerCompanionIfNeeded({
     circleciTokenPresent: cciTok !== null && cciTok !== "",

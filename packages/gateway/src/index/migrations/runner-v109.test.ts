@@ -39,7 +39,7 @@ describe("V109 cost lines (Phase 7)", () => {
 
   test("a fresh database has the table, its columns, the unique grain key and two read indexes", () => {
     const db = new Database(":memory:");
-    runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+    runIndexedSchemaMigrations(db, 109);
     const cols = db.query("PRAGMA table_info(cost_line)").all() as Array<{ name: string }>;
     expect(cols.map((c) => c.name).sort()).toEqual(COLUMNS);
     const idx = db.query("PRAGMA index_list(cost_line)").all() as Array<{

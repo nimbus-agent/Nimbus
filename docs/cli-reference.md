@@ -1360,6 +1360,35 @@ What is read (from each vendor's documentation; no live response was checked whe
 
 When a key cannot read its organization (an ordinary or workspace key, a missing report, a refused request) the reason appears in every cost view's freshness as `Not synced: …`; a rate-limited or failed response is retried the next day. A month is written whole or not at all: if any row of it cannot be read, the stored month is kept as it was and the gap says how many rows could not be read (an OpenAI cost with no line item is kept, under the line item `unknown`). `connector remove openai_billing` (or `anthropic_billing`) deletes that source's lines.
 
+### GitLab compute minutes (`[cost.gitlab]`)
+
+List the GitLab groups whose CI minutes you want as cost lines, and the price of a minute; nothing is fetched until `groups` is set:
+
+```toml
+[cost.gitlab]
+groups = ["acme", "other-group/platform"]   # 0 to 50 full group paths; none inside another listed group
+rate_per_minute = 0.008                     # your price of one minute; unset: the minutes are kept unpriced
+currency = "USD"                            # ISO 4217, default USD
+```
+
+On a self-managed instance (a `gitlab.api_base` other than gitlab.com) you can also price each runner; GitLab.com refuses this key:
+
+```toml
+[cost.gitlab]
+groups = ["platform"]
+rate_per_minute = 0.008
+runner_rates = { "big-linux-runner" = 0.02 } # a price per runner description; others use rate_per_minute
+```
+
+The gateway syncs once a day as source `gitlab_billing`, provider `gitlab`, with the `gitlab.pat` (and `gitlab.api_base`) you stored for the GitLab connector, for the current month, plus the previous month until the 5th and on a group's first sync. **No GitLab API returns money**, so every line carries its minutes (`consumed_quantity`, unit `minute`) and is priced at your rate. With no rate the lines are kept unpriced at 0, and every cost view says so under the source: `Unpriced: 1,240 minute (set a rate: [cost.gitlab] rate_per_minute)`. When you set or change a rate or the currency, the next sync prices the stored lines again from their minutes, with no API call. Each group is its own billing account; each project is a sub-account (on GitLab.com its stable project id, so a renamed project keeps its history, with its path as the sub-account name) and its path is the `repo`, so a `[[cost.rule]]` on `repo` or `provider = "gitlab"` puts the minutes under a product.
+
+What is read (from GitLab's documentation; no live response was checked when this was written):
+
+- **GitLab.com** (no `gitlab.api_base`, or `gitlab.com`): the GraphQL query `ciMinutesProjectMonthlyUsage`, each project's compute minutes for the month, with GitLab's runner cost factor already applied (the factor is "not a monetary price", GitLab's docs say). It is a month-to-date total with no per-day figure, so each daily sync stores the difference from what the month's earlier days already hold, on the day it was observed: **these minutes are observed per day, not metered per day**, and a missed sync's minutes land on the next synced day. If GitLab's total falls (a restatement), the latest earlier days are lowered, never below 0. A project moved between two of your listed groups during a month is counted in both for that month. `runner_rates` is refused here (a stated gap): the cost factor already covers the runner size.
+- **A self-managed instance**: it has no usage API (the hosted-runner usage query is GitLab Dedicated only, and the runner usage queries need ClickHouse), so the sync lists each group's projects and their finished jobs (`success`, `failed`, `canceled`) and sums the jobs' `duration` per day, project and runner (a project shared into the group from another group is not listed: it is that group's; each project is keyed by its numeric id, so a rename keeps its history). These are wall-clock minutes on your own runners, priced at the runner's `runner_rates` entry or `rate_per_minute`. GitLab's docs do not state `duration`'s unit; GitLab returns seconds. A job with no runner (it never ran, or the token cannot see the runner) is not counted. At most 2,000 projects per group and 5,000 jobs per project and run; past either, the whole group's months are kept as stored with a gap (one very busy project holds back its group). An empty project listing never clears a month that already holds minutes, and a project the listing no longer shows keeps its stored minutes. Jobs are listed newest first by creation, reaching 7 days before the month, so a job created earlier that finishes inside the month is not counted. A job's line keeps its runner, so a `runner_rates` entry added later re-prices that runner's stored minutes.
+- **Only over https.** The token is sent only to an `https` GitLab base (`http` only to `localhost`, `127.0.0.1` or `::1`); any other base is a stated gap and nothing is fetched.
+- **Who may read it.** GitLab's reference names no role or token scope for the usage query; a group owner's token is the likely need. A refused, unknown or invisible group, a GraphQL error and a redirect to another host are shown in every cost view's freshness as `Not synced: …`; a rate-limited response waits for the shared `gitlab` limiter and a server error is retried the next day. A month with any usage row that cannot be read is kept as it was. `connector remove gitlab` deletes these lines too.
+
 ### `nimbus cost products` and `nimbus cost internal`
 
 Cost per product (with its parts: the service and provider, and the env), and the internal cost (CI and the dev and test environments), computed from the local cost lines (`nimbus cost import`), the indexed Vantage rows for a provider with no raw lines, and your `[[cost.rule]]` allocation rules. Local index only: **no network call, no model, no egress row**.
@@ -3580,6 +3609,10 @@ Limits for the FinOps cost data the Vantage, OpenCost and Kubecost syncs index (
 | `[cost] internal_envs` | `["ci", "dev", "test", "staging"]` | The envs `nimbus cost internal` shows (1 to 32 names). |
 | `[cost] authoritative` | `{}` | Per provider, the source the cost views use, for example `{ aws = "vantage" }`; without it, raw lines win over Vantage rows for a provider. |
 | `[cost.github] orgs` | `[]` | GitHub organizations whose billing usage report is synced daily as cost lines (0 to 20 names; see [GitHub billing usage](#github-billing-usage-costgithub)). Empty: nothing is fetched. |
+| `[cost.gitlab] groups` | `[]` | GitLab group full paths whose compute minutes are synced daily as cost lines (0 to 50; none inside another listed group; see [GitLab compute minutes](#gitlab-compute-minutes-costgitlab)). Empty: nothing is fetched. |
+| `[cost.gitlab] rate_per_minute` | unset | Your price of one compute minute (0 to 1000). Unset: the minutes are kept unpriced and every cost view names them. A change re-prices the stored lines on the next sync. |
+| `[cost.gitlab] currency` | `"USD"` | The ISO 4217 currency of the rates. |
+| `[cost.gitlab] runner_rates` | `{}` | Self-managed GitLab only: a price per minute per runner description (at most 100); a job on an unlisted runner uses `rate_per_minute`. On GitLab.com it is a stated gap. |
 | `[cost.focus] dir` | unset | An absolute path. A minute after boot and then once a day the gateway imports its new or changed `*.csv` FOCUS exports (never on a demo gateway; a link is not followed). |
 | `[[cost.report]]` | none | A cost report (`nimbus cost report`): `name` (lowercase letters, digits and `-`), `scope = { product, env, service, provider }` (at least one), `period` (`week`, `month` or `<N>d`, 1 to 400), optional `schedule` (a cron line as for workflows, numeric days: `0 8 * * 1` is Monday 08:00) and `tz` (an IANA zone). At most 50. As for every array block, the highest layer with reports supplies all of them. |
 | `[[cost.report.channel]]` | none | One channel of a report, its own array (so a role pack's reports, such as the `finops` pack's `prod-weekly`, can take your channels; a pack can never set one): `report` (a report name), `kind` (`slack`, `teams`, `gmail`, `outlook`; one of each per report), `to` (Slack channel id; Teams `{ team, channel }`; 1 to 50 email addresses, or one as a string), `format` (Slack `text`/`markdown`; Teams `text`/`markdown`/`html`; Gmail `text`; Outlook `text`/`html`), optional `breakdown = "csv"`, exactly one of `template` and `template_file` (in `cost-templates/`), and for Gmail and Outlook a required one-line `subject`. At most 200. A bad report or channel refuses only the reports (`nimbus cost report` names the problem); your `[[cost.rule]]` rules and every cost view keep working. |

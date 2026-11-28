@@ -20,6 +20,9 @@
  *
  * Backfill: none. Nothing earlier is recoverable; history begins at the upgrade. Re-runnable (IF NOT EXISTS).
  */
+export const SCHEMA_HISTORY_V108_DESCRIPTION =
+  "warehouse schema history (Phase 10, data incident brief)";
+
 export const SCHEMA_HISTORY_V108_SQL = [
   `CREATE TABLE IF NOT EXISTS schema_history (
   id INTEGER PRIMARY KEY,

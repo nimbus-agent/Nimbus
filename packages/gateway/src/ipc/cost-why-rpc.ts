@@ -135,7 +135,7 @@ export function handleCostWhy(raw: unknown, ctx: CostViewsRpcCtx): CostWhyResult
   return {
     ...why,
     empty: false,
-    freshness: costFreshness(both),
+    freshness: costFreshness({ ...both, range }),
     excludedSources: [...both.excludedSources],
     notes: [...both.notes],
     context,

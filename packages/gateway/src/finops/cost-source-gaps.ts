@@ -1,4 +1,4 @@
-// Phase 7 (the Cost Pack, slices 5 and 6): what a cost sync could NOT read, per source, for the views' freshness.
+// Phase 7 (the Cost Pack, slices 5, 6 and 8): what a cost sync could NOT read, per source, for the views' freshness.
 //
 // A cost sync (GitHub billing, OpenAI costs, Anthropic costs) keeps, per account it reads, a fixed-text gap when
 // it could not read it, the day it last synced, and the months a run could not finish, in its own cursor, which
@@ -17,6 +17,7 @@ export const COST_SYNC_CURSOR_PREFIXES = Object.freeze({
   github_billing: "nimbus-ghb1:",
   openai_billing: "nimbus-oai1:",
   anthropic_billing: "nimbus-ant1:",
+  gitlab_billing: "nimbus-glb1:",
 } as const);
 export type CostSyncServiceId = keyof typeof COST_SYNC_CURSOR_PREFIXES;
 
@@ -29,6 +30,8 @@ export type CostSyncCursor = {
   readonly gaps: Readonly<Record<string, string>>;
   readonly synced: Readonly<Record<string, string>>;
   readonly pending: Readonly<Record<string, readonly string[]>>;
+  /** Slice 8: the fingerprint of the rates the stored lines were priced with (absent: none recorded). */
+  readonly rates?: string;
 };
 
 const EMPTY: CostSyncCursor = { gaps: {}, synced: {}, pending: {} };
@@ -70,6 +73,7 @@ export function decodeCostSyncCursor(prefix: string, raw: string | null): CostSy
       gaps: stringMap(rec["gaps"]),
       synced: stringMap(rec["synced"]),
       pending: monthListMap(rec["pending"]),
+      ...(typeof rec["rates"] === "string" ? { rates: rec["rates"] } : {}),
     };
   } catch {
     return EMPTY;

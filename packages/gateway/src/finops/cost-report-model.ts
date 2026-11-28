@@ -212,6 +212,8 @@ export function buildCostReport(input: BuildCostReportInput): CostReportModel {
     provisionalFrom: provisionalFromOf(input.range, input.nowMs),
     freshness: costFreshness({
       lastDays: input.lastDays,
+      lines: input.lines,
+      range: input.range,
       nowMs: input.nowMs,
       ...(input.sourceGaps === undefined ? {} : { sourceGaps: input.sourceGaps }),
     }),

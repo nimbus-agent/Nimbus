@@ -2,6 +2,10 @@ import type { Database } from "bun:sqlite";
 
 import { dbExec, dbRun } from "../../db/write.ts";
 import { CAPTURE_LABEL_SOURCE_V99_SQL } from "../capture-label-source-v99-sql.ts";
+import {
+  COST_LINE_QUANTITY_V110_COLUMNS,
+  COST_LINE_QUANTITY_V110_DESCRIPTION,
+} from "../cost-line-quantity-v110-sql.ts";
 import { EXTENSION_PROVENANCE_V105_SQL } from "../extension-provenance-v105-sql.ts";
 import { INCIDENT_EXECUTED_AT_V106_SQL } from "../incident-executed-at-v106-sql.ts";
 import { LAN_PEER_PROTO_V95_SQL } from "../lan-peer-proto-v95-sql.ts";
@@ -98,5 +102,25 @@ export function migrateIndexedV94ToV95(db: Database, now: number): void {
     }
     dbExec(db, "PRAGMA user_version = 95");
     recordMigration(db, 95, "lan peer protocol version (Phase 10 FS1)", now);
+  })();
+}
+
+/** V110 - `cost_line.consumed_quantity`, `consumed_unit` and `priced` (Phase 7, the Cost Pack, slice 8). */
+export function migrateIndexedV109ToV110(db: Database, now: number): void {
+  db.transaction(() => {
+    // The columns are read ONCE, before any ALTER, by a statement finalized here: a cached statement run again
+    // after an ALTER changed the table left the connection unable to close on Windows (the file stayed locked).
+    const probe = db.prepare("PRAGMA table_info(cost_line)");
+    let present: Set<string>;
+    try {
+      present = new Set((probe.all() as Array<{ name: string }>).map((r) => r.name));
+    } finally {
+      probe.finalize();
+    }
+    for (const c of COST_LINE_QUANTITY_V110_COLUMNS) {
+      if (!present.has(c.name)) dbExec(db, c.sql);
+    }
+    dbExec(db, "PRAGMA user_version = 110");
+    recordMigration(db, 110, COST_LINE_QUANTITY_V110_DESCRIPTION, now);
   })();
 }

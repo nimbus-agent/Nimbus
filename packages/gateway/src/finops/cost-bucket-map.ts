@@ -2,7 +2,7 @@
 // cost report). Pure (static D48). Each vendor supplies how a bucket names its day and how one result row becomes
 // a line; this walks every bucket of a month's pages, drops and counts what it cannot use, and sums rows of one day
 // and grain so the stored unique key (`cost_line_grain`) never collides.
-import { type CostLine, costLineGrainHash } from "./cost-line.ts";
+import { type CostLine, costLineGrainHash, mergeMeasures } from "./cost-line.ts";
 
 export type CostDropReason = "malformed" | "outside_month";
 
@@ -77,6 +77,7 @@ export function mapCostBuckets(
               ...prior,
               billedCost: prior.billedCost + line.billedCost,
               effectiveCost: (prior.effectiveCost ?? 0) + (line.effectiveCost ?? 0),
+              ...mergeMeasures(prior, line),
             },
       );
     }

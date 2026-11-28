@@ -309,7 +309,7 @@ export interface LanPeerRow {
   proto_version: number;
 }
 
-export const CURRENT_SCHEMA_VERSION = 109;
+export const CURRENT_SCHEMA_VERSION = 110;
 
 // `role_pack_card_dismissed`: the desktop's "Try a role pack" card, set once when an upgraded user
 // dismisses it so it never returns (role packs P5).
