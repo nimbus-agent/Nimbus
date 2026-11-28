@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795871432498,
+  "lastUpdate": 1795872536418,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "7a4feb5e79947b4e9a1b381bc84f7aa7409a282d",
-          "message": "feat(oncall): push the on-call brief when a P1 is assigned to you (#1592)\n\n## What this does\n\nWhen a PagerDuty sync shows a new P1 assigned to you, the gateway now\nruns `agents.oncall` for it unattended and stores the brief, so it is\nalready there when you look. This is Phase 17 W2's first half and the\nopening beat of the Killer Demo: a P1 fires and the assembled brief is\nalready waiting.\n\n- **Trigger.** After a PagerDuty sync, the gateway selects active\nincidents (triggered or acknowledged) assigned to the self-person. This\nuses the same `selectActiveAssignedIncidents` query `nimbus oncall`\nuses, so push and oncall cannot disagree about who \"me\" is. Severity\nmust be in `{\"p1\"}` plus `[pagerduty] severity_p1_aliases`, or in\n`[oncall.push] severities`, which replaces that set. The incident must\nhave opened at or after `enabled_at` minus a 5-minute grace window. It\nis DEFAULT OFF via `[oncall.push] enabled`.\n- **One brief per incident.** The new schema **V64** table\n`pushed_brief` has `incident_id` as its primary key, so the table itself\nis the dedup and there is no cursor to drift.\n`oncall_push_state.enabled_at` is reconciled at gateway boot, so\nenabling never backfills history and a disable then enable cycle never\nbackfills the gap.\n- **Deterministic and local.** A push dispatch omits the synthesis\nrunner by type: `PushDispatchContext` drops `runner`. The brief is the\ndeterministic render, no model is ever called on this path, and no\negress row is written.\n- **Delivery.** The `gateway.event` kind `oncall.briefPushed` carries\n`{incidentId, status}` only, never brief text. It is visible via `nimbus\ntail --filter oncall`. Read the brief back with `nimbus oncall pushed`,\n`nimbus oncall pushed list`, or `nimbus oncall pushed <id> [--retry]\n[--json]`. `nimbus doctor` warns when push is enabled but identity is\nunresolved.\n- **The OS notification is attempted but dropped today.** Nimbus has no\nplatform notification implementation: `createUnimplementedNotifications`\nis the only `NotificationService`. The toast sink therefore records\n`skipped` with that reason rather than claiming `delivered`.\n`NotificationService` gained an optional `delivers` flag for this.\n- **`nimbus demo` fires a simulated page.** `demo.firePage` is claimed\nonly by a demo-rooted gateway and runs the **same**\n`runtime.run(\"pagerduty\")` a real sync triggers. The tour's first step\nis now `nimbus --demo oncall pushed`. The story deploy finishes about 8\nminutes before the page, and the incident-channel chatter is written\nafter the brief, so the pushed brief is honestly assembled before anyone\ntyped. The locality panel still closes on zero outbound egress.\n\n## Security surface\n\n- **New derived `ClientKind` `push`.** It is absent from `RECOGNISED`,\nso no socket client can declare it, and\n`EGRESS_BEARING_CLIENT_KINDS.push` is `null`.\n`OWNER_SCOPED_ONCALL_ALLOWED.push` is `false`, so a push call that ever\nlost its `incidentId` is refused instead of briefing the owner-scoped\nresolution. A test asserts that every `ClientKind` is classified.\n- **Static rule D28** gains a `D28-push-client-kind` twin that confines\nthe `kind: \"push\"` assignment to `oncall-push/push-runner.ts`.\n- **The whole `oncall` IPC namespace is LAN-forbidden.** It is tested by\ncalling the check, with negative controls for `oncallish.read` and\n`agents.oncall`. It is **not** on the Tauri allowlist, which stays at\n105. A real-socket E2E proves the routing and was red-proved by removing\nthe dispatcher entry.\n- **`agents/oncall-queries.ts` moved to `agents/_lib/`.** It is a pure\nSELECT helper. D22(d) treats every `agents/<name>.ts` as an emitter, and\n`_lib/` is the rule's own home for helpers. No exemption was added to\nthe rule.\n\n## Stated bounds\n\n- A GDPR purge does not sweep `pushed_brief`. Retention, 90 days by\ndefault, is the bound, the same as `fleet_brief`. Pruning runs at boot\nregardless of `enabled` and on every run, so the bound holds even with\npush turned off.\n- An incident with no `opened_at_ms` is never pushed.\n- **Not shipped:** the ChatOps sink, which is PR 2; the desktop panel,\nwhich is PR 3; approve-from-push; and cascade root ranking.\n\n## Release-judge transition\n\n`scripts/release/assert-demo-tour.ts` accepts **both** the old\nfirst-step command, `--incident pagerduty:PDEMO412`, and the new `oncall\npushed`. The weekly smoke run judges the latest release with `main`'s\nscript, so the old form must keep passing until a release carrying this\nchange ships. The removal condition is in a comment beside the check.\n\n## Verification\n\n- Whole repo, `bun test packages/gateway packages/cli scripts`: 24,507\npass, 1 fail. The failure, `ResultStream > query entry has nimbus>\nprefix`, fails identically on untouched `main` in this environment.\n- typecheck, typecheck:tests (0 new), biome, the invariants audit,\ndoc-refs, status-drift and the platform-test-gaps audit are clean.\n- The demo-tour E2E passes, including the zero-egress panel line. The\noncall routing E2E passes.\n- **Not measured, stated plainly:** `verify:docker --changed` did not\nrun because the Docker daemon was down, so Linux was not reproduced\nlocally. The coverage floor was measured on Windows only, with the new\nfiles at or above 92% line and 94% branch. The Linux-authoritative\ncoverage gate in CI is the first authoritative measurement.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **New Features**\n* Added on-call brief pushes for eligible active PagerDuty incidents.\nPushes are off by default, and older incidents aren’t backfilled.\n* Added `nimbus oncall pushed` to view the latest brief, list or\nretrieve briefs, and retry failures.\n* Added on-call push events to `nimbus tail` and updated the demo to\nfire a page and showcase its brief.\n* **Documentation**\n* Updated CLI, setup, schema, and feature-status documentation with push\nbehavior and limitations, including 90-day retention and unavailable OS\nnotifications.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
-          "timestamp": "2026-10-02T18:58:07Z",
-          "tree_id": "255238532cad5c2e886a5ebad3764ab7cdfdc635",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/7a4feb5e79947b4e9a1b381bc84f7aa7409a282d"
-        },
-        "date": 1790969873704,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 331.97226004999465,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 330.74920705000403,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 264.9598991500003,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "80facffaa4f95291e7e6b64be634ee9b9103f740",
+          "message": "feat: AWS Cost Explorer as an opt-in fallback for AWS cost (Phase 7, slice 11b) (#2208)\n\n## What changed\nWith `[cost.aws] cost_explorer = true` and NO `export`, the daily\n`aws_billing` sync reads AWS Cost Explorer (`aws ce get-cost-and-usage`,\nDAILY, `UnblendedCost` / `AmortizedCost` / `UsageQuantity`, grouped by\nSERVICE and LINKED_ACCOUNT) instead of showing slice 11a's interim gap.\n\n- `connectors/aws-cost-explorer.ts`: payer account (Organizations\nmanagement account when readable, else `sts get-caller-identity`), paged\nread, at most 10 pages per month and run (`month_gap` past that), billed\nrequest count logged per run.\n- `finops/aws-ce-lines.ts` (pure): `billedCost` = Unblended,\n`effectiveCost` = Amortized, linked account as sub-account, currency\nfrom `Unit`; `UsageQuantity` is NOT stored as a quantity.\n- `aws-billing-cost-sync.ts`: Cost Explorer path chosen only when\n`costExplorer && export === null`; refactored the export path into a\nfetcher without behaviour change.\n- `cost-month-sync.ts`: an `ok` outcome may carry `pending: true`\n(written, kept pending); used for `Estimated` months.\n- Docs: CHANGELOG, cli-reference (USD 0.01 per request, expected 1 to 4\nrequests a day, bounds), architecture, file map.\n\n## Owner rulings\nD7: Cost Explorer is opt-in, never called by default or with an export\nset (test proves no `ce` call). Antigravity 8: billing account = payer\nso a later switch to the export replaces the same tuple (test); page cap\n10; Estimated month written and pending.\n\n## Stated bounds\nNo region, resource or tag grain. USD 0.01 per request.\nDocumentation-verified only: request/reply shapes follow AWS's\nGetCostAndUsage reference and the pricing page; no live account was\nqueried. A day the API answers for replaces that day; an answer with no\ncost never clears a month that holds lines.\n\n## Verification\n`bun run preflight:fast` passes; new and touched suites pass\n(aws-billing-ce, aws-ce-lines, aws-billing-cost-sync, cost-month-sync,\naws acceptance); `tsc` and `typecheck:tests` clean.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-28T13:22:27Z",
+          "tree_id": "21a9d41958b7a6a5a729fe1b69cf4cfa40ed3c67",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/80facffaa4f95291e7e6b64be634ee9b9103f740"
+        },
+        "date": 1795872532026,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 168.03071069999933,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 170.15851509999592,
             "unit": "ms"
           }
         ]
