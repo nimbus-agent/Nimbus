@@ -2,6 +2,21 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [11.21.0](https://github.com/nimbus-agent/Nimbus/compare/v11.20.0...v11.21.0) (2026-11-28)
+
+
+### Features
+
+* **connectors:** Unleash and Split, indexed, with three flag writes (connectors 0.22.0) ([#2193](https://github.com/nimbus-agent/Nimbus/issues/2193)) ([58730b2](https://github.com/nimbus-agent/Nimbus/commit/58730b2bf7d0fa1af6f58b8b99ca1949575f266e))
+* **gateway:** nimbus incident undo reaches the Unleash and Split writes ([#2195](https://github.com/nimbus-agent/Nimbus/issues/2195)) ([0b6c1b7](https://github.com/nimbus-agent/Nimbus/commit/0b6c1b776f2c7959fbf82ebe01ada9d74dccc06c))
+* the bundled FinOps role pack and the Phase 7 close-out (Phase 7, slice 7) ([#2196](https://github.com/nimbus-agent/Nimbus/issues/2196)) ([0586051](https://github.com/nimbus-agent/Nimbus/commit/0586051dc6c5271b0daaf4f25337d23239db20d2))
+
+
+### Bug Fixes
+
+* **gateway:** pin @nimbus-dev/connectors 0.23.0 (CLI connectors no longer quote unparsable stdout) ([#2199](https://github.com/nimbus-agent/Nimbus/issues/2199)) ([6223b98](https://github.com/nimbus-agent/Nimbus/commit/6223b989e77cc44fde4da0c3fd9e7699305f0576))
+* **iac:** the CloudFormation reads reach AWS, and an init removes the module .git it cloned ([#2197](https://github.com/nimbus-agent/Nimbus/issues/2197)) ([4ae534a](https://github.com/nimbus-agent/Nimbus/commit/4ae534a6bf198bed9e631ba64783cc455785f3a2))
+
 ## [11.20.0](https://github.com/nimbus-agent/Nimbus/compare/v11.19.0...v11.20.0) (2026-11-27)
 
 

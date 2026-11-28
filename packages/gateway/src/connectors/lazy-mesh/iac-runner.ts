@@ -10,6 +10,7 @@
 //   show  NO network, NO credential; workdir read, the approved plan directory read, no write
 //   apply the granted clouds' network and credential; workdir read+write, approved dir read-only
 //   cfn   CloudFormation + STS endpoints, the AWS credential; this call's scratch dir read+write
+//         (a read: no scratch dir, nothing writable)
 //   kube  ONE owner-approved API server (host:port); read: a gateway-built single-context
 //         kubeconfig; write: this call's scratch directory ONLY (no owner directory is writable)
 //
@@ -52,6 +53,7 @@ import {
   nodeKubeFs,
 } from "../connector-writes/kubeconfig-facts.ts";
 import { manifestForFirstParty } from "./first-party-manifests.ts";
+import { CFN_READ_TOOLS, cfnRefusal, cfnRegionFor } from "./iac-runner/iac-cfn.ts";
 import {
   callChildTool,
   EXIT_WAIT_MS,
@@ -65,7 +67,9 @@ import {
 import { loadIacCloudEnv } from "./iac-runner/iac-cloud-env.ts";
 import { IacWindowsGrants } from "./iac-runner/iac-grant-ledger.ts";
 import { type IacBinary, installReads } from "./iac-runner/iac-install-reads.ts";
+import { listOf, setEnvIfDefined, uniq } from "./iac-runner/iac-list-util.ts";
 import { IacLiveChildren } from "./iac-runner/iac-live-children.ts";
+import { initSucceeded, moduleGitKeys, removeInitModuleGits } from "./iac-runner/iac-module-git.ts";
 import { IAC_RUNNER_REFUSALS } from "./iac-runner/iac-refusals.ts";
 import { iacRootFor, isOurChangeSet } from "./iac-runner/iac-roots.ts";
 import type { IacHost, IacRunnerDeps } from "./iac-runner/iac-runner-types.ts";
@@ -77,6 +81,7 @@ import { wrapIacServerSpec } from "./wrap-server-spec.ts";
 
 // The public surface of this module is unchanged by the split (the pieces live in `./iac-runner/`).
 export { IAC_APPLY_ESCALATE_AFTER_MS as APPLY_ESCALATE_AFTER_MS } from "../connector-writes/iac-limits.ts";
+export { CFN_READ_REFUSALS, CFN_READ_TOOLS, cfnRegionFor } from "./iac-runner/iac-cfn.ts";
 export {
   type ChildCall,
   callChildTool,
@@ -106,7 +111,10 @@ export type { IacHost, IacRunnerDeps } from "./iac-runner/iac-runner-types.ts";
 
 export type IacProfileKind = "plan" | "init" | "show" | "apply" | "cfn" | "kube";
 
-/** The tools the runner executes (eleven). Everything else the `iac` slot lists stays in it. */
+/**
+ * The tools the runner executes (fourteen). Everything else the `iac` slot lists stays in it. The
+ * three CloudFormation reads run in a `cfn` child with nothing writable (`CFN_READ_TOOLS`).
+ */
 export const IAC_TOOL_PROFILE: Readonly<Record<string, Exclude<IacProfileKind, "kube">>> =
   Object.freeze({
     iac_terraform_plan: "plan",
@@ -120,6 +128,9 @@ export const IAC_TOOL_PROFILE: Readonly<Record<string, Exclude<IacProfileKind, "
     iac_cloudformation_changeset_create: "cfn",
     iac_cloudformation_changeset_discard: "cfn",
     iac_cloudformation_deploy: "cfn",
+    iac_cloudformation_stack_get: "cfn",
+    iac_cloudformation_changesets_list: "cfn",
+    iac_cloudformation_changeset_get: "cfn",
   });
 
 /**
@@ -144,19 +155,6 @@ export function iacRoutedKeys(): readonly string[] {
     ...Object.keys(IAC_TOOL_PROFILE).map((id) => mcpClientToolKey("iac", id)),
     ...Object.keys(KUBE_TOOL_PROFILE).map((id) => mcpClientToolKey("kubernetes", id)),
   ];
-}
-
-/**
- * The region a CloudFormation child uses: the Vault credential's own region, else the first
- * approved one, and ONLY when it is an approved region, so the child never reaches a host the
- * owner's enable prompt did not list. `undefined` refuses the call.
- */
-export function cfnRegionFor(
-  credentialRegion: string,
-  approved: readonly string[],
-): string | undefined {
-  const region = credentialRegion !== "" ? credentialRegion : (approved[0] ?? "");
-  return region !== "" && approved.includes(region) ? region : undefined;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -203,23 +201,6 @@ const PROFILE_ID_PREFIX = "com.nimbus.iac-";
 /** The profile id of a run: new on every run. */
 export function iacProfileId(kind: IacProfileKind, runId: string): string {
   return `${PROFILE_ID_PREFIX}${kind}.${runId}`;
-}
-
-function uniq(values: readonly string[]): string[] {
-  return [...new Set(values)];
-}
-
-/** A one-element list for a defined value, else an empty one. */
-function listOf(value: string | undefined): string[] {
-  return value === undefined ? [] : [value];
-}
-
-function setEnvIfDefined(
-  env: Record<string, string>,
-  key: string,
-  value: string | undefined,
-): void {
-  if (value !== undefined) env[key] = value;
 }
 
 /** What one profile kind may reach, read and write, before the manifest is assembled. */
@@ -672,8 +653,12 @@ export class IacRunner implements IacHost {
     try {
       // A Terraform row's preflight always resolves the path; the caller's string is never used.
       const workingDirectory = opened.workingDirectory ?? "";
+      const platform = this.deps.pathDeps.platform;
+      const before = moduleGitKeys(workingDirectory, platform);
       const out = await this.runTerraform(toolId, "init", { workingDirectory }, budget);
-      // The child has exited (awaitExit): a git-sourced module it cloned is refused now, clearly.
+      // The child has exited (awaitExit). Owner ruling 2026-11-27: the module `.git` folders THIS
+      // init cloned are removed (iac-module-git.ts); the real rescan then refuses anything left.
+      if (initSucceeded(out)) removeInitModuleGits(workingDirectory, before, platform);
       const planted = this.recheckGit(workingDirectory);
       if (planted !== undefined) throw new Error(planted);
       return out;
@@ -903,25 +888,32 @@ export class IacRunner implements IacHost {
     args: Record<string, unknown>,
     budget: number,
   ): Promise<unknown> {
+    // A read (or a discard) can be the first call after boot: as for a kube read, the boot sweep runs first.
+    this.live.sweep();
+    const unreadable = this.live.liveRecordRefusal();
+    if (unreadable !== undefined) throw new Error(unreadable);
     const grants = this.deps.grants();
-    if (!grants.clouds.includes("aws")) throw new Error(IAC_RUNNER_REFUSALS.noCredential);
+    if (!grants.clouds.includes("aws")) throw new Error(cfnRefusal(toolId, "noCloud"));
     const aws = this.resolve("aws");
     if (aws === undefined) throw new Error(IAC_RUNNER_REFUSALS.noBinary);
     const creds = await loadAwsCreds(this.deps.vault);
-    if (!creds.ok) throw new Error(IAC_RUNNER_REFUSALS.noCredential);
+    if (!creds.ok) throw new Error(cfnRefusal(toolId, "noCredential"));
     const region = cfnRegionFor(creds.region, grants.regions);
-    if (region === undefined) throw new Error(IAC_RUNNER_REFUSALS.regionNotApproved);
+    if (region === undefined) throw new Error(cfnRefusal(toolId, "regionNotApproved"));
     if (toolId === "iac_cloudformation_changeset_discard" && !isOurChangeSet(args, region)) {
       throw new Error(IAC_RUNNER_REFUSALS.notOurChangeSet);
     }
     const callId = this.hex(8);
-    const scratchDir = join(this.iacRoot, "scratch", callId);
-    mkdirSync(scratchDir, { recursive: true, mode: 0o700 });
+    // A read is handed no scratch directory: it writes nothing (CFN_READ_TOOLS).
+    const scratchDir = CFN_READ_TOOLS.has(toolId)
+      ? undefined
+      : join(this.iacRoot, "scratch", callId);
+    if (scratchDir !== undefined) mkdirSync(scratchDir, { recursive: true, mode: 0o700 });
     const profile = buildIacProfile({
       kind: "cfn",
       runId: callId,
       platform: this.deps.platform,
-      scratchDir,
+      ...(scratchDir === undefined ? {} : { scratchDir }),
       clouds: ["aws"],
       region,
       net: [],
@@ -935,7 +927,9 @@ export class IacRunner implements IacHost {
       // The approved region, always: a profile-only credential would otherwise use its own.
       { ...creds.env, AWS_DEFAULT_REGION: region, AWS_REGION: region },
       { toolId, args, budget, timeoutText: "iac: the call exceeded its time limit" },
-      () => this.safeRemove(scratchDir),
+      () => {
+        if (scratchDir !== undefined) this.safeRemove(scratchDir);
+      },
     );
   }
 
