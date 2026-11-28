@@ -324,7 +324,8 @@ export function createJenkinsCostSyncable(options: JenkinsCostSyncableOptions): 
             own(prev.synced, host) === undefined,
             own(prev.pending, host) ?? [],
           );
-          return months.reduce((a, b) => (a < b ? a : b));
+          // `costMonthsToFetch` lists the months newest first and always holds the current one: the last is the earliest.
+          return String(months.at(-1));
         },
         data: new Map(),
       };
