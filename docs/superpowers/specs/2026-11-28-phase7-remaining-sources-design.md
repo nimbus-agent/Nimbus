@@ -232,3 +232,64 @@ The owner wants all of them designed now, so they can be built in parallel lanes
 - How slice 15 keeps one count per machine (the review checks it).
 
 Each slice's detailed task list is written into the plan (`2026-11-26-phase7-cost-pack.md`) and approved by Antigravity before its code starts, as for slices 1 to 8.
+
+## 8. Review resolutions (2026-11-28)
+
+The builder check (9 questions) and Antigravity (CHANGES REQUIRED, 16 findings) were each verified against the code on `origin/main`, where slices 1 to 8 are merged. These resolutions override sections 3 to 5 where they differ.
+
+**Lanes and stacking (Antigravity 10).**
+- 11a and 11b are one service (`aws_billing`) and one config table, so 11b is **stacked** on 11a (its branch is cut from 11a's).
+- 12b is stacked on 12a the same way.
+- Slice 15 depends on slice 10 and on at least one cloud export slice.
+- The CI lane, the cloud lane and the flag lane stay independent of each other.
+
+**Shared rules made explicit.**
+- **Whole-month writes (Antigravity 6; builder 5).** A CI or cloud sync aggregates every sub-account of one (account, month) and calls `replaceCostLinesForMonth` once. Any failed sub-account fetch or capped page makes the whole month a `retry` or `month_gap`, with no write.
+  - Before the write, stored lines of sub-accounts missing from the listing are re-supplied unchanged (`readOwnCostLinesForMonth`), as in slice 8.
+  - Unfinished pipelines and builds are skipped.
+- **Keyed rates (Antigravity 9; builder 5).**
+  - `finops/cost-rate-price.ts` generalises `runnerRates` to keyed rates by prefix (`runner:`, `size:`, `agent:`, `label:`).
+  - A line ALWAYS carries the key of whatever identity it has (its runner, size, agent or label), and `rateForKey` falls back to `rate_per_minute`. So a rate added later re-prices the stored lines, as slice 8's review fixed for runners.
+  - `COST_RATE_CONFIG_HINT` gains `bitbucket_billing` and `jenkins_billing`.
+- **Gzip (Antigravity 5; builder 7).** Export readers detect `.gz` (or the `1F 8B` magic bytes) and gunzip before `parseFocusCsv`. A newer export file replaces exactly the days it covers, per the parent spec's re-import contract.
+- **The overlap rule C4 (Antigravity 11; builder 3).**
+  - It is built in slice 11a, in `finops/cost-view-input.ts` `chooseSources`. When `[cost] authoritative` is unset and a cloud sync source and `focus` both cover a provider, `focus` is set aside with the reason `cloud sync active for this provider (set [cost] authoritative to choose)`.
+  - A cloud sync replaces only its own source's lines, never `focus` lines (the store key includes the source).
+  - The export path and the API fallback are exclusive by config: the API runs only when no export is set.
+- **Configured but idle (Antigravity 16).** A cloud billing service counts as configured whenever its cloud's credentials exist, so a missing `[cost.<cloud>]` setup shows as a stated gap. That gap is `AWS cost is not configured: set [cost.aws] export, or cost_explorer = true`, and its Azure and GCP equivalents.
+
+**Per slice.**
+- **9, Bitbucket.**
+  - The gateway passes the credential to the connector as `BITBUCKET_USERNAME` and `BITBUCKET_APP_PASSWORD` (`connectors/lazy-mesh/connector-spawns.ts:444`), and Basic auth has the same shape for an API token. So the new keys map onto those variables and slice 9 needs no connectors-repo change. The builder confirms this from the connectors package before coding (builder 8).
+  - `size_rates` is used only if the pipeline listing itself carries step size: no per-pipeline step fetches (Antigravity 14). Otherwise lines carry `rate_key: default` and the docs say so.
+- **10, Jenkins.**
+  - `timestamp` and `duration` are milliseconds: minutes = `duration / 60_000`, and the end is `timestamp + duration` (Antigravity 7).
+  - Jenkins is checked per sync at 24 h intervals, the same daily cadence as every cost sync, so no extra once-a-day guard is needed (builder 9, for Azure too).
+- **11a, AWS export.** The billing account is the FOCUS `BillingAccountId` (the payer account).
+- **11b, Cost Explorer (Antigravity 8).**
+  - The billing account is the payer account id from `aws sts get-caller-identity` (its Organizations management account when readable), so a later switch to the export replaces the same tuple.
+  - At most 10 pages per month and run (a `month_gap` past that), and the request count is logged.
+  - An `Estimated` current month IS written as provisional and stays pending until it is final.
+- **12a and 12b, Azure (Antigravity 3).** The existing `azure-sync.ts` only runs `az account show`, so there is no REST token path to reuse. Both slices go through a new `connectors/_lib/azure-cli.ts`: `az rest` for the Cost Management Query API, and `az storage blob` for the export, logged in with the vaulted service principal (`azure.tenant_id`, `azure.client_id`, `azure.client_secret`). The builder checks the `az` login flow in the existing spawn helpers.
+- **13, GCP (Antigravity 1, 4, 13; builder 6).**
+  - `gcloudPrintAccessToken` moves from `connectors/bigquery-sync.ts` into `connectors/_lib/gcp-auth.ts`.
+  - The query aggregates credits and labels without a cartesian join:
+    - `SUM(cost) + SUM((SELECT SUM(c.amount) FROM UNNEST(credits) c))`;
+    - the labels as a sorted JSON string in the GROUP BY;
+    - grouped by day, `billing_account_id`, `project.id`, service, SKU, region, `currency` and `usage.unit`.
+  - The query filters partitions with a 3-day buffer past the month end, filters on `usage_start_time` for the month, and sets `maximumBytesBilled` (default 50 GiB, configurable as `[cost.gcp] max_bytes_billed`).
+  - The billing account is `billing_account_id`; one month is replaced per billing account.
+  - An empty result for a month that already holds lines is a `month_gap` (export lag), never a clear.
+- **14, flags (Antigravity 12; builder 2).**
+  - `ServiceConfig` gains `featureFlags`, and `CostChangeContext` gains `flags` and `flagsTruncated`.
+  - With no `feature_flags`, there is no query and no gap.
+  - Bindings match the flag items' `externalId` (`<project>:<key>` for LaunchDarkly, Unleash and Flagsmith; `<workspace>:<name>` for Split).
+  - A flag is listed only when its item carries a real change time; a sync-time fallback never counts as a change.
+- **15, Jenkins agent cloud cost (Antigravity 2).**
+  - Money is stored ONCE, on the cloud line. Jenkins lines for a mapped agent are quantity-only (unpriced, tags `agent` and `cloud_resource`), so slice 15 needs no new stored cost and no cross-source re-price.
+  - The split happens at read time in the allocation views. A mapped machine's daily cloud cost is divided across that day's builds by minutes, which go to CI under the builds' products; the remainder is shown as `idle` on the machine.
+  - It works with export lines, whose FOCUS `ResourceId` identifies the machine. Cost Explorer has no resource grain, which is a stated gap, warned at config check.
+
+**Corrections to sections 3 to 5.**
+- C7's Azure and GCP paths are as above.
+- Slice 15's bound "a FOCUS export has no resource grain" was wrong: FOCUS carries `ResourceId`; only Cost Explorer lacks one.
