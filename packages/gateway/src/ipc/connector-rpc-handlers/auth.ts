@@ -55,6 +55,7 @@ import {
   parseServiceArg,
   registerAtlassianApiConnectorAuth,
 } from "../connector-rpc-shared.ts";
+import { registerConnectorWithCompanions } from "./auth-register.ts";
 import type {
   ConnectorRpcHandlerContext,
   ConnectorRpcHit,
@@ -147,11 +148,7 @@ function registerAndSucceed(
   id: ConnectorServiceId,
   verified: VerifiedState = null,
 ): ConnectorRpcHit {
-  localIndex.ensureConnectorSchedulerRegistration(
-    id,
-    defaultSyncIntervalMsForService(id),
-    Date.now(),
-  );
+  registerConnectorWithCompanions(localIndex, id);
   return authSuccess(id, verified);
 }
 
@@ -650,12 +647,6 @@ async function connectorAuthJenkins(ctx: ConnectorRpcHandlerContext): Promise<Co
   await writeConnectorSecret(ctx.vault, "jenkins", "base_url", base);
   await writeConnectorSecret(ctx.vault, "jenkins", "username", user);
   await writeConnectorSecret(ctx.vault, "jenkins", "api_token", token);
-  // Phase 7 slice 10: the build-minutes cost sync is a companion of jenkins (idle until `[cost.jenkins]` exists).
-  ctx.localIndex.ensureConnectorSchedulerRegistration(
-    "jenkins_billing",
-    defaultSyncIntervalMsForService("jenkins_billing"),
-    Date.now(),
-  );
   return registerAndSucceed(ctx.localIndex, "jenkins", verified);
 }
 

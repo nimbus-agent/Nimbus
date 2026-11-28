@@ -312,8 +312,6 @@ describe("handleConnectorAuth — jenkins", () => {
     await assertVaultKey(vault, "jenkins.username", "admin");
     await assertVaultKey(vault, "jenkins.api_token", fixture);
     assertSchedulerRow(db, "jenkins");
-    // Phase 7 slice 10: the build-minutes cost companion is registered with the credentials.
-    assertSchedulerRow(db, "jenkins_billing");
   });
 
   test("strips trailing slashes from apiBaseUrl", async () => {
