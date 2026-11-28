@@ -1455,6 +1455,7 @@ Stated bounds:
 - **Estimated months.** A month AWS marks `Estimated` is written, and it stays pending until AWS marks it final.
 - **Whole months only.** An unreadable group, a page token that does not advance, an answer that covers no day of a month that holds stored lines, or more than 10 pages makes that month a gap with no write. An answer that covers days is authoritative for them, even when it lists no cost. A Cost Explorer call that fails (Cost Explorer not enabled, `ce:GetCostAndUsage` not allowed) is shown as a gap.
 - **Documentation-verified only.** The request and reply shapes follow AWS's `GetCostAndUsage` reference; no live account was queried.
+
 ### GCP cost from the BigQuery billing export (`[cost.gcp]`)
 
 Turn on Cloud Billing export to BigQuery in your Google Cloud account (Billing, Billing export: the **standard** or the **detailed** usage cost export), then name the table; nothing is queried until `export_table` is set:
