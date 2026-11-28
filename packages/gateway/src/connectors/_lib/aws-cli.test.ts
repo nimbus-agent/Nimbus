@@ -277,10 +277,9 @@ describe("awsCliDownload: timeout and cleanup", () => {
     const ctx = {
       getSharedSecret: async (_s: string, k: string) => (k === "profile" ? "p" : null),
     } as unknown as SyncContext;
-    expect(await awsCliJson(ctx, ["s3api", "list-objects-v2"], 20)).toEqual({
-      ok: false,
-      text: "",
-    });
+    const r = await awsCliJson(ctx, ["s3api", "list-objects-v2"], 20);
+    expect(r.ok).toBe(false);
+    expect(r.text).toBe("");
   });
 
   test("removeTempDir retries a busy directory three times and never throws", async () => {

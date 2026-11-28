@@ -403,8 +403,6 @@ describe("aws_billing: configuration", () => {
     const r = await run(b, cfg({ export: null }));
     expect(r.cursor.gaps).toEqual({ aws: AWS_COST_GAPS.notConfigured });
     expect(b.listCalls).toHaveLength(0);
-    const ce = await run(b, cfg({ export: null, costExplorer: true }));
-    expect(ce.cursor.gaps["aws"]).toBe(AWS_COST_GAPS.costExplorerOnly);
     const kept = await run(b, null, r.out.cursor);
     expect(kept.out.cursor).toBe(r.out.cursor);
     expect((await run(b, null, null)).out.cursor?.startsWith(PREFIX)).toBe(true);

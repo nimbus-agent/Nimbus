@@ -1439,13 +1439,13 @@ Create a FOCUS 1.0 export in your AWS account (Billing and Cost Management, Data
 ```toml
 [cost.aws]
 export = "s3://my-cost-bucket/focus"   # the prefix holds ONE export (its folder is <prefix>/<export-name>/)
-cost_explorer = false                  # opt-in fallback (a later slice, USD 0.01 per request); used only with no export
+cost_explorer = false                  # opt-in fallback, USD 0.01 per request; used only with no export
 ```
 
 | Key | Meaning |
 | --- | --- |
 | `export` | `s3://bucket/prefix`: an S3 bucket name and an optional prefix, no `..`, no spaces. |
-| `cost_explorer` | `true` or `false` (default `false`). Parsed now; read by a later slice, only when no export is set. |
+| `cost_explorer` | `true` or `false` (default `false`). Opt-in AWS Cost Explorer fallback, used ONLY when this is `true` and no `export` is set (see below). Each Cost Explorer request is billed by AWS at USD 0.01. |
 
 The gateway syncs once a day as source `aws_billing`, provider `aws`, with the `aws.*` credentials you stored for the AWS connector (the AWS CLI must be installed). For each billing period it reads the newest manifest (`<export-name>/metadata/BILLING_PERIOD=YYYY-MM/...Manifest.json`), downloads the data files it lists (gzip is handled), and stores one line per day and grain under the file's `BillingAccountId`. A newer delivery replaces only the days its files cover; a billing account the export stops listing keeps its lines. The current month, plus the previous month until the 5th and on the first sync, are read.
 
@@ -1460,6 +1460,22 @@ Stated bounds:
 - **No export, no `cost_explorer`:** the freshness line shows `AWS cost is not configured: set [cost.aws] export, or cost_explorer = true`.
 - **Re-delivered exports.** A day that an export no longer contains is not cleared (only the days a delivery covers are replaced), and the previous month is re-read only until the 5th of the month and on the first sync. A row dated after today makes its month a gap.
 - **One source per provider, per day.** On each day the AWS sync has lines for, a `[cost.focus] dir` import's AWS lines of that day are set aside, and the views list how many days; days only the file covers keep its lines. The views use the sync and list the file import as set aside (`[cost] authoritative = { aws = "focus" }` chooses the file instead).
+
+### AWS cost from Cost Explorer (`[cost.aws] cost_explorer = true`, opt-in fallback)
+
+With no `export` and `cost_explorer = true`, the same `aws_billing` sync reads AWS Cost Explorer instead (`aws ce get-cost-and-usage`, `DAILY`, metrics `UnblendedCost`, `AmortizedCost` and `UsageQuantity`, grouped by `SERVICE` and `LINKED_ACCOUNT`). Cost Explorer is **never** called otherwise: not by default, and not when an `export` is set (the export wins; setting it later replaces the Cost Explorer lines of the days the export covers, under the same billing account, so nothing is counted twice).
+
+**What it costs.** AWS bills **USD 0.01 per Cost Explorer API request** (<https://aws.amazon.com/aws-cost-management/pricing/>; documentation-verified, not measured on a live account). The sync runs once a day. A month normally needs one request, sometimes a few for a large account, and a run reads the current month plus the previous month until the 5th, on the first sync and while a month is still pending: expect about **1 to 4 requests a day, USD 0.01 to 0.04**. A run is capped at 10 requests per month and **20 requests in all (USD 0.20)**; past the run cap the remaining months stay pending with a stated gap. A month whose read failed for good (more than 10 pages, an unreadable reply or row) is **retried weekly** (the running month daily), so it is not billed again every day. Every run logs its Cost Explorer request count. Each call is stopped after 60 seconds and the Cost Explorer part of a run after 10 minutes. The calls that find the billing account (`organizations describe-organization`, `sts get-caller-identity`) are not Cost Explorer requests.
+
+What is stored: a line per day, service and linked account, with `billedCost` from `UnblendedCost` and `effectiveCost` from `AmortizedCost` (currency from AWS's `Unit`). The billing account is the Organizations management account (`organizations describe-organization`, so the credentials need `organizations:DescribeOrganization`); only when AWS answers that the account is not in an organization is the account of the credentials used (`sts get-caller-identity`). Any other failure is a gap (`cannot read the Organizations management account; retrying next run`). It is the account a FOCUS export names as `BillingAccountId`, and once resolved it is kept and reused by later runs.
+
+Stated bounds:
+
+- **No region, resource or tag grain.** The API allows two group-bys; the lines carry the service and the linked account only, so cost by region, by resource or by tag is not available from this source (use a FOCUS export for it).
+- **No usage quantity.** `UsageQuantity` is not requested: its unit differs per service, so a sum would mix unlike things.
+- **Estimated months.** A month AWS marks `Estimated` is written, and it stays pending until AWS marks it final.
+- **Whole months only.** An unreadable group, a page token that does not advance, an answer that covers no day of a month that holds stored lines, or more than 10 pages makes that month a gap with no write. An answer that covers days is authoritative for them, even when it lists no cost. A Cost Explorer call that fails (Cost Explorer not enabled, `ce:GetCostAndUsage` not allowed) is shown as a gap.
+- **Documentation-verified only.** The request and reply shapes follow AWS's `GetCostAndUsage` reference; no live account was queried.
 
 ### GCP cost from the BigQuery billing export (`[cost.gcp]`)
 
