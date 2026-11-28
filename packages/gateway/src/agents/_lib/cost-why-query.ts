@@ -14,6 +14,7 @@ import {
   type ServiceConfig,
 } from "../../metrics/dora-config.ts";
 import { findServiceEntity, ownersOf } from "../../ownership/ownership-store.ts";
+import { codeUnitCompare } from "../../util/code-unit-compare.ts";
 
 const DAY_MS = 86_400_000;
 export const COST_WHY_MAX_DEPLOYS = 10;
@@ -234,7 +235,7 @@ function flagContext(
   const gaps = [
     ...new Set(cfg.featureFlags.filter((b) => b.service !== "launchdarkly").map((b) => b.service)),
   ]
-    .sort()
+    .sort(codeUnitCompare)
     .map((s) => `flag changes are recorded for LaunchDarkly only; ${s} bindings show no changes`);
   if (cfg.featureFlags.some((b) => b.service === "launchdarkly"))
     gaps.push(COST_WHY_FLAG_LATEST_ONLY);
