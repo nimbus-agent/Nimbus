@@ -102,7 +102,7 @@ export const CONNECTOR_CATALOG_META = Object.freeze({
   azure_billing: m(
     "Azure cost",
     "cloud",
-    "Azure cost lines from a FOCUS Cost Management export you create in Blob Storage, per billing account and service",
+    "Azure cost lines from a FOCUS Cost Management export in Blob Storage, per account and service",
   ),
   bitbucket: m("Bitbucket", "code", "Atlassian's Git code hosting service"),
   bitbucket_billing: m(
