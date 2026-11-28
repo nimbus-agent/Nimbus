@@ -736,6 +736,258 @@ Design:
 
 **Review focus (slice 8):** a delta never makes a month's stored total differ from GitLab's latest month-to-date total (except the stated floor at 0); the re-price and the bound read cannot reach another source; an unpriced line can never carry a cost; the PAT is sent only to the configured origin; a capped or malformed fetch never clears a month; no view sums money and minutes together.
 
+## Slices 9 to 15: the remaining cost sources and the flag join
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement each slice task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Bitbucket and Jenkins CI minutes, AWS, Azure and GCP billing, LaunchDarkly flag changes in `nimbus cost why`, and Jenkins agents priced from their cloud machines, each as its own PR.
+
+**Architecture:** Every source is a gateway syncable on the slice 5 to 8 pattern: its own service id, a shared-credential grant, a `cost-source-gaps.ts` cursor, the `cost-month-sync.ts` month loop, writes through `replaceCostLinesForMonth`. CI sources price minutes by keyed rates (`finops/cost-rate-price.ts`). Cloud sources read the cloud's own export, with the cloud's cost API as a fallback.
+
+**Tech Stack:** Bun, TypeScript strict, `bun:sqlite`, the AWS CLI, the Azure CLI (`az`), BigQuery REST with a `gcloud` token.
+
+**Spec:** `docs/superpowers/specs/2026-11-28-phase7-remaining-sources-design.md` (§8 review resolutions and D8/D9 override §3 to §5), parent `docs/superpowers/specs/2026-11-26-phase7-cost-pack-design.md`.
+
+### Global constraints (every slice)
+
+- Branch per slice from `origin/main`, except stacked: 11b on 11a, 12b on 12a. Slice 15 after 10 and at least one of 11a, 12a.
+- New files under 500 lines; baselined files never grow (`audit:file-size`); `sync/sync-capabilities.ts` must not grow.
+- A read that is malformed, capped, partial, or empty for a month that holds lines never writes (retry or `month_gap`). One `replaceCostLinesForMonth` per (account, month). Stored sub-accounts missing from a listing are re-supplied (`readOwnCostLinesForMonth`). Rows deduplicated by id across offset pages. Pagination cursors must advance. Identities are stable ids; names and paths are `subAccountName` and `repo`.
+- An unreadable cost config: the options getter returns `null` and the sync returns its cursor unchanged (slice 8 pattern).
+- Transport: `fetchSameOriginOnly` to the configured origin, or the cloud CLI. https only; http only to `localhost`, `127.0.0.1`, `[::1]`; any other base is a stated gap. A refused redirect is a stated gap. 429 penalises the service's limiter; 5xx retries.
+- Test fakes return a field only when the request asks for it (slice 8 lesson).
+- No paid call without opt-in (AWS Cost Explorer: `[cost.aws] cost_explorer = true`).
+- Each new service: `COST_SYNC_SERVICES` + D24 paragraph of `docs/SECURITY-INVARIANTS.md` in the same commit; catalog, meta, oauth-unsupported, secrets manifest (empty list, shared grant), configured check, boot companion (`platform/assemble/index-boot.ts`), removal (`ipc/connector-rpc-handlers/removal.ts`), `connectors/finops-syncables.ts`, `platform/assemble/scheduler-mesh.ts` options, `cost-source-gaps.ts` prefix, pinned tests (`sync/connector-configured.test.ts`, `connectors/finops-syncables.test.ts`).
+- Docs every PR: `docs/CHANGELOG.md`, `docs/cli-reference.md` (section, config rows, bounds), `docs/architecture.md`, `.claude/commands/nimbus-file-map.md`. Status docs (`docs/roadmap.md`, `CLAUDE.md`, `GEMINI.md`) in the last PR of each lane.
+- Verify per task: the touched suites, `bunx tsc --noEmit -p packages/gateway`, `bun run typecheck:tests`; per PR: `bun run preflight:fast`, a whole-branch review subagent, then PR with auto-merge.
+
+### Review Focus (all slices)
+
+1. A source that lists zero sub-accounts for a month that holds lines must keep the month (each CI and cloud sync has a test).
+2. A rate added after lines are stored re-prices them (slices 9 and 10: lines keep their `size:`/`agent:` key even with no rate for it; test).
+3. The same costs reachable through two sources must count once (C4 rule test in 11a; 11a then 11b switch test in 11b; slice 15 money-once test).
+4. A paid or quota-limited API must be bounded (Cost Explorer page cap; BigQuery `maximumBytesBilled`; Azure 429 retry-after) — each has a test.
+5. Credentials never leave their host and never go over plain http (each sync has an http-base gap test and a cross-origin redirect test).
+
+---
+
+### Slice 9: Bitbucket on API tokens, and Pipelines minutes as cost lines
+
+Branch `dev/asaf/phase7-s9-bitbucket-cost`.
+
+#### Task 9.1: The Bitbucket connector on Atlassian API tokens (D5)
+
+**Files:** modify `connectors/connector-secrets-manifest.ts` (bitbucket: add `bitbucket.email`, `bitbucket.api_token`), `connectors/bitbucket-sync.ts:347,497`, `connectors/lazy-mesh/connector-spawns.ts:444`, `connectors/lazy-mesh/service-credential.ts`, `connectors/lazy-mesh/credential-orchestration.ts`, `connectors/credential-probe.ts`, `ipc/connector-rpc-handlers/auth.ts`, `sync/connector-configured.ts`, `sync/fetch-host-boundary.ts`, `chatops/chatops-tool-runner.ts`, `connectors/lazy-mesh/chatops-bot-spawn.ts`, `extensions/connector-requirements.ts`, `platform/gateway-log-file.ts` (redaction list), `packages/cli/src/commands/connector/auth-appliers-vcs.ts`; create `connectors/bitbucket-credential.ts` (+ test).
+
+**Interfaces:** Produces `readBitbucketCredential(read: (key: "email" | "api_token" | "username" | "app_password") => Promise<string | null>): Promise<{ kind: "token"; user: string; secret: string } | { kind: "app_password"; user: string; secret: string } | { kind: "none" }>` — the new pair first, the old pair as fallback. Every site above that reads the pair calls it; `connector-spawns.ts` maps `user`→`BITBUCKET_USERNAME`, `secret`→`BITBUCKET_APP_PASSWORD` (Basic auth has the same shape for an API token).
+
+- [ ] Step 1: before coding, confirm from `node_modules/@nimbus-dev/connectors` that the Bitbucket server builds Basic auth from those two env vars; if not, stop and record it (a connectors-repo PR would be needed).
+- [ ] Step 2: failing tests in `bitbucket-credential.test.ts`: new pair wins over old; old pair alone → `app_password`; blank values → `none`; whitespace trimmed.
+- [ ] Step 3: implement; switch every site above to it; `nimbus connector auth bitbucket` asks for email and API token; status prints `deprecated: app password (Atlassian removed app passwords on 2026-07-28; store an API token)` when the old pair is in use.
+- [ ] Step 4: run `bun test packages/gateway/src/connectors packages/gateway/src/ipc packages/gateway/src/sync packages/cli/src/commands/connector` — PASS; grep shows no remaining direct `app_password` read outside `bitbucket-credential.ts` and the manifest.
+- [ ] Step 5: commit `feat: the Bitbucket connector uses Atlassian API tokens (app passwords as a fallback)`.
+
+#### Task 9.2: Keyed rates and `[cost.bitbucket]`
+
+**Files:** modify `finops/cost-rate-price.ts` (+ test), `config/cost-gitlab-toml.ts`, `connectors/gitlab-cost-sync.ts`, `finops/cost-unpriced.ts`; create `config/cost-bitbucket-toml.ts` (+ test); modify `config/cost-toml.ts`.
+
+**Interfaces:**
+- `CostRates` becomes `{ ratePerMinute: number | null; currency: string; keyedRates: readonly (readonly [string, number])[] }` where each key carries its prefix (`runner:<desc>`, `size:<n>x`, `agent:<name>`, `label:<name>`); `rateForKey(rates, key)` = the keyed rate when listed, else `ratePerMinute`; `rateKeyFor(prefix: "runner" | "size" | "agent" | "label", value: string | null): string` (`default` for null). GitLab maps `runnerRates` → `runner:` keys (no behaviour change; slice 8 tests stay green; the fingerprint input changes, so the first run after upgrade re-prices once — harmless, stated in the commit).
+- `NimbusCostBitbucketConfig = { workspaces: readonly string[]; ratePerMinute: number | null; currency: string; sizeRates: readonly (readonly [string, number])[] }` on `NimbusCostConfig.bitbucket`; `size_rates` keys must be one of `1x 2x 4x 8x 16x 24x 32x`; workspaces: slugs `^[a-z0-9][a-z0-9_-]{0,61}$`, at most 50, unique.
+- `COST_RATE_CONFIG_HINT` gains `bitbucket_billing` → `[cost.bitbucket] rate_per_minute`, `jenkins_billing` → `[cost.jenkins] rate_per_minute`.
+
+- [ ] Tests: `rateForKey` for each prefix and the fallback; GitLab slice 8 suites unchanged and green; `[cost.bitbucket]` validation (bad slug, duplicate, unknown size key, negative rate) refuses the cost config. Commit `feat(gateway): keyed per-minute rates and [cost.bitbucket]`.
+
+#### Task 9.3: Pipelines → cost lines (pure mapper)
+
+**Files:** create `finops/bitbucket-pipeline-lines.ts` (+ test).
+
+**Interfaces:** `bitbucketPipelineLines(account: string, month: string, repos: readonly { repoUuid: string; fullName: string; pipelines: readonly unknown[] }[], rates: CostRates, lastDay?: string): { lines: CostLine[]; pipelines: number; dropped: Record<"unfinished" | "bad_seconds" | "outside_month" | "self_hosted", number> }`. Line: `source "bitbucket_billing"`, `provider "bitbucket"`, `billingAccountId` = workspace, `subAccountId` = repo uuid, `subAccountName`/`repo` = full name, `serviceName "Bitbucket Pipelines"`, `skuId "pipeline_minutes"`, unit `minute`, quantity = Σ `build_seconds_used` / 60, day = UTC day of `completed_on`, tag `rate_key` = `size:<n>x` only when the pipeline object itself carries a size (Antigravity 14), else `default`. Pipelines deduplicated by `uuid`.
+
+- [ ] Tests: two pipelines one day summed; a repeated uuid counted once; `completed_on` null → `unfinished`; non-finite or negative seconds → `bad_seconds`; outside month / after `lastDay`; a pipeline the API marks as on a self-hosted runner (the builder reads the documented field from the OpenAPI spec; if none exists, this counter stays 0 and the docs say so) → `self_hosted`; no rate → unpriced. Commit `feat(gateway): map Bitbucket pipelines to cost lines`.
+
+#### Task 9.4: The `bitbucket_billing` syncable and its wiring
+
+**Files:** create `connectors/bitbucket-cost-fetch.ts`, `connectors/bitbucket-cost-sync.ts` (+ tests, + `bitbucket-cost.acceptance.test.ts`); wiring per Global constraints; prefix `nimbus-bbb1:`.
+
+**Interfaces:** `createBitbucketCostSyncable({ bitbucket: () => NimbusCostBitbucketConfig | null; now?; fetch?; maxPipelinePages? })`. Fetch: `GET https://api.bitbucket.org/2.0/repositories/{workspace}?pagelen=100` (follow `next`, cap 20 pages, dedupe by uuid), then per repo `GET .../repositories/{workspace}/{slug}/pipelines?sort=-created_on&pagelen=100` down to 7 days before the earliest month (cap 50 pages → `month_gap` for the workspace). Jobs paged once per run per workspace (slice 8 pattern). 401/403/404 gap; 429 penalises `bitbucket`.
+
+- [ ] Tests: unconfigured → no request; one workspace two repos; a repo missing from a later listing keeps its lines; an empty listing never clears; repeated repo/pipeline across pages; a non-advancing `next` retries; cap → `month_gap`; old credential pair still works; cross-origin redirect → gap; acceptance: unpriced minutes, then a rate prices them; a re-sync changes nothing. Docs: cli-reference "Bitbucket Pipelines minutes (`[cost.bitbucket]`)" with bounds (no workspace total; size multiplier unverified; self-hosted; caps; API tokens). Commit, PR.
+
+---
+
+### Slice 10: Jenkins build minutes at a configured agent rate
+
+Branch `dev/asaf/phase7-s10-jenkins-cost` (after slice 9 merges: it uses keyed rates).
+
+#### Task 10.1: `[cost.jenkins]` and the mapper
+
+**Files:** create `config/cost-jenkins-toml.ts` (+ test), `finops/jenkins-build-lines.ts` (+ test); modify `config/cost-toml.ts`.
+
+**Interfaces:** `NimbusCostJenkinsConfig = { enabled: boolean; ratePerMinute: number | null; currency: string; agentRates: readonly (readonly [string, number])[]; labelRates: readonly (readonly [string, number])[] }` (`enabled` = the table exists; Jenkins has one base, from the connector). `jenkinsBuildLines(account: string, month: string, jobs: readonly { fullName: string; builds: readonly unknown[] }[], rates: CostRates, lastDay?: string)` → lines with `source "jenkins_billing"`, `provider "jenkins"`, `billingAccountId` = base host, `subAccountId`/`subAccountName`/`repo` = job full name (Jenkins has no stable job id; stated), `resourceName` = `builtOn` (`""` → `built-in`), quantity = `duration / 60_000`, day = UTC day of `timestamp + duration`, `rate_key` = `agent:<builtOn>` when present, else `default`. Builds deduplicated by (job, number); `building: true` or no `duration` → `unfinished`.
+
+- [ ] Tests: ms units (120000 ms = 2 minutes); end-day crossing midnight; built-in node; agent rate then default fallback; a later-added agent rate re-prices (key kept); dedupe. Commit `feat(gateway): [cost.jenkins] and Jenkins builds as cost lines`.
+
+#### Task 10.2: The `jenkins_billing` syncable and its wiring
+
+**Files:** create `connectors/jenkins-cost-sync.ts` (+ test, + acceptance); reuse `connectors/jenkins-api-jobs.ts` `flattenJenkinsApiJobs`; prefix `nimbus-jkb1:`.
+
+**Interfaces:** `createJenkinsCostSyncable({ jenkins: () => NimbusCostJenkinsConfig | null; now?; fetch?; maxJobs? })`. Fetch: `GET <base>/api/json?tree=<JENKINS_JOBS_API_TREE>` (folder walk, cap 2,000 jobs → `month_gap`), then per job `GET <job>/api/json?tree=builds[number,timestamp,duration,builtOn,result,building]{0,200}` newest first, down to 7 days before the earliest month. Basic auth from the connector's `jenkins.username`/`api_token`. A non-loopback `http` base → gap (D9) before any request.
+
+- [ ] Tests: http base gap; folder jobs; a job missing from the listing keeps its lines; empty listing never clears; Pipeline builds with no `builtOn` priced at `default` (docs say per-agent rates apply when the agent is readable); acceptance. Docs: cli-reference "Jenkins build minutes (`[cost.jenkins]`)", bounds (wall-clock, no job id, http refused, caps). Status docs for the CI lane. Commit, PR.
+
+---
+
+### Slice 11a: AWS from a FOCUS Data Export in S3
+
+Branch `dev/asaf/phase7-s11a-aws-export`.
+
+#### Task 11a.1: `[cost.aws]`, gzip, and the overlap rule (C4)
+
+**Files:** create `config/cost-aws-toml.ts` (+ test); modify `config/cost-toml.ts`, `finops/cost-view-input.ts` (+ test), `finops/focus-csv.ts` or a new `finops/focus-file-text.ts` (+ test).
+
+**Interfaces:** `NimbusCostAwsConfig = { export: { bucket: string; prefix: string } | null; costExplorer: boolean }` (`export = "s3://bucket/prefix"`, bucket per S3 naming rules). `focusFileText(bytes: Uint8Array, name: string): string` — gunzips when the name ends `.gz` or the bytes start `1F 8B` (`Bun.gunzipSync`), UTF-8 decodes. `chooseSources`: with no `authoritative`, when `focus` and a `*_billing` cloud source both cover a provider, keep the cloud source and exclude `focus` with reason `cloud sync active for this provider (set [cost] authoritative to choose)`.
+
+- [ ] Tests: s3 URL parse and refusals; gzip and plain decode; C4 exclusion and its `authoritative` override; existing cost-view-input tests green. Commit `feat(gateway): [cost.aws], gzip-aware FOCUS text, and one source per provider`.
+
+#### Task 11a.2: The `aws_billing` syncable (export path)
+
+**Files:** create `connectors/aws-billing-cost-sync.ts`, `connectors/aws-billing-export.ts` (+ tests, + acceptance); modify `connectors/_lib/aws-cli.ts` if a helper is needed; wiring; prefix `nimbus-awb1:`; configured = `hasUsableAwsCredentials` (Antigravity 16).
+
+**Interfaces:** `createAwsBillingCostSyncable({ aws: () => NimbusCostAwsConfig | null; now?; cli? })`. Per billing period folder under the prefix (`aws s3api list-objects-v2 --bucket --prefix`, paged), the newest manifest (`*Manifest.json`) names its data files; each is fetched (`aws s3 cp s3://… -`), decoded with `focusFileText`, parsed by `parseFocusCsv`; lines re-sourced to `aws_billing`, grouped per (`BillingAccountId`, period), each replaced once on the days the files cover. No export and no `cost_explorer` → gap `AWS cost is not configured: set [cost.aws] export, or cost_explorer = true`.
+
+- [ ] Tests: a fake CLI returning a two-file gzipped export; a newer manifest replaces only its days; a period with an unreadable file is a `month_gap` (nothing written); a Parquet export → gap `the export is Parquet; recreate it as CSV`; acceptance with C4 (a `focus` import of the same file is set aside). Docs. Commit, PR.
+
+### Slice 11b: AWS Cost Explorer fallback (opt-in; stacked on 11a)
+
+Branch `dev/asaf/phase7-s11b-aws-ce` from 11a's branch.
+
+#### Task 11b.1: Cost Explorer reads and the payer account
+
+**Files:** create `connectors/aws-cost-explorer.ts`, `finops/aws-ce-lines.ts` (+ tests); modify `connectors/aws-billing-cost-sync.ts`.
+
+**Interfaces:** runs only when `costExplorer && export === null`. Account id: `aws organizations describe-organization` master account id when readable, else `aws sts get-caller-identity` Account. `aws ce get-cost-and-usage --time-period Start=,End= --granularity DAILY --metrics UnblendedCost AmortizedCost UsageQuantity --group-by Type=DIMENSION,Key=SERVICE Type=DIMENSION,Key=LINKED_ACCOUNT`, at most 10 pages per month (`--next-page-token`; past that `month_gap`); the request count is logged. Lines: `billedCost` = UnblendedCost, `effectiveCost` = AmortizedCost, `subAccountId` = linked account, `serviceName` = service, currency from `Unit`; `UsageQuantity` is NOT stored as a quantity (mixed units). A month with any `Estimated: true` result is written and kept pending.
+
+- [ ] Tests: off by default (no `ce` call); the page cap; Estimated current month written and pending; switching to an export replaces the same tuple (same account id); the docs state $0.01 per request and the expected count. Commit, PR.
+
+---
+
+### Slice 12a: Azure from a FOCUS Cost Management export
+
+Branch `dev/asaf/phase7-s12a-azure-export`.
+
+#### Task 12a.1: The `az` helper and `[cost.azure]`
+
+**Files:** create `connectors/_lib/azure-cli.ts` (+ test), `config/cost-azure-toml.ts` (+ test); modify `config/cost-toml.ts`.
+
+**Interfaces:** `azureCli(args: readonly string[], creds, opts): Promise<{ ok: true; json: unknown } | { ok: false; reason: string }>` — spawns through `spawnCapture` with `extensionProcessEnv` (I1), logs in with `az login --service-principal` from `azure.tenant_id`/`client_id`/`client_secret` in a per-run `AZURE_CONFIG_DIR` temp dir (never the user's profile; removed after). The builder reads `connectors/azure-sync.ts` for the existing spawn and env pattern. `NimbusCostAzureConfig = { export: { account: string; container: string; path: string } | null; scopes: readonly string[] }`.
+
+- [ ] Tests: the login args never carry the secret on the command line (passed via env or stdin, as the `az` docs allow; the builder confirms which); temp dir removed on error; config validation. Commit.
+
+#### Task 12a.2: The `azure_billing` syncable (export path)
+
+**Files:** create `connectors/azure-billing-cost-sync.ts`, `connectors/azure-billing-export.ts` (+ tests, + acceptance); wiring; prefix `nimbus-azb1:`; configured = Azure credentials present.
+
+**Interfaces:** list the export's run folders (`az storage blob list --auth-mode login`), take each period's newest run, download its CSV parts (`az storage blob download`), `focusFileText`, `parseFocusCsv`, re-source to `azure_billing`, replace per (`BillingAccountId`, period).
+
+- [ ] Tests: two parts gzipped; unreadable part → `month_gap`; C4 with a `focus` import; no export and no scopes → gap. Docs (management-group scope unsupported for FOCUS exports). Commit, PR.
+
+### Slice 12b: Azure Query API fallback (on by default; stacked on 12a)
+
+Branch `dev/asaf/phase7-s12b-azure-query` from 12a's branch.
+
+#### Task 12b.1: The Query API read
+
+**Files:** create `connectors/azure-cost-query.ts`, `finops/azure-query-lines.ts` (+ tests); modify `connectors/azure-billing-cost-sync.ts`.
+
+**Interfaces:** runs only when `export === null` and `scopes` is non-empty. `az rest --method post --url https://management.azure.com/{scope}/providers/Microsoft.CostManagement/query?api-version=<the builder reads the current GA version>` with body `{ type: "ActualCost", timeframe: "Custom", timePeriod, dataset: { granularity: "Daily", aggregation: { totalCost: { name: "Cost", function: "Sum" } }, grouping: [{ type: "Dimension", name: "ServiceName" }, { type: "Dimension", name: "ResourceGroupName" }] } }`; pages by `nextLink` (must advance); a 429 waits `x-ms-ratelimit-microsoft.costmanagement-qpu-retry-after` seconds once, then retries next run. Lines: `billingAccountId` = scope id, `subAccountId` = resource group, `serviceName` = service, currency from the response's currency column.
+
+- [ ] Tests: columns mapped by name, not position; a missing currency column → retry; 429 with retry-after; a non-advancing nextLink. Docs (QPU quotas; aggregated grain). Status docs for the cloud lane only if 13 already merged; else in 13. Commit, PR.
+
+---
+
+### Slice 13: GCP from the BigQuery billing export
+
+Branch `dev/asaf/phase7-s13-gcp-billing`.
+
+#### Task 13.1: The token helper move and `[cost.gcp]`
+
+**Files:** modify `connectors/bigquery-sync.ts` (move `gcloudPrintAccessToken`), `connectors/_lib/gcp-auth.ts`; create `config/cost-gcp-toml.ts` (+ test); modify `config/cost-toml.ts`.
+
+**Interfaces:** `gcloudPrintAccessToken` exported from `_lib/gcp-auth.ts` unchanged in signature; `bigquery-sync.ts` imports it (its tests stay green). `NimbusCostGcpConfig = { exportTables: readonly string[]; maxBytesBilled: number }` (`export_table` one or two `project.dataset.table` names; the detailed `gcp_billing_export_resource_v1_` one preferred; `max_bytes_billed` default `53687091200`, 1 GiB to 10 TiB).
+
+- [ ] Tests: the move (bigquery-sync suite green); config validation. Commit.
+
+#### Task 13.2: The query, the mapper and the `gcp_billing` syncable
+
+**Files:** create `connectors/gcp-billing-cost-sync.ts`, `finops/gcp-billing-lines.ts` (+ tests, + acceptance); wiring; prefix `nimbus-gcb1:`; configured = GCP credentials present.
+
+**Interfaces:** one `jobs.query` per month read (`useLegacySql: false`, `maximumBytesBilled`, parameterised `@start`, `@end`), SQL:
+
+```sql
+SELECT DATE(usage_start_time) AS day, billing_account_id, project.id AS project_id, project.name AS project_name,
+  service.description AS service, sku.description AS sku, location.region AS region, currency, usage.unit AS unit,
+  TO_JSON_STRING(ARRAY(SELECT AS STRUCT key, value FROM UNNEST(labels) ORDER BY key, value)) AS labels_json,
+  SUM(cost) AS cost, SUM(IFNULL((SELECT SUM(c.amount) FROM UNNEST(credits) c), 0)) AS credits,
+  SUM(usage.amount) AS quantity
+FROM `<table>`
+WHERE _PARTITIONTIME >= TIMESTAMP(@start) AND _PARTITIONTIME < TIMESTAMP_ADD(TIMESTAMP(@end), INTERVAL 3 DAY)
+  AND usage_start_time >= TIMESTAMP(@start) AND usage_start_time < TIMESTAMP(@end)
+GROUP BY day, billing_account_id, project_id, project_name, service, sku, region, currency, unit, labels_json
+```
+
+(The builder checks `_PARTITIONTIME` exists on the export table type; the standard export is partitioned by it.) Paged with `pageToken` (must advance; `jobComplete: false` → poll `getQueryResults` up to a cap, then retry). Lines: `billedCost` = cost + credits, `effectiveCost` = same, `subAccountId` = project id, `subAccountName` = project name, `regionId`, tags from labels, quantity + unit. One replace per (`billing_account_id`, month). An empty result for a month that holds lines → `month_gap`.
+
+- [ ] Tests: credits netted without inflation (a row with two credits); labels as tags; `bytesBilled` cap error → gap naming `max_bytes_billed`; empty result keeps the month; a second billing account in one table is its own account; acceptance. Docs (no history before enable, the backfill rule, BigQuery bills the scan, FOCUS export later). Status docs for the cloud lane (or in 12b if it lands last). Commit, PR.
+
+---
+
+### Slice 14: LaunchDarkly flag changes in `nimbus cost why` (D8)
+
+Branch `dev/asaf/phase7-s14-flag-join`.
+
+#### Task 14.1: `feature_flags` on `[ci.service.<id>]`
+
+**Files:** modify `metrics/dora-config.ts` (`ServiceConfig.featureFlags`), `config/service-config-toml.ts` (+ test).
+
+**Interfaces:** `readonly featureFlags: readonly { service: "launchdarkly" | "unleash" | "split" | "flagsmith"; project: string; flag: string | null }[]` from strings `launchdarkly:<project>[:<flag>]`, `unleash:<project>[:<flag>]`, `split:<workspace>[:<flag>]`, `flagsmith:<project>[:<flag>]`. A malformed entry refuses that service's config the way `sentry_projects` does. Unleash/Split/Flagsmith bindings parse (so a config is not rejected) but produce the D8 gap.
+
+- [ ] Tests: each form; unknown service; empty project; default `[]`. Commit.
+
+#### Task 14.2: The flag lookup and its render
+
+**Files:** modify `agents/_lib/cost-why-query.ts` (+ test), `ipc/cost-why-rpc.ts`, `packages/cli/src/commands/cost-why-cli.ts` (+ test).
+
+**Interfaces:** `CostChangeContext` gains `flags: { service: string; key: string; name: string; changedAtMs: number; environments: readonly string[] }[]`, `flagsTruncated: number`. Query: `item` rows `service = 'launchdarkly' AND type = 'feature_flag'` whose `external_id` matches a binding (`<project>:<key>`, or `<project>:%` for a project binding) and whose metadata `updated_at` (the source's own last change; never `modifiedAt`'s sync-time fallback) is in `[fromMs, toMs)`; newest first, 10 max. Environments: those in `metadata.env_states` whose own last-modified is in the window, when the mapping records it (the builder reads `launchdarkly-flag-mapping.ts` `extractEnvironments`). Gaps: `flag changes are recorded for LaunchDarkly only; <service> bindings show no changes` once per non-LaunchDarkly service bound; always the line `only the latest change of each flag is known`. No bindings → no query, no gap. CLI text: `Flags changed: <key> (<env,…>) at <ISO>`.
+
+- [ ] Tests: in-window and out-of-window flags; a flag with `updated_at` null is never listed; project vs flag binding; truncation; D8 gap; JSON shape; CLI text. Docs: cli-reference `cost why` section and `[ci.service]` key; roadmap cost-to-change row marks flags done (LaunchDarkly) and adds the follow-up row for the other three. Commit, PR.
+
+---
+
+### Slice 15: Jenkins agents priced from their cloud machines (after 10 and 11a or 12a)
+
+Branch `dev/asaf/phase7-s15-jenkins-cloud`.
+
+#### Task 15.1: `agent_cost` and quantity-only agent lines
+
+**Files:** modify `config/cost-jenkins-toml.ts` (+ test), `finops/jenkins-build-lines.ts` (+ test).
+
+**Interfaces:** `agentCost: readonly { agent: string; provider: "aws" | "azure" | "gcp"; resource: string }[]` (`resource` a glob on `ResourceId`/`resourceName`). A build on a mapped agent becomes a quantity-only line: unpriced (cost 0), tags `agent:<name>` as `rate_key` → `cloud:<agent>`, `cloud_resource` = the glob. The re-price leaves `cloud:` keys unpriced (`rateForKey` returns null for `cloud:`).
+
+- [ ] Tests: mapped agent lines are unpriced with the tags; unmapped agents unchanged; a mapped agent's line is never priced by `rate_per_minute`. Commit.
+
+#### Task 15.2: The read-time split in the allocation views
+
+**Files:** create `finops/cost-agent-split.ts` (+ test); modify `finops/cost-views.ts` (or `cost-view-input.ts`, the builder picks the one that sees all lines of a range) and `finops/cost-why.ts`/`cost-report-model.ts` only if they total cost independently.
+
+**Interfaces:** `splitAgentMachineCost(lines: readonly CostLine[], agentCost): CostLine[]` — pure: for each day and mapped agent, find the cloud lines whose `resourceId`/`resourceName` matches the glob (per currency); replace each such cloud line, in the returned set only, by (a) one derived line per Jenkins build line of that agent that day carrying `minutes / dayMinutes × cost` with the build line's repo and tags (so `[[cost.rule]]` allocates it to its product and `env = ci`), and (b) the remainder as the machine's line tagged `idle = "true"`; the Jenkins quantity-only lines themselves are dropped from the returned set. The sum of money in = the sum out (per currency, to 1e-9). Stored rows never change.
+
+- [ ] Tests: money conserved; two builds split by minutes; a day with no builds leaves the cloud line whole; a machine matched by two agents is split once (first agent wins; config check warns); Cost Explorer lines (no resource id) → the config check names the gap; the views show CI cost with idle beside it. Docs: cli-reference `agent_cost`; roadmap/status docs close the CI cloud-cost item. Commit, PR.
+
+---
+
+**After slice 15:** Phase 7's remaining item is the owner's launch of the agent-door copy (roadmap row). Delete this plan and its specs from `dev/asaf/phase7-cost-pack` only after the owner closes the phase.
+
 ## Slices 2–8 (each gets a detailed task list here before its code starts)
 
 - **Slice 2 — detailed above.** Summary kept for the record: `finops/cost-why.ts` (pure; compares period vs previous, ranks moved lines); the deploy/PR/owner lookup lives OUTSIDE `finops/` in `agents/_lib/cost-why-query.ts`, passed in as data (D48). IPC `cost.why`, `cost.rulesCheck`; CLI `nimbus cost why <product|service> [--period 14d] [--json]`, `nimbus cost rules check`. Acceptance: the demo spike names the seeded deploy, PR and owner with no network.
