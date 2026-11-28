@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795863907267,
+  "lastUpdate": 1795865702609,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": false,
-          "id": "1738f5a3b0e8cd232eeedd399eb50f9cc04c0260",
-          "message": "ci: raise the cross-platform per-attempt test cap to 1500 s and the job ceiling to 65 min (#1585)\n\n## Why\n\nThe cross-platform Windows leg had turned into a coin-flip on **every**\nPR, whatever the PR changed. Its per-attempt test cap is 1080 s, and\nhealthy `windows-2025` test steps over the 09-29/30 PR batch took:\n\n`795 · 845 · 1019 · 1036 · 1044 · 1047 · 1063 · 1069 · 1079 s`\n\nThe cap had become the median. Four legs in that batch (#1575 ×2, #1580,\n#1581) were killed at 1080 s with **zero failing tests** (`exit 124` on\nboth attempts). One of them had passed more tests before the kill than a\nrun that went green, which rules out a hang. The comment on the cap had\nset its own tripwire, \"re-check if a healthy run exceeds ~850 s\", and it\nhad fired. macOS on the same runs took 334–520 s, far inside the cap.\n\n## Change\n\n- Per-attempt cap **1080 → 1500 s**. The worst healthy run (1079 s) sits\nat 72%, and at the ~28% run-to-run variance the workflow already\ndocuments, its top of swing is ~1381 s, inside the cap.\n- Job ceiling **48 → 65 min**, from the rule the job comment now spells\nout term by term: `setup + typecheck retry + 2 × cap <= ceiling`, each\nterm a bound or a measured worst. Setup is 465 s, the worst of ten\nsuccessful `windows-2025` runs, where the earlier ~270 s figure was a\nsingle run at the median. That gives 465 + 125 + 3005 = 3595 s, which is\n59.9 min, so 60 would have sat 5 s from cancelling the second attempt.\n65 leaves 305 s. A cap raised alone would be useless, because the second\nattempt could never finish.\n- The `Typecheck` step's attempts are now capped at 120 s each. It was\nuncapped, so it had no bound to put in that sum. It takes 6–11 s on both\nOSes.\n- Comments updated with the new measurements and a new tripwire (~1200\ns). Also fixed a stale \"15-minute\" cap in the step comment.\n\nThis is the fourth raise, and the previous comment said a fourth \"is not\na plan\". That's still true, and the comment now says so. This buys time;\nthe durable fix is a faster Windows suite (the e2e tree alone spends\n15–22 s per gateway boot there) that keeps the one-process parity with\nthe push leg.\n\nUnchanged: the test command, its paths and the retry logic, so\n`scripts/ci/cross-platform-parity.test.ts` (which compares positional\npaths only) is unaffected.\n\n## Verification\n\n`bun test scripts/ci` (142 pass, including the parity tests),\n`audit:workflow-lint` OK, `preflight:fast` PASSED. The real test is this\nPR's own Windows leg.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **Chores**\n* Extended the time allowed for cross-platform automated checks to\ncomplete. Type checks now have up to 120 seconds per attempt, with two\nattempts retained, and each test-suite attempt can run for up to 1,500\nseconds. The overall check window is now 65 minutes. These updates\naffect automated validation; app features and user-facing behavior\nremain unchanged.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-30T11:56:57Z",
-          "tree_id": "d866b47bdea6e6802196256d08464b59a123a6b2",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/1738f5a3b0e8cd232eeedd399eb50f9cc04c0260"
-        },
-        "date": 1790772054437,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 212.84799769999844,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 208.50445965000182,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 252.5581556999983,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "12bf66fad30e2518ec328d841ec99a5aefe1da2c",
+          "message": "feat: Bitbucket Pipelines minutes as cost lines, and the connector on API tokens (Phase 7, slice 9) (#2205)\n\n## What changed\n\nPhase 7 (the Cost Pack), slice 9: Bitbucket Pipelines minutes become\ncost lines, and the Bitbucket connector moves to Atlassian API tokens.\n\n- **API tokens (owner ruling D5).** The secrets manifest gains\n`bitbucket.email` and `bitbucket.api_token`. Every site that needs the\ncredential reads it through the new `connectors/bitbucket-credential.ts`\n(token pair first, `username` + `app_password` as a fallback): the\nspawn, the credential probe, the vault-configured checks, the sync, the\nhost boundary, the auth RPC. `nimbus connector auth bitbucket --username\n<atlassian_email> --token <api_token>` stores the new pair, and\n`connector status bitbucket` shows `credential: api_token |\napp_password` with a deprecation note for the old pair. The gate in Task\n9.1 step 1 passed: `@nimbus-dev/connectors` 0.23.0 builds Basic auth\nfrom `BITBUCKET_USERNAME` / `BITBUCKET_APP_PASSWORD`, so the new pair\nmaps onto those variables and no connectors-repo change is needed.\n- **Keyed rates.** `CostRates` generalises GitLab's runner-only rates to\nkeyed rates (`runner:`, `size:`, `agent:`, `label:`) with `rateForKey` /\n`rateKeyFor`. GitLab behaves the same; its rate-fingerprint input\nchanges, so its first run after the upgrade re-prices its stored lines\nonce, locally.\n- **`[cost.bitbucket]`** (`workspaces`, `rate_per_minute`, `currency`,\n`size_rates`), validated like `[cost.gitlab]`.\n- **`bitbucket_billing`** companion service (24 h, prefix\n`nimbus-bbb1:`, shared grant `bitbucket`). Per workspace it lists\nrepositories, then each repository's pipelines newest first, and sums\n`build_seconds_used` per UTC day of `completed_on` and repository. One\n`replaceCostLinesForMonth` per (workspace, month).\n- Wiring: catalog, meta, oauth-unsupported, manifest, configured check,\nboot companion, removal, `finops-syncables`, `COST_SYNC_SERVICES`, the\nD24 paragraph of `SECURITY-INVARIANTS.md`. The finops option getters\nmove to `platform/assemble/finops-options.ts` (keeps `scheduler-mesh.ts`\nunder the file-size limit).\n\n## Owner rulings applied\n\nD1 (CI money comes from a configured rate; with none, lines are unpriced\nand every view names them), D5 (Bitbucket on API tokens in the same\nslice), C6 (size multiplier and self-hosted runners are unverified and\nstated), and the Antigravity review fixes for slices 9 to 15 (repository\ncap is a `month_gap` for every month with no write; finding 1 not\napplied because the files exist on main).\n\n## Stated bounds\n\n- Documentation-verified only (Atlassian's OpenAPI description); no live\nresponse was checked.\n- There is no workspace-total endpoint, so each repository is listed.\nCaps: 20 pages of repositories (2,000) and 50 pages of pipelines per\nrepository and run (5,000); past either, the workspace's months are kept\nas stored with a gap.\n- The documented pipeline object has no step size and no runner field:\nevery line is priced at `rate_per_minute`, `size_rates` applies only if\na listing carries a `size`, the `self_hosted` counter stays 0, and\nwhether `build_seconds_used` includes the size multiplier is unverified.\nA pipeline created more than 7 days before the month and completed\ninside it is not counted.\n- `chatops-tool-runner.ts` and `chatops-bot-spawn.ts` (listed in the\nplan) read Teams `bot_app_password`, not Bitbucket, so they are\nunchanged.\n\n## Rules held (slices 5 to 8)\n\nA malformed, capped, partial or empty read never clears a stored month;\na repository missing from the listing (or whose pipelines are not found)\nkeeps its stored lines; rows are deduplicated by uuid across pages; a\n`next` link must advance and stay on the configured origin; keys are\nstable ids (repository uuid), names are `subAccountName` / `repo`; https\nonly (http to loopback); an unreadable cost config returns null and the\nsync keeps its cursor whole; the credential never follows a redirect.\n\n## Verification\n\n- `bun run preflight:fast` passes. `bunx tsc --noEmit -p\npackages/gateway` and `bun run typecheck:tests` pass.\n- New tests: credential resolution, keyed rates, `[cost.bitbucket]`, the\npipeline mapper, the sync (20 tests, including cap, retry, redirect,\nforeign `next`, http base, old credential pair, re-price, removal), and\nan acceptance test (unpriced minutes, then a rate prices them, a re-sync\nchanges nothing, a hidden workspace shows its gap).\n- Not verified here: the Linux and macOS legs, coverage floor\n(CI-authoritative), a live Bitbucket call. Known machine-local failures\nthat also fail on clean main were ignored (I15 \"grants a clean one\",\n`mesh-user-mcp-write-grant`).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-28T11:27:28Z",
+          "tree_id": "b17f6612a3ecc11d54af3bb0b03bb1d9195d1ceb",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/12bf66fad30e2518ec328d841ec99a5aefe1da2c"
+        },
+        "date": 1795865698241,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 180.34274030000105,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 179.1726715000015,
             "unit": "ms"
           }
         ]
