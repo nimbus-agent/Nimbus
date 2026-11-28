@@ -15,6 +15,7 @@ import { readCostLineCurrencies, readCostLineFreshness, readCostLines } from "./
 import type { CostRule } from "./cost-rules.ts";
 import { readCostSourceGaps } from "./cost-source-gaps.ts";
 import type { CostViewInput, CostViewResult, CostWindow } from "./cost-views.ts";
+import { FOCUS_SOURCE } from "./focus-csv.ts";
 
 export interface CostViewConfig {
   readonly rules: readonly CostRule[];
@@ -52,16 +53,31 @@ function chooseSources(
     return { keep: (s) => s === chosen, excluded };
   }
   const hasRaw = [...sources].some((s) => s !== VANTAGE_SOURCE);
-  if (!hasRaw || !sources.has(VANTAGE_SOURCE)) return { keep: null, excluded: [] };
+  // C4 (Phase 7 slice 11a): a cloud sync (`*_billing`) and a FOCUS file import of one provider are two raw
+  // views of the same bill; the sync wins, so the two are never added together.
+  const cloudSync = [...sources].some((s) => s.endsWith("_billing"));
+  const setAsideFocus = cloudSync && sources.has(FOCUS_SOURCE);
+  const setAsideVantage = hasRaw && sources.has(VANTAGE_SOURCE);
+  if (!setAsideFocus && !setAsideVantage) return { keep: null, excluded: [] };
+  const excluded: Excluded[] = [];
+  if (setAsideFocus) {
+    excluded.push({
+      source: FOCUS_SOURCE,
+      provider,
+      reason: "cloud sync active for this provider (set [cost] authoritative to choose)",
+    });
+  }
+  if (setAsideVantage) {
+    excluded.push({
+      source: VANTAGE_SOURCE,
+      provider,
+      reason: "raw cost lines exist for this provider (set [cost] authoritative to choose)",
+    });
+  }
   return {
-    keep: (s) => s !== VANTAGE_SOURCE,
-    excluded: [
-      {
-        source: VANTAGE_SOURCE,
-        provider,
-        reason: "raw cost lines exist for this provider (set [cost] authoritative to choose)",
-      },
-    ],
+    keep: (s) =>
+      !(setAsideVantage && s === VANTAGE_SOURCE) && !(setAsideFocus && s === FOCUS_SOURCE),
+    excluded,
   };
 }
 
