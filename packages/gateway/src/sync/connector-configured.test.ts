@@ -252,7 +252,7 @@ describe("isConnectorConfigured", () => {
       .filter(([, keys]) => keys.length === 0)
       .map(([serviceId]) => serviceId);
 
-    // Sanity: exactly the services Fix 1 closes (github_billing since Phase 7 slice 5, gitlab_billing since slice 8) — if this drifts, the manifest
+    // Sanity: exactly the services Fix 1 closes (github_billing since Phase 7 slice 5, gitlab_billing since slice 8, bitbucket_billing since slice 9) — if this drifts, the manifest
     // changed and this test's premise needs re-checking, not silent adaptation.
     expect(emptyManifestServiceIds.sort()).toEqual(
       [
@@ -266,6 +266,7 @@ describe("isConnectorConfigured", () => {
         "github_actions",
         "github_billing",
         "gitlab_billing",
+        "bitbucket_billing",
         "bigquery",
         "athena",
         "cloudwatch",

@@ -18,6 +18,7 @@ export const COST_SYNC_CURSOR_PREFIXES = Object.freeze({
   openai_billing: "nimbus-oai1:",
   anthropic_billing: "nimbus-ant1:",
   gitlab_billing: "nimbus-glb1:",
+  bitbucket_billing: "nimbus-bbb1:",
 } as const);
 export type CostSyncServiceId = keyof typeof COST_SYNC_CURSOR_PREFIXES;
 

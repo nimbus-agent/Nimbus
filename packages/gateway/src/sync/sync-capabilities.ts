@@ -57,8 +57,7 @@ import {
  *
  * Four connectors legitimately authenticate with a SHARED credential family: BigQuery, Cloud
  * Logging and Vertex AI all use one `gcp.*` service account, and GitHub Actions uses the same
- * `github.pat` as the GitHub connector. `isConnectorConfigured`'s DERIVED_CONFIGURED_CHECKS already
- * encodes the same relationships for I29's egress gating.
+ * `github.pat` as the GitHub connector. `isConnectorConfigured`'s DERIVED_CONFIGURED_CHECKS already encodes the same relationships for I29's egress gating.
  *
  * Scoping `getSecret` to the calling service alone would have broken all four. Granting them a
  * blanket vault handle would have un-done the narrowing. This is the third option: a named,
@@ -71,6 +70,7 @@ export const SHARED_CREDENTIAL_GRANTS = {
   github_actions: ["github"],
   github_billing: ["github"],
   gitlab_billing: ["gitlab"],
+  bitbucket_billing: ["bitbucket"],
   athena: ["aws"],
   cloudwatch: ["aws"],
   sagemaker: ["aws"],
