@@ -119,6 +119,16 @@ const WHY = {
         },
       ],
       deploysTruncated: 1,
+      flags: [
+        {
+          service: "launchdarkly",
+          key: "new-checkout",
+          name: "New checkout",
+          changedAtMs: SPIKE_MS,
+          environments: ["production", "test"],
+        },
+      ],
+      flagsTruncated: 2,
       owners: [{ label: "Dana Diaz", share: 0.6, resolved: true }],
       gaps: [],
     },
@@ -127,6 +137,8 @@ const WHY = {
       configured: false,
       deploys: [],
       deploysTruncated: 0,
+      flags: [],
+      flagsTruncated: 0,
       owners: [],
       gaps: ["service orders-service is not configured ([ci.service.orders-service])"],
     },
@@ -202,6 +214,10 @@ describe("runCostWhyWith", () => {
     expect(o).toContain("failure  abc");
     expect(o).toContain("... and 1 more deploy");
     expect(o).toContain("Owners (from git blame, who wrote it): Dana Diaz 60%");
+    expect(o).toContain(
+      `  Flags changed: new-checkout (production,test) at ${new Date(SPIKE_MS).toISOString()}\n`,
+    );
+    expect(o).toContain("    ... and 2 more flags\n");
     expect(o).toContain(
       "Gap: service orders-service is not configured ([ci.service.orders-service])",
     );
@@ -284,6 +300,8 @@ describe("runCostWhyWith: a fall, bare pull requests and the footer notes", () =
           },
         ],
         deploysTruncated: 3,
+        flags: [],
+        flagsTruncated: 0,
         owners: [],
         gaps: [],
       },
@@ -292,6 +310,8 @@ describe("runCostWhyWith: a fall, bare pull requests and the footer notes", () =
         configured: true,
         deploys: [],
         deploysTruncated: 0,
+        flags: [],
+        flagsTruncated: 0,
         owners: [],
         gaps: [],
       },
@@ -330,6 +350,23 @@ describe("runCostWhyWith: a fall, bare pull requests and the footer notes", () =
       "Note: vantage lines for aws are not counted: raw lines are counted instead\n",
     );
     expect(o).toContain("Note: one import is still running\n");
+  });
+
+  test("a context from an older gateway, with no flags fields, still renders", async () => {
+    const { s: out, sink: k } = sink();
+    const old = structuredClone(FALL) as unknown as { context: Record<string, unknown>[] };
+    for (const c of old.context) {
+      delete c["flags"];
+      delete c["flagsTruncated"];
+    }
+    expect(
+      await runCostWhyWith(
+        fake(old as unknown as typeof FALL),
+        { target: "payment-service", period: "14d", json: false },
+        k,
+      ),
+    ).toBe(0);
+    expect(out.out).not.toContain("Flags changed");
   });
 
   test("a non-Error rejection is still reported and exits 1", async () => {

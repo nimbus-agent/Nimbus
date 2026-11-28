@@ -8,12 +8,21 @@
 // Nothing is guessed from names: a deploy is listed only for a configured service, by its `nimbus_service_id`.
 import type { Database } from "bun:sqlite";
 
-import { distinctPrServiceColumns, type ServiceConfig } from "../../metrics/dora-config.ts";
+import {
+  distinctPrServiceColumns,
+  type FeatureFlagBinding,
+  type ServiceConfig,
+} from "../../metrics/dora-config.ts";
 import { findServiceEntity, ownersOf } from "../../ownership/ownership-store.ts";
+import { codeUnitCompare } from "../../util/code-unit-compare.ts";
 
 const DAY_MS = 86_400_000;
 export const COST_WHY_MAX_DEPLOYS = 10;
 export const COST_WHY_MAX_OWNERS = 3;
+export const COST_WHY_MAX_FLAGS = 10;
+export const COST_WHY_FLAG_LATEST_ONLY = "only the latest change of each flag is known";
+export const COST_WHY_FLAG_NO_ENV_TIMES =
+  "per-environment flag change times are not recorded; the environments listed are those the flag has";
 
 export interface CostChangePr {
   readonly repo: string | null;
@@ -37,11 +46,23 @@ export interface CostChangeDeploy {
   readonly pr: CostChangePr | null;
 }
 
+export interface CostChangeFlag {
+  readonly service: string;
+  readonly key: string;
+  readonly name: string;
+  /** The flag item's own `metadata.updated_at` (the source's last change). */
+  readonly changedAtMs: number;
+  /** `metadata.environments`: the environments the flag has, NOT those that changed (no per-environment time is kept). */
+  readonly environments: readonly string[];
+}
+
 export interface CostChangeContext {
   readonly serviceId: string;
   readonly configured: boolean;
   readonly deploys: CostChangeDeploy[];
   readonly deploysTruncated: number;
+  readonly flags: CostChangeFlag[];
+  readonly flagsTruncated: number;
   readonly owners: { readonly label: string; readonly share: number; readonly resolved: boolean }[];
   readonly gaps: string[];
 }
@@ -56,6 +77,7 @@ export interface CostChangeContextInput {
   /** UTC midnight of the spike day, or null when there is none. */
   readonly spikeDayMs: number | null;
   readonly maxDeploys?: number;
+  readonly maxFlags?: number;
 }
 
 type DeployRow = {
@@ -147,6 +169,80 @@ function selectDeploys(db: Database, serviceId: string, fromMs: number, toMs: nu
 
 const deployMsOf = (r: DeployRow): number => r.finished_at_ms ?? r.started_at_ms;
 
+type FlagRow = { external_id: string; title: string; metadata: string; updated_at: number };
+
+/** LaunchDarkly flag items matching a binding whose own last change is in the window; newest first. */
+function selectFlags(
+  db: Database,
+  bindings: readonly FeatureFlagBinding[],
+  fromMs: number,
+  toMs: number,
+): FlagRow[] {
+  const ld = bindings.filter((b) => b.service === "launchdarkly");
+  if (ld.length === 0) return [];
+  const clauses: string[] = [];
+  const params: (string | number)[] = [];
+  for (const b of ld) {
+    if (b.flag === null) {
+      const prefix = `${b.project}:`;
+      clauses.push("substr(i.external_id, 1, ?) = ?");
+      params.push(prefix.length, prefix);
+    } else {
+      clauses.push("i.external_id = ?");
+      params.push(`${b.project}:${b.flag}`);
+    }
+  }
+  // lane-census: scope=feature_flag service=launchdarkly
+  return db
+    .query(
+      `SELECT i.external_id AS external_id, i.title AS title, i.metadata AS metadata,
+              json_extract(i.metadata, '$.updated_at') AS updated_at
+         FROM item i
+        WHERE i.service = 'launchdarkly' AND i.type = 'feature_flag'
+          AND json_valid(i.metadata)
+          AND json_type(i.metadata, '$.updated_at') IN ('integer', 'real')
+          AND json_extract(i.metadata, '$.updated_at') >= ?
+          AND json_extract(i.metadata, '$.updated_at') < ?
+          AND (${clauses.join(" OR ")})
+        ORDER BY updated_at DESC, i.external_id ASC`,
+    )
+    .all(fromMs, toMs, ...params) as FlagRow[];
+}
+
+function flagContext(
+  db: Database,
+  cfg: ServiceConfig,
+  input: CostChangeContextInput,
+): { flags: CostChangeFlag[]; flagsTruncated: number; gaps: string[] } {
+  if (cfg.featureFlags.length === 0) return { flags: [], flagsTruncated: 0, gaps: [] };
+  const rows = selectFlags(db, cfg.featureFlags, input.fromMs, input.toMs);
+  const max = input.maxFlags ?? COST_WHY_MAX_FLAGS;
+  const flags = rows.slice(0, max).map((r) => {
+    const meta = metaRecord(r.metadata);
+    // lane-census: scope=feature_flag service=launchdarkly
+    const envs = Array.isArray(meta["environments"])
+      ? meta["environments"].filter((e): e is string => typeof e === "string")
+      : [];
+    // lane-census: scope=feature_flag service=launchdarkly
+    return {
+      service: "launchdarkly",
+      key: str(meta["key"]) ?? r.external_id.slice(r.external_id.indexOf(":") + 1),
+      name: r.title,
+      changedAtMs: r.updated_at,
+      environments: envs,
+    };
+  });
+  const gaps = [
+    ...new Set(cfg.featureFlags.filter((b) => b.service !== "launchdarkly").map((b) => b.service)),
+  ]
+    .sort(codeUnitCompare)
+    .map((s) => `flag changes are recorded for LaunchDarkly only; ${s} bindings show no changes`);
+  if (cfg.featureFlags.some((b) => b.service === "launchdarkly"))
+    gaps.push(COST_WHY_FLAG_LATEST_ONLY);
+  if (flags.length > 0) gaps.push(COST_WHY_FLAG_NO_ENV_TIMES);
+  return { flags, flagsTruncated: Math.max(0, rows.length - max), gaps };
+}
+
 function isNearSpike(ms: number, spikeDayMs: number | null): boolean {
   return spikeDayMs !== null && ms >= spikeDayMs - DAY_MS && ms < spikeDayMs + 2 * DAY_MS;
 }
@@ -163,6 +259,8 @@ function contextFor(
       configured: false,
       deploys: [],
       deploysTruncated: 0,
+      flags: [],
+      flagsTruncated: 0,
       owners: [],
       gaps: [`service ${serviceId} is not configured ([ci.service.${serviceId}])`],
     };
@@ -193,6 +291,8 @@ function contextFor(
     nearSpike: near,
     pr: selectPr(db, r.sha, prServices),
   }));
+  const flagPart = flagContext(db, cfg, input);
+  gaps.push(...flagPart.gaps);
   const entity = findServiceEntity(db, serviceId);
   if (entity === null)
     gaps.push(
@@ -209,6 +309,8 @@ function contextFor(
     configured: true,
     deploys,
     deploysTruncated: Math.max(0, rows.length - max),
+    flags: flagPart.flags,
+    flagsTruncated: flagPart.flagsTruncated,
     owners,
     gaps,
   };
