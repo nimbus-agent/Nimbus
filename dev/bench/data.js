@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795853937373,
+  "lastUpdate": 1795861015740,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "19327c5298a86c28d35363ee637a0263d7036f17",
-          "message": "fix(deps): override past new brace-expansion and fast-uri advisories (#1586)\n\n## Why\n\n`Dependency audit` (required) went red repo-wide again, a day after\n#1577, on newly published advisories. It's blocking every open PR\n(#1583/#1584/#1585 included):\n\n| Package | Advisory | Severity | Affected | Pinned before | Now |\n| --- | --- | --- | --- | --- | --- |\n| brace-expansion | GHSA-qhr7-859c-m2p7 | high | 4.x below 5.0.11 |\n5.0.9 | 5.0.12 |\n| brace-expansion | GHSA-6j4f-fj2g-mc7p | high | 4.x below 5.0.10 |\n5.0.9 | 5.0.12 |\n| fast-uri | GHSA-hrr3-gc8f-f4qj | moderate | 3.x below 3.1.8 | 3.1.7 |\n3.1.8 |\n\nBoth are root `overrides` pins, so the fix is moving the pin (step 1 of\n`accepted-advisories.ts`'s order of preference). Both are same-major\npatch bumps; the `brace-expansion` override already forces 5.x over\n`minimatch@9`'s `^2` range, and that is unchanged.\n\nThis is exactly the failure the `main-health-alert` job in #1584 exists\nto surface: on `main`, it opens an issue the first nightly this happens.\n\n## Verification\n\n`bun audit`: no vulnerabilities; `audit:advisories` OK (0 live);\n`audit:js-licenses` OK; `audit:override-drift` OK; `preflight:fast`\nPASSED.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Chores**\n* Applied routine maintenance updates. No changes to app behavior or\npublic interfaces are included in this release.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5.5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-30T07:49:19Z",
-          "tree_id": "f9b9a9853e85f5886bc767863afb8d7f9553e466",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/19327c5298a86c28d35363ee637a0263d7036f17"
-        },
-        "date": 1790755173450,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 309.8551724000023,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 309.5584471499882,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 207.46808760000022,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "667ce1b07f0bc8b87fb849842f1a99ea82c2f795",
+          "message": "fix(gateway): pin @nimbus-dev/connectors 0.23.2 (guarded requests, every mail recipient scoped) (#2202)\n\nBumps the connectors pin from 0.23.0 to\n[0.23.2](https://github.com/nimbus-agent/nimbus-mcp-servers/releases/tag/connectors-v0.23.2).\nThat's 0.23.1 plus the Jenkins 307/308 fix that review found on this PR\n(nimbus-agent/nimbus-mcp-servers#132).\n\n## What 0.23.1 and 0.23.2 change for the gateway\n\n**No tool is added, removed or redefined.** Every new input check is a\nzod `.refine()`, which `z.toJSONSchema` doesn't emit, so the listed\nschemas are byte-identical and no approval is suspended. The write\nmanifest regenerates unchanged (144 writes).\n\nWhat a gateway-started connector does differently:\n- **Guarded requests.** confluence, notion, jenkins, slack, discord,\noutlook, teams (bot token and activity included), grafana, and jira's\nfetch helper now use the shared guarded fetch:\n  - a read follows only a same-origin redirect, and every hop times out;\n- a write's 3xx is refused, except a same-origin 301, 302 or 303 from\nJenkins, which is how it confirms a write and is read as done;\n- a Jenkins 307 or 308, which asks for the POST to be sent again, is\nrefused.\n\n  `gha_run_log` gains a timeout.\n- **Model-chosen values.** These are now refused before any request,\nwhere before they could leave their URL path or widen a query:\n  - sentry and circleci project slugs;\n  - the GitHub Actions workflow id;\n  - the PagerDuty incident id on `pd_incident_get`;\n  - the Jira project key on `jira_epic_list`.\n- **Base URLs.** A base URL with `user:pass@` is refused at startup.\n- **Unchanged in gateway mode:** the mail recipient scope and the new\n`recoverable: false` pre-states on `jira_issue_update` and\n`aws_lambda_invoke`. Both apply to the standalone consent kit only, and\nthe gateway's own reversibility table is untouched.\n\n## Gates (at 0.23.2)\n\n- `gen:connector-write-manifest`: no change. `gen:connector-registry`\nisn't needed, since only `version` changed in the package manifest.\n- `bun run preflight:fast`: passed.\n- `audit:connector-hosts`: OK, 100 connectors.\n- `report:connector-version-skew`: ok, pinned 0.23.2, latest 0.23.2.\n- `bun test src/connectors` (packages/gateway): 10034 pass, 4 fail. The\n4 are in `mesh-user-mcp-write-grant.test.ts`, which refuses a path with\na `.claude` segment. They fail the same way on unmodified `origin/main`\nin a `.claude/worktrees/` checkout, as on #2199, so they come from the\npath, not this change.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Chores**\n  * Updated an internal package dependency to a newer patch version.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-28T10:05:42Z",
+          "tree_id": "8a90b747c08f0432ed7c2ffb05460cba7dfc529e",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/667ce1b07f0bc8b87fb849842f1a99ea82c2f795"
+        },
+        "date": 1795861010234,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 261.0438228500003,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 261.4413776499896,
             "unit": "ms"
           }
         ]
