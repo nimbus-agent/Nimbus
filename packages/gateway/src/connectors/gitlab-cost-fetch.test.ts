@@ -145,6 +145,11 @@ describe("gitlabMonthUsage", () => {
       body: { data: { ciMinutesProjectMonthlyUsage: { nodes: 1 } } },
     }));
     expect(await gitlabMonthUsage(bad.c, "acme", "g", "2026-11")).toEqual({ kind: "retry" });
+    const noFlag = conn(() => ({
+      status: 200,
+      body: { data: { ciMinutesProjectMonthlyUsage: { nodes: [{ a: 1 }], pageInfo: {} } } },
+    }));
+    expect(await gitlabMonthUsage(noFlag.c, "acme", "g", "2026-11")).toEqual({ kind: "retry" });
     const noCursor = conn(() => usagePage([], null, true));
     expect(await gitlabMonthUsage(noCursor.c, "acme", "g", "2026-11")).toEqual({ kind: "retry" });
     const failing = conn(() => ({ status: 403 }));

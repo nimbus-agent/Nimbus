@@ -171,7 +171,10 @@ export async function gitlabMonthUsage(
     nodes.push(...(conn["nodes"] as unknown[]));
     const info = conn["pageInfo"];
     const next = info["endCursor"];
-    if (info["hasNextPage"] !== true) return { kind: "nodes", nodes };
+    const more = info["hasNextPage"];
+    // An unreadable flag is not "no more pages": the unread pages would be dropped from the month.
+    if (typeof more !== "boolean") return { kind: "retry" };
+    if (!more) return { kind: "nodes", nodes };
     if (typeof next !== "string") return { kind: "retry" };
     after = next;
   }

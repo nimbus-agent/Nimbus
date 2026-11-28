@@ -55,9 +55,18 @@ export function unpricedBySource(
 
 const QUANTITY = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
 
-/** `1,240.5 minute unpriced (set a rate: [cost.gitlab] rate_per_minute)`, one source's units joined. */
-export function unpricedText(source: string, units: readonly CostUnpriced[]): string {
-  const amounts = units.map((u) => `${QUANTITY.format(u.quantity)} ${u.unit}`).join(", ");
+/**
+ * `1,240.5 minute unpriced (set a rate: [cost.gitlab] rate_per_minute)`, one source's units joined. `escapeText` is applied
+ * to each unit and to the hint alone (a report escapes per value, and its length cap must never cut this text short).
+ */
+export function unpricedText(
+  source: string,
+  units: readonly CostUnpriced[],
+  escapeText: (s: string) => string = (s) => s,
+): string {
+  const amounts = units
+    .map((u) => `${QUANTITY.format(u.quantity)} ${escapeText(u.unit)}`)
+    .join(", ");
   const hint = rateHintOf(source);
-  return `${amounts} unpriced${hint === undefined ? "" : ` (set a rate: ${hint})`}`;
+  return `${amounts} unpriced${hint === undefined ? "" : ` (set a rate: ${escapeText(hint)})`}`;
 }

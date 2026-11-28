@@ -155,3 +155,16 @@ function baseModel(): CostReportModel {
     command: "nimbus cost report r",
   };
 }
+
+describe("unpricedText in a report", () => {
+  test("each unit is escaped on its own, so a long list is never cut short", () => {
+    const units = [
+      "compute-minute-linux-shared",
+      "compute-minute-linux-dedicated",
+      "compute-minute-windows-shared",
+      "compute-minute-macos-dedicated",
+    ].map((unit) => ({ unit, quantity: 1, lines: 1 }));
+    const text = unpricedText("gitlab_billing", units, (s) => s.slice(0, 128));
+    expect(text).toContain("compute-minute-macos-dedicated unpriced (set a rate:");
+  });
+});

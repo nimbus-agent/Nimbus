@@ -130,7 +130,9 @@ function freshnessText(m: CostReportModel, t: CostRenderTarget): string {
   const lines = m.freshness.map((f) => {
     const prov = f.provisionalFrom === null ? "" : ` (provisional from ${f.provisionalFrom})`;
     const unpriced =
-      f.unpriced === undefined ? "" : `; ${escapeValue(unpricedText(f.source, f.unpriced), t)}`;
+      f.unpriced === undefined
+        ? ""
+        : `; ${unpricedText(f.source, f.unpriced, (s) => escapeValue(s, t))}`;
     return `${escapeValue(f.source, t)}: data up to ${f.lastDay ?? "none"}${prov}${unpriced}`;
   });
   return lines.join(t.format === "html" ? "<br>" : "\n");

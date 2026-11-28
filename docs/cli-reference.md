@@ -1369,7 +1369,15 @@ List the GitLab groups whose CI minutes you want as cost lines, and the price of
 groups = ["acme", "other-group/platform"]   # 0 to 50 full group paths; none inside another listed group
 rate_per_minute = 0.008                     # your price of one minute; unset: the minutes are kept unpriced
 currency = "USD"                            # ISO 4217, default USD
-runner_rates = { "big-linux-runner" = 0.02 } # self-managed only: a price per runner description
+```
+
+On a self-managed instance (a `gitlab.api_base` other than gitlab.com) you can also price each runner; GitLab.com refuses this key:
+
+```toml
+[cost.gitlab]
+groups = ["platform"]
+rate_per_minute = 0.008
+runner_rates = { "big-linux-runner" = 0.02 } # a price per runner description; others use rate_per_minute
 ```
 
 The gateway syncs once a day as source `gitlab_billing`, provider `gitlab`, with the `gitlab.pat` (and `gitlab.api_base`) you stored for the GitLab connector, for the current month, plus the previous month until the 5th and on a group's first sync. **No GitLab API returns money**, so every line carries its minutes (`consumed_quantity`, unit `minute`) and is priced at your rate. With no rate the lines are kept unpriced at 0, and every cost view says so under the source: `Unpriced: 1,240 minute (set a rate: [cost.gitlab] rate_per_minute)`. When you set or change a rate or the currency, the next sync prices the stored lines again from their minutes, with no API call. Each group is its own billing account; each project is a sub-account (on GitLab.com its stable project id, so a renamed project keeps its history, with its path as the sub-account name) and its path is the `repo`, so a `[[cost.rule]]` on `repo` or `provider = "gitlab"` puts the minutes under a product.
