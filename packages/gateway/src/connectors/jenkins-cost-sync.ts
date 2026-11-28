@@ -90,6 +90,7 @@ type HostData =
 type RunState = {
   readonly c: JenkinsConn;
   readonly rates: CostRates;
+  readonly cloudAgents: ReadonlyMap<string, string>;
   readonly today: string;
   readonly earliestMonth: (host: string) => string;
   readonly data: Map<string, HostData>;
@@ -180,7 +181,7 @@ async function hostMonth(s: RunState, host: string, month: string): Promise<Cost
     .filter((g): g is string => g !== null)
     .join("; ")
     .slice(0, 600);
-  const mapped = jenkinsBuildLines(host, month, complete, s.rates, s.today);
+  const mapped = jenkinsBuildLines(host, month, complete, s.rates, s.today, s.cloudAgents);
   const read = new Set(complete.map((r) => r.fullName));
   const kept = stored.filter((l) => !read.has(String(l.subAccountId)));
   if (mapped.lines.length === 0 && stored.length > kept.length) {
@@ -321,6 +322,7 @@ export function createJenkinsCostSyncable(options: JenkinsCostSyncableOptions): 
           ...(options.maxBuildPages === undefined ? {} : { maxBuildPages: options.maxBuildPages }),
         },
         rates,
+        cloudAgents: new Map(cfg.agentCost.map((e) => [e.agent, e.resource])),
         today: new Date(nowMs).toISOString().slice(0, 10),
         earliestMonth: (host) => {
           const months = costMonthsToFetch(

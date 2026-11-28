@@ -127,6 +127,7 @@ const cfg = (over: Partial<NimbusCostJenkinsConfig> = {}): NimbusCostJenkinsConf
   ratePerMinute: null,
   currency: "USD",
   agentRates: [],
+  agentCost: [],
   ...over,
 });
 

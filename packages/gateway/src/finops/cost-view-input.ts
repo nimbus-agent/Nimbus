@@ -7,8 +7,9 @@
 // lines are used for it. Otherwise, when raw lines (a FOCUS import or a direct source) exist for a provider in the
 // range, its Vantage rows are excluded. Every exclusion is listed, so the output says which source it set aside.
 import type { Database } from "bun:sqlite";
-
+import type { JenkinsAgentCost } from "../config/cost-jenkins-toml.ts";
 import { codeUnitCompare } from "../util/code-unit-compare.ts";
+import { splitAgentMachineCost } from "./cost-agent-split.ts";
 import { adaptCostAllocationItems, VANTAGE_SOURCE } from "./cost-allocation-adapter.ts";
 import type { CostLine } from "./cost-line.ts";
 import { readCostLineCurrencies, readCostLineFreshness, readCostLines } from "./cost-line-store.ts";
@@ -21,6 +22,8 @@ export interface CostViewConfig {
   readonly rules: readonly CostRule[];
   readonly authoritative: Readonly<Record<string, string>>;
   readonly error: string | null;
+  /** Slice 15: `[cost.jenkins] agent_cost`; absent = no agent is priced from a cloud machine. */
+  readonly jenkins?: { readonly agentCost: readonly JenkinsAgentCost[] };
 }
 
 type Excluded = CostViewResult["excludedSources"][number];
@@ -131,16 +134,25 @@ export function gatherCostViewInput(
     cfg.error === null ? cfg.authoritative[p] : undefined,
   );
   excluded.push(...focus.excluded);
-  const lines = all.filter((l) => !focus.drop(l) && (keep.get(l.provider)?.(l.source) ?? true));
+  const kept = all.filter((l) => !focus.drop(l) && (keep.get(l.provider)?.(l.source) ?? true));
+  // Slice 15: the money of a mapped Jenkins agent is on its cloud machine's line; split it over the builds here, so
+  // every view (products, internal, why, rules check, report) shares one split.
+  const split = splitAgentMachineCost(
+    kept,
+    cfg.error === null ? (cfg.jenkins?.agentCost ?? []) : [],
+  );
+  const lines = split.lines;
   const lastDays = readCostLineFreshness(db);
   if (adapted.lastDay !== null) lastDays.push({ source: VANTAGE_SOURCE, lastDay: adapted.lastDay });
   const currencies = new Set([...readCostLineCurrencies(db), ...adapted.currencies]);
-  const notes =
-    adapted.supersededDays > 0
+  const notes = [
+    ...(adapted.supersededDays > 0
       ? [
           `${String(adapted.supersededDays)} days had Vantage rows from more than one report configuration; only the newest synced one was used`,
         ]
-      : [];
+      : []),
+    ...split.notes,
+  ];
   return {
     lines,
     rules: cfg.rules,

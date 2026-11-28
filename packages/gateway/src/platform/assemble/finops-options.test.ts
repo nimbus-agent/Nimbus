@@ -70,6 +70,7 @@ describe("finopsSyncOptions", () => {
       ratePerMinute: 0.008,
       currency: "USD",
       agentRates: [["big", 0.02]],
+      agentCost: [],
     });
     expect(o.bitbucket()).toMatchObject({ workspaces: ["acme"] });
     expect(o.gcp()).toMatchObject({ exportTables: [] });

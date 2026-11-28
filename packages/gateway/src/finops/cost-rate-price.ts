@@ -13,7 +13,9 @@ import { createHash } from "node:crypto";
 
 export const COST_RATE_KEY_TAG = "rate_key";
 export const COST_RATE_KEY_DEFAULT = "default";
-export type CostRateKeyPrefix = "runner" | "size" | "agent" | "label";
+export type CostRateKeyPrefix = "runner" | "size" | "agent" | "label" | "cloud";
+/** A `cloud:<agent>` line is priced by its cloud machine's own cost line, never by a rate (slice 15). */
+export const COST_RATE_KEY_CLOUD_PREFIX = "cloud:";
 
 export interface CostRates {
   /** Null: no default rate. */
@@ -33,6 +35,7 @@ export function rateKeyFor(prefix: CostRateKeyPrefix, value: string | null): str
 
 /** The rate per minute a rate key prices at now: its own listed rate, else the default, else null (unpriced). */
 export function rateForKey(rates: CostRates, key: string): number | null {
+  if (key.startsWith(COST_RATE_KEY_CLOUD_PREFIX)) return null;
   const hit = rates.keyedRates.find(([k]) => k === key);
   return hit === undefined ? rates.ratePerMinute : hit[1];
 }
