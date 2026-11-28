@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795853456247,
+  "lastUpdate": 1795853937373,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "b8cadb5c8641bb27c0df11a5b7d02d5cca2f63c8",
-          "message": "chore: release main (#1578)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.32.1</summary>\n\n##\n[7.32.1](https://github.com/nimbus-agent/Nimbus/compare/v7.32.0...v7.32.1)\n(2026-09-30)\n\n\n### Bug Fixes\n\n* **deps:** override past five new moderate advisories (ip-address,\nnodemailer, undici, markdown-it)\n([#1577](https://github.com/nimbus-agent/Nimbus/issues/1577))\n([beec826](https://github.com/nimbus-agent/Nimbus/commit/beec82653ff9b0be85c073112b35b58a01754436))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-09-30T09:44:03+03:00",
-          "tree_id": "b0bd142b475c09800dd56373f79cbf05ad383acd",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/b8cadb5c8641bb27c0df11a5b7d02d5cca2f63c8"
-        },
-        "date": 1790751451081,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 339.0945685500046,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 342.79131339999765,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 187.45220745000043,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ebb0f45d835edeb57113d531b2e51e3adbc34478",
+          "message": "chore: release main (#2201)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>11.22.0</summary>\n\n##\n[11.22.0](https://github.com/nimbus-agent/Nimbus/compare/v11.21.0...v11.22.0)\n(2026-11-28)\n\n\n### Features\n\n* GitLab compute minutes as cost lines, priced at your rate (Phase 7,\nslice 8) ([#2198](https://github.com/nimbus-agent/Nimbus/issues/2198))\n([ec88997](https://github.com/nimbus-agent/Nimbus/commit/ec889970e9b1b6996a484286fc6656a0e820d885))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-28T08:10:22Z",
+          "tree_id": "f27d0f8febd11872b8437d6020db6471278e5457",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/ebb0f45d835edeb57113d531b2e51e3adbc34478"
+        },
+        "date": 1795853932108,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 211.1574461500004,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 207.46808760000022,
             "unit": "ms"
           }
         ]
