@@ -88,6 +88,7 @@ function unregisterConnectorFromSyncScheduler(
   if (id === "bitbucket") syncScheduler.unregister("bitbucket_billing");
   if (id === "aws") syncScheduler.unregister("aws_billing");
   if (id === "azure") syncScheduler.unregister("azure_billing");
+  if (id === "gcp") syncScheduler.unregister("gcp_billing");
   syncScheduler.unregister(id);
 }
 
@@ -106,6 +107,8 @@ function removeConnectorIndexEntries(localIndex: LocalIndex, id: string): number
   if (id === "aws") itemsDeleted += localIndex.removeConnectorIndexData("aws_billing");
   // Phase 7 slice 12a: the Azure cost lines go with the Azure connector.
   if (id === "azure") itemsDeleted += localIndex.removeConnectorIndexData("azure_billing");
+  // Phase 7 slice 13: the GCP cost lines go with the GCP connector.
+  if (id === "gcp") itemsDeleted += localIndex.removeConnectorIndexData("gcp_billing");
   itemsDeleted += localIndex.removeConnectorIndexData(id);
   return itemsDeleted;
 }

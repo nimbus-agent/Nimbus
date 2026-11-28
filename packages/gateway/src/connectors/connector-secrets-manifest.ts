@@ -27,6 +27,8 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   aws_billing: [],
   // Phase 7 slice 12a: the Azure cost sync reads the shared `azure.*` service principal through its grant.
   azure_billing: [],
+  // Phase 7 slice 13: the GCP cost sync reads the shared `gcp.*` credentials through its grant.
+  gcp_billing: [],
   // API token pair first; `username` + `app_password` are the deprecated fallback (Atlassian removed app passwords 2026-07-28).
   bitbucket: [
     "bitbucket.email",

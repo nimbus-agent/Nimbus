@@ -7,7 +7,7 @@ import {
   DEFAULT_COST_BITBUCKET_CONFIG,
   type NimbusCostBitbucketConfig,
 } from "../config/cost-bitbucket-toml.ts";
-
+import { DEFAULT_COST_GCP_CONFIG, type NimbusCostGcpConfig } from "../config/cost-gcp-toml.ts";
 import {
   DEFAULT_COST_GITLAB_CONFIG,
   type NimbusCostGitlabConfig,
@@ -17,6 +17,7 @@ import { createAnthropicCostSyncable } from "./anthropic-cost-sync.ts";
 import { createAwsBillingCostSyncable } from "./aws-billing-cost-sync.ts";
 import { createAzureBillingCostSyncable } from "./azure-billing-cost-sync.ts";
 import { createBitbucketCostSyncable } from "./bitbucket-cost-sync.ts";
+import { createGcpBillingCostSyncable } from "./gcp-billing-cost-sync.ts";
 import { createGithubBillingCostSyncable } from "./github-billing-cost-sync.ts";
 import { createGitlabCostSyncable } from "./gitlab-cost-sync.ts";
 import { createK8sCostSyncable } from "./k8s-cost-sync.ts";
@@ -37,6 +38,8 @@ export type FinopsSyncOptions = {
   readonly aws?: () => NimbusCostAwsConfig | null;
   /** `[cost.azure]` (slice 12a); absent or no export means no Azure cost sync. */
   readonly azure?: () => NimbusCostAzureConfig | null;
+  /** `[cost.gcp]` (slice 13); absent or no export_table means no GCP cost sync. */
+  readonly gcp?: () => NimbusCostGcpConfig | null;
 };
 
 /**
@@ -71,5 +74,8 @@ export function registerFinopsSyncables(
   );
   scheduler.register(
     createAzureBillingCostSyncable({ azure: finops?.azure ?? (() => DEFAULT_COST_AZURE_CONFIG) }),
+  );
+  scheduler.register(
+    createGcpBillingCostSyncable({ gcp: finops?.gcp ?? (() => DEFAULT_COST_GCP_CONFIG) }),
   );
 }

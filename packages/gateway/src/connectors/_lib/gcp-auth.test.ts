@@ -263,7 +263,7 @@ function isExemptSpawnSite(relFile: string, line: string): boolean {
  * wraps.
  *
  * The two sizes below are derived from the four real call sites, not picked arbitrarily:
- *  - `bigquery-sync.ts` / `gcp-sync.ts` call `gcloudAuthEnv(` on the line immediately AFTER
+ *  - `_lib/gcp-auth.ts` (the moved `gcloudPrintAccessToken`) / `gcp-sync.ts` call `gcloudAuthEnv(` on the line immediately AFTER
  *    the literal (+1).
  *  - `cloud-logging-sync.ts` opens `runGcloudCommand(` on the line immediately BEFORE the literal
  *    (-1) — the argv array is itself the first argument to the call.
@@ -367,7 +367,7 @@ describe("gcloud spawn totality — a future gcloud spawn site cannot skip the c
     // skipped it before `sawArgvSite = true` would make this list four again while the site stayed
     // silently uncredentialable-and-unchecked, which is exactly the shape the review round caught.
     expect(spawnSites.sort()).toEqual([
-      "bigquery-sync.ts",
+      "_lib/gcp-auth.ts",
       "cloud-logging-sync.ts",
       "gcp-sync.ts",
       "local-auth/detect-gcloud.ts",

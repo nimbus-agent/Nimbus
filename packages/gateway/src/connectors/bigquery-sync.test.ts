@@ -4,8 +4,8 @@ import { MockSpawn } from "../../test/helpers/mock-spawn.ts";
 import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
 import type { SyncContext } from "../sync/types.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
-import type { GcpAuth } from "./_lib/gcp-auth.ts";
-import { createBigquerySyncable, gcloudPrintAccessToken } from "./bigquery-sync.ts";
+import { type GcpAuth, gcloudPrintAccessToken } from "./_lib/gcp-auth.ts";
+import { createBigquerySyncable } from "./bigquery-sync.ts";
 import {
   createMemoryIndexDb,
   createStubVault,

@@ -21,6 +21,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "gitlab_billing",
   "aws_billing",
   "azure_billing",
+  "gcp_billing",
   "gitlab",
   "bitbucket",
   "bitbucket_billing",
@@ -172,6 +173,8 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   aws_billing: 24 * 60 * MIN1,
   // Phase 7 slice 12a: Azure cost from a FOCUS Cost Management export in Blob Storage, daily.
   azure_billing: 24 * 60 * MIN1,
+  // Phase 7 slice 13: GCP cost from the BigQuery billing export, daily.
+  gcp_billing: 24 * 60 * MIN1,
   gitlab: MIN1,
   bitbucket: MIN1,
   // Phase 7 slice 9: Bitbucket Pipelines minutes, daily.
@@ -294,6 +297,7 @@ const CREDENTIALS_REUSED_FROM: Partial<Record<ConnectorServiceId, ConnectorServi
   bitbucket_billing: "bitbucket",
   aws_billing: "aws",
   azure_billing: "azure",
+  gcp_billing: "gcp",
   bigquery: "gcp",
   cloud_logging: "gcp",
   vertex_ai: "gcp",
