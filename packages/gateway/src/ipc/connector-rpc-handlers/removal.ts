@@ -86,6 +86,7 @@ function unregisterConnectorFromSyncScheduler(
   }
   if (id === "gitlab") syncScheduler.unregister("gitlab_billing");
   if (id === "bitbucket") syncScheduler.unregister("bitbucket_billing");
+  if (id === "jenkins") syncScheduler.unregister("jenkins_billing");
   if (id === "aws") syncScheduler.unregister("aws_billing");
   if (id === "azure") syncScheduler.unregister("azure_billing");
   if (id === "gcp") syncScheduler.unregister("gcp_billing");
@@ -103,6 +104,8 @@ function removeConnectorIndexEntries(localIndex: LocalIndex, id: string): number
   if (id === "gitlab") itemsDeleted += localIndex.removeConnectorIndexData("gitlab_billing");
   // Phase 7 slice 9: the Bitbucket Pipelines cost lines go with the Bitbucket connector.
   if (id === "bitbucket") itemsDeleted += localIndex.removeConnectorIndexData("bitbucket_billing");
+  // Phase 7 slice 10: the Jenkins build-minute cost lines go with the Jenkins connector.
+  if (id === "jenkins") itemsDeleted += localIndex.removeConnectorIndexData("jenkins_billing");
   // Phase 7 slice 11a: the AWS cost lines go with the AWS connector.
   if (id === "aws") itemsDeleted += localIndex.removeConnectorIndexData("aws_billing");
   // Phase 7 slice 12a: the Azure cost lines go with the Azure connector.
