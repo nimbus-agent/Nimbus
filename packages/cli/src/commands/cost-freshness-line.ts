@@ -6,9 +6,24 @@ export type CostFreshnessRow = {
   lastDay: string | null;
   provisionalFrom: string | null;
   gap?: string;
+  /** Usage in the range this source could not price (Phase 7 slice 8, V110), per unit. */
+  unpriced?: { unit: string; quantity: number; lines: number }[];
+  /** The config key that would price it, e.g. `[cost.gitlab] rate_per_minute`. */
+  rateHint?: string;
 };
 
 const clean = (s: string): string => stripControlChars(s).slice(0, 300);
+const QUANTITY = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
+
+/** `  Unpriced: 1,240 minute (set a rate: …)`, or nothing when the source priced everything. */
+function unpricedLine(f: CostFreshnessRow): string {
+  if (f.unpriced === undefined || f.unpriced.length === 0) return "";
+  const amounts = f.unpriced
+    .map((u) => `${QUANTITY.format(u.quantity)} ${clean(u.unit)}`)
+    .join(", ");
+  const hint = f.rateHint === undefined ? "" : ` (set a rate: ${clean(f.rateHint)})`;
+  return `  Unpriced: ${amounts}${hint}\n`;
+}
 
 /**
  * The "no cost data" refusal every view prints, followed by what a cost sync could not read, so a sync that
@@ -23,5 +38,6 @@ export function noCostDataText(freshness: readonly CostFreshnessRow[] | undefine
 export function costFreshnessLine(f: CostFreshnessRow): string {
   const prov = f.provisionalFrom === null ? "" : ` (provisional from ${clean(f.provisionalFrom)})`;
   const line = `Source ${clean(f.source)}: data up to ${f.lastDay === null ? "none" : clean(f.lastDay)}${prov}\n`;
-  return f.gap === undefined ? line : `${line}  Not synced: ${clean(f.gap)}\n`;
+  const gap = f.gap === undefined ? "" : `  Not synced: ${clean(f.gap)}\n`;
+  return `${line}${unpricedLine(f)}${gap}`;
 }

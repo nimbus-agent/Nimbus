@@ -39,3 +39,31 @@ describe("costFreshnessLine", () => {
     );
   });
 });
+
+describe("costFreshnessLine: unpriced usage (Phase 7 slice 8)", () => {
+  test("the unpriced line comes before the gap, with the rate hint, control characters stripped", () => {
+    expect(
+      costFreshnessLine({
+        source: "gitlab_billing",
+        lastDay: "2026-11-21",
+        provisionalFrom: null,
+        unpriced: [{ unit: "minute\u0007", quantity: 1240, lines: 3 }],
+        rateHint: "[cost.gitlab] rate_per_minute",
+        gap: "group acme/old not found",
+      }),
+    ).toBe(
+      "Source gitlab_billing: data up to 2026-11-21\n  Unpriced: 1,240 minute (set a rate: [cost.gitlab] rate_per_minute)\n  Not synced: group acme/old not found\n",
+    );
+  });
+
+  test("an empty unpriced list prints nothing extra", () => {
+    expect(
+      costFreshnessLine({
+        source: "x",
+        lastDay: "2026-11-21",
+        provisionalFrom: null,
+        unpriced: [],
+      }),
+    ).toBe("Source x: data up to 2026-11-21\n");
+  });
+});

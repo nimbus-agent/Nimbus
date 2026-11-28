@@ -10,6 +10,7 @@ import { codeUnitCompare } from "../util/code-unit-compare.ts";
 import { DAY_MS } from "./cost-item-contract.ts";
 import type { CostLine } from "./cost-line.ts";
 import { allocate, type CostAllocation, type CostRule } from "./cost-rules.ts";
+import { type CostUnpriced, rateHintOf, unpricedBySource } from "./cost-unpriced.ts";
 
 /** The last this-many days of a source are provisional (the provider may still restate them). */
 export const COST_PROVISIONAL_DAYS = 3;
@@ -88,6 +89,10 @@ export interface CostFreshness {
   readonly provisionalFrom: string | null;
   /** What this source's sync could not read (e.g. a GitHub org without billing access); absent when none. */
   readonly gap?: string;
+  /** Usage in the range this source could not price (V110), per unit; absent when none. */
+  readonly unpriced?: CostUnpriced[];
+  /** Where the owner sets the rate that would price `unpriced` (e.g. `[cost.gitlab] rate_per_minute`). */
+  readonly rateHint?: string;
 }
 
 export interface CostViewResult {
@@ -143,10 +148,26 @@ const newAcc = (): Acc => ({
   outside: 0,
 });
 
-/** Each source's newest day and, when it falls in the provisional days, where they start. */
+/**
+ * Each source's newest day and, when it falls in the provisional days, where they start; with `lines` and
+ * `range`, also the usage in that range each source could not price.
+ */
 export function costFreshness(
-  input: Pick<CostViewInput, "lastDays" | "nowMs" | "sourceGaps">,
+  input: Pick<CostViewInput, "lastDays" | "nowMs" | "sourceGaps"> & {
+    readonly lines?: readonly CostLine[];
+    readonly range?: CostWindow;
+  },
 ): CostFreshness[] {
+  const unpriced =
+    input.lines === undefined || input.range === undefined
+      ? new Map<string, CostUnpriced[]>()
+      : unpricedBySource(input.lines, input.range);
+  const unpricedOf = (source: string): { unpriced?: CostUnpriced[]; rateHint?: string } => {
+    const u = unpriced.get(source);
+    if (u === undefined) return {};
+    const hint = rateHintOf(source);
+    return hint === undefined ? { unpriced: u } : { unpriced: u, rateHint: hint };
+  };
   const provisionalFrom = dayText(
     dayMs(dayText(input.nowMs)) - (COST_PROVISIONAL_DAYS - 1) * DAY_MS,
   );
@@ -160,6 +181,7 @@ export function costFreshness(
     lastDay: s.lastDay,
     provisionalFrom: s.lastDay >= provisionalFrom ? provisionalFrom : null,
     ...gapOf(s.source),
+    ...unpricedOf(s.source),
   }));
   // A source whose sync could read nothing at all still gets a row, so its gap is never silent.
   for (const source of [...gaps.keys()].sort(codeUnitCompare)) {
