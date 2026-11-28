@@ -8,7 +8,7 @@ import type { FinopsSyncOptions } from "../../connectors/finops-syncables.ts";
 export function finopsSyncOptions(configDir: string): Required<FinopsSyncOptions> {
   /** One section of the cost config, or null when the cost config is refused. */
   const section =
-    <K extends "gitlab" | "bitbucket" | "jenkins" | "aws" | "gcp">(key: K) =>
+    <K extends "gitlab" | "bitbucket" | "jenkins" | "aws" | "azure" | "gcp">(key: K) =>
     (): NimbusCostConfig[K] | null => {
       const c = loadNimbusCostFromConfigDir(configDir);
       return c.error === null ? c[key] : null;
@@ -20,6 +20,7 @@ export function finopsSyncOptions(configDir: string): Required<FinopsSyncOptions
     bitbucket: section("bitbucket"),
     jenkins: section("jenkins"),
     aws: section("aws"),
+    azure: section("azure"),
     gcp: section("gcp"),
   };
 }

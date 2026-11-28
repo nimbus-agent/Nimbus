@@ -20,6 +20,7 @@ describe("finopsSyncOptions", () => {
     expect(o.githubOrgs()).toEqual([]);
     expect(o.gitlab()).toMatchObject({ groups: [], ratePerMinute: null });
     expect(o.aws()).toEqual({ export: null, costExplorer: false });
+    expect(o.azure()).toEqual({ export: null, scopes: [] });
     expect(o.bitbucket()).toMatchObject({ workspaces: [], ratePerMinute: null });
     expect(o.jenkins()).toMatchObject({ enabled: false, ratePerMinute: null });
   });
@@ -47,6 +48,7 @@ describe("finopsSyncOptions", () => {
     expect(o.gitlab()).toBeNull();
     expect(o.bitbucket()).toBeNull();
     expect(o.aws()).toBeNull();
+    expect(o.azure()).toBeNull();
     expect(o.jenkins()).toBeNull();
     expect(o.gcp()).toBeNull();
     expect(o.githubOrgs()).toEqual([]);

@@ -1303,7 +1303,7 @@ and, since Phase 7 slice 5, `replaceCostLines` also by `finops/cost-sync-intake.
 cost capabilities moved there from `sync/sync-capabilities.ts`, which spreads them in): a syncable writes cost
 lines only through the `replaceCostLinesForMonth` capability, which binds the line `source` to the syncable's
 own service id (never a parameter), is granted only to the cost-sync services (`github_billing`; since slice 6
-`openai_billing` and `anthropic_billing`; since slice 8 `gitlab_billing`; since slice 9 `bitbucket_billing`; since slice 10 `jenkins_billing`; since slice 11a `aws_billing`; since slice 13 `gcp_billing`), refuses a line of any other source,
+`openai_billing` and `anthropic_billing`; since slice 8 `gitlab_billing`; since slice 9 `bitbucket_billing`; since slice 10 `jenkins_billing`; since slice 11a `aws_billing`; since slice 12a `azure_billing`; since slice 13 `gcp_billing`), refuses a line of any other source,
 provider, billing account or month, and replaces exactly that month's UTC days (to today for the current
 month) plus the charge days of the lines it was given that fall outside the month but inside the same billing
 period (a late credit dated before the period; never a day after today, which is refused), so a sync can neither write nor clear another source's lines; it writes no `cost_import` row (that

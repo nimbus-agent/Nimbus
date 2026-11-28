@@ -14,6 +14,7 @@ export const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, strin
   gitlab: "uses a PAT",
   gitlab_billing: "uses the same PAT as gitlab",
   aws_billing: "uses the same AWS credentials as aws",
+  azure_billing: "uses the same service principal as azure",
   gcp_billing: "uses the same GCP credentials as gcp",
   bitbucket: "uses an Atlassian API token (app passwords are deprecated)",
   bitbucket_billing: "uses the same credential as bitbucket",

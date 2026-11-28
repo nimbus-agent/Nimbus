@@ -9,6 +9,7 @@ import {
 import type { loadNimbusSessionFromConfigDir } from "../../config/session-toml.ts";
 import { Config } from "../../config.ts";
 import { hasUsableAwsCredentials } from "../../connectors/_lib/aws-cli.ts";
+import { hasAzureCredentials } from "../../connectors/_lib/azure-token.ts";
 import { hasUsableGcpCredentials } from "../../connectors/_lib/gcp-auth.ts";
 import { readBitbucketVaultCredential } from "../../connectors/bitbucket-credential.ts";
 import { createBlameIndexSyncable } from "../../connectors/blame-index-sync.ts";
@@ -200,6 +201,14 @@ export async function ensureGithubCircleCiSchedulerCompanions(
     localIndex.ensureConnectorSchedulerRegistration(
       "aws_billing",
       defaultSyncIntervalMsForService("aws_billing"),
+      Date.now(),
+    );
+  }
+  // Phase 7 slice 12a: the Azure cost sync is a companion of azure (idle until `[cost.azure] export`).
+  if (await hasAzureCredentials(vault)) {
+    localIndex.ensureConnectorSchedulerRegistration(
+      "azure_billing",
+      defaultSyncIntervalMsForService("azure_billing"),
       Date.now(),
     );
   }
