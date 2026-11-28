@@ -21,6 +21,7 @@ export const COST_SYNC_CURSOR_PREFIXES = Object.freeze({
   bitbucket_billing: "nimbus-bbb1:",
   jenkins_billing: "nimbus-jkb1:",
   aws_billing: "nimbus-awb1:",
+  azure_billing: "nimbus-azb1:",
   gcp_billing: "nimbus-gcb1:",
 } as const);
 export type CostSyncServiceId = keyof typeof COST_SYNC_CURSOR_PREFIXES;
@@ -36,6 +37,11 @@ export type CostSyncCursor = {
   readonly pending: Readonly<Record<string, readonly string[]>>;
   /** Slice 8: the fingerprint of the rates the stored lines were priced with (absent: none recorded). */
   readonly rates?: string;
+  /**
+   * Slice 12b: `<account>|<YYYY-MM>` to the UTC day a cost query last came back EMPTY for a month that holds
+   * stored lines (the stated gap is shown without asking again until the retry interval has passed).
+   */
+  readonly emptyScan?: Readonly<Record<string, string>>;
   /**
    * Slice 13: per account, the day a billed scan of a month last failed (`{ [month]: "YYYY-MM-DD" }`), so a month that
    * cannot finish is not scanned again every day. Absent: none.
@@ -98,6 +104,9 @@ export function decodeCostSyncCursor(prefix: string, raw: string | null): CostSy
       synced: stringMap(rec["synced"]),
       pending: monthListMap(rec["pending"]),
       ...(typeof rec["rates"] === "string" ? { rates: rec["rates"] } : {}),
+      ...(Object.keys(stringMap(rec["emptyScan"])).length > 0
+        ? { emptyScan: stringMap(rec["emptyScan"]) }
+        : {}),
       ...(Object.keys(asRecord(rec["failedScan"])).length > 0
         ? { failedScan: failedScanMap(rec["failedScan"]) }
         : {}),

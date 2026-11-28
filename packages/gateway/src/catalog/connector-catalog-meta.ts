@@ -99,6 +99,11 @@ export const CONNECTOR_CATALOG_META = Object.freeze({
     "cloud",
     "AWS cost lines from a FOCUS Data Export you create in S3, per billing account and service",
   ),
+  azure_billing: m(
+    "Azure cost",
+    "cloud",
+    "Azure cost lines from a FOCUS Cost Management export in Blob Storage, per account and service",
+  ),
   gcp_billing: m(
     "GCP cost",
     "cloud",

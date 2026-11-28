@@ -16,6 +16,8 @@
  * [cost.aws]
  * export = "s3://bucket/prefix"                      # a FOCUS 1.0 CSV Data Export, synced daily (slice 11a)
  *
+ * [cost.azure]
+ * export = { account = "acct", container = "c", path = "dir/name" }   # a FOCUS Cost Management export (slice 12a)
  * [cost.gcp]
  * export_table = "project.dataset.table"             # a Cloud Billing export to BigQuery, synced daily (slice 13)
  *
@@ -47,6 +49,12 @@ import {
   type NimbusCostAwsConfig,
   readCostAwsTable,
 } from "./cost-aws-toml.ts";
+import {
+  CostAzureConfigError,
+  DEFAULT_COST_AZURE_CONFIG,
+  type NimbusCostAzureConfig,
+  readCostAzureTable,
+} from "./cost-azure-toml.ts";
 import {
   CostBitbucketConfigError,
   DEFAULT_COST_BITBUCKET_CONFIG,
@@ -95,6 +103,8 @@ export interface NimbusCostConfig {
   readonly jenkins: NimbusCostJenkinsConfig;
   /** `[cost.aws]`: the FOCUS Data Export in S3 and the Cost Explorer opt-in (slice 11a; see `cost-aws-toml.ts`). */
   readonly aws: NimbusCostAwsConfig;
+  /** `[cost.azure]`: the FOCUS Cost Management export in Blob Storage and the Query API scopes (slice 12a). */
+  readonly azure: NimbusCostAzureConfig;
   /** `[cost.gcp]`: the BigQuery billing export table(s) and the byte cap (slice 13; see `cost-gcp-toml.ts`). */
   readonly gcp: NimbusCostGcpConfig;
   /** `[[cost.report]]` with their `[[cost.report.channel]]` blocks (slice 3; see `cost-report-toml.ts`). */
@@ -123,6 +133,7 @@ export const DEFAULT_COST_CONFIG: NimbusCostConfig = Object.freeze({
   bitbucket: DEFAULT_COST_BITBUCKET_CONFIG,
   jenkins: DEFAULT_COST_JENKINS_CONFIG,
   aws: DEFAULT_COST_AWS_CONFIG,
+  azure: DEFAULT_COST_AZURE_CONFIG,
   gcp: DEFAULT_COST_GCP_CONFIG,
   reports: Object.freeze([]) as readonly CostReportDef[],
   reportsError: null,
@@ -241,6 +252,8 @@ function readPlainSection(s: EffectiveSection & { header: string }, draft: Draft
     draft.jenkins = readCostJenkinsTable(parseSection(s, "[cost.jenkins]"));
   } else if (s.header === "cost.aws" && !s.isArray) {
     draft.aws = readCostAwsTable(parseSection(s, "[cost.aws]"));
+  } else if (s.header === "cost.azure" && !s.isArray) {
+    draft.azure = readCostAzureTable(parseSection(s, "[cost.azure]"));
   } else if (s.header === "cost.gcp" && !s.isArray) {
     draft.gcp = readCostGcpTable(parseSection(s, "[cost.gcp]"));
   } else {
@@ -336,6 +349,7 @@ export function resolveCostConfig(sections: readonly EffectiveSection[]): Nimbus
       e instanceof CostBitbucketConfigError ||
       e instanceof CostJenkinsConfigError ||
       e instanceof CostAwsConfigError ||
+      e instanceof CostAzureConfigError ||
       e instanceof CostGcpConfigError
     ) {
       return Object.freeze({ ...DEFAULT_COST_CONFIG, error: e.message });

@@ -1461,6 +1461,51 @@ Stated bounds:
 - **Re-delivered exports.** A day that an export no longer contains is not cleared (only the days a delivery covers are replaced), and the previous month is re-read only until the 5th of the month and on the first sync. A row dated after today makes its month a gap.
 - **One source per provider, per day.** On each day the AWS sync has lines for, a `[cost.focus] dir` import's AWS lines of that day are set aside, and the views list how many days; days only the file covers keep its lines. The views use the sync and list the file import as set aside (`[cost] authoritative = { aws = "focus" }` chooses the file instead).
 
+### Azure cost from a FOCUS export (`[cost.azure]`)
+
+Create a Cost Management export in Azure (Cost Management, Exports: **Cost and usage details (FOCUS)**, format **CSV**, none or gzip compression, delivered to a storage container you own), then point Nimbus at it; nothing is fetched until `export` is set:
+
+```toml
+[cost.azure]
+export = { account = "acmecost", container = "exports", path = "focus/monthly" }
+scopes = []   # the Query API fallback: read only when no export is set
+```
+
+| Key | Meaning |
+| --- | --- |
+| `export.account` | The storage account name (3 to 24 lowercase letters and digits). |
+| `export.container` | The blob container name. |
+| `export.path` | The folder inside the container that holds the export's date-range folders: the export's storage directory plus its name (`<directory>/<export-name>`). |
+| `scopes` | Cost Management scopes for the Query API fallback (at most 50): `/subscriptions/<guid>`, `/subscriptions/<guid>/resourceGroups/<name>` or `/providers/Microsoft.Billing/billingAccounts/<id>`. Read only when no `export` is set. |
+
+The gateway syncs once a day as source `azure_billing`, provider `azure`, with the `azure.tenant_id`, `azure.client_id` and `azure.client_secret` you stored for the Azure connector. It signs in over HTTPS (OAuth client credentials; the Azure CLI is not used and the secret never appears in a command line), lists `<path>/<YYYYMMDD-YYYYMMDD>/<run-id>/`, reads each billing month's newest run that has a `manifest.json`, downloads the parts the manifest lists (gzip is handled) and stores one line per day and grain under each file's `BillingAccountId`. A newer run replaces only the days its files cover.
+
+**The service principal needs the Storage Blob Data Reader role on the container.** A 401 or 403 shows as a gap saying so.
+
+Stated bounds:
+
+- **Management-group scope is not supported for FOCUS exports** (Microsoft's statement); create the export at a subscription, resource group, enrollment, billing-account or billing-profile scope. You create the export; the storage cost is yours.
+- **Documentation-verified only.** The folder layout and manifest fields follow Microsoft's export documentation; no live account was read.
+- **CSV only.** A Parquet export is a stated gap: `the export is Parquet; recreate it as CSV`. A run folder with no manifest yet is ignored. A date range that spans two months is not read.
+- **Whole periods only.** A run is used only when ALL its parts download and parse: the newest complete run of a month is read (up to the 5 newest are tried), so an older complete run is used when a newer one is partial; a part that cannot be downloaded, decoded or parsed, a row that cannot be read, an empty export or a row outside the period makes that month a gap when no run is complete and writes nothing; the stored month stays. At most 200 files per month, 256 MiB per file (the download is streamed and cancelled past the cap), 100,000 listed blobs.
+- **Monthly folders only.** A date-range folder that spans two months is not read; a month it would cover says `export folder <name> spans two months; use a monthly (month-to-date) export`.
+- **Sign-in and errors.** A 401 mid-run gets a new token once and the request is sent again. A request that never reaches the account (a wrong account name) is a gap naming the account; a 5xx or 429 is retried the next run; any other 4xx is a gap.
+- **No export and no scopes:** the freshness line shows `Azure cost is not configured: set [cost.azure] export, or scopes`.
+- **One source per provider, per day.** On each day the Azure sync has lines for, a `[cost.focus] dir` import's Azure lines of that day are set aside (`[cost] authoritative = { azure = "focus" }` chooses the file instead).
+
+#### The Query API fallback (`scopes`, no `export`)
+
+With no `export`, each scope in `scopes` is read from the Cost Management Query API once a day. It is on by default (it is free and only rate-limited), with the same service principal; **the service principal needs the Cost Management Reader role on each scope**, and a 401 or 403 shows as a gap saying so. A subscription, a resource group and a billing account are accepted (a leading or trailing slash is dropped); a management-group scope is not.
+
+Stated bounds:
+
+- **Aggregated grain only.** Lines are per day, service and resource group (billing account = the scope, sub-account = the resource group); there is no per-resource detail and no tags. Use an `export` for that.
+- **Quota-limited.** The Query API allows 12 QPU per 10 seconds, 60 per minute and 600 per hour per tenant, one QPU per month of data queried (Microsoft may change this). On a 429 the gateway waits the `x-ms-ratelimit-microsoft.costmanagement-qpu-retry-after` seconds once per run, at most 30; a longer header, or a missing one (taken as 60), is not slept through. After any 429 the remaining scopes are not queried that run and stay pending for the next one. A 401 drops the token once and repeats the request.
+- **Whole months only.** An unreadable row, more than 20 pages, a next-page link that leaves management.azure.com or does not advance, or an empty answer for a month that already holds lines makes that month a gap and writes nothing; that stated gap is asked again at most once a day (current month) or once a week (past month), so a month whose real total is zero settles without a daily quota cost. A missing currency column is a retry.
+- **Documentation-verified only** (api-version `2026-06-01` of Microsoft's Query reference); no live tenant was read.
+- **No overlapping scopes.** Scopes are lower-cased (Azure ids are case-insensitive), so two spellings of one scope are refused as a duplicate, and a scope inside another listed scope (a resource group of a listed subscription) is refused, naming both. **Do not list a subscription and the billing account that contains it:** that cannot be detected and the cost counts twice.
+- **When an `export` is set, `scopes` are not read.** The first export run clears each month the earlier query wrote for its scopes (the scopes stay recorded until the export has a clean run), so switching from the query to an export does not count a month twice. Switching back does not clear the export's lines.
+
 ### GCP cost from the BigQuery billing export (`[cost.gcp]`)
 
 Turn on Cloud Billing export to BigQuery in your Google Cloud account (Billing, Billing export: the **standard** or the **detailed** usage cost export), then name the table; nothing is queried until `export_table` is set:
