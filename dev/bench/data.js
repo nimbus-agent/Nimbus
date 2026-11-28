@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795862191262,
+  "lastUpdate": 1795863907267,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "6b6a364f7d3c5f02c636da41632c58329e812457",
-          "message": "ci: shepherd Dependabot PRs to merge on their own, and alert when main goes red (#1584)\n\n## Why\n\nClearing one week's Dependabot batch (#1573–#1576) took two days, seven\nsuperseded PR numbers and a dozen hand-pushed fixes, and none of the\nfailures was a real incompatibility. This PR closes the causes at the\nsource, so Dependabot PRs merge on their own. The merge-queue half is\n#1583.\n\n## What changes\n\n**1. Dependabot shepherd** (`dependabot-shepherd.yml`, hourly, plus\n`scripts/dependabot/`)\n- Replaces each Dependabot description with a parse-safe summary\n(`dependabot-body.ts`) and enables auto-merge, which enqueues the PR,\nwhen **every** bump is non-breaking. A major, or a 0.x minor, is held\nfor a human, with the reason logged.\n- Scheduled rather than `on: pull_request`, on purpose. A\nDependabot-triggered run gets only Dependabot secrets, so it can't mint\nthe release-bot App token. And a merge done under `GITHUB_TOKEN` would\nland on `main` without triggering its `push` workflows: CI,\nrelease-please and Security.\n- It never checks out PR code; it only reads PR metadata and writes a\ndescription plus an auto-merge request. Token scope is `contents` +\n`pull-requests` write on `Nimbus` only. It's registered as a consumer of\nboth `RELEASE_BOT_*` secrets in `credential-registry.ts`.\n\n**2. The Release-safety parse gate judges the body that lands.** For a\nDependabot-authored PR (`PR_AUTHOR` is now passed in),\n`check-pr-message-parses` judges the same summary the shepherd writes,\nnot the upstream release notes that get replaced. Humans are judged\nexactly as before.\n\n**3. `main`-health alert** (new `main-health-alert` job in\n`security.yml`). A red push or nightly Security run on `main` opens one\n\"Security gate is red on main\" issue, comments on it while the run stays\nred, and closes it on the first green run. On 09-29 the nightly went red\nat 07:55 UTC, four hours before Dependabot opened four PRs that all\ninherited it, and nothing reported it. It lives in `security.yml` rather\nthan a `workflow_run` consumer because `audit:workflow-run-triggers`\ncorrectly forbids consuming a fork-reachable upstream.\n\n**4. `audit:override-drift` refuses redundant overrides.** If a pinned\npackage is declared directly and nothing in `bun.lock` depends on it\ntransitively, the pin lifts nothing and only breaks Dependabot bumps.\nThe rule found `tar`: its transitive consumers left with the connectors\non 2026-08-27, so the pin is dropped here. Installed `tar` is still\n7.5.22, and `bun audit` is clean.\n\n**5. Docs:** CLAUDE.md/GEMINI.md CI gating, the `nimbus-preflight` skill\n(its \"one check gates the merge\" was already stale), `dependabot.yml`'s\nheader, and a CHANGELOG entry.\n\n## Verification\n\n- `planForPr` run over this repo's **real** last 12 Dependabot PRs: the\nminor/patch groups (#1579, #1576, #1573, #1569, #1519) would be\nsummarised and enqueued. The majors (#1575 `@mastra/mcp` 2, #1518, #1517\n`imapflow` 2, which really did need a code fix) and #1568's 0.x-minor\n`@nimbus-dev/client` would be held.\n- **That real-data run caught a bug the fixtures could not.** GitHub\nspells the author `dependabot[bot]` in REST webhook payloads but\n`app/dependabot` in `gh`'s GraphQL output. Matching only the first\nclassified every real Dependabot PR as not-Dependabot. Fixed with\n`isDependabotLogin`, and each consumer's test now uses the spelling that\nconsumer really receives.\n- The summary is tested against the **real #1580 body**, recovered from\nthe PR's edit history: its premise is asserted first (the raw body fails\nthe real release-please parser at 758:8), then the summary parses and\nnames all 17 bumps.\n- `bun scripts/dependabot/shepherd.ts --dry-run` against the live repo\nsucceeds (0 open PRs right now).\n- 88 tests pass across the new and changed suites; `preflight:fast`\nPASSED; `audit:workflow-lint` OK.\n\n## Not covered by a test\n\nThe workflow YAML itself (the App-token mint, the `gh` writes under that\ntoken, and the issue job) only runs on GitHub. The first scheduled run\nafter merge is its real test. `workflow_dispatch` with `dry_run: true`\nis available to check it by hand.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **New Features**\n* Dependabot pull requests receive standardized, parseable summaries.\nEligible non-breaking updates can be automatically queued for merging;\nmajor updates and minor updates to 0.x packages remain for human review.\n* Dependabot updates are reviewed hourly, with a manual dry-run option\nto preview planned changes.\n* Security check failures on the main branch open or update an alert\nissue, which closes when checks pass.\n* **Improvements**\n* Pull requests use a merge queue, with all ten required checks run\nbefore merging. Auto-merge queues eligible pull requests once they’re\ngreen.\n* Dependency override checks flag pins that are not used by any\ninstalled package.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-30T10:03:02Z",
-          "tree_id": "0ab30ac46c5f3f6b9f3c81c898355217191879a1",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/6b6a364f7d3c5f02c636da41632c58329e812457"
-        },
-        "date": 1790766083191,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 331.10365660000207,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 331.3087317000063,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 180.65824145000406,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a0372ac98644224c509fc0a78740207ab9945652",
+          "message": "feat: AWS cost from a FOCUS Data Export in S3, one source per provider (Phase 7, slice 11a) (#2204)\n\nPhase 7, the Cost Pack, slice 11a: AWS cost lines from a FOCUS 1.0 CSV\nData Export the owner creates in S3. The Cost Explorer fallback is slice\n11b (stacked on this one).\n\n## What changes\n\n- **`[cost.aws]`**: `export = \"s3://bucket/prefix\"` (bucket per S3\nnaming rules, prefix validated) and `cost_explorer` (parsed only; read\nby 11b). Nothing is fetched until `export` is set.\n- **`aws_billing`**: a companion sync of `aws` on the shared `aws.*`\ncredentials, run daily, through the AWS CLI and the existing I1 scoped\nenv. It lists the prefix (`aws s3api list-objects-v2`, paged, capped),\ntakes each billing period's newest `*Manifest.json`, downloads the files\nits `dataFiles` name, decodes gzip, and parses them with\n`parseFocusCsv`.\n- **`awsCliDownload`** (`connectors/_lib/aws-cli.ts`): `aws s3 cp <url>\n<tmpfile>`, bytes read from the temp file (never through UTF-8 stdout),\nremoved in `finally`.\n- **`finops/focus-file-text.ts`**: gunzips by `.gz` name or `1F 8B`\nmagic, strict UTF-8.\n- **One writer per (billing account, period)**: lines are re-sourced to\n`aws_billing`, grouped by `BillingAccountId`, and each group is written\nonce through `replaceCostLinesForMonth`. Only the days the export covers\nare replaced; the stored lines of other days are supplied again\nunchanged, as a FOCUS file import replaces only its days. An account the\nexport no longer lists keeps its lines.\n- **C4 overlap rule** in `chooseSources`: when a `*_billing` cloud sync\nand a `focus` import both cover a provider and `[cost] authoritative` is\nunset, the sync wins and `focus` is listed as set aside (`cloud sync\nactive for this provider (set [cost] authoritative to choose)`).\n- **Configured but idle**: configured whenever AWS credentials exist; no\nexport and no `cost_explorer` shows `AWS cost is not configured: set\n[cost.aws] export, or cost_explorer = true`.\n- `scheduler-mesh.ts` was at 498 lines; the FinOps option readers moved\nto `platform/assemble/finops-options.ts` (no behaviour change).\n\n## Owner rulings applied\n\nD3 (export is the main path), D7 (Cost Explorer is opt-in and not read\nhere), C4, spec section 8 (gzip, configured-but-idle, billing account =\nFOCUS `BillingAccountId`), Antigravity fix 4 (binary download via a temp\nfile).\n\n## Stated bounds\n\n- The S3 layout and manifest fields follow AWS's documentation only\n(https://docs.aws.amazon.com/cur/latest/userguide/dataexports-export-delivery.html\nand\nhttps://docs.aws.amazon.com/cur/latest/userguide/dataexports-manifest.html);\nno live bucket was read.\n- CSV only; a Parquet export is a stated gap. The prefix must hold one\nexport (two are a gap).\n- A period with any unreadable file, unreadable row, empty result,\nheader mismatch, file outside the bucket/prefix, or row outside the\nperiod is a `month_gap` and writes nothing.\n- Caps: 200 files and 512 MiB per period, 256 MiB per file, 1 GiB\ndecoded per file, 100,000 listed keys.\n- A day removed from a re-delivered export is not cleared (only the days\na delivery covers are replaced), and the previous month is re-read only\nuntil the 5th.\n- C4 is per day: on days the sync covers, the file import of that\nprovider and day is set aside; days only the file covers keep its lines.\n- A late credit dated before its billing period is written under that\nperiod; a row dated after today makes the month a gap.\n- The S3 storage cost is the owner's; history starts when the export\nstarts.\n\n## Verification\n\n- `bun run preflight:fast` passes; `bunx tsc --noEmit -p\npackages/gateway` and `bun run typecheck:tests` are clean.\n- New suites: config, focus-file-text, aws-cli download, the sync (14\ncases: two-file gzip, newer manifest replaces only its days, unreadable\nfile, bad rows, empty chunks, Parquet, outside-prefix manifest, header\nmismatch, paging and non-advancing token, two exports, re-sync, config\nstates) and an acceptance test with the C4 set-aside and the\nauthoritative override. The finops, config, catalog, sync, connector and\nplatform suites pass; the only failures here also fail on clean `main`\n(I15 \"grants a clean one\", `mesh-user-mcp-write-grant`, ps1 installer\ntests).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-28T10:54:54Z",
+          "tree_id": "9aee97b7277b5a8c5e394e2b5878aec9ff13939a",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/a0372ac98644224c509fc0a78740207ab9945652"
+        },
+        "date": 1795863900640,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 252.86961035000039,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 252.5581556999983,
             "unit": "ms"
           }
         ]
