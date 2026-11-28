@@ -354,6 +354,14 @@ describe("selectCostChangeContext", () => {
         "flag changes are recorded for LaunchDarkly only; split bindings show no changes",
       );
       expect(ctx?.gaps.filter((g) => g.includes("unleash"))).toHaveLength(1);
+      expect(ctx?.gaps).not.toContain("only the latest change of each flag is known");
+    });
+
+    test("a LaunchDarkly binding beside another service keeps the latest-change line", () => {
+      const ctx = run([
+        { service: "launchdarkly", project: "web", flag: null },
+        { service: "split", project: "ws", flag: null },
+      ]);
       expect(ctx?.gaps).toContain("only the latest change of each flag is known");
     });
   });

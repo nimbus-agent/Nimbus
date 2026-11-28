@@ -236,7 +236,8 @@ function flagContext(
   ]
     .sort()
     .map((s) => `flag changes are recorded for LaunchDarkly only; ${s} bindings show no changes`);
-  gaps.push(COST_WHY_FLAG_LATEST_ONLY);
+  if (cfg.featureFlags.some((b) => b.service === "launchdarkly"))
+    gaps.push(COST_WHY_FLAG_LATEST_ONLY);
   if (flags.length > 0) gaps.push(COST_WHY_FLAG_NO_ENV_TIMES);
   return { flags, flagsTruncated: Math.max(0, rows.length - max), gaps };
 }

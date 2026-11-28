@@ -352,6 +352,23 @@ describe("runCostWhyWith: a fall, bare pull requests and the footer notes", () =
     expect(o).toContain("Note: one import is still running\n");
   });
 
+  test("a context from an older gateway, with no flags fields, still renders", async () => {
+    const { s: out, sink: k } = sink();
+    const old = structuredClone(FALL) as unknown as { context: Record<string, unknown>[] };
+    for (const c of old.context) {
+      delete c["flags"];
+      delete c["flagsTruncated"];
+    }
+    expect(
+      await runCostWhyWith(
+        fake(old as unknown as typeof FALL),
+        { target: "payment-service", period: "14d", json: false },
+        k,
+      ),
+    ).toBe(0);
+    expect(out.out).not.toContain("Flags changed");
+  });
+
   test("a non-Error rejection is still reported and exits 1", async () => {
     const { s, sink: k } = sink();
     const ipc: CostWhyIpc = { call: () => Promise.reject("socket closed") };
