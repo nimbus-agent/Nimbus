@@ -116,6 +116,8 @@ export async function requestAzureToken(
 /** Tokens for ONE sync run: each scope is requested once, and a refused one is remembered for the run. */
 export interface AzureTokenSource {
   get(scope: AzureScope): Promise<AzureTokenResult>;
+  /** Drops the held token (it expired mid-run) and requests a new one. */
+  refresh(scope: AzureScope): Promise<AzureTokenResult>;
 }
 
 export function createAzureTokenSource(
@@ -131,6 +133,10 @@ export function createAzureTokenSource(
         held.set(scope, p);
       }
       return p;
+    },
+    refresh(scope) {
+      held.delete(scope);
+      return this.get(scope);
     },
   };
 }

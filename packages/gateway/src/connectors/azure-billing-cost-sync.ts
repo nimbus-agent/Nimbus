@@ -148,10 +148,16 @@ export function createAzureBillingCostSyncable(options: AzureBillingCostSyncable
         const l = await listOnce();
         if (l.kind === "gap") return { kind: "gap", reason: l.reason };
         if (l.kind === "retry") return { kind: "retry" };
-        const ref = l.periods.get(month);
-        // A month the export has no folder for (it started later, or its first delivery is pending) is not a gap.
-        if (ref === undefined) return { kind: "ok", lines: 0, bytes: 0 };
-        const read = await readAzureExportMonth(client, exportAt.path, ref, month);
+        const refs = l.periods.get(month);
+        if (refs === undefined) {
+          // A month the export has no folder for (it started later, or its first delivery is pending) is not a
+          // gap, unless a folder that spans two months covers it: that one is not read, and the month says so.
+          const span = l.spanning.get(month);
+          return span === undefined
+            ? { kind: "ok", lines: 0, bytes: 0 }
+            : { kind: "month_gap", reason: AZURE_COST_GAPS.spans(span) };
+        }
+        const read = await readAzureExportMonth(client, exportAt.path, refs, month);
         if (!Array.isArray(read)) return read as CostMonthOutcome;
         // A charge day after today cannot be written (the intake refuses it): a stated gap, not an endless retry.
         const today = new Date(nowMs).toISOString().slice(0, 10);

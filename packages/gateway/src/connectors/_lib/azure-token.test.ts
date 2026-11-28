@@ -100,6 +100,16 @@ describe("azure token", () => {
     expect(f.calls).toHaveLength(2);
   });
 
+  test("refresh drops the held token and asks again", async () => {
+    const f = fake(200);
+    const src = createAzureTokenSource(creds, f.fn);
+    await src.get(AZURE_STORAGE_SCOPE);
+    await src.refresh(AZURE_STORAGE_SCOPE);
+    expect(f.calls).toHaveLength(2);
+    await src.get(AZURE_STORAGE_SCOPE);
+    expect(f.calls).toHaveLength(2);
+  });
+
   test("hasAzureCredentials needs all three fields", async () => {
     const vault = createMockVault();
     expect(await hasAzureCredentials(vault)).toBe(false);
