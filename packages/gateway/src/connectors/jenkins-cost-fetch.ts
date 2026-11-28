@@ -40,6 +40,8 @@ export const JENKINS_COST_GAPS = {
   buildCap: (job: string, since: string): string =>
     `${job}: more than ${(JENKINS_MAX_BUILD_PAGES * JENKINS_BUILDS_PAGE).toLocaleString("en-US")} builds since ${since}; its older months are kept as stored`,
   jobDenied: (job: string): string => `${job}: no access to its builds`,
+  jobFailed: (job: string): string =>
+    `${job}: its builds could not be read this run; its stored lines are kept`,
 } as const;
 
 export interface JenkinsConn {
@@ -56,6 +58,8 @@ export interface JenkinsConn {
 
 type Reply =
   | { kind: "body"; body: unknown }
+  /** 429: the shared limiter was penalised; the whole host waits. */
+  | { kind: "limited" }
   | { kind: "not_found" }
   | { kind: "denied" }
   | Exclude<CostMonthOutcome, { kind: "ok" }>;
@@ -78,7 +82,7 @@ async function request(c: JenkinsConn, url: string, host: string): Promise<Reply
   if (res.status === 429) {
     const sec = Number.parseInt(res.headers.get("retry-after") ?? "60", 10);
     c.ctx.rateLimiter.penalise("jenkins", Number.isFinite(sec) && sec > 0 ? sec * 1000 : 60_000);
-    return { kind: "retry" };
+    return { kind: "limited" };
   }
   if (res.status === 401 || res.status === 403) return { kind: "denied" };
   if (res.status === 404) return { kind: "not_found" };
@@ -95,38 +99,77 @@ export interface JenkinsJob {
   readonly fullName: string;
 }
 
+type ListNode = JenkinsApiJobNode & { _class?: unknown };
+const FOLDER_CLASS = /(?:Folder|MultiBranchProject)$/;
+/** A folder holds jobs: it lists them (`jobs`) or its `_class` says so. Folders are never billed, so never fetched for builds. */
+const isFolder = (n: ListNode): boolean =>
+  Array.isArray(n.jobs) || (typeof n._class === "string" && FOLDER_CLASS.test(n._class));
+/** The tree used to list a folder the first listing did not reach (two levels, one request per folder). */
+const FOLDER_TREE = "jobs[name,url,jobs[name,url]]";
+/** At most this many folders are expanded per run (past it the listing is a gap, like the job cap). */
+const MAX_FOLDER_EXPANSIONS = 2000;
+
 /**
- * Every node of the listing with its full name built from the NAMES on the path (`folder/job`). The connector's
+ * Every job of the listing with its full name built from the NAMES on the path (`folder/job`). The connector's
  * tree asks for `fullname` in lower case, which Jenkins does not export (the property is `fullName`), so a nested
- * job's own name is the only part of the listing that can be relied on: the path is rebuilt from it.
+ * job's own name is the only part of the listing that can be relied on: the path is rebuilt from it. Folders are
+ * not jobs: a folder whose children the tree did not reach (the fourth level) is queued in `expand`.
  */
-function walkJobs(nodes: readonly JenkinsApiJobNode[], prefix: string, out: string[]): void {
+function walkJobs(
+  nodes: readonly ListNode[],
+  prefix: string,
+  out: string[],
+  expand: string[],
+): void {
   for (const n of nodes) {
     if (typeof n !== "object" || n === null || typeof n.name !== "string" || n.name === "")
       continue;
     const full = prefix === "" ? n.name : `${prefix}/${n.name}`;
-    out.push(full);
-    if (Array.isArray(n.jobs)) walkJobs(n.jobs, full, out);
+    if (!isFolder(n)) {
+      out.push(full);
+    } else if (Array.isArray(n.jobs)) {
+      walkJobs(n.jobs, full, out, expand);
+    } else {
+      expand.push(full);
+    }
   }
 }
 
-/** The base's jobs (each full name once), or what to do instead. */
+/** The base's jobs (each full name once), or what to do instead. A folder is expanded with its own request. */
 export async function jenkinsJobList(
   c: JenkinsConn,
   host: string,
 ): Promise<{ kind: "jobs"; jobs: JenkinsJob[] } | Exclude<CostMonthOutcome, { kind: "ok" }>> {
   const tree = encodeURIComponent(JENKINS_JOBS_API_TREE);
   const r = await request(c, `${c.base}/api/json?tree=${tree}`, host);
+  if (r.kind === "limited") return { kind: "retry" };
   if (r.kind === "denied") return { kind: "gap", reason: JENKINS_COST_GAPS.access(host) };
   if (r.kind === "not_found") return { kind: "gap", reason: JENKINS_COST_GAPS.notFound(host) };
   if (r.kind !== "body") return r;
   if (!isRecord(r.body) || !Array.isArray(r.body["jobs"])) return { kind: "retry" };
   const flat: string[] = [];
-  walkJobs(r.body["jobs"] as JenkinsApiJobNode[], "", flat);
-  const jobs: JenkinsJob[] = [...new Set(flat)].map((fullName) => ({ fullName }));
-  if (jobs.length > (c.maxJobs ?? JENKINS_MAX_JOBS)) {
-    return { kind: "month_gap", reason: JENKINS_COST_GAPS.jobCap(host) };
+  const queue: string[] = [];
+  walkJobs(r.body["jobs"] as ListNode[], "", flat, queue);
+  const cap = c.maxJobs ?? JENKINS_MAX_JOBS;
+  const seenFolders = new Set<string>();
+  for (let i = 0; i < queue.length; i++) {
+    const folder = queue[i] ?? "";
+    if (seenFolders.has(folder)) continue;
+    seenFolders.add(folder);
+    if (flat.length > cap || seenFolders.size > MAX_FOLDER_EXPANSIONS) {
+      return { kind: "month_gap", reason: JENKINS_COST_GAPS.jobCap(host) };
+    }
+    const url = `${jenkinsJobRootUrl(c.base, folder)}/api/json?tree=${encodeURIComponent(FOLDER_TREE)}`;
+    const f = await request(c, url, host); // NOSONAR S9382: one request at a time through the limiter
+    // A folder that is gone or refused adds no jobs (their stored lines are kept); anything else stops the listing.
+    if (f.kind === "not_found" || f.kind === "denied") continue;
+    if (f.kind === "limited") return { kind: "retry" };
+    if (f.kind !== "body") return f;
+    if (!isRecord(f.body) || !Array.isArray(f.body["jobs"])) return { kind: "retry" };
+    walkJobs(f.body["jobs"] as ListNode[], folder, flat, queue);
   }
+  const jobs: JenkinsJob[] = [...new Set(flat)].map((fullName) => ({ fullName }));
+  if (jobs.length > cap) return { kind: "month_gap", reason: JENKINS_COST_GAPS.jobCap(host) };
   return { kind: "jobs", jobs };
 }
 
@@ -174,19 +217,28 @@ export async function jenkinsJobBuilds(
   const seen = new Set<string>();
   let oldestMs: number | null = null;
   const pages = c.maxBuildPages ?? JENKINS_MAX_BUILD_PAGES;
+  // One job's failure is that job's gap (its stored lines are kept); only a 429 stops the whole host.
+  const incomplete = (): JenkinsJobRead => ({
+    kind: "builds",
+    builds,
+    complete: false,
+    oldestDay: dayOf(oldestMs),
+    gap: JENKINS_COST_GAPS.jobFailed(job.fullName),
+  });
   for (let page = 0; page < pages; page++) {
     const tree = encodeURIComponent(buildsTree(page * JENKINS_BUILDS_PAGE));
     const r = await request(c, `${root}/api/json?tree=${tree}`, host); // NOSONAR S9382: one request at a time through the limiter
+    if (r.kind === "limited") return { kind: "retry" };
     if (r.kind === "not_found") return { kind: "unavailable" };
     if (r.kind === "denied") {
       const gap = JENKINS_COST_GAPS.jobDenied(job.fullName);
       return { kind: "builds", builds: [], complete: false, oldestDay: null, gap };
     }
-    if (r.kind !== "body") return r;
-    if (!isRecord(r.body)) return { kind: "retry" };
-    // A folder has no `builds`: it adds nothing. A `builds` that is not a list is not the documented shape.
+    if (r.kind !== "body") return incomplete();
+    if (!isRecord(r.body)) return incomplete();
+    // A `builds` that is not a list is not the documented shape.
     const values = r.body["builds"] ?? [];
-    if (!Array.isArray(values)) return { kind: "retry" };
+    if (!Array.isArray(values)) return incomplete();
     for (const b of values as unknown[]) {
       const n = isRecord(b) && typeof b["number"] === "number" ? String(b["number"]) : null;
       if (n !== null) {

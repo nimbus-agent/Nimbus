@@ -77,7 +77,8 @@ const build = (number: number, timestamp: number, minutes: number, builtOn = "li
   building: false,
 });
 
-type JobNode = { name: string; url: string; jobs?: JobNode[] };
+type JobNode = { name: string; url: string; _class?: string; jobs?: JobNode[] };
+const FOLDER = "com.cloudbees.hudson.plugins.folder.Folder";
 /** A listing node: only its own NAME (a nested job is named by its path), as Jenkins returns it for the connector tree. */
 const node = (name: string, jobs?: JobNode[]): JobNode => ({
   name,
@@ -91,6 +92,10 @@ function jenkins(data: {
   builds?: Record<string, unknown[]>;
   missing?: string[];
   denied?: string[];
+  /** Folder full name → the children its own `jobs[...]` listing returns. */
+  folders?: Record<string, JobNode[]>;
+  /** Job full names whose builds answer with this status. */
+  failing?: Record<string, number>;
 }) {
   return fake((url) => {
     expect(url.origin).toBe("https://ci.acme.test");
@@ -103,8 +108,13 @@ function jenkins(data: {
       .replace(/\/api\/json$/, "")
       .split("/job/")
       .join("/");
+    const failStatus = data.failing?.[fullName];
+    if (failStatus !== undefined && tree.startsWith("builds[")) return { status: failStatus };
     if (data.denied?.includes(fullName) === true) return { status: 403 };
     if (data.missing?.includes(fullName) === true) return { status: 404 };
+    if (tree.startsWith("jobs[")) {
+      return { status: 200, body: { jobs: data.folders?.[fullName] ?? [] } };
+    }
     const range = /\{(\d+),(\d+)\}$/.exec(tree);
     const all = data.builds?.[fullName];
     if (range === null || all === undefined) return { status: 200, body: {} }; // a folder: no `builds`
@@ -207,7 +217,8 @@ describe("jenkins_billing sync: what it fetches", () => {
     expect(new Set(j.calls.map((c) => c.headers["Authorization"]))).toEqual(new Set([expected]));
     // The listing's own `url` (another origin) is never requested.
     expect(j.calls.every((c) => c.url.startsWith("https://ci.acme.test/"))).toBe(true);
-    expect(j.calls.some((c) => c.url.includes("/job/team/api/json"))).toBe(true);
+    // A folder is never fetched for builds.
+    expect(j.calls.some((c) => c.url.includes("/job/team/api/json"))).toBe(false);
     expect(decodeCostSyncCursor(PREFIX, r.cursor ?? null).synced).toEqual({ [HOST]: "2026-11-20" });
   });
 
@@ -338,14 +349,100 @@ describe("jenkins_billing sync: what it fetches", () => {
     const r = await sync(jenkins({ jobs: "bad" }), cfg());
     expect(stored()).toEqual([]);
     expect(pending(r)).toContain("2026-11");
-    const odd = fake((url) =>
-      url.pathname === "/api/json"
-        ? { status: 200, body: { jobs: [node("a")] } }
-        : { status: 200, body: { builds: "nope" } },
-    );
-    expect(pending(await sync(odd, cfg()))).toContain("2026-11");
     const notJson = fake(() => ({ status: 200, headers: {} }));
     expect(pending(await sync(notJson, cfg()))).toContain("2026-11");
+  });
+
+  test("a job whose builds are not the documented shape, or answer 500, is that job's gap: others are still written", async () => {
+    const first = await sync(
+      jenkins({
+        jobs: [node("good"), node("bad")],
+        builds: { good: [build(1, T1, 2)], bad: [build(1, T1, 9)] },
+      }),
+      cfg(),
+    );
+    const j = jenkins({
+      jobs: [node("good"), node("bad")],
+      builds: { good: [build(1, T1, 3)] },
+      failing: { bad: 500 },
+    });
+    const r = await sync(j, cfg(), first.cursor ?? null, NOW + DAY);
+    expect(stored()).toEqual([
+      ["bad", "2026-11-02", 9, 0, false],
+      ["good", "2026-11-02", 3, 0, false],
+    ]);
+    expect(gaps(r)[HOST]).toBe(JENKINS_COST_GAPS.jobFailed("bad"));
+    expect(pending(r)).toBeUndefined();
+    const odd = fake((url) =>
+      url.pathname === "/api/json"
+        ? { status: 200, body: { jobs: [node("a"), node("b")] } }
+        : url.pathname.includes("/job/a/")
+          ? { status: 200, body: { builds: "nope" } }
+          : { status: 200, body: { builds: [build(1, T1, 4)] } },
+    );
+    const r2 = await sync(odd, cfg());
+    expect(gaps(r2)[HOST]).toBe(JENKINS_COST_GAPS.jobFailed("a"));
+    expect(stored()).toContainEqual(["b", "2026-11-02", 4, 0, false]);
+  });
+
+  test("a 429 on one job's builds stops the whole host: nothing is written", async () => {
+    const j = jenkins({
+      jobs: [node("a"), node("b")],
+      builds: { b: [build(1, T1, 4)] },
+      failing: { a: 429 },
+    });
+    const r = await sync(j, cfg());
+    expect(stored()).toEqual([]);
+    expect(pending(r)).toContain("2026-11");
+  });
+
+  test("jobs nested deeper than the listing tree are found; folders are never fetched for builds or counted", async () => {
+    // a/b/c/d is the fourth level: its children are past the tree, so it is expanded with its own request.
+    const deep = node("a", [node("b", [node("c", [{ ...node("d"), _class: FOLDER }])])]);
+    const j = jenkins({
+      jobs: [deep],
+      folders: {
+        "a/b/c/d": [node("e", [node("f")])],
+      },
+      builds: { "a/b/c/d/e/f": [build(1, T1, 6)] },
+    });
+    await sync(j, cfg());
+    expect(stored()).toEqual([["a/b/c/d/e/f", "2026-11-02", 6, 0, false]]);
+    const buildCalls = j.calls.filter((c) => decodeURIComponent(c.url).includes("builds["));
+    expect(buildCalls.every((c) => c.url.includes("/job/a/job/b/job/c/job/d/job/e/job/f/"))).toBe(
+      true,
+    );
+    expect(
+      j.calls.some((c) =>
+        decodeURIComponent(c.url).includes("/job/d/api/json?tree=jobs[name,url,jobs[name,url]]"),
+      ),
+    ).toBe(true);
+  });
+
+  test("a folder found by its class at any depth is expanded again, and folders do not count against the job cap", async () => {
+    const deep = node("a", [node("b", [node("c", [{ ...node("d"), _class: FOLDER }])])]);
+    const j = jenkins({
+      jobs: [deep],
+      folders: {
+        "a/b/c/d": [{ ...node("e"), _class: FOLDER }],
+        "a/b/c/d/e": [node("f"), node("g")],
+      },
+      builds: { "a/b/c/d/e/f": [build(1, T1, 1)], "a/b/c/d/e/g": [build(1, T1, 2)] },
+    });
+    // Two jobs and five folders: the cap of 2 counts the jobs only.
+    await sync(j, cfg(), null, NOW, { maxJobs: 2 });
+    expect(stored().map((l) => l[0])).toEqual(["a/b/c/d/e/f", "a/b/c/d/e/g"]);
+    const capped = await sync(j, cfg(), null, NOW, { maxJobs: 1 });
+    expect(gaps(capped)[HOST]).toBe(JENKINS_COST_GAPS.jobCap(HOST));
+  });
+
+  test("a folder that is gone or refused on expansion adds no jobs; its stored lines are kept", async () => {
+    const deep = node("a", [node("b", [node("c", [{ ...node("d"), _class: FOLDER }])])]);
+    const j = jenkins({ jobs: [deep], missing: ["a/b/c/d"] });
+    const r = await sync(j, cfg());
+    expect(gaps(r)).toEqual({});
+    const denied = jenkins({ jobs: [deep], denied: ["a/b/c/d"] });
+    expect(gaps(await sync(denied, cfg()))).toEqual({});
   });
 
   test("401 on the listing is a gap; 404 too; 429 penalises and retries", async () => {

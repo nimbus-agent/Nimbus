@@ -7,10 +7,10 @@
 // charge day is the UTC day the build ENDED (`timestamp + duration`). The minutes are priced by the owner's rate
 // (`[cost.jenkins] rate_per_minute`, or an `agent_rates` entry), else stored unpriced.
 //
-// A line's `rate_key` is `agent:<builtOn>`, or `agent:built-in` for an empty `builtOn` (the built-in node), so a rate
-// added later re-prices the stored lines. Stated bounds: a Pipeline (`WorkflowRun`) build has no `builtOn` in the
-// JSON API the sync asks for, so it is `agent:built-in` too unless the field is present; wall-clock minutes, not
-// agent-billed minutes; Jenkins has no stable job id, so the job's full name is the sub-account.
+// A line's `rate_key` is `agent:<builtOn>`, `agent:built-in` for a PRESENT empty `builtOn` (the built-in node), and
+// `default` (resource `unknown`) when `builtOn` is missing or not a string, so a rate added later re-prices the
+// stored lines. Stated bounds: a Pipeline (`WorkflowRun`) build has no `builtOn` in the JSON API: Jenkins names no
+// agent for it, so it is priced at `rate_per_minute`; wall-clock minutes, not agent-billed minutes; Jenkins has no stable job id, so the job's full name is the sub-account.
 //
 // A build is DROPPED and counted, never thrown: still running or with no duration (`unfinished`), a `number`,
 // `duration` or `timestamp` that is not a finite non-negative number (`bad_duration`), or an end day outside the
@@ -28,7 +28,7 @@ export const JENKINS_COST_SOURCE = "jenkins_billing";
 export const JENKINS_COST_PROVIDER = "jenkins";
 export const JENKINS_COST_SERVICE = "Jenkins builds";
 export const JENKINS_COST_SKU = "build_minutes";
-/** The agent key of a build with no `builtOn`. */
+/** The agent key of a build whose `builtOn` is present and empty (the built-in node). */
 export const JENKINS_BUILT_IN = "built-in";
 
 export type JenkinsBuildDropReason = "unfinished" | "bad_duration" | "outside_month";
@@ -74,7 +74,8 @@ function parseBuild(
   if (Number.isNaN(end.getTime())) return "bad_duration";
   const day = end.toISOString().slice(0, 10);
   if (day.slice(0, 7) !== month || day > lastDay) return "outside_month";
-  const builtOn = typeof raw["builtOn"] === "string" ? raw["builtOn"].trim() : "";
+  // Present and empty: the built-in node. Missing or not a string (a Pipeline build): no agent is named.
+  const builtOn = typeof raw["builtOn"] === "string" ? raw["builtOn"].trim() : null;
   const agent = builtOn === "" ? JENKINS_BUILT_IN : builtOn;
   const tags: Record<string, string> = {};
   setTag(tags, COST_RATE_KEY_TAG, rateKeyFor("agent", agent));
@@ -90,7 +91,7 @@ function parseBuild(
     serviceCategory: null,
     regionId: null,
     resourceId: null,
-    resourceName: agent,
+    resourceName: agent ?? "unknown",
     skuId: JENKINS_COST_SKU,
     chargeCategory: "usage",
     billedCost: 0,

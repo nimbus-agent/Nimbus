@@ -55,17 +55,37 @@ describe("jenkinsBuildLines", () => {
     expect(r.lines[0]?.consumedQuantity).toBe(20);
   });
 
-  test("an empty builtOn is the built-in node, with its own key", () => {
+  test("a present empty builtOn is the built-in node, with its own key", () => {
     const r = jenkinsBuildLines(
       "h",
       "2026-11",
-      [job([build({ builtOn: "" }), build({ number: 2, builtOn: undefined })])],
+      [job([build({ builtOn: "" }), build({ number: 2, builtOn: "  " })])],
       CENT,
     );
     expect(r.lines).toHaveLength(1);
     expect(r.lines[0]?.resourceName).toBe("built-in");
     expect(key(r.lines[0])).toBe("agent:built-in");
     expect(r.lines[0]?.consumedQuantity).toBe(4);
+  });
+
+  test("a missing or non-string builtOn (a Pipeline build) names no agent: key default, resource unknown, default rate", () => {
+    const rates: CostRates = { ...CENT, keyedRates: [["agent:built-in", 0.5]] };
+    const r = jenkinsBuildLines(
+      "h",
+      "2026-11",
+      [
+        job([
+          build({ builtOn: undefined }),
+          build({ number: 2, builtOn: 7 }),
+          build({ number: 3, builtOn: null }),
+        ]),
+      ],
+      rates,
+    );
+    expect(r.lines).toHaveLength(1);
+    expect(r.lines[0]?.resourceName).toBe("unknown");
+    expect(key(r.lines[0])).toBe("default");
+    expect(r.lines[0]?.billedCost).toBe(0.06);
   });
 
   test("an agent rate wins, others fall back to the default, none is unpriced", () => {
