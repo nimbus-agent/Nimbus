@@ -22,6 +22,7 @@ describe("[cost.jenkins]", () => {
       ratePerMinute: null,
       currency: "USD",
       agentRates: [],
+      agentCost: [],
     });
   });
 
@@ -38,7 +39,30 @@ describe("[cost.jenkins]", () => {
         ["built-in", 0],
         ["z-agent", 0.02],
       ],
+      agentCost: [],
     });
+  });
+
+  test("agent_cost keeps config order and refuses a bad entry", () => {
+    const c = jenkins(
+      'agent_cost = { "b" = { provider = "aws", resource = "i-1*" }, "a" = { provider = "gcp", resource = "vm-*" } }',
+    );
+    expect(c.error).toBeNull();
+    expect(c.jenkins.agentCost).toEqual([
+      { agent: "b", provider: "aws", resource: "i-1*" },
+      { agent: "a", provider: "gcp", resource: "vm-*" },
+    ]);
+    for (const bad of [
+      "agent_cost = 3",
+      'agent_cost = { "a" = 3 }',
+      'agent_cost = { "a" = { provider = "oracle", resource = "x" } }',
+      'agent_cost = { "a" = { provider = "aws", resource = "" } }',
+      'agent_cost = { "a" = { provider = "aws" } }',
+      'agent_cost = { "a" = { provider = "aws", resource = "x", extra = 1 } }',
+      `agent_cost = { "a" = { provider = "aws", resource = "${"x".repeat(201)}" } }`,
+    ]) {
+      expect(jenkins(bad).error).not.toBeNull();
+    }
   });
 
   test.each([

@@ -144,4 +144,42 @@ describe("jenkinsBuildLines", () => {
     expect(r.lines).toHaveLength(0);
     expect(r.dropped).toEqual({ unfinished: 2, bad_duration: 4, outside_month: 2 });
   });
+
+  test("an agent mapped to a cloud machine is minutes only: unpriced, key cloud:<agent>, the glob tagged, never priced by a rate", () => {
+    const rates: CostRates = { ...CENT, keyedRates: [["agent:linux-1", 0.5]] };
+    const r = jenkinsBuildLines(
+      "h",
+      "2026-11",
+      [job([build(), build({ number: 2, builtOn: "other" })])],
+      rates,
+      "9999-12-31",
+      new Map([["linux-1", "i-0abc*"]]),
+    );
+    const mapped = r.lines.find((l) => l.resourceName === "linux-1");
+    expect(mapped).toMatchObject({
+      billedCost: 0,
+      effectiveCost: null,
+      priced: false,
+      consumedQuantity: 2,
+      consumedUnit: "minute",
+    });
+    expect(key(mapped)).toBe("cloud:linux-1");
+    expect(tagOf(mapped?.tags ?? {}, "cloud_resource")).toBe("i-0abc*");
+    const other = r.lines.find((l) => l.resourceName === "other");
+    expect(other).toMatchObject({ billedCost: 0.02, priced: true });
+    expect(key(other)).toBe("agent:other");
+    expect(tagOf(other?.tags ?? {}, "cloud_resource")).toBeUndefined();
+  });
+
+  test("the built-in node can be mapped too", () => {
+    const r = jenkinsBuildLines(
+      "h",
+      "2026-11",
+      [job([build({ builtOn: "" })])],
+      CENT,
+      "9999-12-31",
+      new Map([["built-in", "ctrl-*"]]),
+    );
+    expect(key(r.lines[0])).toBe("cloud:built-in");
+  });
 });

@@ -30,6 +30,8 @@ export const JENKINS_COST_SERVICE = "Jenkins builds";
 export const JENKINS_COST_SKU = "build_minutes";
 /** The agent key of a build whose `builtOn` is present and empty (the built-in node). */
 export const JENKINS_BUILT_IN = "built-in";
+/** The tag of a quantity-only line: the glob its agent's cloud machine is found by. */
+export const CLOUD_RESOURCE_TAG = "cloud_resource";
 
 export type JenkinsBuildDropReason = "unfinished" | "bad_duration" | "outside_month";
 
@@ -61,6 +63,7 @@ function parseBuild(
   month: string,
   lastDay: string,
   rates: CostRates,
+  cloudAgents: ReadonlyMap<string, string>,
 ): Parsed | JenkinsBuildDropReason {
   if (!isRecord(raw)) return "bad_duration";
   if (raw["building"] === true || raw["duration"] === undefined || raw["duration"] === null) {
@@ -78,7 +81,15 @@ function parseBuild(
   const builtOn = typeof raw["builtOn"] === "string" ? raw["builtOn"].trim() : null;
   const agent = builtOn === "" ? JENKINS_BUILT_IN : builtOn;
   const tags: Record<string, string> = {};
-  setTag(tags, COST_RATE_KEY_TAG, rateKeyFor("agent", agent));
+  // Slice 15: a build on an agent mapped to a cloud machine is minutes only; the machine's own cost line carries the
+  // money and the views split it (`cost-agent-split.ts`), so the same cost is never stored twice.
+  const cloudResource = agent === null ? undefined : cloudAgents.get(agent);
+  setTag(
+    tags,
+    COST_RATE_KEY_TAG,
+    cloudResource === undefined ? rateKeyFor("agent", agent) : rateKeyFor("cloud", agent),
+  );
+  if (cloudResource !== undefined) setTag(tags, CLOUD_RESOURCE_TAG, cloudResource);
   const line: CostLine = {
     source: JENKINS_COST_SOURCE,
     provider: JENKINS_COST_PROVIDER,
@@ -119,6 +130,7 @@ export function jenkinsBuildLines(
   jobs: readonly JenkinsJobBuilds[],
   rates: CostRates,
   lastDay = "9999-12-31",
+  cloudAgents: ReadonlyMap<string, string> = new Map(),
 ): JenkinsBuildLinesResult {
   const dropped: Record<JenkinsBuildDropReason, number> = {
     unfinished: 0,
@@ -129,7 +141,7 @@ export function jenkinsBuildLines(
   const seen = new Set<string>();
   for (const job of jobs) {
     for (const raw of job.builds) {
-      const r = parseBuild(raw, job, account, month, lastDay, rates);
+      const r = parseBuild(raw, job, account, month, lastDay, rates, cloudAgents);
       if (typeof r === "string") {
         dropped[r]++;
         continue;

@@ -47,6 +47,14 @@ describe("rate prices", () => {
     expect(rateForKey(rates, "runner:4x")).toBe(0.01);
   });
 
+  test("a cloud: key is never priced by a rate, not even the default (slice 15: the machine's cost line holds the money)", () => {
+    const withDefault: CostRates = { ...rates, ratePerMinute: 0.5, keyedRates: [["cloud:big", 9]] };
+    expect(rateKeyFor("cloud", "big")).toBe("cloud:big");
+    expect(rateForKey(withDefault, "cloud:big")).toBeNull();
+    expect(rateForKey(withDefault, "cloud:other")).toBeNull();
+    expect(rateForKey(withDefault, "agent:other")).toBe(0.5);
+  });
+
   test("rounding is stable, and no rate is an unpriced line", () => {
     expect(ratePrice(3, 0.1)).toBe(0.3);
     expect(pricedFields(100, 0.01)).toEqual({ billedCost: 1, effectiveCost: 1, priced: true });
