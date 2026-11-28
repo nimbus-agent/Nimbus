@@ -50,13 +50,18 @@ import {
   type NimbusCostBitbucketConfig,
   readCostBitbucketTable,
 } from "./cost-bitbucket-toml.ts";
-
 import {
   CostGitlabConfigError,
   DEFAULT_COST_GITLAB_CONFIG,
   type NimbusCostGitlabConfig,
   readCostGitlabTable,
 } from "./cost-gitlab-toml.ts";
+import {
+  CostJenkinsConfigError,
+  DEFAULT_COST_JENKINS_CONFIG,
+  type NimbusCostJenkinsConfig,
+  readCostJenkinsTable,
+} from "./cost-jenkins-toml.ts";
 import {
   CostReportConfigError,
   type CostReportDef,
@@ -77,6 +82,8 @@ export interface NimbusCostConfig {
   readonly gitlab: NimbusCostGitlabConfig;
   /** `[cost.bitbucket]`: the workspaces whose Pipelines minutes are synced, and the owner's rates (slice 9). */
   readonly bitbucket: NimbusCostBitbucketConfig;
+  /** `[cost.jenkins]`: the Jenkins build-minute rates (slice 10). */
+  readonly jenkins: NimbusCostJenkinsConfig;
   /** `[cost.aws]`: the FOCUS Data Export in S3 and the Cost Explorer opt-in (slice 11a; see `cost-aws-toml.ts`). */
   readonly aws: NimbusCostAwsConfig;
   /** `[[cost.report]]` with their `[[cost.report.channel]]` blocks (slice 3; see `cost-report-toml.ts`). */
@@ -103,6 +110,7 @@ export const DEFAULT_COST_CONFIG: NimbusCostConfig = Object.freeze({
   githubOrgs: Object.freeze([]) as readonly string[],
   gitlab: DEFAULT_COST_GITLAB_CONFIG,
   bitbucket: DEFAULT_COST_BITBUCKET_CONFIG,
+  jenkins: DEFAULT_COST_JENKINS_CONFIG,
   aws: DEFAULT_COST_AWS_CONFIG,
   reports: Object.freeze([]) as readonly CostReportDef[],
   reportsError: null,
@@ -217,6 +225,8 @@ function readPlainSection(s: EffectiveSection & { header: string }, draft: Draft
     draft.gitlab = readCostGitlabTable(parseSection(s, "[cost.gitlab]"));
   } else if (s.header === "cost.bitbucket" && !s.isArray) {
     draft.bitbucket = readCostBitbucketTable(parseSection(s, "[cost.bitbucket]"));
+  } else if (s.header === "cost.jenkins" && !s.isArray) {
+    draft.jenkins = readCostJenkinsTable(parseSection(s, "[cost.jenkins]"));
   } else if (s.header === "cost.aws" && !s.isArray) {
     draft.aws = readCostAwsTable(parseSection(s, "[cost.aws]"));
   } else {
@@ -310,6 +320,7 @@ export function resolveCostConfig(sections: readonly EffectiveSection[]): Nimbus
       e instanceof CostRuleError ||
       e instanceof CostGitlabConfigError ||
       e instanceof CostBitbucketConfigError ||
+      e instanceof CostJenkinsConfigError ||
       e instanceof CostAwsConfigError
     ) {
       return Object.freeze({ ...DEFAULT_COST_CONFIG, error: e.message });

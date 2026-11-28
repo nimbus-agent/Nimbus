@@ -31,6 +31,7 @@ describe("[cost] config", () => {
       aws: { export: null, costExplorer: false },
       gitlab: { groups: [], ratePerMinute: null, currency: "USD", runnerRates: [] },
       bitbucket: { workspaces: [], ratePerMinute: null, currency: "USD", sizeRates: [] },
+      jenkins: { enabled: false, ratePerMinute: null, currency: "USD", agentRates: [] },
       reports: [],
       reportsError: null,
       error: null,
