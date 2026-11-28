@@ -50,12 +50,14 @@ type Brief = {
   /** The top remediation proposal the push carried (IC5b); absent on an older gateway. */
   proposal?: PushedProposal | null;
 };
-type PushedProposal = {
+export type PushedProposal = {
   recordId: string;
   proposalId: string;
   kind: string;
   toolId: string;
   reversibility: string;
+  /** The condition a conditionally reversible row's undo rests on; absent from an older gateway. */
+  reversibleIf?: string;
   confidence: number | null;
   expiresAtMs: number;
 };
@@ -192,6 +194,14 @@ async function renderNoBrief(
 
 const REMEDIATE_REFUSALS = ["ERR_PROPOSAL_STALE", "ERR_PROPOSAL_EXPIRED", "ERR_PROPOSAL_NOT_FOUND"];
 
+/** The pushed proposal's reversibility label: never plain "reversible" for a row whose undo rests on a condition. */
+export function pushedLabel(p: PushedProposal): string {
+  if (p.reversibility === "irreversible") return "IRREVERSIBLE";
+  return p.reversibility === "reversible" && p.reversibleIf !== undefined
+    ? `reversible only if ${terminalSafe(p.reversibleIf)}; otherwise IRREVERSIBLE`
+    : terminalSafe(p.reversibility);
+}
+
 /**
  * `nimbus oncall pushed <id> --remediate` (Phase 10 IC5b, approve-from-push). Reads the push and asks the gateway
  * to run the proposal it carried through `incident.remediate` on THIS connection: the gateway re-derives it from
@@ -229,7 +239,7 @@ async function runPushedRemediate(
   } catch {
     // An older gateway: `incident.remediate` then refuses with its own message.
   }
-  const label = p.reversibility === "irreversible" ? "IRREVERSIBLE" : terminalSafe(p.reversibility);
+  const label = pushedLabel(p);
   sink.out(
     `Running the proposal pushed for ${terminalSafe(incidentId)}: [${label}] ${terminalSafe(p.kind)} - ${terminalSafe(p.toolId)} (${terminalSafe(p.proposalId)})\n`,
   );

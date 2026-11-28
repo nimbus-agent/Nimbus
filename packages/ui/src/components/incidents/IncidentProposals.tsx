@@ -19,6 +19,13 @@ export function remediateCommand(recordId: string, proposalId: string): string |
     : null;
 }
 
+/** Never plain "reversible" for a row whose undo rests on the call's own before-state (the Unleash toggle). */
+export function reversibilityText(p: IncidentProposal): string {
+  return p.reversibility === "reversible" && p.reversibleIf !== undefined
+    ? `reversible only if ${safeText(p.reversibleIf, 200)}; otherwise IRREVERSIBLE`
+    : safeText(p.reversibility, 40);
+}
+
 function confidenceText(c: number | null): string {
   return c === null ? "not scored" : String(c);
 }
@@ -88,7 +95,7 @@ function Proposal({
         {`${safeText(p.kind, 40)} - ${safeText(p.toolId, 80)} - ${safeText(p.status, 20)}`}
       </p>
       <p className="text-[var(--color-fg-muted)]">
-        {`Reversibility: ${safeText(p.reversibility, 40)} - confidence ${confidenceText(p.confidence)} - expires ${stamp(p.expiresAtMs)}`}
+        {`Reversibility: ${reversibilityText(p)} - confidence ${confidenceText(p.confidence)} - expires ${stamp(p.expiresAtMs)}`}
       </p>
       {ev !== null && (
         <>

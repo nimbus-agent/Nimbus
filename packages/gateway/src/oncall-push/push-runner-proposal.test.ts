@@ -179,6 +179,25 @@ describe("a push carries its record's top proposal", () => {
     expect(text.split("\n")[2]).toStartWith("[IRREVERSIBLE]");
   });
 
+  test("a conditionally reversible proposal (the Unleash toggle) names its condition, never plain reversible", () => {
+    const text = proposalSection("pagerduty:PA", {
+      ...PROPOSAL("inc_0000000000000000"),
+      kind: "repeat_last",
+      toolId: "unleash_feature_toggle",
+      reversibleIf: "the environment already has an active strategy",
+    });
+    expect(text.split("\n")[2]).toStartWith(
+      "[reversible only if the environment already has an active strategy; otherwise IRREVERSIBLE] repeat_last: `unleash_feature_toggle`",
+    );
+    // A condition on a class that is not reversible changes nothing.
+    const unknown = proposalSection("pagerduty:PA", {
+      ...PROPOSAL("inc_0000000000000000"),
+      reversibility: "unknown",
+      reversibleIf: "x",
+    });
+    expect(unknown.split("\n")[2]).toStartWith("[unknown]");
+  });
+
   test("no proposal, a null one or a throwing listing: no block, a null proposal, the push still ok", async () => {
     for (const topProposal of [
       undefined,
@@ -214,6 +233,26 @@ describe("pushedProposalOf re-validates what it reads", () => {
     ["an array", JSON.stringify({ proposal: [] })],
   ])("%s is no proposal", (_why, json) => {
     expect(pushedProposalOf(json)).toBeNull();
+  });
+  test("the condition comes from the row table by tool id, never from the stored value", () => {
+    const condition = "the environment already has an active strategy";
+    const unleash = { ...good, kind: "repeat_last", toolId: "unleash_feature_toggle" };
+    for (const stored of [
+      {},
+      { reversibleIf: "anything at all" },
+      { reversibleIf: 1 },
+      { reversibleIf: "x\u001b[31m" },
+    ]) {
+      const read = pushedProposalOf(JSON.stringify({ proposal: { ...unleash, ...stored } }));
+      expect(read?.reversibleIf, JSON.stringify(stored)).toBe(condition);
+    }
+    // An unconditional row, or a class that is not reversible, carries none whatever was stored.
+    expect(
+      pushedProposalOf(JSON.stringify({ proposal: { ...good, reversibleIf: condition } })),
+    ).not.toHaveProperty("reversibleIf");
+    expect(
+      pushedProposalOf(JSON.stringify({ proposal: { ...unleash, reversibility: "unknown" } })),
+    ).not.toHaveProperty("reversibleIf");
   });
   test("a null confidence is allowed", () => {
     expect(

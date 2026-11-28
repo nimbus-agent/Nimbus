@@ -20,7 +20,8 @@ import {
   getAgentRequestSessionId,
 } from "./agent-request-context.ts";
 import type { AskExplainRecorder } from "./ask-explain-recorder.ts";
-import { createBeforeStateRunner } from "./before-state.ts";
+import { type BeforeStateRunnerOptions, createBeforeStateRunner } from "./before-state.ts";
+import { type CaptureVet, vettedBeforeStateRunner } from "./before-state-vet.ts";
 import { COMPUTER_USE_TURN_REFUSALS, ComputerUseTurnError } from "./computer-use-turn-error.ts";
 import {
   bindConsentChannel,
@@ -185,11 +186,10 @@ export type RunAskParams = {
 };
 
 /**
- * Whether this turn runs on a demo-rooted gateway (I41). DERIVED from the required `paths` —
- * never a second flag a caller could set differently, and never the env var — so every `runAsk`
- * caller (the IPC handler and ChatOps alike) is demo-aware without having to remember to be.
- * In the demo, connector auth/sync are refused and the org is seeded by `nimbus demo`, so the
- * real-install empty-index and no-LLM guidance are both wrong there.
+ * Whether this turn runs on a demo-rooted gateway (I41). DERIVED from the required `paths` — never a second flag a
+ * caller could set differently, and never the env var — so every `runAsk` caller (the IPC handler and ChatOps alike)
+ * is demo-aware without having to remember to be. In the demo, connector auth/sync are refused and the org is seeded
+ * by `nimbus demo`, so the real-install empty-index and no-LLM guidance are both wrong there.
  */
 function isDemo(p: RunAskParams): boolean {
   return p.paths.demo === true;
@@ -595,10 +595,9 @@ const NEVER_ASKED_CONSENT: ConsentChannel = {
 };
 
 /**
- * The ONE place a workflow write executor is made, and so the one `standingRules:` and the one
- * `unattended:` value in this file (static D44(e) and D44(d)): the attended and the unattended
- * builder are one-line calls of it, so they cannot drift on the before-state runner, the
- * standing-rule dependencies or the policy.
+ * The ONE place a workflow write executor is made, and so the one `standingRules:` and the one `unattended:` value in
+ * this file (static D44(e) and D44(d)): the attended and the unattended builder are one-line calls of it, so they
+ * cannot drift on the before-state runner, the standing-rule dependencies or the policy.
  */
 function newWorkflowWriteExecutor(
   p: UnattendedWorkflowWriteExecutorParams,
@@ -628,26 +627,24 @@ function newWorkflowWriteExecutor(
 }
 
 /**
- * What the incident engine's remediation builds its executor from (Phase 10 IC5a, I57 (b)): the shared
- * executor arguments, the before-state rows and KB accessor the guards read, and the observer told what a
- * reversible row's reader captured. `consentCoordinator` is the coordinator the CALLER already wrapped to
- * accept a human answer only.
+ * What the incident engine's remediation builds its executor from (Phase 10 IC5a, I57 (b)): the shared executor
+ * arguments, the before-state rows and KB accessor the guards read, the observer told what a reversible row's reader
+ * captured, and an undo's fresh-state vet. `consentCoordinator` is already wrapped to accept a human answer only.
  */
 export type RemediationExecutorParams = ExecutorBuildParams &
   Pick<RunAskParams, "beforeStateRows" | "getTribalKbConfig"> & {
-    readonly onCaptured: (
-      action: PlannedAction,
-      captured: Readonly<Record<string, string>>,
-    ) => void;
+    readonly onCaptured: NonNullable<BeforeStateRunnerOptions["onCaptured"]>;
+    /** An undo of a conditionally reversible row: its FRESH capture may refuse the write before any prompt. */
+    readonly vetCapture?: CaptureVet;
     /** Phase 17: the executor is built for a dry run, so it may run `readBeforeOnly` (static D46(c)). */
     readonly dryRun?: boolean;
   };
 
 /**
  * The incident remediation executor (static D46(c), D40(b)): consent bound to the CLI client that asked, NO
- * delegation (I20), the before-state runner reading for every origin (the action carries none, it is the
- * owner's own) with the capture observer, and NO standing-rule dependencies and no unattended flag (I55:
- * an engine proposal is never approved by a rule). Called only from `gateway-main.ts`.
+ * delegation (I20), the before-state runner reading for every origin (the action carries none, it is the owner's own)
+ * with the capture observer, and NO standing-rule dependencies and no unattended flag (I55: an engine proposal is
+ * never approved by a rule). Called only from `gateway-main.ts`.
  */
 export function buildRemediationExecutor(p: RemediationExecutorParams): ToolExecutor {
   return newRemediationExecutor(p, bindConsentChannel(p.consentCoordinator, p.clientId));
@@ -663,14 +660,18 @@ function newRemediationExecutor(
     consent,
     undefined,
     {
-      beforeState: createBeforeStateRunner({
-        readsEveryOrigin: true,
-        onCaptured: p.onCaptured,
-        ...(p.beforeStateRows === undefined ? {} : { rows: p.beforeStateRows }),
-        guardContext: () => ({ kb: p.getTribalKbConfig() }),
-      }),
-      // Phase 17 remediation dry run: the only executor that may run `readBeforeOnly` (static D46(c)), and
-      // only when the call asked for a dry run.
+      beforeState: vettedBeforeStateRunner(
+        (onCaptured) =>
+          createBeforeStateRunner({
+            readsEveryOrigin: true,
+            onCaptured,
+            ...(p.beforeStateRows === undefined ? {} : { rows: p.beforeStateRows }),
+            guardContext: () => ({ kb: p.getTribalKbConfig() }),
+          }),
+        p.onCaptured,
+        p.vetCapture,
+      ),
+      // Phase 17 dry run: the only executor that may run `readBeforeOnly` (static D46(c)), only when asked.
       dryRun: p.dryRun === true,
     },
     p.localIndex,
@@ -807,9 +808,8 @@ function demoAwareAskError(p: RunAskParams, e: unknown): unknown {
 }
 
 /**
- * Records this call's wall-clock duration for telemetry. Best-effort exactly like
- * {@link recordExplainSafely}: a recorder failure must never change what the caller receives or
- * throws.
+ * Records this call's wall-clock duration for telemetry. Best-effort exactly like {@link recordExplainSafely}: a
+ * recorder failure must never change what the caller receives or throws.
  */
 function recordLatencySafely(p: RunAskParams, startedAt: number): void {
   if (p.agentLatencyRecorder === undefined) {

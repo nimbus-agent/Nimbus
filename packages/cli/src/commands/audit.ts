@@ -206,6 +206,8 @@ export interface ReplayView {
       readonly toolId: string;
       readonly status: string;
       readonly reversibility: string;
+      /** The condition a conditionally reversible row's undo rests on; absent from an older gateway. */
+      readonly reversibleIf?: string;
       readonly confidence: number | null;
       readonly actionId: string | null;
       readonly undoStatus: string | null;
@@ -288,7 +290,12 @@ function proposalLine(p: ReplayProposalView): string {
   const conf = p.confidence === null ? "not scored" : `confidence ${String(p.confidence)}`;
   const ran = p.actionId === null ? "" : `, action ${oneLineClean(p.actionId)}`;
   const undo = p.undoStatus === null ? "" : `, undo ${oneLineClean(p.undoStatus)}`;
-  return `  ${oneLineClean(p.id)}  ${oneLineClean(p.kind)}  ${oneLineClean(p.toolId)}  [${oneLineClean(p.status)}]  ${oneLineClean(p.reversibility)}, ${conf}${ran}${undo}`;
+  // Never plain "reversible" for a row whose undo rests on the call's own before-state (the Unleash toggle).
+  const rev =
+    p.reversibility === "reversible" && p.reversibleIf !== undefined
+      ? `reversible only if ${oneLineClean(p.reversibleIf)}; otherwise IRREVERSIBLE`
+      : oneLineClean(p.reversibility);
+  return `  ${oneLineClean(p.id)}  ${oneLineClean(p.kind)}  ${oneLineClean(p.toolId)}  [${oneLineClean(p.status)}]  ${rev}, ${conf}${ran}${undo}`;
 }
 
 /** The replay as terminal text. Every field that came from a row passes through `stripControlChars`. */
