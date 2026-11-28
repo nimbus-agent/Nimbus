@@ -30,7 +30,6 @@ import {
 import { stripTrailingSlashes } from "../string/strip-trailing-slashes.ts";
 import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
-import { codeUnitCompare } from "../util/code-unit-compare.ts";
 import { basicAuthHeader } from "./atlassian-api-sync-helpers.ts";
 import {
   type CostMonthOutcome,
@@ -184,7 +183,7 @@ async function hostMonth(s: RunState, host: string, month: string): Promise<Cost
     .slice(0, 600);
   const mapped = jenkinsBuildLines(host, month, complete, s.rates, s.today);
   const read = new Set(complete.map((r) => r.fullName));
-  const kept = stored.filter((l) => l.subAccountId === null || !read.has(l.subAccountId));
+  const kept = stored.filter((l) => !read.has(String(l.subAccountId)));
   if (mapped.lines.length === 0 && stored.length > kept.length) {
     return { kind: "month_gap", reason: JENKINS_COST_GAPS.noBuilds(host, month) };
   }
@@ -210,6 +209,28 @@ function safeBase(raw: string): { root: string; host: string } | null {
   const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(base.hostname);
   const ok = base.protocol === "https:" || (base.protocol === "http:" && loopback);
   return ok ? { root: stripTrailingSlashes(raw), host: base.host } : null;
+}
+
+/** The Jenkins connector's base URL, user and token (trimmed) through the shared grant, or null when any is blank. */
+async function readJenkinsCredential(
+  ctx: SyncContext,
+): Promise<{ base: string; user: string; token: string } | null> {
+  const get = async (k: "base_url" | "username" | "api_token"): Promise<string> =>
+    (await ctx.getSharedSecret("jenkins", k))?.trim() ?? "";
+  const base = await get("base_url");
+  const user = await get("username");
+  const token = await get("api_token");
+  return base === "" || user === "" || token === "" ? null : { base, user, token };
+}
+
+/** The host a gap names for a base that is not usable: its own host, else the generic name. */
+function hostName(raw: string): string {
+  try {
+    const h = new URL(raw).host;
+    return h === "" ? "jenkins" : h;
+  } catch {
+    return "jenkins";
+  }
 }
 
 export function createJenkinsCostSyncable(options: JenkinsCostSyncableOptions): Syncable {
@@ -244,26 +265,14 @@ export function createJenkinsCostSyncable(options: JenkinsCostSyncableOptions): 
         );
       };
       if (!cfg.enabled) return idle(null);
-      const [baseRaw, user, token] = await Promise.all([
-        ctx.getSharedSecret("jenkins", "base_url"),
-        ctx.getSharedSecret("jenkins", "username"),
-        ctx.getSharedSecret("jenkins", "api_token"),
-      ]);
-      const blank = (v: string | null): boolean => v === null || v.trim() === "";
+      const cred = await readJenkinsCredential(ctx);
       // No credential: nothing is read, and the gaps recorded earlier are kept, not cleared.
-      if (blank(baseRaw) || blank(user) || blank(token)) {
+      if (cred === null) {
         return syncPassCursorSuccess(t0, 0, cursor ?? encodeCostSyncCursor(PREFIX, prev0()), 0);
       }
-      const base = safeBase((baseRaw ?? "").trim());
-      if (base === null) {
-        let host = "jenkins";
-        try {
-          host = new URL((baseRaw ?? "").trim()).host || host;
-        } catch {
-          // an unparsable base is named by the generic host
-        }
-        return idle(null, { [host]: JENKINS_COST_GAPS.insecureBase });
-      }
+      const base = safeBase(cred.base);
+      if (base === null)
+        return idle(null, { [hostName(cred.base)]: JENKINS_COST_GAPS.insecureBase });
       const keyed = (m: Readonly<Record<string, string>>): Record<string, string> => {
         const v = own(m, base.host);
         return v === undefined ? {} : { [base.host]: v };
@@ -303,7 +312,7 @@ export function createJenkinsCostSyncable(options: JenkinsCostSyncableOptions): 
           ctx,
           fetchFn,
           base: base.root,
-          auth: basicAuthHeader((user ?? "").trim(), (token ?? "").trim()),
+          auth: basicAuthHeader(cred.user, cred.token),
           ...(options.maxJobs === undefined ? {} : { maxJobs: options.maxJobs }),
           ...(options.maxBuildPages === undefined ? {} : { maxBuildPages: options.maxBuildPages }),
         },
@@ -315,7 +324,7 @@ export function createJenkinsCostSyncable(options: JenkinsCostSyncableOptions): 
             own(prev.synced, host) === undefined,
             own(prev.pending, host) ?? [],
           );
-          return [...months].sort(codeUnitCompare)[0] ?? new Date(nowMs).toISOString().slice(0, 7);
+          return months.reduce((a, b) => (a < b ? a : b));
         },
         data: new Map(),
       };
