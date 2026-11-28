@@ -338,6 +338,18 @@ describe("bitbucket_billing sync: what it fetches", () => {
   });
 });
 
+describe("bitbucket_billing sync: removal", () => {
+  test("removing the connector's index data (connector remove bitbucket) erases its cost lines", async () => {
+    await sync(
+      bitbucket({ repos: { acme: [web] }, pipelines: { "acme/web": [pipe("{p1}", D1, 60)] } }),
+      cfg(),
+    );
+    expect(stored()).toHaveLength(1);
+    new LocalIndex(db).removeConnectorIndexData("bitbucket_billing");
+    expect(stored()).toEqual([]);
+  });
+});
+
 describe("bitbucket_billing sync: rates", () => {
   test("a rate added later prices the stored lines, with no request for the re-price itself", async () => {
     const data = { repos: { acme: [web] }, pipelines: { "acme/web": [pipe("{p1}", D1, 6000)] } };
