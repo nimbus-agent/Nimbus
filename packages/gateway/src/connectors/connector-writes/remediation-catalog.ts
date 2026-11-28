@@ -27,6 +27,9 @@ export const REMEDIATION_CATALOG: RemediationCatalog = Object.freeze({
   repeatable: Object.freeze([
     "launchdarkly_flag_toggle",
     "flagsmith_feature_state_set",
+    "unleash_feature_toggle",
+    "split_kill",
+    "split_restore",
     "aws_ec2_instance_start",
     "aws_ec2_instance_stop",
   ]),

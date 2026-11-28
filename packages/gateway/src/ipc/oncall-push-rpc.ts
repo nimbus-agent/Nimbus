@@ -1,3 +1,4 @@
+import { reversibleIfOf } from "../connectors/connector-writes/reversibility.ts";
 import { ENGINE_PROPOSAL_ID_RE } from "../engine/incident-link.ts";
 import { parseHeadlineBrief, resolvePushService } from "../oncall-push/push-headline.ts";
 import { PushRetryRefusedError } from "../oncall-push/push-runner.ts";
@@ -31,6 +32,8 @@ export type PushedBriefProposal = {
   kind: string;
   toolId: string;
   reversibility: "reversible" | "irreversible" | "unknown";
+  /** The condition a conditionally reversible row's undo rests on (the Unleash toggle), else absent. */
+  reversibleIf?: string;
   confidence: number | null;
   expiresAtMs: number;
 };
@@ -77,6 +80,8 @@ export function pushedProposalOf(briefJson: string | null): PushedBriefProposal 
     kind,
     toolId,
     reversibility: reversibility as PushedBriefProposal["reversibility"],
+    // From the row table by the tool id, never the stored value: a damaged row cannot drop or reword it.
+    ...(reversibility === "reversible" ? reversibleIfOf(toolId) : {}),
     confidence,
     expiresAtMs,
   };

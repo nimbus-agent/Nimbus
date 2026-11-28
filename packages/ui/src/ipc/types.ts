@@ -501,10 +501,7 @@ export interface PushedBriefDetail extends PushedBriefSummary {
   readonly briefMarkdown: string | null;
   readonly failureCode: string | null;
   readonly delivery: Readonly<Record<string, PushSinkOutcome>>;
-  /**
-   * The remediation proposal the push carried (Phase 10 IC5b), run only from the CLI with
-   * `nimbus oncall pushed <id> --remediate`. The desktop does not start it. Optional: an older gateway omits it.
-   */
+  /** The proposal the push carried (IC5b), run only by `nimbus oncall pushed <id> --remediate`, never here; absent from an older gateway. */
   readonly proposal?: PushedBriefProposal | null;
 }
 
@@ -756,6 +753,8 @@ export interface IncidentProposal {
   } | null;
   readonly confidence: number | null;
   readonly reversibility: string;
+  /** The condition a conditionally reversible row's undo rests on (the Unleash toggle); absent otherwise. */
+  readonly reversibleIf?: string;
   readonly irreversibleReason: string | null;
   readonly status: string;
   readonly createdAtMs: number;

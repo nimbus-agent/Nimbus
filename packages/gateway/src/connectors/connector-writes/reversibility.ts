@@ -397,6 +397,15 @@ export function reversibleOnlyIf(toolId: string): string | undefined {
   return entryOf(toolId)?.conditional?.condition;
 }
 
+/**
+ * `{ reversibleIf }` for a conditionally reversible row, else nothing: what a runbook or proposal listing carries
+ * beside the class, so it never reads plain "reversible" for a row whose undo depends on the call's before-state.
+ */
+export function reversibleIfOf(toolId: string | undefined): { reversibleIf?: string } {
+  const condition = toolId === undefined ? undefined : reversibleOnlyIf(toolId);
+  return condition === undefined ? {} : { reversibleIf: condition };
+}
+
 /** Why THIS call of a conditionally reversible row cannot be undone, else `undefined`. */
 export function notReversibleBecause(
   toolId: string,
@@ -424,6 +433,33 @@ export function reversibilityConditionOf(
 ): { readonly condition: string; readonly otherwise: string } | undefined {
   const c = entryOf(toolId)?.conditional;
   return c === undefined ? undefined : { condition: c.condition, otherwise: c.otherwise };
+}
+
+/**
+ * Whether an undo whose inverse is `toolId` must be judged again on a FRESH before-read: a conditionally reversible
+ * row, whose condition (the Unleash toggle: an active strategy) can stop holding between the run and its undo.
+ */
+export function undoNeedsFreshRead(toolId: string): boolean {
+  return entryOf(toolId)?.conditional !== undefined;
+}
+
+/**
+ * The refusal of such an undo, judged on what its inverse's FRESH read captured (`undefined`: nothing was captured,
+ * so it fails closed); `undefined` lets it run. The recorded capture only chose and built the inverse.
+ */
+export function undoFreshRefusal(
+  toolId: string,
+  inverseInput: Readonly<Record<string, unknown>>,
+  fresh: Readonly<Record<string, string>> | undefined,
+): string | undefined {
+  const c = entryOf(toolId)?.conditional;
+  if (c === undefined) return undefined;
+  const lead = `irreversible now: it is reversible only if ${c.condition}, and`;
+  if (fresh === undefined)
+    return `${lead} the target could not be read again to check; nothing was run`;
+  return c.whyNot(inverseInput, fresh) === undefined
+    ? undefined
+    : `${lead} a fresh read of the target does not show that (${c.otherwise})`;
 }
 
 /** The undo refusal for a call whose inverse cannot be built: the service's reason when there is one. */
