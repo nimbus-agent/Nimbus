@@ -20,6 +20,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "anthropic_billing",
   "gitlab_billing",
   "aws_billing",
+  "gcp_billing",
   "gitlab",
   "bitbucket",
   "bitbucket_billing",
@@ -169,6 +170,8 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   gitlab_billing: 24 * 60 * MIN1,
   // Phase 7 slice 11a: AWS cost from a FOCUS Data Export in S3, daily.
   aws_billing: 24 * 60 * MIN1,
+  // Phase 7 slice 13: GCP cost from the BigQuery billing export, daily.
+  gcp_billing: 24 * 60 * MIN1,
   gitlab: MIN1,
   bitbucket: MIN1,
   // Phase 7 slice 9: Bitbucket Pipelines minutes, daily.
@@ -290,6 +293,7 @@ const CREDENTIALS_REUSED_FROM: Partial<Record<ConnectorServiceId, ConnectorServi
   gitlab_billing: "gitlab",
   bitbucket_billing: "bitbucket",
   aws_billing: "aws",
+  gcp_billing: "gcp",
   bigquery: "gcp",
   cloud_logging: "gcp",
   vertex_ai: "gcp",

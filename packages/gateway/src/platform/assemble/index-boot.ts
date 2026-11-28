@@ -9,6 +9,7 @@ import {
 import type { loadNimbusSessionFromConfigDir } from "../../config/session-toml.ts";
 import { Config } from "../../config.ts";
 import { hasUsableAwsCredentials } from "../../connectors/_lib/aws-cli.ts";
+import { hasUsableGcpCredentials } from "../../connectors/_lib/gcp-auth.ts";
 import { readBitbucketVaultCredential } from "../../connectors/bitbucket-credential.ts";
 import { createBlameIndexSyncable } from "../../connectors/blame-index-sync.ts";
 import { defaultSyncIntervalMsForService } from "../../connectors/connector-catalog.ts";
@@ -190,6 +191,14 @@ export async function ensureGithubCircleCiSchedulerCompanions(
     localIndex.ensureConnectorSchedulerRegistration(
       "aws_billing",
       defaultSyncIntervalMsForService("aws_billing"),
+      Date.now(),
+    );
+  }
+  // Phase 7 slice 13: the GCP cost sync is a companion of gcp (idle until `[cost.gcp] export_table`).
+  if (await hasUsableGcpCredentials(vault)) {
+    localIndex.ensureConnectorSchedulerRegistration(
+      "gcp_billing",
+      defaultSyncIntervalMsForService("gcp_billing"),
       Date.now(),
     );
   }

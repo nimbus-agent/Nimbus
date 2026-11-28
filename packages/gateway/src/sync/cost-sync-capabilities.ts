@@ -24,6 +24,7 @@ export const COST_SYNC_SERVICES: ReadonlySet<string> = new Set([
   "gitlab_billing",
   "bitbucket_billing",
   "aws_billing",
+  "gcp_billing",
 ]);
 
 export interface CostSyncCapabilities {
