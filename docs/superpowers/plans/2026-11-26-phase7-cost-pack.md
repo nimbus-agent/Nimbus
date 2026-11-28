@@ -723,6 +723,17 @@ Design:
 6. **File size.** `sync/sync-capabilities.ts` is at 458 lines. The cost capabilities (`replaceCostLinesForMonth` moved, plus the two new ones, and `COST_SYNC_SERVICES`) go to a new `sync/cost-sync-capabilities.ts` that builds them for a bound service. `sync-capabilities.ts` spreads its result, and is left smaller than it is now. The builder's own check is the same.
 7. **Advisory, adopted: tests.** Same-day re-sync (100 then 150 gives 150). A multi-day walk-back (a drop of 150 against 100, then 80 on earlier days, lowers them to 0 and 30). Re-price on a currency change (lines move to `EUR`, re-hashed, no duplicate grain) and on a runner removed from `runner_rates` (those lines become unpriced with zero cost).
 
+
+**As built (slice 8, 2026-11-28; branch `dev/asaf/phase7-s8-gitlab-cost`).** Deviations from the design and fixes above, each deliberate:
+
+1. **Unpriced usage rides on the freshness row.** Every view already prints one freshness row per source (the CLI and the report `{freshness}` placeholder), so `CostFreshness` gains `unpriced` (per unit) and `rateHint`, computed from the view's lines and range (`finops/cost-unpriced.ts`). There is no new `{unpriced}` placeholder and no separate unpriced movers list in `cost why`. `finops/cost-rollup.ts` is the Phase 10 series rollup and was not touched.
+2. **`CostLine` measure fields are optional** (`consumedQuantity?`, `consumedUnit?`, `priced?`; absent = none / priced), so no existing producer changes; a read always fills them. `mergeMeasures` sums quantities only in one unit (a unit is not in the grain).
+3. **A runner removed from `runner_rates` re-prices at the default rate**, as a fresh sync of that job would; it is unpriced only when no default rate is set either (the review's advisory test 7 said unpriced).
+4. **The capabilities** are `readOwnCostLinesForMonth` and `repriceOwnCostLines` (store functions `readCostLinesForAccountMonth`, `repriceCostLines`; intake wrappers `readOwnSyncedCostLines`, `repriceSyncedCostLines`). The D24 rule names the two re-price mutators only; reads stay unrestricted, as the rule already says.
+5. **GraphQL uses `Authorization: Bearer`**, REST `PRIVATE-TOKEN`. A refused redirect is a stated gap. The jobs listing asks for `success`, `failed` and `canceled` and is paged ONCE per run down to the group's earliest month read (a seam `maxJobPages` for the cap test).
+6. **V110 probes the columns once with a finalized statement.** Re-running the cached `PRAGMA table_info` between the ALTERs left the database unclosable on Windows (EBUSY in `index-boot.test.ts`); fixed in its own commit.
+7. **The cursor codec gains an optional `rates` fingerprint**; the GitLab prefix is `nimbus-glb1:`.
+
 **Review focus (slice 8):** a delta never makes a month's stored total differ from GitLab's latest month-to-date total (except the stated floor at 0); the re-price and the bound read cannot reach another source; an unpriced line can never carry a cost; the PAT is sent only to the configured origin; a capped or malformed fetch never clears a month; no view sums money and minutes together.
 
 ## Slices 2–8 (each gets a detailed task list here before its code starts)
