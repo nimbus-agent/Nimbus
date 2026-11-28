@@ -6,9 +6,7 @@ import {
 } from "../../automation/watcher-engine.ts";
 import { loadNimbusAnomalyFromConfigDir } from "../../config/anomaly-toml.ts";
 import { loadNimbusBriefingFromConfigDir } from "../../config/briefing-toml.ts";
-import { loadNimbusCostFromConfigDir } from "../../config/cost-toml.ts";
 import { loadNimbusFilesystemRootsFromConfigDir } from "../../config/filesystem-toml.ts";
-import { loadNimbusFinopsFromConfigDir } from "../../config/finops-toml.ts";
 import { loadNimbusIncidentScribeFromConfigDir } from "../../config/incident-scribe-toml.ts";
 import { loadNimbusIncidentFromConfigDir } from "../../config/incident-toml.ts";
 import {
@@ -60,6 +58,7 @@ import { bootPolicyFor } from "../demo-boot.ts";
 import { showIgnoringFailure } from "../notifications/notifications-runtime.ts";
 import { registerUserMcpSyncablesFromDatabase } from "../register-user-mcp-sync.ts";
 import { loadServiceConfigsOrDegrade } from "./boot-misc.ts";
+import { finopsSyncOptions } from "./finops-options.ts";
 import { registerFilesystemRootSyncables } from "./index-boot.ts";
 import type { SchedulerWithMesh, SchedulerWithMeshOpts } from "./scheduler-mesh-opts.ts";
 
@@ -458,18 +457,7 @@ export async function createSchedulerWithMesh(
   // far `syncScheduler.start()` may sit from the guard that wraps it.
   const briefingSnapshotIntervalMinutes = (): number =>
     loadNimbusBriefingFromConfigDir(paths.configDir).snapshotIntervalMinutes;
-  const finops = {
-    maxSeries: (): number => loadNimbusFinopsFromConfigDir(paths.configDir).maxSeries,
-    githubOrgs: (): readonly string[] => loadNimbusCostFromConfigDir(paths.configDir).githubOrgs,
-    gitlab: () => {
-      const c = loadNimbusCostFromConfigDir(paths.configDir);
-      return c.error === null ? c.gitlab : null;
-    },
-    aws: () => {
-      const c = loadNimbusCostFromConfigDir(paths.configDir);
-      return c.error === null ? c.aws : null;
-    },
-  };
+  const finops = finopsSyncOptions(paths.configDir);
   if (syncEnabled) {
     registerConnectorMeshSyncables(policyFilteredRegistrar, connectorMesh, {
       pagerdutyMaxPagesPerSync: pagerdutyCfg.maxPagesPerSync,
