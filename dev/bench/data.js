@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795861015740,
+  "lastUpdate": 1795862191262,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "b78b44a44be5e4fb4eecf26f1c42e9092ed678f3",
-          "message": "ci: report every required check on merge_group so the merge queue can be enabled (#1583)\n\n## Why\n\nThe General ruleset requires branches to be **up to date** before\nmerging, and auto-merge does not update a BEHIND branch. So every merge\nsends every other open PR back through a full ~40-minute CI cycle, with\nsomeone clicking \"update branch\" in between. Clearing five Dependabot\nPRs on 09-29/30 took three rounds of this.\n\nGitHub's merge queue replaces that: a queued PR is tested once on top of\nthe real tip of `main` and lands automatically. But the queue waits for\n**every required context** to report on the `merge_group` event, and\ntoday none of our workflows listen for it, so enabling the queue now\nwould stall every merge. This PR makes all 10 required contexts report\non queue entries. The ruleset change that turns the queue on follows as\na separate step, after this lands.\n\n## What reports on `merge_group`\n\n| Required context | Workflow | On a queue entry |\n| --- | --- | --- |\n| PR quality — required gates | `ci.yml` | Runs the full PR gate on the\nmerged result. Release safety reports `skipped`, since it reads the PR\nbody/title, which a queue event does not carry and which were already\nchecked at PR time. |\n| Dependency audit, Trivy, Gitleaks, Gateway audit JSON, Cargo audit,\nCargo deny | `security.yml` | Run as on a PR. Rust-change detection now\ntakes `merge_group.base_sha` as its base, so the cargo scans still skip\nwhen no Rust changed. |\n| Analyze (javascript-typescript), Analyze (rust) | `codeql.yml` | Run\nas on a PR. |\n| cla | `cla.yml` | New `cla-merge-queue` job, `name: cla`, with no\ntoken and `permissions: {}`: passes, since the PR had to pass `cla` to\nenter the queue. Concurrency is now keyed on `merge_group.head_sha`, so\nqueue runs don't evict each other from the shared `cla-` group. |\n\nAlso: `SONAR_TOKEN` is withheld on queue runs. The Sonar gate already\njudged the PR's new code, and a queue run would otherwise upload a\nbranch analysis for every throwaway `gh-readonly-queue/*` ref.\n\n## Verification\n\n- `audit:workflow-lint` OK (25 workflows); the 11 test files that parse\nthese workflows pass (219 tests); `preflight:fast` PASSED.\n- On a PR this change is a no-op for every job; only the `merge_group`\nevent gains behaviour. The real proof is the first queued merge after\nthe ruleset flip. If a context fails to report there, the queue can be\nswitched back off in the ruleset in one call.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Improvements**\n* Merge queue entries now receive the project’s build, cross-platform,\ncode-quality, and security checks before merging.\n* CLA status is reported in merge queue checks based on verification\ncompleted during the pull request.\n  * Release-safety checks remain limited to pull requests.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5.5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-09-30T08:35:38Z",
-          "tree_id": "382fc5ce6841b7293ac4337b3c0cc69d19b619cd",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/b78b44a44be5e4fb4eecf26f1c42e9092ed678f3"
-        },
-        "date": 1790758138635,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 341.25136255000467,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 332.7334636499942,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 261.4413776499896,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4625b9dda4a972c01c430916d60b1c37de5daaab",
+          "message": "feat: LaunchDarkly flag changes in nimbus cost why (Phase 7, slice 14) (#2203)\n\n## What\n\n`nimbus cost why` now lists the LaunchDarkly flags that changed in the\nperiod, per service, beside its deploys, pull requests and owners.\n\n- New config: `[ci.service.<id>] feature_flags =\n[\"launchdarkly:<project>\", \"launchdarkly:<project>:<flag>\", ...]` (also\nunder `[metrics.dora.<id>]`). Parsed beside\n`sentry_projects`/`argocd_apps`; a malformed entry refuses that\nservice's config.\n- `agents/_lib/cost-why-query.ts` gains the flag lookup (static rule D48\nkeeps `finops/` free of item reads). `CostChangeContext` gains `flags`\nand `flagsTruncated`.\n- CLI text: `Flags changed: <key> (<environments>) at <ISO time>`,\nnewest first, at most 10 with the rest counted.\n\n## Owner ruling D8 (2026-11-28)\n\nLaunchDarkly only. `unleash:`, `split:` and `flagsmith:` bindings parse\n(a config is not rejected) but show no changes and print `flag changes\nare recorded for LaunchDarkly only; <service> bindings show no changes`,\nonce per service. A roadmap follow-up row records their change times\nlater.\n\n## Bounds\n\n- A flag is listed only when its item's own `metadata.updated_at` (a\nnumber) is in the window; never `modifiedAt` (it falls back to sync\ntime).\n- The index keeps no flag history: a flag changed twice shows once; the\noutput always says `only the latest change of each flag is known` when\nflags are bound.\n- The mapping keeps no per-environment change time, so the environments\nshown are those the flag has; the output says so (Antigravity review fix\n7).\n- No bindings: no query, no gap. Read-only; bound parameters only (I9);\nproject bindings match by `substr` prefix (never `LIKE`).\n\n## Verification\n\nTouched suites (gateway config, cost-why query, cost RPC, CLI) pass;\n`tsc` for gateway and cli, `typecheck:tests` (0 new), `audit:file-size`,\nD48/invariants, lane census and `preflight:fast` pass. Docs: CHANGELOG,\ncli-reference, architecture, file map, roadmap (flags done for\nLaunchDarkly, plus the Unleash/Split/Flagsmith follow-up row).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* `nimbus cost why` can show up to 10 LaunchDarkly flag changes for\nconfigured services, including the flag key, environments, and change\ntime.\n* Feature-flag bindings can be configured for LaunchDarkly, Unleash,\nSplit, and Flagsmith. Only LaunchDarkly changes are currently listed;\nother providers show a data gap.\n* **Documentation**\n* Updated the CLI reference and architecture guidance with configuration\nformats, time-window behavior, and limitations, including that only each\nflag’s latest change is available and per-environment change times\naren’t provided.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-28T10:28:58Z",
+          "tree_id": "7c58092e9238a62fadca5cde9196b2206829916f",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/4625b9dda4a972c01c430916d60b1c37de5daaab"
+        },
+        "date": 1795862186832,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 180.81130970000012,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 180.65824145000406,
             "unit": "ms"
           }
         ]
