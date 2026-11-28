@@ -1,5 +1,5 @@
 /**
- * `[cost]`, `[cost.focus]`, `[cost.github]`, `[cost.gitlab]` (`cost-gitlab-toml.ts`) and `[[cost.rule]]` - the Cost
+ * `[cost]`, `[cost.focus]`, `[cost.github]`, `[cost.gitlab]` (`cost-gitlab-toml.ts`), `[cost.bitbucket]` (`cost-bitbucket-toml.ts`) and `[[cost.rule]]` - the Cost
  * Pack's owner config (Phase 7).
  *
  * ```toml
@@ -36,6 +36,12 @@ import {
   compileCostRule,
 } from "../finops/cost-rules.ts";
 import {
+  CostBitbucketConfigError,
+  DEFAULT_COST_BITBUCKET_CONFIG,
+  type NimbusCostBitbucketConfig,
+  readCostBitbucketTable,
+} from "./cost-bitbucket-toml.ts";
+import {
   CostGitlabConfigError,
   DEFAULT_COST_GITLAB_CONFIG,
   type NimbusCostGitlabConfig,
@@ -59,6 +65,8 @@ export interface NimbusCostConfig {
   readonly githubOrgs: readonly string[];
   /** `[cost.gitlab]`: the groups whose compute minutes are synced, and the owner's rates (slice 8). */
   readonly gitlab: NimbusCostGitlabConfig;
+  /** `[cost.bitbucket]`: the workspaces whose Pipelines minutes are synced, and the owner's rates (slice 9). */
+  readonly bitbucket: NimbusCostBitbucketConfig;
   /** `[[cost.report]]` with their `[[cost.report.channel]]` blocks (slice 3; see `cost-report-toml.ts`). */
   readonly reports: readonly CostReportDef[];
   /** Non-null: the report definitions are refused (`reports` is empty); the rules still apply. */
@@ -82,6 +90,7 @@ export const DEFAULT_COST_CONFIG: NimbusCostConfig = Object.freeze({
   focusDir: null,
   githubOrgs: Object.freeze([]) as readonly string[],
   gitlab: DEFAULT_COST_GITLAB_CONFIG,
+  bitbucket: DEFAULT_COST_BITBUCKET_CONFIG,
   reports: Object.freeze([]) as readonly CostReportDef[],
   reportsError: null,
   error: null,
@@ -193,6 +202,8 @@ function readPlainSection(s: EffectiveSection & { header: string }, draft: Draft
     draft.githubOrgs = readGithubTable(parseSection(s, "[cost.github]"));
   } else if (s.header === "cost.gitlab" && !s.isArray) {
     draft.gitlab = readCostGitlabTable(parseSection(s, "[cost.gitlab]"));
+  } else if (s.header === "cost.bitbucket" && !s.isArray) {
+    draft.bitbucket = readCostBitbucketTable(parseSection(s, "[cost.bitbucket]"));
   } else {
     const shown = s.isArray ? `[[${s.header}]]` : `[${s.header}]`;
     throw new CostConfigError(`unknown section ${shown}`);
@@ -282,7 +293,8 @@ export function resolveCostConfig(sections: readonly EffectiveSection[]): Nimbus
     if (
       e instanceof CostConfigError ||
       e instanceof CostRuleError ||
-      e instanceof CostGitlabConfigError
+      e instanceof CostGitlabConfigError ||
+      e instanceof CostBitbucketConfigError
     ) {
       return Object.freeze({ ...DEFAULT_COST_CONFIG, error: e.message });
     }

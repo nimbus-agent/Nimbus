@@ -29,6 +29,7 @@ describe("[cost] config", () => {
       focusDir: null,
       githubOrgs: [],
       gitlab: { groups: [], ratePerMinute: null, currency: "USD", runnerRates: [] },
+      bitbucket: { workspaces: [], ratePerMinute: null, currency: "USD", sizeRates: [] },
       reports: [],
       reportsError: null,
       error: null,
