@@ -65,6 +65,11 @@ export const IAC_TOOL_TIMEOUTS_MS: Readonly<Record<string, number>> = Object.fre
   iac_terraform_apply_refresh_only: 30 * 60_000,
   iac_cloudformation_deploy: 60_000,
   iac_cloudformation_changeset_discard: 60_000,
+  // The three CloudFormation reads run in a `cfn` child too: listed so the dispatcher's race
+  // outlasts the runner's budget (as for the kubernetes reads below).
+  iac_cloudformation_stack_get: 60_000,
+  iac_cloudformation_changesets_list: 60_000,
+  iac_cloudformation_changeset_get: 60_000,
   // D3a: the nine kubernetes tools (the plan is a dry run, a read and a diff on a cold sandbox).
   k8s_manifest_plan: 120_000,
   k8s_manifest_apply: 300_000,
@@ -313,12 +318,14 @@ export const IAC_PREFLIGHT_REFUSALS = Object.freeze({
 
 /**
  * Owner ruling (connectors 0.21.0): the refusal when the only `.git` beneath an approved directory
- * is under its `.terraform/modules/`, a git-sourced module `terraform init` cloned. Not supported
- * yet: nothing is exempted or deleted, the owner deletes the folder. It names that folder, built
- * from the gateway-resolved approved path (never the caller's string).
+ * is under its `.terraform/modules/`. Since the 2026-11-27 ruling the runner removes the
+ * `<module>/.git` folders an init it ran has just cloned (`lazy-mesh/iac-runner/iac-module-git.ts`);
+ * this is the refusal for any other one (a link, a file, a deeper one, one an init outside Nimbus
+ * left, one that could not be removed). Nothing is exempted: the owner deletes the folder. It names
+ * that folder, built from the gateway-resolved approved path (never the caller's string).
  */
 export function terraformModulesGitRefusal(workdir: string): string {
-  return `iac: git-sourced Terraform modules are not supported yet (a module under .terraform/modules was cloned with its .git); delete ${join(workdir, ".terraform", "modules")} before a plan, apply or init can run in this directory`;
+  return `iac: a .git under .terraform/modules is not one the gateway removes (it removes only the <module>/.git folders an init it ran has just cloned); delete ${join(workdir, ".terraform", "modules")} before a plan, apply or init can run in this directory`;
 }
 
 /** What the MODEL door alone refuses for an iac write (the owner's doors are not restricted). */
