@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [11.22.0](https://github.com/nimbus-agent/Nimbus/compare/v11.21.0...v11.22.0) (2026-11-28)
+
+
+### Features
+
+* GitLab compute minutes as cost lines, priced at your rate (Phase 7, slice 8) ([#2198](https://github.com/nimbus-agent/Nimbus/issues/2198)) ([ec88997](https://github.com/nimbus-agent/Nimbus/commit/ec889970e9b1b6996a484286fc6656a0e820d885))
+
 ## [11.21.0](https://github.com/nimbus-agent/Nimbus/compare/v11.20.0...v11.21.0) (2026-11-28)
 
 
