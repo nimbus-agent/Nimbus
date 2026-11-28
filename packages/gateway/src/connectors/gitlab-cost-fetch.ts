@@ -36,6 +36,8 @@ export const GITLAB_COST_GAPS = {
     `GitLab redirected the request for ${group} to another host; the token is never sent there`,
   noProjects: (group: string): string =>
     `GitLab listed no projects for ${group}, though its stored minutes say it had some; the stored month is kept`,
+  insecureBase:
+    "the GitLab base URL is not https (http is allowed only for localhost); the token is never sent over it",
   runnerRatesOnDotCom:
     "[cost.gitlab] runner_rates applies to self-managed GitLab only: GitLab.com minutes already include the runner cost factor; remove it",
   projectCap: (group: string): string =>
@@ -176,6 +178,8 @@ export async function gitlabMonthUsage(
     if (typeof more !== "boolean") return { kind: "retry" };
     if (!more) return { kind: "nodes", nodes };
     if (typeof next !== "string") return { kind: "retry" };
+    // A cursor that does not advance would read the same page again and count its projects twice.
+    if (next === after) return { kind: "retry" };
     after = next;
   }
   c.ctx.logger.warn(
@@ -205,9 +209,12 @@ export async function gitlabGroupProjects(
   | Exclude<CostMonthOutcome, { kind: "ok" }>
 > {
   const projects: { id: number; fullPath: string }[] = [];
+  const seen = new Set<number>();
   for (let page = 1; page <= GITLAB_MAX_PROJECT_PAGES; page++) {
     const r = await rest(c, group, `/groups/${encodeURIComponent(group)}/projects`, [
       ["include_subgroups", "true"],
+      // A project shared INTO the group belongs to another group: listing it would count its jobs twice.
+      ["with_shared", "false"],
       ["simple", "true"],
       ["per_page", "100"],
       ["page", String(page)],
@@ -222,6 +229,9 @@ export async function gitlabGroupProjects(
       ) {
         return { kind: "retry" };
       }
+      // Offset pages can repeat a project when one is created while paging: each id is kept once.
+      if (seen.has(p["id"])) continue;
+      seen.add(p["id"]);
       projects.push({ id: p["id"], fullPath: p["path_with_namespace"] });
     }
     if ((r.body as unknown[]).length < 100) return { kind: "projects", projects };

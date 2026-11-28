@@ -266,6 +266,16 @@ describe("gitlab_billing sync: what it fetches", () => {
     expect(stored()).toEqual([["acme/web", "2026-11-20", 100, 0, false]]);
   });
 
+  test("a base that is not https is a stated gap; the token is never sent", async () => {
+    await vault.set("gitlab.api_base", "http://git.example.com/api/v4");
+    const gl = dotCom({});
+    const r = await sync(gl, cfg());
+    expect(gl.calls).toEqual([]);
+    expect(decodeCostSyncCursor(PREFIX, r.cursor ?? null).gaps).toEqual({
+      acme: GITLAB_COST_GAPS.insecureBase,
+    });
+  });
+
   test("runner_rates on GitLab.com is a stated gap, and nothing is fetched", async () => {
     const gl = dotCom({});
     const r = await sync(gl, cfg({ runnerRates: [["big", 0.1]] }));
@@ -343,6 +353,18 @@ describe("gitlab_billing sync: self-managed", () => {
     // Paged once per run: the two months share one jobs listing.
     expect(gl.calls.filter((c) => c.url.includes("/jobs"))).toHaveLength(1);
     expect(gl.calls.every((c) => c.headers["PRIVATE-TOKEN"] === "glpat-secret")).toBe(true);
+  });
+
+  test("a renamed self-managed project keeps one identity: its minutes are not counted twice", async () => {
+    const listing = (path: string) =>
+      fakeGitlab((url) =>
+        url.pathname.endsWith("/projects")
+          ? { status: 200, body: [{ id: 11, path_with_namespace: path }] }
+          : { status: 200, body: [job(1, "2026-11-19T10:00:00Z", 120)] },
+      );
+    const first = await sync(listing("acme/old"), cfg());
+    await sync(listing("acme/new"), cfg(), first.cursor ?? null, NOW + DAY);
+    expect(stored()).toEqual([["acme/new", "2026-11-19", 2, 0, false]]);
   });
 
   test("a project the listing no longer shows keeps its stored lines", async () => {

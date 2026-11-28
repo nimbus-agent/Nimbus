@@ -150,6 +150,8 @@ describe("gitlabMonthUsage", () => {
       body: { data: { ciMinutesProjectMonthlyUsage: { nodes: [{ a: 1 }], pageInfo: {} } } },
     }));
     expect(await gitlabMonthUsage(noFlag.c, "acme", "g", "2026-11")).toEqual({ kind: "retry" });
+    const stuck = conn(() => usagePage([{ a: 1 }], "same", true));
+    expect(await gitlabMonthUsage(stuck.c, "acme", "g", "2026-11")).toEqual({ kind: "retry" });
     const noCursor = conn(() => usagePage([], null, true));
     expect(await gitlabMonthUsage(noCursor.c, "acme", "g", "2026-11")).toEqual({ kind: "retry" });
     const failing = conn(() => ({ status: 403 }));
@@ -176,6 +178,14 @@ describe("gitlabGroupProjects", () => {
       ],
     });
     expect(new URL(calls[0] ?? "").searchParams.get("include_subgroups")).toBe("true");
+    expect(new URL(calls[0] ?? "").searchParams.get("with_shared")).toBe("false");
+  });
+
+  test("a project repeated on the next offset page is kept once", async () => {
+    const full = Array.from({ length: 100 }, (_, i) => proj(i));
+    const { c } = conn((_u, n) => ({ status: 200, body: n === 1 ? full : [proj(99), proj(100)] }));
+    const r = await gitlabGroupProjects(c, "acme");
+    expect(r.kind === "projects" ? r.projects.length : -1).toBe(101);
   });
 
   test("a body that is not a list, or a malformed project, retries; an error status passes through", async () => {

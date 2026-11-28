@@ -99,7 +99,10 @@ type RunState = {
 };
 
 type GroupJobs =
-  | { readonly kind: "jobs"; readonly perProject: { projectFullPath: string; jobs: unknown[] }[] }
+  | {
+      readonly kind: "jobs";
+      readonly perProject: { projectId: string; projectFullPath: string; jobs: unknown[] }[];
+    }
   | Exclude<CostMonthOutcome, { kind: "ok" }>;
 
 /** A group's jobs for this run, paged once down to the day before its earliest month. */
@@ -113,14 +116,14 @@ async function groupJobs(s: RunState, group: string): Promise<GroupJobs> {
   let out: GroupJobs = { kind: "jobs", perProject: [] };
   const projects = await gitlabGroupProjects(s.c, group);
   if (projects.kind === "projects") {
-    const perProject: { projectFullPath: string; jobs: unknown[] }[] = [];
+    const perProject: { projectId: string; projectFullPath: string; jobs: unknown[] }[] = [];
     for (const p of projects.projects) {
       const r = await gitlabProjectJobs(s.c, group, p, since, earliest);
       if (r.kind !== "jobs") {
         out = r;
         break;
       }
-      perProject.push({ projectFullPath: p.fullPath, jobs: r.jobs });
+      perProject.push({ projectId: String(p.id), projectFullPath: p.fullPath, jobs: r.jobs });
     }
     if (out.kind === "jobs") out = { kind: "jobs", perProject };
   } else {
@@ -213,7 +216,7 @@ async function selfManagedMonth(
   const mapped = gitlabJobLines(group, month, perProject, s.rates, s.today);
   // A project the listing no longer shows (the token lost it, it moved away) keeps its stored lines: the month is
   // replaced only for the projects whose jobs were read.
-  const listed = new Set(perProject.map((p) => p.projectFullPath));
+  const listed = new Set(perProject.map((p) => p.projectId));
   const kept = stored.filter((l) => l.subAccountId === null || !listed.has(l.subAccountId));
   const dropped = Object.values(mapped.dropped).reduce((a, b) => a + b, 0);
   if (dropped > 0) {
@@ -270,7 +273,18 @@ export function createGitlabCostSyncable(options: GitlabCostSyncableOptions): Sy
       // No token: nothing is read, and the gaps recorded earlier are kept, not cleared.
       if (pat === "") return idle(keep(prev.gaps));
       const apiBase = normalisedApiBase(await ctx.getSharedSecret("gitlab", "api_base"));
-      const dotCom = new URL(apiBase).host === "gitlab.com";
+      // The token is sent only over https (http only to this machine), whatever base was stored earlier.
+      let base: URL;
+      try {
+        base = new URL(apiBase);
+      } catch {
+        return idle(Object.fromEntries(groups.map((g) => [g, GITLAB_COST_GAPS.insecureBase])));
+      }
+      const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(base.hostname);
+      if (base.protocol !== "https:" && !(base.protocol === "http:" && loopback)) {
+        return idle(Object.fromEntries(groups.map((g) => [g, GITLAB_COST_GAPS.insecureBase])));
+      }
+      const dotCom = base.host === "gitlab.com";
       if (dotCom && cfg.runnerRates.length > 0) {
         return idle(
           Object.fromEntries(groups.map((g) => [g, GITLAB_COST_GAPS.runnerRatesOnDotCom])),

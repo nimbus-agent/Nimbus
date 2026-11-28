@@ -26,8 +26,12 @@ describe("gitlabJobLines", () => {
       "acme",
       "2026-11",
       [
-        { projectFullPath: "acme/web", jobs: [job(), job({ id: 2, duration: 60 })] },
-        { projectFullPath: "acme/api", jobs: [job({ id: 3 })] },
+        {
+          projectId: "acme/web",
+          projectFullPath: "acme/web",
+          jobs: [job(), job({ id: 2, duration: 60 })],
+        },
+        { projectId: "acme/api", projectFullPath: "acme/api", jobs: [job({ id: 3 })] },
       ],
       RATES,
     );
@@ -55,14 +59,19 @@ describe("gitlabJobLines", () => {
     const [l] = gitlabJobLines(
       "acme",
       "2026-11",
-      [{ projectFullPath: "p", jobs: [small] }],
+      [{ projectId: "p", projectFullPath: "p", jobs: [small] }],
       RATES,
     ).lines;
     expect(l).toMatchObject({ billedCost: 0.02, tags: { rate_key: "runner:small" } });
-    const [u] = gitlabJobLines("acme", "2026-11", [{ projectFullPath: "p", jobs: [small] }], {
-      ...RATES,
-      ratePerMinute: null,
-    }).lines;
+    const [u] = gitlabJobLines(
+      "acme",
+      "2026-11",
+      [{ projectId: "p", projectFullPath: "p", jobs: [small] }],
+      {
+        ...RATES,
+        ratePerMinute: null,
+      },
+    ).lines;
     expect(u).toMatchObject({
       billedCost: 0,
       effectiveCost: null,
@@ -77,6 +86,7 @@ describe("gitlabJobLines", () => {
       "2026-11",
       [
         {
+          projectId: "p",
           projectFullPath: "p",
           jobs: [
             job({ runner: null }),
@@ -102,7 +112,7 @@ describe("gitlabJobLines", () => {
     const [l] = gitlabJobLines(
       "acme",
       "2026-11",
-      [{ projectFullPath: "p", jobs: [late] }],
+      [{ projectId: "p", projectFullPath: "p", jobs: [late] }],
       RATES,
     ).lines;
     expect(l?.chargeDay).toBe("2026-11-03");

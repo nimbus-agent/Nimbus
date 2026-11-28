@@ -29,6 +29,9 @@ import {
 export type GitlabJobDropReason = "no_runner" | "unfinished" | "bad_duration" | "outside_month";
 
 export interface GitlabProjectJobs {
+  /** GitLab's numeric project id: the line's sub-account, so a renamed project keeps one identity. */
+  readonly projectId: string;
+  /** The project's path now: the sub-account name and the `repo`. */
   readonly projectFullPath: string;
   readonly jobs: readonly unknown[];
 }
@@ -57,7 +60,7 @@ type Parsed = { line: CostLine; seconds: number };
 
 function parseJob(
   raw: unknown,
-  project: string,
+  project: { readonly id: string; readonly path: string },
   account: string,
   month: string,
   lastDay: string,
@@ -87,8 +90,8 @@ function parseJob(
     billingAccountId: account,
     billingPeriod: month,
     chargeDay: day,
-    subAccountId: project,
-    subAccountName: null,
+    subAccountId: project.id,
+    subAccountName: project.path,
     serviceName: GITLAB_COST_SERVICE,
     serviceCategory: null,
     regionId: null,
@@ -100,7 +103,7 @@ function parseJob(
     effectiveCost: null,
     currency: rates.currency,
     tags,
-    repo: project,
+    repo: project.path,
     workflow: null,
     model: null,
     importId: `${GITLAB_COST_SOURCE}:${account}:${month}`,
@@ -133,7 +136,14 @@ export function gitlabJobLines(
   for (const p of projects) {
     for (const raw of p.jobs) {
       jobs++;
-      const r = parseJob(raw, p.projectFullPath, account, month, lastDay, rates);
+      const r = parseJob(
+        raw,
+        { id: p.projectId, path: p.projectFullPath },
+        account,
+        month,
+        lastDay,
+        rates,
+      );
       if (typeof r === "string") {
         dropped[r]++;
         continue;
