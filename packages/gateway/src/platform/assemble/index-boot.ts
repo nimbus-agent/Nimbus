@@ -39,6 +39,7 @@ import {
 import { readIndexedUserVersion } from "../../index/migrations/runner.ts";
 import { mergeRoots } from "../../index/registered-roots-store.ts";
 import { SessionMemoryStore } from "../../memory/session-memory-store.ts";
+import { isJenkinsConfigured } from "../../sync/connector-configured.ts";
 import type { SyncScheduler } from "../../sync/scheduler.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import type { HostActivity } from "../host-activity.ts";
@@ -183,6 +184,14 @@ export async function ensureGithubCircleCiSchedulerCompanions(
     localIndex.ensureConnectorSchedulerRegistration(
       "bitbucket_billing",
       defaultSyncIntervalMsForService("bitbucket_billing"),
+      Date.now(),
+    );
+  }
+  // Phase 7 slice 10: the build-minutes cost sync is a companion of jenkins (idle until `[cost.jenkins]` exists).
+  if (await isJenkinsConfigured(vault)) {
+    localIndex.ensureConnectorSchedulerRegistration(
+      "jenkins_billing",
+      defaultSyncIntervalMsForService("jenkins_billing"),
       Date.now(),
     );
   }

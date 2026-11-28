@@ -66,6 +66,15 @@ async function isBitbucketConfigured(vault: NimbusVault): Promise<boolean> {
   return (await readBitbucketVaultCredential(vault)).kind !== "none";
 }
 
+/** `jenkins_billing` (Phase 7 slice 10) syncs with the Jenkins connector's base URL, user and token. */
+export async function isJenkinsConfigured(vault: NimbusVault): Promise<boolean> {
+  for (const k of ["base_url", "username", "api_token"] as const) {
+    const v = await readConnectorSecret(vault, "jenkins", k);
+    if (v === null || v.trim() === "") return false;
+  }
+  return true;
+}
+
 /** Whether any one of `keys` holds a non-blank value: the manifest rule, which `teams` reuses. */
 async function hasAnyNonBlankKey(vault: NimbusVault, keys: readonly string[]): Promise<boolean> {
   for (const key of keys) {
@@ -174,6 +183,7 @@ const DERIVED_CONFIGURED_CHECKS: Readonly<
   github_billing: isGithubPatConfigured,
   gitlab_billing: isGitlabPatConfigured,
   bitbucket_billing: isBitbucketConfigured,
+  jenkins_billing: isJenkinsConfigured,
   bigquery: isGcpCredentialConfigured,
   cloud_logging: isGcpCredentialConfigured,
   vertex_ai: isGcpCredentialConfigured,

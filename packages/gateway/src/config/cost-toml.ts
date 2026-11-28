@@ -66,6 +66,12 @@ import {
   readCostGitlabTable,
 } from "./cost-gitlab-toml.ts";
 import {
+  CostJenkinsConfigError,
+  DEFAULT_COST_JENKINS_CONFIG,
+  type NimbusCostJenkinsConfig,
+  readCostJenkinsTable,
+} from "./cost-jenkins-toml.ts";
+import {
   CostReportConfigError,
   type CostReportDef,
   compileCostReports,
@@ -85,6 +91,8 @@ export interface NimbusCostConfig {
   readonly gitlab: NimbusCostGitlabConfig;
   /** `[cost.bitbucket]`: the workspaces whose Pipelines minutes are synced, and the owner's rates (slice 9). */
   readonly bitbucket: NimbusCostBitbucketConfig;
+  /** `[cost.jenkins]`: the Jenkins build-minute rates (slice 10). */
+  readonly jenkins: NimbusCostJenkinsConfig;
   /** `[cost.aws]`: the FOCUS Data Export in S3 and the Cost Explorer opt-in (slice 11a; see `cost-aws-toml.ts`). */
   readonly aws: NimbusCostAwsConfig;
   /** `[cost.gcp]`: the BigQuery billing export table(s) and the byte cap (slice 13; see `cost-gcp-toml.ts`). */
@@ -113,6 +121,7 @@ export const DEFAULT_COST_CONFIG: NimbusCostConfig = Object.freeze({
   githubOrgs: Object.freeze([]) as readonly string[],
   gitlab: DEFAULT_COST_GITLAB_CONFIG,
   bitbucket: DEFAULT_COST_BITBUCKET_CONFIG,
+  jenkins: DEFAULT_COST_JENKINS_CONFIG,
   aws: DEFAULT_COST_AWS_CONFIG,
   gcp: DEFAULT_COST_GCP_CONFIG,
   reports: Object.freeze([]) as readonly CostReportDef[],
@@ -228,6 +237,8 @@ function readPlainSection(s: EffectiveSection & { header: string }, draft: Draft
     draft.gitlab = readCostGitlabTable(parseSection(s, "[cost.gitlab]"));
   } else if (s.header === "cost.bitbucket" && !s.isArray) {
     draft.bitbucket = readCostBitbucketTable(parseSection(s, "[cost.bitbucket]"));
+  } else if (s.header === "cost.jenkins" && !s.isArray) {
+    draft.jenkins = readCostJenkinsTable(parseSection(s, "[cost.jenkins]"));
   } else if (s.header === "cost.aws" && !s.isArray) {
     draft.aws = readCostAwsTable(parseSection(s, "[cost.aws]"));
   } else if (s.header === "cost.gcp" && !s.isArray) {
@@ -323,6 +334,7 @@ export function resolveCostConfig(sections: readonly EffectiveSection[]): Nimbus
       e instanceof CostRuleError ||
       e instanceof CostGitlabConfigError ||
       e instanceof CostBitbucketConfigError ||
+      e instanceof CostJenkinsConfigError ||
       e instanceof CostAwsConfigError ||
       e instanceof CostGcpConfigError
     ) {

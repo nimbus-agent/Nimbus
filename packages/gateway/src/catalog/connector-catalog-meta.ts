@@ -116,6 +116,11 @@ export const CONNECTOR_CATALOG_META = Object.freeze({
   confluence: m("Confluence", "docs", "Atlassian's team wiki and documentation tool"),
   discord: m("Discord", "chat", "A chat platform for communities and teams"),
   jenkins: m("Jenkins", "ci-cd", "An open-source automation server for builds and pipelines"),
+  jenkins_billing: m(
+    "Jenkins build minutes",
+    "cloud",
+    "Jenkins build minutes per job and agent, priced at the rates you configure",
+  ),
   circleci: m("CircleCI", "ci-cd", "A hosted continuous integration and delivery service"),
   pagerduty: m("PagerDuty", "observability", "An incident response and on-call alerting service"),
   kubernetes: m("Kubernetes", "cloud", "An open-source system for running containerised workloads"),

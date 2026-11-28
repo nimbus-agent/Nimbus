@@ -55,6 +55,7 @@ import {
   parseServiceArg,
   registerAtlassianApiConnectorAuth,
 } from "../connector-rpc-shared.ts";
+import { registerConnectorWithCompanions } from "./auth-register.ts";
 import type {
   ConnectorRpcHandlerContext,
   ConnectorRpcHit,
@@ -147,11 +148,7 @@ function registerAndSucceed(
   id: ConnectorServiceId,
   verified: VerifiedState = null,
 ): ConnectorRpcHit {
-  localIndex.ensureConnectorSchedulerRegistration(
-    id,
-    defaultSyncIntervalMsForService(id),
-    Date.now(),
-  );
+  registerConnectorWithCompanions(localIndex, id);
   return authSuccess(id, verified);
 }
 

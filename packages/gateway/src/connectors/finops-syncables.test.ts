@@ -32,6 +32,7 @@ describe("registerFinopsSyncables", () => {
       "anthropic_billing",
       "gitlab_billing",
       "bitbucket_billing",
+      "jenkins_billing",
       "aws_billing",
       "gcp_billing",
     ]);
@@ -43,6 +44,7 @@ describe("registerFinopsSyncables", () => {
       "github_billing",
       "gitlab_billing",
       "bitbucket_billing",
+      "jenkins_billing",
       "aws_billing",
       "gcp_billing",
     ]) {
