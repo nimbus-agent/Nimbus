@@ -101,7 +101,11 @@ type Products = {
     string,
     { total: number; rows: { key: string; provider: string; amount: number }[] }
   >;
-  freshness: { source: string; gap?: string; unpriced?: { unit: string; quantity: number; lines: number }[] }[];
+  freshness: {
+    source: string;
+    gap?: string;
+    unpriced?: { unit: string; quantity: number; lines: number }[];
+  }[];
 };
 
 async function products(now: number): Promise<Products> {
