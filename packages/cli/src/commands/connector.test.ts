@@ -1131,7 +1131,7 @@ const AUTH_ERR_ROWS: AuthErrRow[] = [
   { service: "newrelic", match: /New Relic requires --token/ },
   { service: "datadog", match: /Datadog requires --datadog-api-key/ },
   { service: "gitlab", match: /GitLab requires a PAT/ },
-  { service: "bitbucket", match: /Bitbucket requires username/ },
+  { service: "bitbucket", match: /Bitbucket requires your Atlassian email/ },
   { service: "discord", match: /Discord is off by default/ },
   { service: "jira", match: /Jira requires your Atlassian account email/ },
   { service: "confluence", match: /Confluence requires your Atlassian account email/ },
@@ -1763,9 +1763,9 @@ describe("runConnector auth — env-fallback success + secondary error branches"
     expect(out.stdout).toContain("Stored: kubernetes (not verified)");
   });
 
-  it("bitbucket missing app password throws the app-password error", async () => {
+  it("bitbucket missing API token throws the API-token error", async () => {
     await expect(runConnector(["auth", "bitbucket", "--username", "u"])).rejects.toThrow(
-      /Bitbucket requires an app password/,
+      /Bitbucket requires an Atlassian API token/,
     );
   });
 

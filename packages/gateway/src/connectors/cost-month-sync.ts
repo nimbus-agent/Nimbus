@@ -17,6 +17,8 @@ export type CostMonthOutcome =
       readonly bytes: number;
       /** The month was written but its source may still restate it (AWS `Estimated`): it stays pending. */
       readonly pending?: boolean;
+      /** A stated gap that does not hold the month back (a part of it was kept as stored). */
+      readonly note?: string;
     }
   /** A stated gap for the ACCOUNT (no access, refused): shown; no write; this and older months stay pending. */
   | { readonly kind: "gap"; readonly reason: string }
@@ -96,6 +98,7 @@ export async function runCostAccounts(
         lines += r.lines;
         bytes += r.bytes;
         if (r.pending === true) unfinished.push(month);
+        if (r.note !== undefined) monthGap ??= r.note;
         continue;
       }
       if (r.kind === "month_gap") {

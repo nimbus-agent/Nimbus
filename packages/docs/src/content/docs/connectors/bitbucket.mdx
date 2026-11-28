@@ -3,7 +3,7 @@ title: Bitbucket
 description: Index Bitbucket pull requests and read repository metadata, issues, and Pipelines runs.
 ---
 
-The Bitbucket connector indexes pull requests into the local SQLite index and exposes read tools across repositories, PRs, issues, and Pipelines runs. Authentication is via your Bitbucket username plus an [app password](https://bitbucket.org/account/settings/app-passwords/).
+The Bitbucket connector indexes pull requests into the local SQLite index and exposes read tools across repositories, PRs, issues, and Pipelines runs. Authentication is via your Atlassian account email plus an [API token](https://id.atlassian.com/manage-profile/security/api-tokens). Atlassian removed app passwords on 2026-07-28; a stored app password still works as a fallback.
 
 ---
 
@@ -18,7 +18,7 @@ The Bitbucket connector indexes pull requests into the local SQLite index and ex
 nimbus connector auth bitbucket
 ```
 
-Stored in the Vault as `bitbucket.username` and `bitbucket.app_password` and injected at spawn as `BITBUCKET_USERNAME` / `BITBUCKET_APP_PASSWORD`. The MCP server uses HTTP Basic auth against `api.bitbucket.org/2.0`.
+`nimbus connector auth bitbucket --username <atlassian_email> --token <api_token>` stores them in the Vault as `bitbucket.email` and `bitbucket.api_token`. They are injected at spawn as `BITBUCKET_USERNAME` / `BITBUCKET_APP_PASSWORD` (the names are historical; Basic auth has the same shape for an API token). The old `bitbucket.username` / `bitbucket.app_password` pair is read only when no API token pair is stored, and `nimbus connector status bitbucket` flags it as deprecated. The MCP server uses HTTP Basic auth against `api.bitbucket.org/2.0`.
 
 ## Read tools (no HITL)
 

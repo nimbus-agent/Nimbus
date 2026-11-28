@@ -127,7 +127,7 @@
     "packages/gateway/src/connectors/apple-sync.test.ts": 674,
     "packages/gateway/src/connectors/athena-sync.test.ts": 513,
     "packages/gateway/src/connectors/bigquery-sync.test.ts": 1214,
-    "packages/gateway/src/connectors/bitbucket-sync.ts": 730,
+    "packages/gateway/src/connectors/bitbucket-sync.ts": 728,
     "packages/gateway/src/connectors/cloudwatch-sync.test.ts": 595,
     "packages/gateway/src/connectors/confluence-sync.test.ts": 976,
     "packages/gateway/src/connectors/connector-writes/agent-door-runtime.test.ts": 1323,

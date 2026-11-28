@@ -149,7 +149,7 @@ describe("connectorRequirementStatuses", () => {
     ],
     [
       "bitbucket",
-      "nimbus connector auth bitbucket --username <atlassian_username> --token <app_password>",
+      "nimbus connector auth bitbucket --username <atlassian_email> --token <api_token>",
     ],
     ["sentry", "nimbus connector auth sentry --token <token> --sentry-org <slug>"],
     [

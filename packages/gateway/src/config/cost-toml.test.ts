@@ -30,6 +30,7 @@ describe("[cost] config", () => {
       githubOrgs: [],
       aws: { export: null, costExplorer: false },
       gitlab: { groups: [], ratePerMinute: null, currency: "USD", runnerRates: [] },
+      bitbucket: { workspaces: [], ratePerMinute: null, currency: "USD", sizeRates: [] },
       reports: [],
       reportsError: null,
       error: null,

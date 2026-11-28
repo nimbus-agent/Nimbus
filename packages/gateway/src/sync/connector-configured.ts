@@ -4,6 +4,7 @@ import { resolveGoogleOAuthVaultKey } from "../auth/google-access-token.ts";
 import { TEAM_CREDENTIAL_SYNC_CONNECTORS } from "../config/nimbus-toml-connectors.ts";
 import { hasUsableAwsCredentials } from "../connectors/_lib/aws-cli.ts";
 import { loadGcpAuthFromVault } from "../connectors/_lib/gcp-auth.ts";
+import { readBitbucketVaultCredential } from "../connectors/bitbucket-credential.ts";
 import {
   CONNECTOR_VAULT_SECRET_KEYS,
   requiredSecretKeysFor,
@@ -58,6 +59,11 @@ async function isGithubPatConfigured(vault: NimbusVault): Promise<boolean> {
 async function isGitlabPatConfigured(vault: NimbusVault): Promise<boolean> {
   const pat = await readConnectorSecret(vault, "gitlab", "pat");
   return pat !== null && pat.trim() !== "";
+}
+
+/** `bitbucket_billing` (Phase 7 slice 9) syncs with the Bitbucket connector's credential (API token or old pair). */
+async function isBitbucketConfigured(vault: NimbusVault): Promise<boolean> {
+  return (await readBitbucketVaultCredential(vault)).kind !== "none";
 }
 
 /** Whether any one of `keys` holds a non-blank value: the manifest rule, which `teams` reuses. */
@@ -167,6 +173,7 @@ const DERIVED_CONFIGURED_CHECKS: Readonly<
   github_actions: isGithubPatConfigured,
   github_billing: isGithubPatConfigured,
   gitlab_billing: isGitlabPatConfigured,
+  bitbucket_billing: isBitbucketConfigured,
   bigquery: isGcpCredentialConfigured,
   cloud_logging: isGcpCredentialConfigured,
   vertex_ai: isGcpCredentialConfigured,
