@@ -1,5 +1,5 @@
 /**
- * `[cost]`, `[cost.focus]`, `[cost.github]`, `[cost.gitlab]` (`cost-gitlab-toml.ts`) and `[[cost.rule]]` - the Cost
+ * `[cost]`, `[cost.focus]`, `[cost.github]`, `[cost.gitlab]` (`cost-gitlab-toml.ts`), `[cost.bitbucket]` (`cost-bitbucket-toml.ts`) and `[[cost.rule]]` - the Cost
  * Pack's owner config (Phase 7).
  *
  * ```toml
@@ -48,6 +48,12 @@ import {
   readCostAwsTable,
 } from "./cost-aws-toml.ts";
 import {
+  CostBitbucketConfigError,
+  DEFAULT_COST_BITBUCKET_CONFIG,
+  type NimbusCostBitbucketConfig,
+  readCostBitbucketTable,
+} from "./cost-bitbucket-toml.ts";
+import {
   CostGcpConfigError,
   DEFAULT_COST_GCP_CONFIG,
   type NimbusCostGcpConfig,
@@ -77,6 +83,8 @@ export interface NimbusCostConfig {
   readonly githubOrgs: readonly string[];
   /** `[cost.gitlab]`: the groups whose compute minutes are synced, and the owner's rates (slice 8). */
   readonly gitlab: NimbusCostGitlabConfig;
+  /** `[cost.bitbucket]`: the workspaces whose Pipelines minutes are synced, and the owner's rates (slice 9). */
+  readonly bitbucket: NimbusCostBitbucketConfig;
   /** `[cost.aws]`: the FOCUS Data Export in S3 and the Cost Explorer opt-in (slice 11a; see `cost-aws-toml.ts`). */
   readonly aws: NimbusCostAwsConfig;
   /** `[cost.gcp]`: the BigQuery billing export table(s) and the byte cap (slice 13; see `cost-gcp-toml.ts`). */
@@ -104,6 +112,7 @@ export const DEFAULT_COST_CONFIG: NimbusCostConfig = Object.freeze({
   focusDir: null,
   githubOrgs: Object.freeze([]) as readonly string[],
   gitlab: DEFAULT_COST_GITLAB_CONFIG,
+  bitbucket: DEFAULT_COST_BITBUCKET_CONFIG,
   aws: DEFAULT_COST_AWS_CONFIG,
   gcp: DEFAULT_COST_GCP_CONFIG,
   reports: Object.freeze([]) as readonly CostReportDef[],
@@ -217,6 +226,8 @@ function readPlainSection(s: EffectiveSection & { header: string }, draft: Draft
     draft.githubOrgs = readGithubTable(parseSection(s, "[cost.github]"));
   } else if (s.header === "cost.gitlab" && !s.isArray) {
     draft.gitlab = readCostGitlabTable(parseSection(s, "[cost.gitlab]"));
+  } else if (s.header === "cost.bitbucket" && !s.isArray) {
+    draft.bitbucket = readCostBitbucketTable(parseSection(s, "[cost.bitbucket]"));
   } else if (s.header === "cost.aws" && !s.isArray) {
     draft.aws = readCostAwsTable(parseSection(s, "[cost.aws]"));
   } else if (s.header === "cost.gcp" && !s.isArray) {
@@ -311,6 +322,7 @@ export function resolveCostConfig(sections: readonly EffectiveSection[]): Nimbus
       e instanceof CostConfigError ||
       e instanceof CostRuleError ||
       e instanceof CostGitlabConfigError ||
+      e instanceof CostBitbucketConfigError ||
       e instanceof CostAwsConfigError ||
       e instanceof CostGcpConfigError
     ) {

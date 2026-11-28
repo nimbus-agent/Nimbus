@@ -1,4 +1,8 @@
 import { DEFAULT_COST_AWS_CONFIG, type NimbusCostAwsConfig } from "../config/cost-aws-toml.ts";
+import {
+  DEFAULT_COST_BITBUCKET_CONFIG,
+  type NimbusCostBitbucketConfig,
+} from "../config/cost-bitbucket-toml.ts";
 import { DEFAULT_COST_GCP_CONFIG, type NimbusCostGcpConfig } from "../config/cost-gcp-toml.ts";
 import {
   DEFAULT_COST_GITLAB_CONFIG,
@@ -7,6 +11,7 @@ import {
 import type { Syncable } from "../sync/types.ts";
 import { createAnthropicCostSyncable } from "./anthropic-cost-sync.ts";
 import { createAwsBillingCostSyncable } from "./aws-billing-cost-sync.ts";
+import { createBitbucketCostSyncable } from "./bitbucket-cost-sync.ts";
 import { createGcpBillingCostSyncable } from "./gcp-billing-cost-sync.ts";
 import { createGithubBillingCostSyncable } from "./github-billing-cost-sync.ts";
 import { createGitlabCostSyncable } from "./gitlab-cost-sync.ts";
@@ -22,6 +27,8 @@ export type FinopsSyncOptions = {
   readonly githubOrgs?: () => readonly string[];
   /** `[cost.gitlab]` (Phase 7 slice 8); absent or no groups means no GitLab compute-minute sync. */
   readonly gitlab?: () => NimbusCostGitlabConfig | null;
+  /** `[cost.bitbucket]` (Phase 7 slice 9); absent or no workspaces means no Bitbucket Pipelines sync. */
+  readonly bitbucket?: () => NimbusCostBitbucketConfig | null;
   /** `[cost.aws]` (slice 11a); absent or no export means no AWS cost sync. */
   readonly aws?: () => NimbusCostAwsConfig | null;
   /** `[cost.gcp]` (slice 13); absent or no export_table means no GCP cost sync. */
@@ -30,7 +37,7 @@ export type FinopsSyncOptions = {
 
 /**
  * Registers the FinOps syncables: Vantage, then OpenCost and Kubecost (Phase 10), then GitHub billing usage
- * (Phase 7 slice 5), then OpenAI and Anthropic organization costs (slice 6). Then GitLab compute minutes (slice 8). Each source runs on its own timer and fails on its own: an unconfigured one is skipped by
+ * (Phase 7 slice 5), then OpenAI and Anthropic organization costs (slice 6). Then GitLab compute minutes (slice 8) and Bitbucket Pipelines minutes (slice 9). Each source runs on its own timer and fails on its own: an unconfigured one is skipped by
  * the scheduler's configured check.
  */
 export function registerFinopsSyncables(
@@ -49,6 +56,11 @@ export function registerFinopsSyncables(
   scheduler.register(createAnthropicCostSyncable());
   scheduler.register(
     createGitlabCostSyncable({ gitlab: finops?.gitlab ?? (() => DEFAULT_COST_GITLAB_CONFIG) }),
+  );
+  scheduler.register(
+    createBitbucketCostSyncable({
+      bitbucket: finops?.bitbucket ?? (() => DEFAULT_COST_BITBUCKET_CONFIG),
+    }),
   );
   scheduler.register(
     createAwsBillingCostSyncable({ aws: finops?.aws ?? (() => DEFAULT_COST_AWS_CONFIG) }),

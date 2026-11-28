@@ -6,20 +6,16 @@ import { loadNimbusFinopsFromConfigDir } from "../../config/finops-toml.ts";
 import type { FinopsSyncOptions } from "../../connectors/finops-syncables.ts";
 
 export function finopsSyncOptions(configDir: string): Required<FinopsSyncOptions> {
+  const cost = () => {
+    const c = loadNimbusCostFromConfigDir(configDir);
+    return c.error === null ? c : null;
+  };
   return {
     maxSeries: (): number => loadNimbusFinopsFromConfigDir(configDir).maxSeries,
     githubOrgs: (): readonly string[] => loadNimbusCostFromConfigDir(configDir).githubOrgs,
-    gitlab: () => {
-      const c = loadNimbusCostFromConfigDir(configDir);
-      return c.error === null ? c.gitlab : null;
-    },
-    aws: () => {
-      const c = loadNimbusCostFromConfigDir(configDir);
-      return c.error === null ? c.aws : null;
-    },
-    gcp: () => {
-      const c = loadNimbusCostFromConfigDir(configDir);
-      return c.error === null ? c.gcp : null;
-    },
+    gitlab: () => cost()?.gitlab ?? null,
+    bitbucket: () => cost()?.bitbucket ?? null,
+    aws: () => cost()?.aws ?? null,
+    gcp: () => cost()?.gcp ?? null,
   };
 }

@@ -88,7 +88,10 @@ describe("ConnectorSecretKeyOf — type pins", () => {
     assertEq<ConnectorSecretKeyOf<"linear">, "api_key">(true);
     assertEq<ConnectorSecretKeyOf<"gitlab">, "pat" | "api_base">(true);
     assertEq<ConnectorSecretKeyOf<"datadog">, "api_key" | "app_key" | "site">(true);
-    assertEq<ConnectorSecretKeyOf<"bitbucket">, "username" | "app_password">(true);
+    assertEq<
+      ConnectorSecretKeyOf<"bitbucket">,
+      "email" | "api_token" | "username" | "app_password"
+    >(true);
 
     assertEq<ConnectorSecretKeyOf<"google_drive">, never>(true);
     assertEq<ConnectorSecretKeyOf<"gmail">, never>(true);

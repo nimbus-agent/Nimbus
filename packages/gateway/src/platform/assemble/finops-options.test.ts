@@ -20,6 +20,7 @@ describe("finopsSyncOptions", () => {
     expect(o.githubOrgs()).toEqual([]);
     expect(o.gitlab()).toMatchObject({ groups: [], ratePerMinute: null });
     expect(o.aws()).toEqual({ export: null, costExplorer: false });
+    expect(o.bitbucket()).toMatchObject({ workspaces: [], ratePerMinute: null });
   });
 
   test("each getter reads the config at call time, so an edit applies to the next run", () => {
@@ -43,6 +44,7 @@ describe("finopsSyncOptions", () => {
     write('[cost.aws]\nbogus = "x"\n');
     const o = finopsSyncOptions(dir);
     expect(o.gitlab()).toBeNull();
+    expect(o.bitbucket()).toBeNull();
     expect(o.aws()).toBeNull();
     expect(o.githubOrgs()).toEqual([]);
   });

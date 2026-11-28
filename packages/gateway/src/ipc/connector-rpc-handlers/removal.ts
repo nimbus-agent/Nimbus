@@ -85,6 +85,7 @@ function unregisterConnectorFromSyncScheduler(
     syncScheduler.unregister("github_billing");
   }
   if (id === "gitlab") syncScheduler.unregister("gitlab_billing");
+  if (id === "bitbucket") syncScheduler.unregister("bitbucket_billing");
   if (id === "aws") syncScheduler.unregister("aws_billing");
   if (id === "gcp") syncScheduler.unregister("gcp_billing");
   syncScheduler.unregister(id);
@@ -99,6 +100,8 @@ function removeConnectorIndexEntries(localIndex: LocalIndex, id: string): number
   }
   // Phase 7 slice 8: the GitLab compute-minute cost lines go with the GitLab connector.
   if (id === "gitlab") itemsDeleted += localIndex.removeConnectorIndexData("gitlab_billing");
+  // Phase 7 slice 9: the Bitbucket Pipelines cost lines go with the Bitbucket connector.
+  if (id === "bitbucket") itemsDeleted += localIndex.removeConnectorIndexData("bitbucket_billing");
   // Phase 7 slice 11a: the AWS cost lines go with the AWS connector.
   if (id === "aws") itemsDeleted += localIndex.removeConnectorIndexData("aws_billing");
   // Phase 7 slice 13: the GCP cost lines go with the GCP connector.

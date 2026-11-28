@@ -16,6 +16,8 @@ export interface CostUnpriced {
 /** Where the owner sets the rate that prices a source's lines, by source. */
 const COST_RATE_CONFIG_HINT: ReadonlyMap<string, string> = new Map([
   ["gitlab_billing", "[cost.gitlab] rate_per_minute"],
+  ["bitbucket_billing", "[cost.bitbucket] rate_per_minute"],
+  ["jenkins_billing", "[cost.jenkins] rate_per_minute"],
 ]);
 
 /** The config key that would price `source`'s unpriced lines, or undefined. */
