@@ -127,6 +127,13 @@ function clearQueryScopes(
   return null;
 }
 
+/** A recorded day for a query scope that has none (it is kept only so the next export run clears it). */
+const EPOCH_DAY = "1970-01-01";
+
+/** The cursor key of an export location. */
+const exportKey = (e: { account: string; container: string; path: string }): string =>
+  `azure://${e.account}/${e.container}/${e.path}`;
+
 export function createAzureBillingCostSyncable(options: AzureBillingCostSyncableOptions): Syncable {
   return {
     serviceId: AZURE_BILLING_SERVICE_ID,
@@ -140,10 +147,7 @@ export function createAzureBillingCostSyncable(options: AzureBillingCostSyncable
         return syncPassCursorSuccess(t0, 0, cursor ?? encodeCostSyncCursor(PREFIX, prev0), 0);
       }
       const exportAt = cfg.export;
-      const where =
-        exportAt === null
-          ? null
-          : `azure://${exportAt.account}/${exportAt.container}/${exportAt.path}`;
+      const where = exportAt === null ? null : exportKey(exportAt);
       const scopes = [...new Set(cfg.scopes.flatMap((s) => normaliseAzureScope(s) ?? []))];
       const accounts = where === null ? scopes : [where];
       const prev = decodeCostSyncCursor(PREFIX, cursor);
@@ -236,13 +240,11 @@ export function createAzureBillingCostSyncable(options: AzureBillingCostSyncable
         return { kind: "ok", lines: written, bytes: 0 };
       });
       // The earlier query scopes stay recorded until the export has a clean run (every month it needs written).
+      const here = exportKey(exportAt);
       const clean =
-        own(run.cursor.pending, where ?? "") === undefined &&
-        own(run.cursor.gaps, where ?? "") === undefined;
+        own(run.cursor.pending, here) === undefined && own(run.cursor.gaps, here) === undefined;
       const synced = { ...run.cursor.synced };
-      if (!clean)
-        for (const k of oldScopes)
-          synced[k] = own(prev.synced, k) ?? prev.synced[k] ?? "1970-01-01";
+      if (!clean) for (const k of oldScopes) synced[k] = own(prev.synced, k) ?? EPOCH_DAY;
       return syncPassCursorSuccess(
         t0,
         run.bytes,
