@@ -25,18 +25,18 @@ describe("[cost.azure]", () => {
       export: { account: "acmecost", container: "my-exports", path: "focus/monthly" },
       scopes: [
         "/subscriptions/00000000-0000-0000-0000-000000000000",
-        "/providers/Microsoft.Billing/billingAccounts/123",
+        "/providers/microsoft.billing/billingaccounts/123",
       ],
     });
   });
 
   test("scopes alone are parsed (slice 12b reads them)", () => {
     const c = az(
-      'scopes = ["/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-1"]',
+      'scopes = ["/subscriptions/00000000-0000-0000-0000-000000000000/resourcegroups/rg-1"]',
     );
     expect(c.azure.export).toBeNull();
     expect(c.azure.scopes).toEqual([
-      "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-1",
+      "/subscriptions/00000000-0000-0000-0000-000000000000/resourcegroups/rg-1",
     ]);
   });
 
@@ -66,5 +66,33 @@ describe("[cost.azure]", () => {
       (_, i) => `"/subscriptions/00000000-0000-0000-0000-${String(i).padStart(12, "0")}"`,
     ).join(",");
     expect(az(`scopes = [${many}]`).error).toContain("at most 50");
+  });
+
+  test("scopes are lower-cased; two spellings of one scope are one scope (a duplicate)", () => {
+    const c = az(
+      'scopes = ["/Subscriptions/00000000-0000-0000-0000-000000000000/ResourceGroups/RG-One"]',
+    );
+    expect(c.azure.scopes).toEqual([
+      "/subscriptions/00000000-0000-0000-0000-000000000000/resourcegroups/rg-one",
+    ]);
+    const d = az(
+      'scopes = ["/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg", "/SUBSCRIPTIONS/00000000-0000-0000-0000-000000000000/RESOURCEGROUPS/RG/"]',
+    );
+    expect(d.error).toContain("twice");
+  });
+
+  test("a scope inside another listed scope is refused, naming both", () => {
+    const c = az(
+      'scopes = ["/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg", "/subscriptions/00000000-0000-0000-0000-000000000000"]',
+    );
+    expect(c.error).toContain(
+      "/subscriptions/00000000-0000-0000-0000-000000000000/resourcegroups/rg",
+    );
+    expect(c.error).toContain("is inside /subscriptions/00000000-0000-0000-0000-000000000000");
+    expect(
+      az(
+        'scopes = ["/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/a", "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/b"]',
+      ).error,
+    ).toBeNull();
   });
 });

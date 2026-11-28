@@ -13,6 +13,7 @@ import { type NimbusCostAzureConfig, normaliseAzureScope } from "../config/cost-
 import type { CostLine } from "../finops/cost-line.ts";
 import {
   COST_SYNC_CURSOR_PREFIXES,
+  type CostSyncCursor,
   decodeCostSyncCursor,
   encodeCostSyncCursor,
 } from "../finops/cost-source-gaps.ts";
@@ -87,6 +88,45 @@ function writeGroup(ctx: SyncContext, month: string, g: Group): CostMonthOutcome
   return null;
 }
 
+/** The cursor keys that are Query API scopes (everything but the export location and the configuration gap). */
+function queryScopesOf(prev: CostSyncCursor): string[] {
+  const keys = new Set([
+    ...Object.keys(prev.synced),
+    ...Object.keys(prev.gaps),
+    ...Object.keys(prev.pending),
+  ]);
+  return [...keys].filter((k) => k !== CONFIG_KEY && !k.startsWith("azure://"));
+}
+
+/**
+ * The owner switched from the Query API to an export: its lines carry other billing account ids (the scopes), so
+ * the export's write never replaces them and the month would count twice. Once the export has written `month`,
+ * the same month of every scope the query had recorded is cleared (the service's own source: D24 allows it).
+ */
+function clearQueryScopes(
+  ctx: SyncContext,
+  scopes: readonly string[],
+  month: string,
+): CostMonthOutcome | null {
+  try {
+    for (const billingAccountId of scopes) {
+      const target = { provider: AZURE_COST_PROVIDER, billingAccountId, month };
+      if (ctx.readOwnCostLinesForMonth(target).length > 0) ctx.replaceCostLinesForMonth(target, []);
+    }
+  } catch (e) {
+    ctx.logger.warn(
+      {
+        serviceId: AZURE_BILLING_SERVICE_ID,
+        month,
+        err: e instanceof Error ? e.message : String(e),
+      },
+      "azure_billing sync: the earlier Query API lines could not be cleared; retrying next run",
+    );
+    return { kind: "retry" };
+  }
+  return null;
+}
+
 export function createAzureBillingCostSyncable(options: AzureBillingCostSyncableOptions): Syncable {
   return {
     serviceId: AZURE_BILLING_SERVICE_ID,
@@ -104,7 +144,7 @@ export function createAzureBillingCostSyncable(options: AzureBillingCostSyncable
         exportAt === null
           ? null
           : `azure://${exportAt.account}/${exportAt.container}/${exportAt.path}`;
-      const scopes = cfg.scopes.flatMap((s) => normaliseAzureScope(s) ?? []);
+      const scopes = [...new Set(cfg.scopes.flatMap((s) => normaliseAzureScope(s) ?? []))];
       const accounts = where === null ? scopes : [where];
       const prev = decodeCostSyncCursor(PREFIX, cursor);
       const keep = <T>(m: Readonly<Record<string, T>>): Record<string, T> => {
@@ -157,6 +197,7 @@ export function createAzureBillingCostSyncable(options: AzureBillingCostSyncable
           options.fetch ?? fetchSameOriginOnly,
         );
       const nowMs = (options.now ?? Date.now)();
+      const oldScopes = queryScopesOf(prev);
       let listing: Promise<ExportListing> | null = null;
       const listOnce = (): Promise<ExportListing> =>
         (listing ??= listAzureExport(client, exportAt.path));
@@ -164,10 +205,16 @@ export function createAzureBillingCostSyncable(options: AzureBillingCostSyncable
         const l = await listOnce();
         if (l.kind === "gap") return { kind: "gap", reason: l.reason };
         if (l.kind === "retry") return { kind: "retry" };
-        const ref = l.periods.get(month);
-        // A month the export has no folder for (it started later, or its first delivery is pending) is not a gap.
-        if (ref === undefined) return { kind: "ok", lines: 0, bytes: 0 };
-        const read = await readAzureExportMonth(client, exportAt.path, ref, month);
+        const refs = l.periods.get(month);
+        if (refs === undefined) {
+          // A month the export has no folder for (it started later, or its first delivery is pending) is not a
+          // gap, unless a folder that spans two months covers it: that one is not read, and the month says so.
+          const span = l.spanning.get(month);
+          return span === undefined
+            ? { kind: "ok", lines: 0, bytes: 0 }
+            : { kind: "month_gap", reason: AZURE_COST_GAPS.spans(span) };
+        }
+        const read = await readAzureExportMonth(client, exportAt.path, refs, month);
         if (!Array.isArray(read)) return read as CostMonthOutcome;
         // A charge day after today cannot be written (the intake refuses it): a stated gap, not an endless retry.
         const today = new Date(nowMs).toISOString().slice(0, 10);
@@ -184,12 +231,22 @@ export function createAzureBillingCostSyncable(options: AzureBillingCostSyncable
           if (refused !== null) return refused;
           written += g.lines.length;
         }
+        const cleared = clearQueryScopes(ctx, oldScopes, month);
+        if (cleared !== null) return cleared;
         return { kind: "ok", lines: written, bytes: 0 };
       });
+      // The earlier query scopes stay recorded until the export has a clean run (every month it needs written).
+      const clean =
+        own(run.cursor.pending, where ?? "") === undefined &&
+        own(run.cursor.gaps, where ?? "") === undefined;
+      const synced = { ...run.cursor.synced };
+      if (!clean)
+        for (const k of oldScopes)
+          synced[k] = own(prev.synced, k) ?? prev.synced[k] ?? "1970-01-01";
       return syncPassCursorSuccess(
         t0,
         run.bytes,
-        encodeCostSyncCursor(PREFIX, run.cursor),
+        encodeCostSyncCursor(PREFIX, { ...run.cursor, synced }),
         run.lines,
       );
     },

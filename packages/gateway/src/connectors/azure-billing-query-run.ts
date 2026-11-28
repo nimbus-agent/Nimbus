@@ -11,7 +11,12 @@ import {
   azureQueryClient,
   readAzureQueryMonth,
 } from "./azure-cost-query.ts";
-import { type CostMonthOutcome, type CostSyncRun, runCostAccounts } from "./cost-month-sync.ts";
+import {
+  type CostMonthOutcome,
+  type CostSyncRun,
+  own,
+  runCostAccounts,
+} from "./cost-month-sync.ts";
 
 /** The last UTC day of `month` (`YYYY-MM`) that is not after `today` (`YYYY-MM-DD`). */
 export function lastQueryDay(month: string, today: string): string {
@@ -21,24 +26,27 @@ export function lastQueryDay(month: string, today: string): string {
   return end < today ? end : today;
 }
 
+const DAY_MS = 86_400_000;
+/** How long a stated "empty answer" gap stands before the query is asked again: a day now, a week for a past month. */
+export const AZURE_EMPTY_RETRY_DAYS = { current: 1, past: 7 } as const;
+
+const emptyReason = (scope: string, month: string, days: number): string =>
+  `the ${month} cost query for ${scope} returned no rows but lines are stored; that month was not updated (asked again every ${String(days)} day${days === 1 ? "" : "s"})`;
+
 /** Writes one scope's month; the days the query returned replace those days, every other stored day is kept. */
 function writeMonth(
   ctx: SyncContext,
   scope: string,
   month: string,
   lines: readonly CostLine[],
+  onEmpty: () => CostMonthOutcome,
 ): CostMonthOutcome {
   const target = { provider: AZURE_COST_PROVIDER, billingAccountId: scope, month };
   try {
     const stored = ctx.readOwnCostLinesForMonth(target);
     // An empty answer for a month that holds lines never clears it.
     if (lines.length === 0) {
-      return stored.length > 0
-        ? {
-            kind: "month_gap",
-            reason: `the ${month} cost query for ${scope} returned no rows but lines are stored; that month was not updated`,
-          }
-        : { kind: "ok", lines: 0, bytes: 0 };
+      return stored.length > 0 ? onEmpty() : { kind: "ok", lines: 0, bytes: 0 };
     }
     const covered = new Set(lines.map((l) => l.chargeDay));
     ctx.replaceCostLinesForMonth(target, [
@@ -67,13 +75,31 @@ export interface AzureQueryRunInput {
   readonly client?: AzureQueryClient;
 }
 
-export function runAzureQuery(input: AzureQueryRunInput): Promise<CostSyncRun> {
+export async function runAzureQuery(input: AzureQueryRunInput): Promise<CostSyncRun> {
   const client =
     input.client ?? azureQueryClient(input.ctx, input.tokens, input.fetch, input.sleep);
   const today = new Date(input.nowMs).toISOString().slice(0, 10);
-  return runCostAccounts(input.prev, input.scopes, input.nowMs, async (scope, month) => {
+  const emptyScan: Record<string, string> = {};
+  const run = await runCostAccounts(input.prev, input.scopes, input.nowMs, async (scope, month) => {
+    // After a 429 the quota is not asked again this run: the remaining scopes and months stay pending.
+    if (client.throttled?.() === true) return { kind: "retry" };
+    const key = `${scope}|${month}`;
+    const days =
+      month === today.slice(0, 7) ? AZURE_EMPTY_RETRY_DAYS.current : AZURE_EMPTY_RETRY_DAYS.past;
+    const last = own(input.prev.emptyScan ?? {}, key);
+    // A month whose last answer was empty is not asked again until the interval has passed (no QPU spent).
+    if (last !== undefined && input.nowMs - Date.parse(`${last}T00:00:00Z`) < days * DAY_MS) {
+      emptyScan[key] = last;
+      return { kind: "month_gap", reason: emptyReason(scope, month, days) };
+    }
     const read = await readAzureQueryMonth(client, scope, month, lastQueryDay(month, today));
     if (!Array.isArray(read)) return read as CostMonthOutcome;
-    return writeMonth(input.ctx, scope, month, read as CostLine[]);
+    return writeMonth(input.ctx, scope, month, read as CostLine[], () => {
+      emptyScan[key] = today;
+      return { kind: "month_gap", reason: emptyReason(scope, month, days) };
+    });
   });
+  return Object.keys(emptyScan).length === 0
+    ? run
+    : { ...run, cursor: { ...run.cursor, emptyScan } };
 }

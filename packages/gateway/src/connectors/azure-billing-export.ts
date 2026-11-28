@@ -18,7 +18,12 @@
 import type { CostLine } from "../finops/cost-line.ts";
 import type { SyncContext } from "../sync/types.ts";
 import { codeUnitCompare } from "../util/code-unit-compare.ts";
-import { AZURE_STORAGE_SCOPE, type AzureFetch, type AzureTokenSource } from "./_lib/azure-token.ts";
+import {
+  AZURE_STORAGE_SCOPE,
+  type AzureFetch,
+  type AzureTokenResult,
+  type AzureTokenSource,
+} from "./_lib/azure-token.ts";
 import {
   AWS_EXPORT_MAX_TEXT_BYTES,
   exportText,
@@ -43,7 +48,10 @@ export const AZURE_COST_GAPS = {
   list: "the Azure cost export could not be listed (check the account, the container and the path)",
   access:
     "Azure refused the export container (the service principal needs the Storage Blob Data Reader role on it)",
-  notFound: "the Azure storage account or container was not found",
+  notFound: (account: string, container: string): string =>
+    `the Azure storage account ${account} or its container ${container} was not found (check [cost.azure] export)`,
+  spans: (folder: string): string =>
+    `export folder ${folder} spans two months; use a monthly (month-to-date) export`,
   listCap: `the export holds more than ${String(AZURE_LIST_MAX_PAGES * LIST_PAGE_SIZE)} files under its path; point [cost.azure] export at the export's own folder`,
   empty:
     "no FOCUS export run with a manifest was found under the configured path (the first delivery can take up to 24 hours; check the path)",
@@ -60,7 +68,10 @@ export type BlobListReply =
 /** What the sync needs of Blob Storage; a test passes a fake. */
 export interface AzureBlobClient {
   list(prefix: string, marker: string | null): Promise<BlobListReply>;
-  download(name: string): Promise<{ ok: true; bytes: Uint8Array } | { ok: false }>;
+  /** `transient`: the failure may pass (network, 429, 5xx), so the month is retried, not read from an older run. */
+  download(
+    name: string,
+  ): Promise<{ ok: true; bytes: Uint8Array } | { ok: false; transient: boolean }>;
 }
 
 const UNESCAPES: Readonly<Record<string, string>> = {
@@ -99,14 +110,35 @@ export function azureBlobClient(
   fetchFn: AzureFetch,
 ): AzureBlobClient {
   const base = `https://${account}.blob.core.windows.net/${container}`;
-  const headers = (token: string): Record<string, string> => ({
-    Authorization: `Bearer ${token}`,
-    "x-ms-version": AZURE_BLOB_API_VERSION,
-  });
+  const penalise = (res: Response): void => {
+    const sec = Number.parseInt(res.headers.get("retry-after") ?? "60", 10);
+    ctx.rateLimiter.penalise("azure", Number.isFinite(sec) && sec > 0 ? sec * 1000 : 60_000);
+  };
+  const drop = async (res: Response): Promise<void> => {
+    await res.body?.cancel().catch(() => undefined);
+  };
+  /**
+   * One authorised GET. A 401 (the token expired mid-run) drops the cached token, fetches a new one and sends the
+   * request once more. A thrown fetch propagates to the caller.
+   */
+  async function send(
+    url: string,
+  ): Promise<{ res: Response } | Exclude<AzureTokenResult, { kind: "token" }>> {
+    let t = await tokens.get(AZURE_STORAGE_SCOPE);
+    for (let attempt = 0; ; attempt++) {
+      if (t.kind !== "token") return t;
+      await ctx.rateLimiter.acquire("azure"); // NOSONAR S9382: one request at a time
+      const res = await fetchFn(url, {
+        headers: { Authorization: `Bearer ${t.token}`, "x-ms-version": AZURE_BLOB_API_VERSION },
+        signal: AbortSignal.timeout(AZURE_BLOB_TIMEOUT_MS),
+      }); // NOSONAR S9382
+      if (res.status !== 401 || attempt > 0) return { res };
+      await drop(res); // NOSONAR S9382
+      t = await tokens.refresh(AZURE_STORAGE_SCOPE); // NOSONAR S9382
+    }
+  }
   return {
     async list(prefix, marker) {
-      const t = await tokens.get(AZURE_STORAGE_SCOPE);
-      if (t.kind !== "token") return t;
       const q = new URLSearchParams({
         restype: "container",
         comp: "list",
@@ -114,33 +146,35 @@ export function azureBlobClient(
         maxresults: String(LIST_PAGE_SIZE),
       });
       if (marker !== null) q.set("marker", marker);
-      await ctx.rateLimiter.acquire("azure");
-      let res: Response;
+      let sent: Awaited<ReturnType<typeof send>>;
       try {
-        res = await fetchFn(`${base}?${q.toString()}`, {
-          headers: headers(t.token),
-          signal: AbortSignal.timeout(AZURE_BLOB_TIMEOUT_MS),
-        });
+        sent = await send(`${base}?${q.toString()}`);
       } catch (e) {
-        return e instanceof RedirectRefusedError
-          ? { kind: "gap", reason: AZURE_COST_GAPS.redirect }
+        if (e instanceof RedirectRefusedError) {
+          return { kind: "gap", reason: AZURE_COST_GAPS.redirect };
+        }
+        // The first request never reached the account (DNS, connect): the account name is wrong or does not exist.
+        return marker === null
+          ? { kind: "gap", reason: AZURE_COST_GAPS.notFound(account, container) }
           : { kind: "retry" };
       }
+      if (!("res" in sent)) return sent;
+      const { res } = sent;
+      if (res.status === 429) penalise(res);
       if (res.status === 401 || res.status === 403) {
-        await res.body?.cancel().catch(() => undefined);
+        await drop(res);
         return { kind: "gap", reason: AZURE_COST_GAPS.access };
       }
       if (res.status === 404) {
-        await res.body?.cancel().catch(() => undefined);
-        return { kind: "gap", reason: AZURE_COST_GAPS.notFound };
-      }
-      if (res.status === 429) {
-        const sec = Number.parseInt(res.headers.get("retry-after") ?? "60", 10);
-        ctx.rateLimiter.penalise("azure", Number.isFinite(sec) && sec > 0 ? sec * 1000 : 60_000);
+        await drop(res);
+        return { kind: "gap", reason: AZURE_COST_GAPS.notFound(account, container) };
       }
       if (!res.ok) {
-        await res.body?.cancel().catch(() => undefined);
-        return { kind: "retry" };
+        await drop(res);
+        // 429 and 5xx are transient; any other status is a request Azure will keep refusing.
+        return res.status === 429 || res.status >= 500
+          ? { kind: "retry" }
+          : { kind: "gap", reason: AZURE_COST_GAPS.list };
       }
       try {
         // The XML is read as bytes and decoded once; a listing holds names only.
@@ -153,35 +187,68 @@ export function azureBlobClient(
       }
     },
     async download(name) {
-      const t = await tokens.get(AZURE_STORAGE_SCOPE);
-      if (t.kind !== "token") return { ok: false };
-      await ctx.rateLimiter.acquire("azure");
       try {
-        const res = await fetchFn(`${base}/${encodeBlobPath(name)}`, {
-          headers: headers(t.token),
-          signal: AbortSignal.timeout(AZURE_BLOB_TIMEOUT_MS),
-        });
-        if (res.status === 429) {
-          const sec = Number.parseInt(res.headers.get("retry-after") ?? "60", 10);
-          ctx.rateLimiter.penalise("azure", Number.isFinite(sec) && sec > 0 ? sec * 1000 : 60_000);
+        const sent = await send(`${base}/${encodeBlobPath(name)}`);
+        if (!("res" in sent)) return { ok: false, transient: sent.kind === "retry" };
+        const { res } = sent;
+        if (res.status === 429) penalise(res);
+        if (!res.ok) {
+          await drop(res);
+          return { ok: false, transient: res.status === 429 || res.status >= 500 };
         }
-        const declared = Number(res.headers.get("content-length") ?? "0");
-        if (!res.ok || declared > AZURE_BLOB_MAX_BYTES) {
-          await res.body?.cancel().catch(() => undefined);
-          return { ok: false };
-        }
-        const bytes = new Uint8Array(await res.arrayBuffer());
-        return bytes.byteLength > AZURE_BLOB_MAX_BYTES ? { ok: false } : { ok: true, bytes };
+        return await readCapped(res);
       } catch {
-        return { ok: false };
+        return { ok: false, transient: true };
       }
     },
   };
 }
 
+/**
+ * The body, streamed and counted: it is cancelled the moment it passes {@link AZURE_BLOB_MAX_BYTES}, so the cap
+ * holds with no Content-Length, a wrong one, or chunked encoding. A Content-Length that is a finite number over the
+ * cap is refused early; a missing or non-numeric one is not trusted and not needed.
+ */
+async function readCapped(
+  res: Response,
+): Promise<{ ok: true; bytes: Uint8Array } | { ok: false; transient: boolean }> {
+  const declared = Number(res.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > AZURE_BLOB_MAX_BYTES) {
+    await res.body?.cancel().catch(() => undefined);
+    return { ok: false, transient: false };
+  }
+  if (res.body === null) return { ok: true, bytes: new Uint8Array(0) };
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read(); // NOSONAR S9382: a stream is read in order
+    if (done) break;
+    total += value.byteLength;
+    if (total > AZURE_BLOB_MAX_BYTES) {
+      await reader.cancel().catch(() => undefined); // NOSONAR S9382
+      return { ok: false, transient: false };
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let at = 0;
+  for (const c of chunks) {
+    bytes.set(c, at);
+    at += c.byteLength;
+  }
+  return { ok: true, bytes };
+}
+
 export type ExportRef = { readonly manifest: string };
 export type ExportListing =
-  | { readonly kind: "listing"; readonly periods: ReadonlyMap<string, ExportRef> }
+  | {
+      readonly kind: "listing";
+      /** Per billing month, its runs that have a manifest, newest first. */
+      readonly periods: ReadonlyMap<string, readonly ExportRef[]>;
+      /** Per month, a date-range folder that spans two months (not read), by folder name. */
+      readonly spanning: ReadonlyMap<string, string>;
+    }
   | { readonly kind: "gap"; readonly reason: string }
   | { readonly kind: "retry" };
 
@@ -190,19 +257,21 @@ const MANIFEST_RE = /(?:^|\/)_?manifest\.json$/i;
 
 type Run = { manifest: string; lastModified: number };
 
-function newer(a: Run, b: Run): boolean {
-  return a.lastModified !== b.lastModified
-    ? a.lastModified > b.lastModified
-    : codeUnitCompare(a.manifest, b.manifest) > 0;
+/** Newest first. */
+function newestFirst(a: Run, b: Run): number {
+  return a.lastModified === b.lastModified
+    ? codeUnitCompare(b.manifest, a.manifest)
+    : b.lastModified - a.lastModified;
 }
 
-/** Every blob under the export path, and from them the newest run with a manifest of each billing month. */
+/** Every blob under the export path, and from them each billing month's runs with a manifest, newest first. */
 export async function listAzureExport(
   client: AzureBlobClient,
   path: string,
 ): Promise<ExportListing> {
   const keyPrefix = `${path}/`;
-  const periods = new Map<string, Run>();
+  const runs = new Map<string, Run[]>();
+  const spanning = new Map<string, string>();
   let marker: string | null = null;
   for (let page = 0; page < AZURE_LIST_MAX_PAGES; page++) {
     const r: BlobListReply = await client.list(keyPrefix, marker); // NOSONAR S9382: one request at a time
@@ -211,17 +280,31 @@ export async function listAzureExport(
       if (!b.name.startsWith(keyPrefix) || !MANIFEST_RE.test(b.name)) continue;
       const m = RUN_RE.exec(b.name.slice(keyPrefix.length));
       if (m === null) continue;
-      // A range that starts on one month and ends in another is not one billing month: not read.
-      if (m[1] !== m[4] || m[2] !== m[5]) continue;
+      if (m[1] !== m[4] || m[2] !== m[5]) {
+        // A range that starts in one month and ends in another is not one billing month: recorded, not read.
+        const name = b.name.slice(keyPrefix.length).split("/")[0] ?? "";
+        spanning.set(`${m[1] ?? ""}-${m[2] ?? ""}`, name);
+        spanning.set(`${m[4] ?? ""}-${m[5] ?? ""}`, name);
+        continue;
+      }
       const month = `${m[1] ?? ""}-${m[2] ?? ""}`;
       const run: Run = { manifest: b.name, lastModified: b.lastModified };
-      const held = periods.get(month);
-      if (held === undefined || newer(run, held)) periods.set(month, run);
+      const held = runs.get(month);
+      if (held === undefined) runs.set(month, [run]);
+      else held.push(run);
     }
     if (r.next === null) {
-      return periods.size === 0
-        ? { kind: "gap", reason: AZURE_COST_GAPS.empty }
-        : { kind: "listing", periods };
+      if (runs.size === 0 && spanning.size === 0) {
+        return { kind: "gap", reason: AZURE_COST_GAPS.empty };
+      }
+      const periods = new Map<string, readonly ExportRef[]>();
+      for (const [month, rs] of runs) {
+        periods.set(
+          month,
+          [...rs].sort(newestFirst).map((x) => ({ manifest: x.manifest })),
+        );
+      }
+      return { kind: "listing", periods, spanning };
     }
     if (r.next === marker) return { kind: "gap", reason: AZURE_COST_GAPS.list };
     marker = r.next;
@@ -266,11 +349,34 @@ function manifestFiles(text: string, path: string, month: string): string[] | Co
 }
 
 /**
- * One billing month's lines, re-sourced to `azure_billing`, or why they cannot be written: an account gap
- * (Parquet) or a `month_gap` (anything unreadable, partial, empty or refused: a stored month is never cleared).
+ * One run's lines, re-sourced to `azure_billing`, or why they cannot be written: an account gap (Parquet), a
+ * `retry` (a transient download failure) or a `month_gap` (anything unreadable, partial, empty or refused).
  */
-export async function readAzureExportMonth(
+export async function readAzureExportRun(
   client: AzureBlobClient,
+  path: string,
+  ref: ExportRef,
+  month: string,
+  maxTextBytes?: number,
+): Promise<CostLine[] | CostMonthOutcome> {
+  let transient = false;
+  const reading: RunDownload = {
+    download: async (name) => {
+      const got = await client.download(name);
+      if (!got.ok && got.transient) transient = true;
+      return got.ok ? got : { ok: false };
+    },
+  };
+  const outcome = await readRun(reading, path, ref, month, maxTextBytes);
+  return transient && !Array.isArray(outcome) ? { kind: "retry" } : outcome;
+}
+
+type RunDownload = {
+  download(url: string): Promise<{ ok: true; bytes: Uint8Array } | { ok: false }>;
+};
+
+async function readRun(
+  client: RunDownload,
   path: string,
   ref: ExportRef,
   month: string,
@@ -285,4 +391,29 @@ export async function readAzureExportMonth(
   const text = await exportText(client, names, month, maxTextBytes ?? AWS_EXPORT_MAX_TEXT_BYTES);
   if (typeof text !== "string") return text;
   return focusLinesFromText(text, AZURE_COST_PROVIDER, AZURE_BILLING_SOURCE, month);
+}
+
+/** How many runs of one month are tried, newest first, before the month is a gap. */
+export const AZURE_MAX_RUNS_TRIED = 5;
+
+/**
+ * One billing month's lines from the newest run whose parts ALL download and parse; an older complete run is used
+ * when a newer one is partial. Only when no run is complete is it a `month_gap` (the newest run's reason). A
+ * transient failure or an account gap stops the search at once (an older run must not stand in for a retry).
+ */
+export async function readAzureExportMonth(
+  client: AzureBlobClient,
+  path: string,
+  refs: readonly ExportRef[],
+  month: string,
+  maxTextBytes?: number,
+): Promise<CostLine[] | CostMonthOutcome> {
+  let firstGap: CostMonthOutcome | null = null;
+  for (const ref of refs.slice(0, AZURE_MAX_RUNS_TRIED)) {
+    const out = await readAzureExportRun(client, path, ref, month, maxTextBytes); // NOSONAR S9382: newest first, one at a time
+    if (Array.isArray(out)) return out;
+    if (out.kind !== "month_gap") return out;
+    firstGap ??= out;
+  }
+  return firstGap ?? monthGap(`the ${month} export has no run to read; that month was not updated`);
 }

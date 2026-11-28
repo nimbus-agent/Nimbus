@@ -50,11 +50,13 @@ const SCOPE_RES: readonly RegExp[] = [
 /**
  * A scope as the request path wants it: leading and trailing slashes removed, or null when it is not one of the
  * three accepted shapes (`/subscriptions/<guid>`, `.../resourceGroups/<name>`,
- * `/providers/Microsoft.Billing/billingAccounts/<id>`). "." and ".." segments never match.
+ * `/providers/Microsoft.Billing/billingAccounts/<id>`). "." and ".." segments never match. The result is
+ * LOWER-CASED, `resourceGroups` keyword included: Azure resource ids are case-insensitive, and two spellings of one
+ * scope must never be two accounts (their lines would count twice).
  */
 export function normaliseAzureScope(s: string): string | null {
   const bare = s.trim().replace(/^\/+|\/+$/g, "");
-  return SCOPE_RES.some((re) => re.test(`/${bare}`)) ? bare : null;
+  return SCOPE_RES.some((re) => re.test(`/${bare}`)) ? bare.toLowerCase() : null;
 }
 
 const bad = (key: string, why: string): CostAzureConfigError =>
@@ -113,6 +115,13 @@ function readScopes(v: unknown): readonly string[] {
     const scope = `/${bare}`;
     if (out.includes(scope)) throw bad("scopes", `lists ${scope} twice`);
     out.push(scope);
+  }
+  // A scope inside another listed scope (a resource group of a listed subscription) would be read twice.
+  for (const a of out) {
+    const inner = out.find((b) => b.startsWith(`${a}/`));
+    if (inner !== undefined) {
+      throw bad("scopes", `lists ${inner}, which is inside ${a}; list only the outer scope`);
+    }
   }
   return Object.freeze(out);
 }

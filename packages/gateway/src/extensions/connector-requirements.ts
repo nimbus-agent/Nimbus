@@ -261,7 +261,7 @@ async function ownedStatus(
 const TOKEN_CONNECTOR_AUTH_FLAGS: Readonly<Record<string, string>> = {
   jira: "--username <email> --token <api_token> --api-base <url>",
   confluence: "--username <email> --token <api_token> --api-base <url>",
-  bitbucket: "--username <atlassian_username> --token <app_password>",
+  bitbucket: "--username <atlassian_email> --token <api_token>",
   sentry: "--token <token> --sentry-org <slug>",
   jenkins: "--username <user> --token <api_token> --api-base <url>",
   grafana: "--api-base <url> --token <api_token>",

@@ -14,9 +14,9 @@
 //
 // Throttling (https://learn.microsoft.com/en-us/azure/cost-management-billing/costs/manage-automation: 12 QPU per
 // 10 seconds, 60 per minute and 600 per hour per tenant, one QPU per month of data queried): on a 429 the client
-// waits the seconds the `x-ms-ratelimit-microsoft.costmanagement-qpu-retry-after` header names (60 when it is
-// missing or unusable) ONCE per run and repeats the request; a second 429 in the run, or a wait longer than five
-// minutes, is a retry for the next run. A month is read whole or not at all: any drop, cap or unreadable page keeps
+// waits the seconds the `x-ms-ratelimit-microsoft.costmanagement-qpu-retry-after` header names ONCE per run (at most
+// 30 s) and repeats the request. A second 429, a wait over 30 s or a missing header (taken as 60 s) is a retry for
+// the next run with no sleep, and after any 429 the rest of the run's scopes and months stay pending, unasked. A month is read whole or not at all: any drop, cap or unreadable page keeps
 // the stored month as it was.
 
 import { azureQueryLines } from "../finops/azure-query-lines.ts";
@@ -38,7 +38,7 @@ export const AZURE_QUERY_MAX_PAGES = 20;
 export const AZURE_QUERY_TIMEOUT_MS = 2 * 60 * 1000;
 export const AZURE_QUERY_RETRY_HEADER = "x-ms-ratelimit-microsoft.costmanagement-qpu-retry-after";
 export const AZURE_QUERY_DEFAULT_RETRY_SECONDS = 60;
-export const AZURE_QUERY_MAX_WAIT_SECONDS = 300;
+export const AZURE_QUERY_MAX_WAIT_SECONDS = 30;
 
 export const AZURE_QUERY_GAPS = {
   access:
@@ -62,6 +62,8 @@ export type QueryReply =
 /** What the month read needs of the API; a test passes a fake. */
 export interface AzureQueryClient {
   post(url: string, body: unknown): Promise<QueryReply>;
+  /** True once a request of this run was answered 429: the quota is not asked again until the next run. */
+  throttled?(): boolean;
 }
 
 export function queryUrl(scope: string): string {
@@ -92,18 +94,22 @@ export function azureQueryClient(
   sleep: (ms: number) => Promise<void> = (ms) => Bun.sleep(ms),
 ): AzureQueryClient {
   let waited = false;
+  let throttled = false;
   return {
+    throttled: () => throttled,
     async post(url, body) {
-      for (let attempt = 0; attempt < 2; attempt++) {
-        const t = await tokens.get(AZURE_MANAGEMENT_SCOPE); // NOSONAR S9382: one request at a time
-        if (t.kind !== "token") return t;
+      let refreshed = false;
+      let token = await tokens.get(AZURE_MANAGEMENT_SCOPE);
+      // At most: the first send, one repeat after a new token (401), one repeat after the one wait (429).
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (token.kind !== "token") return token;
         await ctx.rateLimiter.acquire("azure"); // NOSONAR S9382: one request at a time
         let res: Response;
         try {
           res = await fetchFn(url, {
             method: "POST",
             headers: {
-              Authorization: `Bearer ${t.token}`,
+              Authorization: `Bearer ${token.token}`,
               "Content-Type": "application/json",
               Accept: "application/json",
             },
@@ -115,11 +121,20 @@ export function azureQueryClient(
             ? { kind: "gap", reason: AZURE_QUERY_GAPS.redirect }
             : { kind: "retry" };
         }
+        if (res.status === 401 && !refreshed) {
+          // The token expired mid-run: drop it once and send the request again.
+          await res.body?.cancel().catch(() => undefined);
+          refreshed = true;
+          token = await tokens.refresh(AZURE_MANAGEMENT_SCOPE); // NOSONAR S9382
+          continue;
+        }
         if (res.status === 429) {
           await res.body?.cancel().catch(() => undefined);
+          throttled = true;
           const given = Number.parseInt(res.headers.get(AZURE_QUERY_RETRY_HEADER) ?? "", 10);
           const seconds =
             Number.isFinite(given) && given > 0 ? given : AZURE_QUERY_DEFAULT_RETRY_SECONDS;
+          // A long back-off is not slept through (it would stall the whole sync): the next run asks again.
           if (waited || seconds > AZURE_QUERY_MAX_WAIT_SECONDS) return { kind: "retry" };
           waited = true;
           await sleep(seconds * 1000); // NOSONAR S9382: the one wait of the run

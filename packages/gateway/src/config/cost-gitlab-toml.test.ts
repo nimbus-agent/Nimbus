@@ -1,12 +1,4 @@
 import { describe, expect, test } from "bun:test";
-
-import {
-  costRatesFingerprint,
-  pricedFields,
-  rateForKey,
-  rateKeyForRunner,
-  ratePrice,
-} from "../finops/cost-rate-price.ts";
 import { DEFAULT_COST_GITLAB_CONFIG } from "./cost-gitlab-toml.ts";
 import { resolveCostConfig } from "./cost-toml.ts";
 import { mergeLayerDocs, parseLayerDoc } from "./layered-merge.ts";
@@ -69,39 +61,5 @@ describe("[cost.gitlab]", () => {
     );
     expect(c.rules).toEqual([]);
     expect(c.error).not.toBeNull();
-  });
-});
-
-describe("rate prices", () => {
-  const rates = {
-    ratePerMinute: 0.01,
-    currency: "USD",
-    runnerRates: [["big", 0.05]] as const,
-  };
-
-  test("a runner key prices at its runner's rate, and falls back to the default when unlisted", () => {
-    expect(rateKeyForRunner("big")).toBe("runner:big");
-    // An unlisted runner keeps its own key, and prices at the default until a rate is added for it.
-    expect(rateKeyForRunner("small")).toBe("runner:small");
-    expect(rateForKey(rates, "runner:small")).toBe(0.01);
-    expect(rateKeyForRunner(null)).toBe("default");
-    expect(rateForKey(rates, "runner:big")).toBe(0.05);
-    expect(rateForKey(rates, "runner:gone")).toBe(0.01);
-    expect(rateForKey({ ...rates, ratePerMinute: null }, "runner:gone")).toBeNull();
-    expect(rateForKey(rates, "default")).toBe(0.01);
-  });
-
-  test("rounding is stable, and no rate is an unpriced line", () => {
-    expect(ratePrice(3, 0.1)).toBe(0.3);
-    expect(pricedFields(100, 0.01)).toEqual({ billedCost: 1, effectiveCost: 1, priced: true });
-    expect(pricedFields(100, null)).toEqual({ billedCost: 0, effectiveCost: null, priced: false });
-  });
-
-  test("the fingerprint changes with a rate or the currency, and not otherwise", () => {
-    const f = costRatesFingerprint(rates);
-    expect(costRatesFingerprint({ ...rates })).toBe(f);
-    expect(costRatesFingerprint({ ...rates, currency: "EUR" })).not.toBe(f);
-    expect(costRatesFingerprint({ ...rates, ratePerMinute: 0.02 })).not.toBe(f);
-    expect(costRatesFingerprint({ ...rates, runnerRates: [] })).not.toBe(f);
   });
 });

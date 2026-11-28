@@ -18,6 +18,7 @@ export const COST_SYNC_CURSOR_PREFIXES = Object.freeze({
   openai_billing: "nimbus-oai1:",
   anthropic_billing: "nimbus-ant1:",
   gitlab_billing: "nimbus-glb1:",
+  bitbucket_billing: "nimbus-bbb1:",
   aws_billing: "nimbus-awb1:",
   azure_billing: "nimbus-azb1:",
 } as const);
@@ -34,6 +35,11 @@ export type CostSyncCursor = {
   readonly pending: Readonly<Record<string, readonly string[]>>;
   /** Slice 8: the fingerprint of the rates the stored lines were priced with (absent: none recorded). */
   readonly rates?: string;
+  /**
+   * Slice 12b: `<account>|<YYYY-MM>` to the UTC day a cost query last came back EMPTY for a month that holds
+   * stored lines (the stated gap is shown without asking again until the retry interval has passed).
+   */
+  readonly emptyScan?: Readonly<Record<string, string>>;
 };
 
 const EMPTY: CostSyncCursor = { gaps: {}, synced: {}, pending: {} };
@@ -76,6 +82,9 @@ export function decodeCostSyncCursor(prefix: string, raw: string | null): CostSy
       synced: stringMap(rec["synced"]),
       pending: monthListMap(rec["pending"]),
       ...(typeof rec["rates"] === "string" ? { rates: rec["rates"] } : {}),
+      ...(Object.keys(stringMap(rec["emptyScan"])).length > 0
+        ? { emptyScan: stringMap(rec["emptyScan"]) }
+        : {}),
     };
   } catch {
     return EMPTY;

@@ -106,11 +106,12 @@ async function run(
   m: Management,
   config: NimbusCostAzureConfig | null = cfg(),
   cursor: string | null = null,
+  now = NOW,
 ) {
   const sleeps: number[] = [];
   const out = await createAzureBillingCostSyncable({
     azure: () => config,
-    now: () => NOW,
+    now: () => now,
     fetch: m.fetch,
     sleep: async (ms) => {
       sleeps.push(ms);
@@ -196,16 +197,47 @@ describe("azure_billing: the Query API fallback", () => {
     const m2 = new Management();
     m2.answer = () => new Response("", { status: 429 });
     const b = await run(m2, cfg(), null);
-    expect(b.sleeps).toEqual([60_000]);
+    expect(b.sleeps).toEqual([]); // no header is taken as 60 s: longer than the 30 s cap, so no sleep
     expect(b.cursor.pending[ACCT]?.length).toBeGreaterThan(0);
     expect(b.cursor.gaps).toEqual({}); // a retry is not a stated gap
-    expect(m2.requests).toHaveLength(2); // one wait, one repeat, then the next run
+    expect(m2.requests).toHaveLength(1);
+
+    const m3 = new Management();
+    m3.answer = () =>
+      new Response("", { status: 429, headers: { [AZURE_QUERY_RETRY_HEADER]: "30" } });
+    const c = await run(m3);
+    expect(c.sleeps).toEqual([30_000]); // the cap itself is waited
+    expect(m3.requests).toHaveLength(2); // one wait, one repeat, then the next run
   });
 
-  test("a retry-after beyond five minutes is not waited for", async () => {
+  test("after a 429 the remaining scopes are not queried and stay pending", async () => {
+    const other = "/subscriptions/99999999-2222-3333-4444-555555555555";
+    const m = new Management();
+    m.answer = () => new Response("", { status: 429 });
+    const r = await run(m, cfg({ scopes: [SUB, other] }));
+    expect(m.requests).toHaveLength(1);
+    expect(r.cursor.pending[ACCT]?.length).toBeGreaterThan(0);
+    expect(r.cursor.pending[other.slice(1)]?.length).toBeGreaterThan(0);
+  });
+
+  test("a 401 drops the token once and repeats; a second 401 is the role gap", async () => {
+    const m = new Management();
+    m.answer = (n) => (n === 1 ? new Response("", { status: 401 }) : page([ROW]));
+    await run(m);
+    expect(m.tokenCalls).toBe(2);
+    expect(stored()).toHaveLength(1);
+    const m2 = new Management();
+    m2.answer = () => new Response("", { status: 401 });
+    const r = await run(m2);
+    expect(r.cursor.gaps[ACCT]).toBe(AZURE_QUERY_GAPS.access);
+    expect(m2.tokenCalls).toBe(2);
+    expect(m2.requests).toHaveLength(2);
+  });
+
+  test("a retry-after beyond 30 seconds is not waited for", async () => {
     const m = new Management();
     m.answer = () =>
-      new Response("", { status: 429, headers: { [AZURE_QUERY_RETRY_HEADER]: "3600" } });
+      new Response("", { status: 429, headers: { [AZURE_QUERY_RETRY_HEADER]: "31" } });
     const r = await run(m);
     expect(r.sleeps).toEqual([]);
     expect(m.requests).toHaveLength(1);
@@ -333,6 +365,59 @@ describe("azure_billing: the Query API fallback", () => {
     db.run("DELETE FROM cost_line");
     const fresh = await run(empty);
     expect(fresh.cursor.gaps).toEqual({});
+  });
+
+  test("an empty month is asked again at most once a day (current), with no query in between", async () => {
+    const first = await run(new Management());
+    const empty = new Management();
+    empty.answer = () => new Response(null, { status: 204 });
+    const a = await run(empty, cfg(), first.out.cursor, NOW + DAY);
+    expect(a.cursor.gaps[ACCT]).toContain("asked again every 1 day");
+    expect(a.cursor.emptyScan?.[`${ACCT}|2026-11`]).toBe("2026-11-21");
+    const asked = empty.requests.length;
+    expect(asked).toBeGreaterThan(0);
+    // Same day again: the stated gap stands and no QPU is spent.
+    const b = await run(empty, cfg(), a.out.cursor, NOW + DAY);
+    expect(empty.requests).toHaveLength(asked);
+    expect(b.cursor.gaps[ACCT]).toContain("asked again");
+    // The next day the current month is asked again.
+    const c = await run(empty, cfg(), b.out.cursor, NOW + 2 * DAY);
+    expect(empty.requests.length).toBeGreaterThan(asked);
+    expect(c.cursor.emptyScan?.[`${ACCT}|2026-11`]).toBe("2026-11-22");
+    expect(stored()).toHaveLength(1);
+    // A real answer clears the record.
+    const d = await run(new Management(), cfg(), c.out.cursor, NOW + 3 * DAY);
+    expect(d.cursor.emptyScan).toBeUndefined();
+    expect(d.cursor.gaps).toEqual({});
+  });
+
+  test("a past month is asked again only after a week", async () => {
+    const first = await run(new Management());
+    const dec3 = Date.UTC(2026, 11, 3, 9); // up to the 5th the previous month (November) is read again
+    const empty = new Management();
+    empty.answer = () => new Response(null, { status: 204 });
+    const a = await run(empty, cfg(), first.out.cursor, dec3);
+    expect(a.cursor.emptyScan?.[`${ACCT}|2026-11`]).toBe("2026-12-03");
+    expect(a.cursor.gaps[ACCT]).toContain("asked again every 7 days");
+    const nov = () =>
+      empty.requests.filter((r) => JSON.stringify(r.body).includes("2026-11-01")).length;
+    const asked = nov();
+    expect(asked).toBeGreaterThan(0);
+    await run(empty, cfg(), a.out.cursor, dec3 + 6 * DAY); // six days later: no new November query
+    expect(nov()).toBe(asked);
+    await run(empty, cfg(), a.out.cursor, dec3 + 7 * DAY);
+    expect(nov()).toBe(asked + 1);
+  });
+
+  test("a scope written in other letters is the same account", async () => {
+    const mixed = SUB.replace("/subscriptions", "/Subscriptions")
+      .toUpperCase()
+      .replace("/SUBSCRIPTIONS", "/Subscriptions");
+    await run(new Management(), cfg({ scopes: [mixed] }));
+    expect(stored().map((l) => l.billingAccountId)).toEqual([ACCT]);
+    const m = new Management();
+    await run(m, cfg({ scopes: [SUB, mixed] }));
+    expect(m.requests).toHaveLength(2); // one scope, two months (a first sync), never four
   });
 
   test("days the query does not return keep their stored lines", async () => {

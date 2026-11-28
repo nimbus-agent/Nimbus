@@ -27,7 +27,15 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   aws_billing: [],
   // Phase 7 slice 12a: the Azure cost sync reads the shared `azure.*` service principal through its grant.
   azure_billing: [],
-  bitbucket: ["bitbucket.username", "bitbucket.app_password"],
+  // API token pair first; `username` + `app_password` are the deprecated fallback (Atlassian removed app passwords 2026-07-28).
+  bitbucket: [
+    "bitbucket.email",
+    "bitbucket.api_token",
+    "bitbucket.username",
+    "bitbucket.app_password",
+  ],
+  // Phase 7 slice 9: the Pipelines-minutes cost sync reads the `bitbucket` credential through its grant.
+  bitbucket_billing: [],
   linear: ["linear.api_key"],
   // `jira.cloud_id` is OPTIONAL and non-secret in effect (the Atlassian site UUID the Operations alert
   // tools need); it is a Vault key so `connector.remove jira` clears it.
