@@ -34,6 +34,7 @@ describe("registerFinopsSyncables", () => {
       "bitbucket_billing",
       "jenkins_billing",
       "aws_billing",
+      "gcp_billing",
     ]);
   });
 
@@ -45,6 +46,7 @@ describe("registerFinopsSyncables", () => {
       "bitbucket_billing",
       "jenkins_billing",
       "aws_billing",
+      "gcp_billing",
     ]) {
       const r = await byId.get(id)?.sync(ctx, null);
       expect(r?.itemsUpserted ?? 0).toBe(0);

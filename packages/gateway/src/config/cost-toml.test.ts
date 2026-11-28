@@ -29,6 +29,7 @@ describe("[cost] config", () => {
       focusDir: null,
       githubOrgs: [],
       aws: { export: null, costExplorer: false },
+      gcp: { exportTables: [], maxBytesBilled: 53_687_091_200 },
       gitlab: { groups: [], ratePerMinute: null, currency: "USD", runnerRates: [] },
       bitbucket: { workspaces: [], ratePerMinute: null, currency: "USD", sizeRates: [] },
       jenkins: { enabled: false, ratePerMinute: null, currency: "USD", agentRates: [] },

@@ -151,7 +151,7 @@ describe("isConnectorConfigured", () => {
   });
 
   describe("bigquery/cloud_logging/vertex_ai — the shared gcp.* credential pair", () => {
-    for (const serviceId of ["bigquery", "cloud_logging", "vertex_ai"] as const) {
+    for (const serviceId of ["bigquery", "cloud_logging", "vertex_ai", "gcp_billing"] as const) {
       test(`${serviceId} is NOT configured against an empty vault`, async () => {
         expect(await isConnectorConfigured(fakeVault({}), serviceId)).toBe(false);
       });
@@ -252,7 +252,7 @@ describe("isConnectorConfigured", () => {
       .filter(([, keys]) => keys.length === 0)
       .map(([serviceId]) => serviceId);
 
-    // Sanity: exactly the services Fix 1 closes (github_billing since Phase 7 slice 5, gitlab_billing since slice 8, bitbucket_billing since slice 9, jenkins_billing since slice 10, aws_billing since slice 11a) — if this drifts, the manifest
+    // Sanity: exactly the services Fix 1 closes (github_billing since Phase 7 slice 5, gitlab_billing since slice 8, bitbucket_billing since slice 9, jenkins_billing since slice 10, aws_billing since slice 11a, gcp_billing since slice 13) — if this drifts, the manifest
     // changed and this test's premise needs re-checking, not silent adaptation.
     expect(emptyManifestServiceIds.sort()).toEqual(
       [
@@ -269,6 +269,7 @@ describe("isConnectorConfigured", () => {
         "bitbucket_billing",
         "jenkins_billing",
         "aws_billing",
+        "gcp_billing",
         "bigquery",
         "athena",
         "cloudwatch",
