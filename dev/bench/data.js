@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795847680696,
+  "lastUpdate": 1795848164994,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "49699333+dependabot[bot]@users.noreply.github.com",
-            "name": "dependabot[bot]",
-            "username": "dependabot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "8a544dbcae5f6e5c762df751851960735a63d530",
-          "message": "chore(deps): bump the all-minor-patch group across 1 directory with 21 updates (#1582)\n\nBumps the all-minor-patch group with 21 updates:\n\n- dependency-cruiser 18.3.1 -> 18.4.0\n- jscpd 5.3.0 -> 5.3.2\n- knip 6.37.0 -> 6.38.0\n- markdownlint-cli2 0.23.2 -> 0.23.3\n- @mastra/core 1.67.0 -> 1.71.0\n- hyparquet 1.31.1 -> 1.31.2\n- imapflow 2.0.5 -> 2.0.7\n- tsdav 2.3.3 -> 2.3.4\n- fast-check 4.10.1 -> 4.10.2\n- @modelcontextprotocol/sdk 1.30.0 -> 1.30.1\n- @tauri-apps/api 2.11.1 -> 2.12.0\n- @tauri-apps/plugin-clipboard-manager 2.3.3 -> 2.4.0\n- @tauri-apps/plugin-dialog 2.7.3 -> 2.8.0\n- @tauri-apps/plugin-fs 2.5.2 -> 2.6.0\n- react-window 2.3.1 -> 2.3.3\n- @tauri-apps/cli 2.11.4 -> 2.12.0\n- @vitest/coverage-v8 5.0.1 -> 5.0.2\n- jsdom 30.1.0 -> 30.1.1\n- vitest 5.0.1 -> 5.0.2\n- @astrojs/starlight 0.42.2 -> 0.42.4\n- astro 7.3.3 -> 7.3.5\n\nThe original Dependabot body quoted upstream release notes whose\nparentheses break the squash-commit parse gate, so it was replaced with\nthis summary.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nSigned-off-by: dependabot[bot] <support@github.com>\nCo-authored-by: dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>\nCo-authored-by: Asaf <asafgolombek@gmail.com>",
-          "timestamp": "2026-09-30T03:01:28Z",
-          "tree_id": "5fdc8876735b6883675292d47274eae7f1b7d171",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/8a544dbcae5f6e5c762df751851960735a63d530"
-        },
-        "date": 1790737851435,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 272.58405434999986,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 273.23587480000094,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 255.2944593999964,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5dc548a42873885008cea6d9c89e1ce787d130f2",
+          "message": "chore: release main (#2194)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>11.21.0</summary>\n\n##\n[11.21.0](https://github.com/nimbus-agent/Nimbus/compare/v11.20.0...v11.21.0)\n(2026-11-28)\n\n\n### Features\n\n* **connectors:** Unleash and Split, indexed, with three flag writes\n(connectors 0.22.0)\n([#2193](https://github.com/nimbus-agent/Nimbus/issues/2193))\n([58730b2](https://github.com/nimbus-agent/Nimbus/commit/58730b2bf7d0fa1af6f58b8b99ca1949575f266e))\n* **gateway:** nimbus incident undo reaches the Unleash and Split writes\n([#2195](https://github.com/nimbus-agent/Nimbus/issues/2195))\n([0b6c1b7](https://github.com/nimbus-agent/Nimbus/commit/0b6c1b776f2c7959fbf82ebe01ada9d74dccc06c))\n* the bundled FinOps role pack and the Phase 7 close-out (Phase 7, slice\n7) ([#2196](https://github.com/nimbus-agent/Nimbus/issues/2196))\n([0586051](https://github.com/nimbus-agent/Nimbus/commit/0586051dc6c5271b0daaf4f25337d23239db20d2))\n\n\n### Bug Fixes\n\n* **gateway:** pin @nimbus-dev/connectors 0.23.0 (CLI connectors no\nlonger quote unparsable stdout)\n([#2199](https://github.com/nimbus-agent/Nimbus/issues/2199))\n([6223b98](https://github.com/nimbus-agent/Nimbus/commit/6223b989e77cc44fde4da0c3fd9e7699305f0576))\n* **iac:** the CloudFormation reads reach AWS, and an init removes the\nmodule .git it cloned\n([#2197](https://github.com/nimbus-agent/Nimbus/issues/2197))\n([4ae534a](https://github.com/nimbus-agent/Nimbus/commit/4ae534a6bf198bed9e631ba64783cc455785f3a2))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-28T08:34:56+02:00",
+          "tree_id": "ac8dfbcd9269a08c4814093e569df03fb8fbf7a2",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/5dc548a42873885008cea6d9c89e1ce787d130f2"
+        },
+        "date": 1795848161566,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 188.0651856999986,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 183.8234927000023,
             "unit": "ms"
           }
         ]
