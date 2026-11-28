@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795869310751,
+  "lastUpdate": 1795871432498,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "693f62ba1885418b3dfd57db9e619810c53f509a",
-          "message": "fix(deps): bump the devalue override to 5.9.4 for three new high advisories (#1593)\n\n`Dependency audit` and `Trivy vulnerability scan` — both required checks\n— went red repo-wide on 2026-10-01 when three high-severity `devalue`\nadvisories were published (GHSA-j22f-vq7h-c4qm, GHSA-mcm9-63f2-9j32,\nGHSA-x5rw-q4pp-hg5g; all affect `<= 5.9.2`, patched in `5.9.3`). `main`\nitself is red at `502856ce`, so every open PR is blocked until this\nlands.\n\nThe root `overrides` pinned `devalue` to `5.9.1`; this moves the pin to\n`5.9.4` (latest 5.x — `astro` asks for `^5.8.1`, so 6.x is not taken).\nLockfile diff is the two lines that name the version.\n\nVerified locally: `bun audit --audit-level high` → no vulnerabilities;\n`audit:advisories` OK; `audit:js-licenses` OK.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Chores**\n* Updated a behind-the-scenes component. There are no changes to the\napp’s features, workflows, or appearance in this release.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
-          "timestamp": "2026-10-02T14:47:34Z",
-          "tree_id": "4f1f9f57ff1d7086a7fcd7e5b4ccda324bf9d83c",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/693f62ba1885418b3dfd57db9e619810c53f509a"
-        },
-        "date": 1790955530162,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 343.26102269999717,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 339.93822985000077,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 185.33574350000345,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d02270eef6f89686e144a75f33fc7e51134743f0",
+          "message": "feat: Jenkins build minutes as cost lines at your agent rates (Phase 7, slice 10) (#2211)\n\n## What changed\n\nPhase 7 (the Cost Pack), slice 10: Jenkins build minutes become cost\nlines at the owner's rates, and this is the last PR of the CI lane, so\nthe lane status docs are updated.\n\n- **`[cost.jenkins]`**: `rate_per_minute`, `currency` and `agent_rates`\nkeyed by agent name (`builtOn`; `built-in` for the controller). The\ntable's presence turns the sync on. There is no `label_rates`: the build\nJSON exposes `builtOn` but no node label (AbstractBuild javadoc), so the\nkey is refused.\n- **`jenkins_billing`** companion service (24 h, prefix `nimbus-jkb1:`,\nshared grant on `jenkins`, configured when `jenkins.base_url`,\n`username` and `api_token` exist). Billing account = base host,\nsub-account and `repo` = job full name, resource = agent. Minutes =\n`duration / 60 000`; charge day = UTC day of `timestamp + duration`;\nrunning builds skipped; `rate_key` = `agent:<builtOn>` or\n`agent:built-in`.\n- **Fetch**: the job tree (cap 2,000 jobs, a `month_gap`), then per job\n`builds[...]{0,200}`, `{200,400}` and so on up to 1,000 builds. A job\ncapped before the lookback is incomplete only for the months its read\ndoes not reach: its stored lines are kept and one gap names it (slice\n9's per-repo rule); it does not block the host.\n- **D9**: a non-loopback `http` base is a stated gap before any request.\nCross-origin redirects are a stated gap.\n- Wiring per the global constraints (catalog, meta, oauth-unsupported,\nsecrets manifest, configured check, boot companion, removal,\nfinops-syncables, finops-options, cursor prefix, `COST_SYNC_SERVICES`,\nD24 paragraph, grant), docs (CHANGELOG, cli-reference, architecture,\nfile map) and the lane status docs (roadmap rows, the three \"slices\nshipped\" restatements and the sequencing note, `CLAUDE.md`,\n`GEMINI.md`).\n\n## Owner rulings\nD4 (a configured rate per agent first; machine-cost pricing is slice 15)\nand D9 (no plain-http Jenkins). Antigravity fixes 3 (build paging) and 9\n(built-in agent key) applied.\n\n## Stated bounds and a deviation\n- Documentation-verified only: no live Jenkins response was checked\n(https://www.jenkins.io/doc/book/using/remote-access-api/,\nhttps://javadoc.jenkins.io/hudson/model/AbstractBuild.html).\n- The connector's `JENKINS_JOBS_API_TREE` asks for a lower-case\n`fullname`, which Jenkins does not export (the property is `fullName`),\nso `flattenJenkinsApiJobs` yields bare names for nested jobs. This slice\nrebuilds `folder/job` from the names on the path instead of calling it\n(the shared tree and the existing sync are untouched). Likely a latent\nbug in the existing Jenkins sync for nested jobs; not changed here.\n- Pipeline builds carry no `builtOn` and count as `built-in`. Wall-clock\nminutes; a build started more than 7 days before the month is not\ncounted; Jenkins has no stable job id.\n\n## Verification\n`bunx tsc --noEmit -p packages/gateway`, `bun run typecheck:tests`, the\ntouched suites (new unit, sync and acceptance tests; sync, platform,\ncatalog suites), `bun run preflight:fast` all pass.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added Jenkins build-minute cost tracking, with costs grouped by build\nday, job, and agent.\n* Configure a default per-minute rate and optional agent-specific rates.\nBuilds without a configured rate appear as unpriced.\n* Jenkins cost data syncs daily and is repriced after rate or currency\nchanges. Jenkins connections require HTTPS, except for localhost.\n* **Documentation**\n* Updated setup, configuration, and cost-ingestion documentation to\ncover Jenkins billing, pricing, and data limitations.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-28T12:59:44Z",
+          "tree_id": "1d29cac637fc4f85c1191df5fda708ba88aa824e",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/d02270eef6f89686e144a75f33fc7e51134743f0"
+        },
+        "date": 1795871427368,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 264.2261015000022,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 264.9598991500003,
             "unit": "ms"
           }
         ]
