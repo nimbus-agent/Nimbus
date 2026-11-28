@@ -32,12 +32,32 @@ export type ServiceConfig = {
    * them back; nothing else reads the key. Exact names, at most `MAX_BINDING_ENTRIES`.
    */
   readonly argocdApps: readonly string[];
+  /**
+   * Feature-flag bindings (Phase 7 slice 14). Only `nimbus cost why` reads them, and only the LaunchDarkly
+   * ones produce a flag list; the other three services parse so a config is not rejected (owner ruling D8).
+   */
+  readonly featureFlags: readonly FeatureFlagBinding[];
 };
+
+export type FeatureFlagService = "launchdarkly" | "unleash" | "split" | "flagsmith";
+export interface FeatureFlagBinding {
+  readonly service: FeatureFlagService;
+  /** The project (workspace for Split). */
+  readonly project: string;
+  /** One flag key, or null for every flag of the project. */
+  readonly flag: string | null;
+}
 
 /** The four incident-engine binding fields, empty, for a literal to spread. */
 export const NO_INCIDENT_BINDINGS: Pick<
   ServiceConfig,
-  "jsmAlertTags" | "sentryProjects" | "dataModels" | "dependsOn" | "chatAliases" | "argocdApps"
+  | "jsmAlertTags"
+  | "sentryProjects"
+  | "dataModels"
+  | "dependsOn"
+  | "chatAliases"
+  | "argocdApps"
+  | "featureFlags"
 > = Object.freeze({
   jsmAlertTags: [],
   sentryProjects: [],
@@ -45,6 +65,7 @@ export const NO_INCIDENT_BINDINGS: Pick<
   dependsOn: [],
   chatAliases: [],
   argocdApps: [],
+  featureFlags: [],
 });
 
 export const DEFAULT_DEPLOY_WORKFLOW_PATTERN = "^[Dd]eploy";
