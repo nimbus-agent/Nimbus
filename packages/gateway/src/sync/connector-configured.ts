@@ -173,6 +173,8 @@ const DERIVED_CONFIGURED_CHECKS: Readonly<
   athena: hasUsableAwsCredentials,
   // Phase 7 slice 11a: configured whenever AWS credentials exist; a missing `[cost.aws]` shows as a stated gap.
   aws_billing: hasUsableAwsCredentials,
+  // Phase 7 slice 13: configured whenever GCP credentials exist; a missing `[cost.gcp]` shows as a stated gap.
+  gcp_billing: isGcpCredentialConfigured,
   cloudwatch: hasUsableAwsCredentials,
   sagemaker: hasUsableAwsCredentials,
 };

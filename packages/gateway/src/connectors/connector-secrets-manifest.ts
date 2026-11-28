@@ -25,6 +25,8 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   gitlab_billing: [],
   // Phase 7 slice 11a: the AWS cost sync reads the shared `aws.*` credentials through its grant.
   aws_billing: [],
+  // Phase 7 slice 13: the GCP cost sync reads the shared `gcp.*` credentials through its grant.
+  gcp_billing: [],
   bitbucket: ["bitbucket.username", "bitbucket.app_password"],
   linear: ["linear.api_key"],
   // `jira.cloud_id` is OPTIONAL and non-secret in effect (the Atlassian site UUID the Operations alert

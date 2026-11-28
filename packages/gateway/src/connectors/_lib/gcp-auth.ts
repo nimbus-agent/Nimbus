@@ -51,6 +51,15 @@ export function gcloudAuthEnv(
   return auth.kind === "key" ? { ...passthrough, ...gcloudKeyFileEnv(auth.credPath) } : passthrough;
 }
 
+/** GCP credentials AND a project id: what every `gcp` companion service needs to run a query. */
+export async function hasUsableGcpCredentials(vault: NimbusVault): Promise<boolean> {
+  const [auth, project] = await Promise.all([
+    loadGcpAuthFromVault(vault),
+    readConnectorSecret(vault, "gcp", "project_id"),
+  ]);
+  return auth !== null && (project?.trim() ?? "") !== "";
+}
+
 export async function loadGcpAuthFromVault(vault: NimbusVault): Promise<GcpAuth | null> {
   const [credPath, authSource] = await Promise.all([
     readConnectorSecret(vault, "gcp", "credentials_json_path"),

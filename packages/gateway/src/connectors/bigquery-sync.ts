@@ -5,11 +5,7 @@ import {
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
-import {
-  type GcpAuth,
-  gcloudPrintAccessToken,
-  resolveGcpAuth,
-} from "./_lib/gcp-auth.ts";
+import { type GcpAuth, gcloudPrintAccessToken, resolveGcpAuth } from "./_lib/gcp-auth.ts";
 import { mapBigqueryTableToItem } from "./bigquery-table-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, stringField } from "./unknown-record.ts";

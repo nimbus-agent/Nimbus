@@ -1418,6 +1418,33 @@ Stated bounds:
 - **Re-delivered exports.** A day that an export no longer contains is not cleared (only the days a delivery covers are replaced), and the previous month is re-read only until the 5th of the month and on the first sync. A row dated after today makes its month a gap.
 - **One source per provider, per day.** On each day the AWS sync has lines for, a `[cost.focus] dir` import's AWS lines of that day are set aside, and the views list how many days; days only the file covers keep its lines. The views use the sync and list the file import as set aside (`[cost] authoritative = { aws = "focus" }` chooses the file instead).
 
+### GCP cost from the BigQuery billing export (`[cost.gcp]`)
+
+Turn on Cloud Billing export to BigQuery in your Google Cloud account (Billing, Billing export: the **standard** or the **detailed** usage cost export), then name the table; nothing is queried until `export_table` is set:
+
+```toml
+[cost.gcp]
+export_table = "my-project.billing.gcp_billing_export_resource_v1_01AB23_CD45EF_6789AB"   # or a list of two names
+max_bytes_billed = 53687091200                                                          # default 50 GiB
+```
+
+| Key | Meaning |
+| --- | --- |
+| `export_table` | One `project.dataset.table` name, or two (the detailed `gcp_billing_export_resource_v1_` and the standard `gcp_billing_export_v1_` table). With two, the detailed one is read. Letters, digits, `_` and `-` only. |
+| `max_bytes_billed` | The most bytes one query may scan, 1 GiB to 10 TiB (default 53687091200, 50 GiB). A larger scan fails and bills nothing; the freshness line then names this key. |
+
+The gateway syncs once a day as source `gcp_billing`, provider `gcp`, with the `gcp.*` credentials you stored for the GCP connector (its `project_id` is the project the query runs and is billed in; the `gcloud` CLI mints the token). For each month it reads (the current month, plus the previous month until the 5th and on the first sync) it runs one query that sums cost, credits and usage per day, billing account, project, service, SKU, region, currency, unit, cost type and labels, and stores one line per group: `billedCost` and `effectiveCost` are cost plus credits, the labels are the line's tags, the usage is the quantity. Each billing account's month is replaced whole.
+
+Stated bounds:
+
+- **Documentation-verified only.** The REST calls and the partition rule follow Google's documentation (<https://docs.cloud.google.com/bigquery/docs/reference/rest/v2/jobs/query>, <https://docs.cloud.google.com/billing/docs/how-to/export-data-bigquery-tables/standard-usage>, <https://docs.cloud.google.com/billing/docs/how-to/export-data-bigquery-tables/detailed-usage>); no live table was read. Those pages do not state the table's partition column, so the sync reads it from the table's metadata: ingestion time filters on `_PARTITIONTIME`, a table partitioned on a DATE or TIMESTAMP column filters on that column, and any other table is filtered on `usage_start_time` alone.
+- **BigQuery bills the scan.** Each query is bounded by the partition column (the month plus three days) and by `max_bytes_billed`, but it still reads the bytes of those partitions. Rows the export delivers more than three days after a month ends are not read.
+- **No history before the export was enabled.** The one exception is Google's backfill from the start of the previous month, once, on a multi-region (EU or US) dataset.
+- **Whole months only.** An unreadable row, missing column, unfinished job after six polls, repeated page token, a row count that differs from `totalRows`, or a result longer than 400,000 rows keeps the stored month and shows a gap or retries. An empty result for a month that holds lines keeps it and shows a gap, when the table's name carries its billing account.
+- **No export table:** the freshness line shows `GCP cost is not configured: set [cost.gcp] export_table to your Cloud Billing export table`.
+- **One source per provider, per day.** On each day the GCP sync has lines for, a `[cost.focus] dir` import's GCP lines of that day are set aside (`[cost] authoritative = { gcp = "focus" }` chooses the file instead).
+- **The FOCUS export is later.** Google's FOCUS export is in preview; reading it is a roadmap row for when it is generally available.
+
 ### `nimbus cost products` and `nimbus cost internal`
 
 Cost per product (with its parts: the service and provider, and the env), and the internal cost (CI and the dev and test environments), computed from the local cost lines (`nimbus cost import`), the indexed Vantage rows for a provider with no raw lines, and your `[[cost.rule]]` allocation rules. Local index only: **no network call, no model, no egress row**.
