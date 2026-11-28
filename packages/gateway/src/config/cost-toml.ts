@@ -1,5 +1,6 @@
 /**
- * `[cost]`, `[cost.focus]`, `[cost.github]` and `[[cost.rule]]` - the Cost Pack's owner config (Phase 7).
+ * `[cost]`, `[cost.focus]`, `[cost.github]`, `[cost.gitlab]` (`cost-gitlab-toml.ts`) and `[[cost.rule]]` - the Cost
+ * Pack's owner config (Phase 7).
  *
  * ```toml
  * [cost]
@@ -35,6 +36,12 @@ import {
   compileCostRule,
 } from "../finops/cost-rules.ts";
 import {
+  CostGitlabConfigError,
+  DEFAULT_COST_GITLAB_CONFIG,
+  type NimbusCostGitlabConfig,
+  readCostGitlabTable,
+} from "./cost-gitlab-toml.ts";
+import {
   CostReportConfigError,
   type CostReportDef,
   compileCostReports,
@@ -50,6 +57,8 @@ export interface NimbusCostConfig {
   readonly focusDir: string | null;
   /** `[cost.github] orgs`: the organizations whose billing usage is synced (slice 5); empty = none. */
   readonly githubOrgs: readonly string[];
+  /** `[cost.gitlab]`: the groups whose compute minutes are synced, and the owner's rates (slice 8). */
+  readonly gitlab: NimbusCostGitlabConfig;
   /** `[[cost.report]]` with their `[[cost.report.channel]]` blocks (slice 3; see `cost-report-toml.ts`). */
   readonly reports: readonly CostReportDef[];
   /** Non-null: the report definitions are refused (`reports` is empty); the rules still apply. */
@@ -72,6 +81,7 @@ export const DEFAULT_COST_CONFIG: NimbusCostConfig = Object.freeze({
   authoritative: Object.freeze({}),
   focusDir: null,
   githubOrgs: Object.freeze([]) as readonly string[],
+  gitlab: DEFAULT_COST_GITLAB_CONFIG,
   reports: Object.freeze([]) as readonly CostReportDef[],
   reportsError: null,
   error: null,
@@ -181,6 +191,8 @@ function readPlainSection(s: EffectiveSection & { header: string }, draft: Draft
     draft.focusDir = readFocusTable(parseSection(s, "[cost.focus]"));
   } else if (s.header === "cost.github" && !s.isArray) {
     draft.githubOrgs = readGithubTable(parseSection(s, "[cost.github]"));
+  } else if (s.header === "cost.gitlab" && !s.isArray) {
+    draft.gitlab = readCostGitlabTable(parseSection(s, "[cost.gitlab]"));
   } else {
     const shown = s.isArray ? `[[${s.header}]]` : `[${s.header}]`;
     throw new CostConfigError(`unknown section ${shown}`);
@@ -267,7 +279,11 @@ export function resolveCostConfig(sections: readonly EffectiveSection[]): Nimbus
     );
     return Object.freeze(draft);
   } catch (e) {
-    if (e instanceof CostConfigError || e instanceof CostRuleError) {
+    if (
+      e instanceof CostConfigError ||
+      e instanceof CostRuleError ||
+      e instanceof CostGitlabConfigError
+    ) {
       return Object.freeze({ ...DEFAULT_COST_CONFIG, error: e.message });
     }
     throw e;
