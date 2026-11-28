@@ -58,7 +58,11 @@ export const CREDENTIAL_PROBES: Partial<Record<ConnectorServiceId, CredentialPro
   bitbucket: (c) => ({
     url: "https://api.bitbucket.org/2.0/user",
     headers: {
-      Authorization: basicAuthHeader(c["username"] ?? "", c["app_password"] ?? ""),
+      // The API token pair (`email` + `api_token`) first; the deprecated app password pair as a fallback.
+      Authorization: basicAuthHeader(
+        c["email"] ?? c["username"] ?? "",
+        c["api_token"] ?? c["app_password"] ?? "",
+      ),
       Accept: "application/json",
     },
   }),

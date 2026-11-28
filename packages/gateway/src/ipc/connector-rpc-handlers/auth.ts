@@ -658,17 +658,18 @@ async function connectorAuthBitbucket(ctx: ConnectorRpcHandlerContext): Promise<
   const user = extractStringField(userRaw);
   const token = aliasedStringField(ctx.rec, PAT_TOKEN_FIELDS);
   if (user === "") {
-    throw new ConnectorRpcError(-32602, "Missing username for bitbucket (Atlassian account)");
+    throw new ConnectorRpcError(
+      -32602,
+      "Missing email for bitbucket (the Atlassian account email)",
+    );
   }
   if (token === "") {
-    throw new ConnectorRpcError(-32602, "Missing app password for bitbucket (use token field)");
+    throw new ConnectorRpcError(-32602, "Missing API token for bitbucket (use token field)");
   }
-  const verified = await verifyBeforeStore(ctx, "bitbucket", {
-    username: user,
-    app_password: token,
-  });
-  await writeConnectorSecret(ctx.vault, "bitbucket", "username", user);
-  await writeConnectorSecret(ctx.vault, "bitbucket", "app_password", token);
+  // An Atlassian API token pair; Atlassian removed app passwords on 2026-07-28 (the old pair is only read, never written).
+  const verified = await verifyBeforeStore(ctx, "bitbucket", { email: user, api_token: token });
+  await writeConnectorSecret(ctx.vault, "bitbucket", "email", user);
+  await writeConnectorSecret(ctx.vault, "bitbucket", "api_token", token);
   return registerAndSucceed(ctx.localIndex, "bitbucket", verified);
 }
 

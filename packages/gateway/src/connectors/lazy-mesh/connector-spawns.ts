@@ -32,6 +32,7 @@ import type { ExtensionManifest } from "../../extensions/manifest.ts";
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import { stripTrailingSlashes } from "../../string/strip-trailing-slashes.ts";
 import { isAtlassianCloudId } from "../atlassian-cloud-id.ts";
+import { readBitbucketVaultCredential } from "../bitbucket-credential.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
 import { readGithubCredentialPair } from "../github-api-base.ts";
 import { transitionHealth } from "../health.ts";
@@ -427,9 +428,8 @@ export async function ensureBitbucketMcp(ctx: MeshSpawnContext): Promise<void> {
     ctx.scheduleLazyDisconnect(slotKey);
     return;
   }
-  const user = await readConnectorSecret(ctx.vault, "bitbucket", "username");
-  const pass = await readConnectorSecret(ctx.vault, "bitbucket", "app_password");
-  if (user === null || user === "" || pass === null || pass === "") {
+  const cred = await readBitbucketVaultCredential(ctx.vault);
+  if (cred.kind === "none") {
     return;
   }
   ctx.setLazyClient(
@@ -441,8 +441,8 @@ export async function ensureBitbucketMcp(ctx: MeshSpawnContext): Promise<void> {
           {
             ...connectorSpawn("bitbucket"),
             env: extensionProcessEnv({
-              BITBUCKET_USERNAME: user,
-              BITBUCKET_APP_PASSWORD: pass,
+              BITBUCKET_USERNAME: cred.user,
+              BITBUCKET_APP_PASSWORD: cred.secret,
             }),
           },
           "bitbucket",

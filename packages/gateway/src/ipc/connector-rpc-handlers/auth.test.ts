@@ -668,7 +668,7 @@ describe("PAT handlers — the exact Vault plan, then the shared registration ta
     {
       service: "bitbucket",
       fields: { username: "u", token: "t" },
-      plan: ["write:bitbucket.username=u", "write:bitbucket.app_password=t"],
+      plan: ["write:bitbucket.email=u", "write:bitbucket.api_token=t"],
     },
   ];
 
@@ -982,8 +982,8 @@ describe("PAT handlers — the exact Vault plan, then the shared registration ta
     {
       service: "bitbucket",
       fields: { username: "u" },
-      tokenKey: "bitbucket.app_password",
-      missing: "Missing app password for bitbucket (use token field)",
+      tokenKey: "bitbucket.api_token",
+      missing: "Missing API token for bitbucket (use token field)",
     },
   ];
 
