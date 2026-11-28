@@ -15,6 +15,7 @@ export function finopsSyncOptions(configDir: string): Required<FinopsSyncOptions
     githubOrgs: (): readonly string[] => loadNimbusCostFromConfigDir(configDir).githubOrgs,
     gitlab: () => cost()?.gitlab ?? null,
     bitbucket: () => cost()?.bitbucket ?? null,
+    jenkins: () => cost()?.jenkins ?? null,
     aws: () => cost()?.aws ?? null,
   };
 }

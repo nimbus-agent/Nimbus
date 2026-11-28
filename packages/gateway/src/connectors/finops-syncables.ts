@@ -7,12 +7,17 @@ import {
   DEFAULT_COST_GITLAB_CONFIG,
   type NimbusCostGitlabConfig,
 } from "../config/cost-gitlab-toml.ts";
+import {
+  DEFAULT_COST_JENKINS_CONFIG,
+  type NimbusCostJenkinsConfig,
+} from "../config/cost-jenkins-toml.ts";
 import type { Syncable } from "../sync/types.ts";
 import { createAnthropicCostSyncable } from "./anthropic-cost-sync.ts";
 import { createAwsBillingCostSyncable } from "./aws-billing-cost-sync.ts";
 import { createBitbucketCostSyncable } from "./bitbucket-cost-sync.ts";
 import { createGithubBillingCostSyncable } from "./github-billing-cost-sync.ts";
 import { createGitlabCostSyncable } from "./gitlab-cost-sync.ts";
+import { createJenkinsCostSyncable } from "./jenkins-cost-sync.ts";
 import { createK8sCostSyncable } from "./k8s-cost-sync.ts";
 import { createOpenaiCostSyncable } from "./openai-cost-sync.ts";
 import { createVantageSyncable } from "./vantage-sync.ts";
@@ -27,6 +32,8 @@ export type FinopsSyncOptions = {
   readonly gitlab?: () => NimbusCostGitlabConfig | null;
   /** `[cost.bitbucket]` (Phase 7 slice 9); absent or no workspaces means no Bitbucket Pipelines sync. */
   readonly bitbucket?: () => NimbusCostBitbucketConfig | null;
+  /** `[cost.jenkins]` (slice 10); absent or no table means no Jenkins build-minute sync. */
+  readonly jenkins?: () => NimbusCostJenkinsConfig | null;
   /** `[cost.aws]` (slice 11a); absent or no export means no AWS cost sync. */
   readonly aws?: () => NimbusCostAwsConfig | null;
 };
@@ -57,6 +64,9 @@ export function registerFinopsSyncables(
     createBitbucketCostSyncable({
       bitbucket: finops?.bitbucket ?? (() => DEFAULT_COST_BITBUCKET_CONFIG),
     }),
+  );
+  scheduler.register(
+    createJenkinsCostSyncable({ jenkins: finops?.jenkins ?? (() => DEFAULT_COST_JENKINS_CONFIG) }),
   );
   scheduler.register(
     createAwsBillingCostSyncable({ aws: finops?.aws ?? (() => DEFAULT_COST_AWS_CONFIG) }),

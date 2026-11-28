@@ -23,6 +23,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "gitlab",
   "bitbucket",
   "bitbucket_billing",
+  "jenkins_billing",
   "linear",
   "jira",
   "notion",
@@ -173,6 +174,8 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   bitbucket: MIN1,
   // Phase 7 slice 9: Bitbucket Pipelines minutes, daily.
   bitbucket_billing: 24 * 60 * MIN1,
+  // Phase 7 slice 10: Jenkins build minutes, daily.
+  jenkins_billing: 24 * 60 * MIN1,
   linear: MIN1,
   jira: MIN1,
   discord: MIN5,
@@ -289,6 +292,7 @@ const CREDENTIALS_REUSED_FROM: Partial<Record<ConnectorServiceId, ConnectorServi
   github_billing: "github",
   gitlab_billing: "gitlab",
   bitbucket_billing: "bitbucket",
+  jenkins_billing: "jenkins",
   aws_billing: "aws",
   bigquery: "gcp",
   cloud_logging: "gcp",

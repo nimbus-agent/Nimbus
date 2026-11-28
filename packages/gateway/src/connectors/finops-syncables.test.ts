@@ -32,13 +32,20 @@ describe("registerFinopsSyncables", () => {
       "anthropic_billing",
       "gitlab_billing",
       "bitbucket_billing",
+      "jenkins_billing",
       "aws_billing",
     ]);
   });
 
   test("with no options, GitHub billing, GitLab minutes and Bitbucket minutes have nothing to sync", async () => {
     const byId = new Map(registered(undefined).map((s) => [s.serviceId, s]));
-    for (const id of ["github_billing", "gitlab_billing", "bitbucket_billing", "aws_billing"]) {
+    for (const id of [
+      "github_billing",
+      "gitlab_billing",
+      "bitbucket_billing",
+      "jenkins_billing",
+      "aws_billing",
+    ]) {
       const r = await byId.get(id)?.sync(ctx, null);
       expect(r?.itemsUpserted ?? 0).toBe(0);
     }

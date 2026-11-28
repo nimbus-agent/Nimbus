@@ -252,7 +252,7 @@ describe("isConnectorConfigured", () => {
       .filter(([, keys]) => keys.length === 0)
       .map(([serviceId]) => serviceId);
 
-    // Sanity: exactly the services Fix 1 closes (github_billing since Phase 7 slice 5, gitlab_billing since slice 8, bitbucket_billing since slice 9, aws_billing since slice 11a) — if this drifts, the manifest
+    // Sanity: exactly the services Fix 1 closes (github_billing since Phase 7 slice 5, gitlab_billing since slice 8, bitbucket_billing since slice 9, jenkins_billing since slice 10, aws_billing since slice 11a) — if this drifts, the manifest
     // changed and this test's premise needs re-checking, not silent adaptation.
     expect(emptyManifestServiceIds.sort()).toEqual(
       [
@@ -267,6 +267,7 @@ describe("isConnectorConfigured", () => {
         "github_billing",
         "gitlab_billing",
         "bitbucket_billing",
+        "jenkins_billing",
         "aws_billing",
         "bigquery",
         "athena",
@@ -391,5 +392,23 @@ describe("vantage is configured by its token alone", () => {
     expect(await isConnectorConfigured(fakeVault({ "vantage.api_token": "t" }), "vantage")).toBe(
       true,
     );
+  });
+});
+
+describe("isConnectorConfigured: jenkins_billing", () => {
+  test("needs the Jenkins base URL, user and token, all non-blank", async () => {
+    const all = {
+      "jenkins.base_url": "https://ci.test",
+      "jenkins.username": "u",
+      "jenkins.api_token": "t",
+    };
+    expect(await isConnectorConfigured(fakeVault(all), "jenkins_billing")).toBe(true);
+    expect(
+      await isConnectorConfigured(
+        fakeVault({ ...all, "jenkins.api_token": " " }),
+        "jenkins_billing",
+      ),
+    ).toBe(false);
+    expect(await isConnectorConfigured(fakeVault({}), "jenkins_billing")).toBe(false);
   });
 });

@@ -16,6 +16,7 @@ export const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, strin
   aws_billing: "uses the same AWS credentials as aws",
   bitbucket: "uses an Atlassian API token (app passwords are deprecated)",
   bitbucket_billing: "uses the same credential as bitbucket",
+  jenkins_billing: "uses the same credential as jenkins",
   linear: "uses an API key",
   jira: "uses email + API token + base URL",
   confluence: "uses email + API token + base URL",
