@@ -18,6 +18,8 @@
  *
  * [cost.azure]
  * export = { account = "acct", container = "c", path = "dir/name" }   # a FOCUS Cost Management export (slice 12a)
+ * [cost.gcp]
+ * export_table = "project.dataset.table"             # a Cloud Billing export to BigQuery, synced daily (slice 13)
  *
  * [[cost.rule]]                                      # ordered, first match wins
  * match = { provider = "aws", tag = { product = "*" } }
@@ -59,7 +61,12 @@ import {
   type NimbusCostBitbucketConfig,
   readCostBitbucketTable,
 } from "./cost-bitbucket-toml.ts";
-
+import {
+  CostGcpConfigError,
+  DEFAULT_COST_GCP_CONFIG,
+  type NimbusCostGcpConfig,
+  readCostGcpTable,
+} from "./cost-gcp-toml.ts";
 import {
   CostGitlabConfigError,
   DEFAULT_COST_GITLAB_CONFIG,
@@ -90,6 +97,8 @@ export interface NimbusCostConfig {
   readonly aws: NimbusCostAwsConfig;
   /** `[cost.azure]`: the FOCUS Cost Management export in Blob Storage and the Query API scopes (slice 12a). */
   readonly azure: NimbusCostAzureConfig;
+  /** `[cost.gcp]`: the BigQuery billing export table(s) and the byte cap (slice 13; see `cost-gcp-toml.ts`). */
+  readonly gcp: NimbusCostGcpConfig;
   /** `[[cost.report]]` with their `[[cost.report.channel]]` blocks (slice 3; see `cost-report-toml.ts`). */
   readonly reports: readonly CostReportDef[];
   /** Non-null: the report definitions are refused (`reports` is empty); the rules still apply. */
@@ -116,6 +125,7 @@ export const DEFAULT_COST_CONFIG: NimbusCostConfig = Object.freeze({
   bitbucket: DEFAULT_COST_BITBUCKET_CONFIG,
   aws: DEFAULT_COST_AWS_CONFIG,
   azure: DEFAULT_COST_AZURE_CONFIG,
+  gcp: DEFAULT_COST_GCP_CONFIG,
   reports: Object.freeze([]) as readonly CostReportDef[],
   reportsError: null,
   error: null,
@@ -233,6 +243,8 @@ function readPlainSection(s: EffectiveSection & { header: string }, draft: Draft
     draft.aws = readCostAwsTable(parseSection(s, "[cost.aws]"));
   } else if (s.header === "cost.azure" && !s.isArray) {
     draft.azure = readCostAzureTable(parseSection(s, "[cost.azure]"));
+  } else if (s.header === "cost.gcp" && !s.isArray) {
+    draft.gcp = readCostGcpTable(parseSection(s, "[cost.gcp]"));
   } else {
     const shown = s.isArray ? `[[${s.header}]]` : `[${s.header}]`;
     throw new CostConfigError(`unknown section ${shown}`);
@@ -325,7 +337,8 @@ export function resolveCostConfig(sections: readonly EffectiveSection[]): Nimbus
       e instanceof CostGitlabConfigError ||
       e instanceof CostBitbucketConfigError ||
       e instanceof CostAwsConfigError ||
-      e instanceof CostAzureConfigError
+      e instanceof CostAzureConfigError ||
+      e instanceof CostGcpConfigError
     ) {
       return Object.freeze({ ...DEFAULT_COST_CONFIG, error: e.message });
     }

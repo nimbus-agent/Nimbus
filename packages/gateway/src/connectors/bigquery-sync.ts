@@ -1,5 +1,3 @@
-import { extensionProcessEnv } from "../extensions/spawn-env.ts";
-import { spawnCapture } from "../platform/spawn-capture.ts";
 import {
   syncPassCursorHttpEmpty,
   syncPassCursorParseEmpty,
@@ -7,7 +5,7 @@ import {
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
-import { type GcpAuth, gcloudAuthEnv, resolveGcpAuth } from "./_lib/gcp-auth.ts";
+import { type GcpAuth, gcloudPrintAccessToken, resolveGcpAuth } from "./_lib/gcp-auth.ts";
 import { mapBigqueryTableToItem } from "./bigquery-table-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
@@ -28,28 +26,6 @@ type BigqueryCursorV1 = { pass: number };
 
 function pass1Cursor(): string {
   return encodeNimbusJsonCursor(CURSOR_PREFIX, { pass: 1 } satisfies BigqueryCursorV1);
-}
-
-/**
- * Mints a short-lived GCP access token by shelling `gcloud auth print-access-token`
- * authenticated per `auth` — the configured service-account key, or the owner's own
- * `gcloud auth login` — via `gcloudAuthEnv`. Returns null when gcloud is missing or
- * exits non-zero — the caller degrades gracefully (no throw past the Syncable
- * boundary), mirroring gcp-sync's `!res.ok` posture.
- */
-export async function gcloudPrintAccessToken(auth: GcpAuth): Promise<string | null> {
-  try {
-    const r = await spawnCapture(["gcloud", "auth", "print-access-token"], {
-      env: extensionProcessEnv(gcloudAuthEnv(auth)),
-    });
-    if (!r.ok) {
-      return null;
-    }
-    const out = r.stdout.trim();
-    return out === "" ? null : out;
-  } catch {
-    return null;
-  }
 }
 
 /** Injectable token-mint — defaults to the gcloud spawn; tests pass a stub. */

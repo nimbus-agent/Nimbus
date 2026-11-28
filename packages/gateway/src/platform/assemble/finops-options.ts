@@ -17,5 +17,6 @@ export function finopsSyncOptions(configDir: string): Required<FinopsSyncOptions
     bitbucket: () => cost()?.bitbucket ?? null,
     aws: () => cost()?.aws ?? null,
     azure: () => cost()?.azure ?? null,
+    gcp: () => cost()?.gcp ?? null,
   };
 }

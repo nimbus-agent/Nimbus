@@ -21,6 +21,7 @@ export const COST_SYNC_CURSOR_PREFIXES = Object.freeze({
   bitbucket_billing: "nimbus-bbb1:",
   aws_billing: "nimbus-awb1:",
   azure_billing: "nimbus-azb1:",
+  gcp_billing: "nimbus-gcb1:",
 } as const);
 export type CostSyncServiceId = keyof typeof COST_SYNC_CURSOR_PREFIXES;
 
@@ -40,6 +41,11 @@ export type CostSyncCursor = {
    * stored lines (the stated gap is shown without asking again until the retry interval has passed).
    */
   readonly emptyScan?: Readonly<Record<string, string>>;
+  /**
+   * Slice 13: per account, the day a billed scan of a month last failed (`{ [month]: "YYYY-MM-DD" }`), so a month that
+   * cannot finish is not scanned again every day. Absent: none.
+   */
+  readonly failedScan?: Readonly<Record<string, Readonly<Record<string, string>>>>;
 };
 
 const EMPTY: CostSyncCursor = { gaps: {}, synced: {}, pending: {} };
@@ -71,6 +77,21 @@ const monthListMap = (v: unknown): Record<string, string[]> => {
   return out;
 };
 
+const DAY_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+
+const failedScanMap = (v: unknown): Record<string, Record<string, string>> => {
+  const out: Record<string, Record<string, string>> = {};
+  for (const [account, months] of Object.entries(asRecord(v))) {
+    if (account === "__proto__") continue;
+    const kept: Record<string, string> = {};
+    for (const [m, day] of Object.entries(asRecord(months))) {
+      if (MONTH_RE.test(m) && typeof day === "string" && DAY_RE.test(day)) kept[m] = day;
+    }
+    if (Object.keys(kept).length > 0) out[account] = kept;
+  }
+  return out;
+};
+
 export function decodeCostSyncCursor(prefix: string, raw: string | null): CostSyncCursor {
   if (!raw?.startsWith(prefix)) return EMPTY;
   try {
@@ -84,6 +105,9 @@ export function decodeCostSyncCursor(prefix: string, raw: string | null): CostSy
       ...(typeof rec["rates"] === "string" ? { rates: rec["rates"] } : {}),
       ...(Object.keys(stringMap(rec["emptyScan"])).length > 0
         ? { emptyScan: stringMap(rec["emptyScan"]) }
+        : {}),
+      ...(Object.keys(asRecord(rec["failedScan"])).length > 0
+        ? { failedScan: failedScanMap(rec["failedScan"]) }
         : {}),
     };
   } catch {

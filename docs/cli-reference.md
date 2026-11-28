@@ -1485,6 +1485,34 @@ Stated bounds:
 - **No overlapping scopes.** Scopes are lower-cased (Azure ids are case-insensitive), so two spellings of one scope are refused as a duplicate, and a scope inside another listed scope (a resource group of a listed subscription) is refused, naming both. **Do not list a subscription and the billing account that contains it:** that cannot be detected and the cost counts twice.
 - **When an `export` is set, `scopes` are not read.** The first export run clears each month the earlier query wrote for its scopes (the scopes stay recorded until the export has a clean run), so switching from the query to an export does not count a month twice. Switching back does not clear the export's lines.
 
+### GCP cost from the BigQuery billing export (`[cost.gcp]`)
+
+Turn on Cloud Billing export to BigQuery in your Google Cloud account (Billing, Billing export: the **standard** or the **detailed** usage cost export), then name the table; nothing is queried until `export_table` is set:
+
+```toml
+[cost.gcp]
+export_table = "my-project.billing.gcp_billing_export_resource_v1_01AB23_CD45EF_6789AB"   # or a list of two names
+max_bytes_billed = 53687091200                                                          # default 50 GiB
+```
+
+| Key | Meaning |
+| --- | --- |
+| `export_table` | One `project.dataset.table` name, or two (the detailed `gcp_billing_export_resource_v1_` and the standard `gcp_billing_export_v1_` table). With two, the detailed one is read. Letters, digits, `_` and `-` only. |
+| `max_bytes_billed` | The most bytes one query may scan, 1 GiB to 10 TiB (default 53687091200, 50 GiB). A larger scan fails and bills nothing; the freshness line then names this key. |
+
+The gateway syncs once a day as source `gcp_billing`, provider `gcp`, with the `gcp.*` credentials you stored for the GCP connector (its `project_id` is the project the query runs and is billed in; the `gcloud` CLI mints the token). For each month it reads (the current month, plus the previous month until the 5th and on the first sync) it runs one query that sums cost, credits and usage per day, billing account, project, service, SKU, region, currency, unit, cost type and labels, and stores one line per group: `billedCost` and `effectiveCost` are cost plus credits, the labels are the line's tags, the usage is the quantity. Each billing account's month is replaced whole.
+
+Stated bounds:
+
+- **Documentation-verified only.** The REST calls and the partition rule follow Google's documentation (<https://docs.cloud.google.com/bigquery/docs/reference/rest/v2/jobs/query>, <https://docs.cloud.google.com/billing/docs/how-to/export-data-bigquery-tables/standard-usage>, <https://docs.cloud.google.com/billing/docs/how-to/export-data-bigquery-tables/detailed-usage>); no live table was read. Those pages do not state the table's partition column, so the sync reads it from the table's metadata: ingestion time filters on `_PARTITIONTIME`, a table partitioned on a DATE or TIMESTAMP column filters on that column, and any other table is filtered on `usage_start_time` alone.
+- **BigQuery bills the scan.** Each query has a lower bound on the partition column (one day before the month starts; no upper bound, so a restatement row exported later is read) and `max_bytes_billed`, but it still reads the bytes of every partition from then on. A table that is not time-partitioned is scanned in full once per month read, bounded only by `max_bytes_billed`.
+- **A month that fails is not rescanned daily.** A month whose billed scan fails (more than 400,000 rows, an unreadable row, a job that did not finish in time, which is cancelled, or a row count that does not match) is scanned again at most once every 7 days for a past month, and once a day for the current month; its gap says the next attempt runs a billed scan.
+- **No history before the export was enabled.** The one exception is Google's backfill from the start of the previous month, once, on a multi-region (EU or US) dataset.
+- **Whole months only.** An unreadable row, missing column, unfinished job after six polls, repeated page token, a row count that differs from `totalRows`, or a result longer than 400,000 rows keeps the stored month and shows a gap or retries. An empty result for a month that holds lines keeps it and shows a gap, when the table's name carries its billing account.
+- **No export table:** the freshness line shows `GCP cost is not configured: set [cost.gcp] export_table to your Cloud Billing export table`.
+- **One source per provider, per day.** On each day the GCP sync has lines for, a `[cost.focus] dir` import's GCP lines of that day are set aside (`[cost] authoritative = { gcp = "focus" }` chooses the file instead).
+- **The FOCUS export is later.** Google's FOCUS export is in preview; reading it is a roadmap row for when it is generally available.
+
 ### `nimbus cost products` and `nimbus cost internal`
 
 Cost per product (with its parts: the service and provider, and the env), and the internal cost (CI and the dev and test environments), computed from the local cost lines (`nimbus cost import`), the indexed Vantage rows for a provider with no raw lines, and your `[[cost.rule]]` allocation rules. Local index only: **no network call, no model, no egress row**.
