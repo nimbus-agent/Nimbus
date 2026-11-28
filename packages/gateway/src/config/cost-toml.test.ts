@@ -28,6 +28,7 @@ describe("[cost] config", () => {
       authoritative: {},
       focusDir: null,
       githubOrgs: [],
+      aws: { export: null, costExplorer: false },
       gitlab: { groups: [], ratePerMinute: null, currency: "USD", runnerRates: [] },
       reports: [],
       reportsError: null,

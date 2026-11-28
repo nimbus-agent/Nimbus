@@ -15,6 +15,7 @@ import { readCostLineCurrencies, readCostLineFreshness, readCostLines } from "./
 import type { CostRule } from "./cost-rules.ts";
 import { readCostSourceGaps } from "./cost-source-gaps.ts";
 import type { CostViewInput, CostViewResult, CostWindow } from "./cost-views.ts";
+import { FOCUS_SOURCE } from "./focus-csv.ts";
 
 export interface CostViewConfig {
   readonly rules: readonly CostRule[];
@@ -65,6 +66,50 @@ function chooseSources(
   };
 }
 
+/** The cloud billing syncs (C4): each reads a cloud's own export or cost API, the same bill a FOCUS file holds. */
+export const CLOUD_SYNC_SOURCES: ReadonlySet<string> = new Set([
+  "aws_billing",
+  "azure_billing",
+  "gcp_billing",
+]);
+
+/**
+ * C4 (Phase 7 slice 11a): on a day a cloud sync has lines for a provider, a FOCUS file import's lines of that
+ * provider and day are the same bill and are set aside, so the two are never added together. A day only the file
+ * covers (history from before the sync, or a day the sync has not read) keeps the file's lines. A provider
+ * `[cost] authoritative` names is left to the authoritative rule.
+ */
+function setAsideFocusDays(
+  all: readonly CostLine[],
+  chosenFor: (provider: string) => string | undefined,
+): { drop: (l: CostLine) => boolean; excluded: Excluded[] } {
+  const cloudDays = new Map<string, Set<string>>();
+  for (const l of all) {
+    if (!CLOUD_SYNC_SOURCES.has(l.source) || chosenFor(l.provider) !== undefined) continue;
+    const days = cloudDays.get(l.provider) ?? new Set<string>();
+    days.add(l.chargeDay);
+    cloudDays.set(l.provider, days);
+  }
+  const dropped = new Map<string, Set<string>>();
+  for (const l of all) {
+    if (l.source !== FOCUS_SOURCE || cloudDays.get(l.provider)?.has(l.chargeDay) !== true) continue;
+    const days = dropped.get(l.provider) ?? new Set<string>();
+    days.add(l.chargeDay);
+    dropped.set(l.provider, days);
+  }
+  const excluded: Excluded[] = [...dropped]
+    .sort(([x], [y]) => codeUnitCompare(x, y))
+    .map(([provider, days]) => ({
+      source: FOCUS_SOURCE,
+      provider,
+      reason: `cloud sync active for this provider on ${String(days.size)} day${days.size === 1 ? "" : "s"} (set [cost] authoritative to choose)`,
+    }));
+  return {
+    drop: (l) => l.source === FOCUS_SOURCE && (dropped.get(l.provider)?.has(l.chargeDay) ?? false),
+    excluded,
+  };
+}
+
 export function gatherCostViewInput(
   db: Database,
   cfg: CostViewConfig,
@@ -82,7 +127,11 @@ export function gatherCostViewInput(
     if (c.keep !== null) keep.set(provider, c.keep);
     excluded.push(...c.excluded);
   }
-  const lines = all.filter((l) => keep.get(l.provider)?.(l.source) ?? true);
+  const focus = setAsideFocusDays(all, (p) =>
+    cfg.error === null ? cfg.authoritative[p] : undefined,
+  );
+  excluded.push(...focus.excluded);
+  const lines = all.filter((l) => !focus.drop(l) && (keep.get(l.provider)?.(l.source) ?? true));
   const lastDays = readCostLineFreshness(db);
   if (adapted.lastDay !== null) lastDays.push({ source: VANTAGE_SOURCE, lastDay: adapted.lastDay });
   const currencies = new Set([...readCostLineCurrencies(db), ...adapted.currencies]);

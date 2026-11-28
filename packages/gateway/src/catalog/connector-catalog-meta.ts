@@ -94,6 +94,11 @@ export const CONNECTOR_CATALOG_META = Object.freeze({
     "cloud",
     "GitLab CI compute minutes per group and project, priced at the rate you configure",
   ),
+  aws_billing: m(
+    "AWS cost",
+    "cloud",
+    "AWS cost lines from a FOCUS Data Export you create in S3, per billing account and service",
+  ),
   bitbucket: m("Bitbucket", "code", "Atlassian's Git code hosting service"),
   linear: m("Linear", "issues", "An issue and project tracker for software teams"),
   jira: m("Jira", "issues", "Atlassian's issue and project tracker"),

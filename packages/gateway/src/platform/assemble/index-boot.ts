@@ -8,6 +8,7 @@ import {
 } from "../../config/nimbus-toml.ts";
 import type { loadNimbusSessionFromConfigDir } from "../../config/session-toml.ts";
 import { Config } from "../../config.ts";
+import { hasUsableAwsCredentials } from "../../connectors/_lib/aws-cli.ts";
 import { createBlameIndexSyncable } from "../../connectors/blame-index-sync.ts";
 import { defaultSyncIntervalMsForService } from "../../connectors/connector-catalog.ts";
 import { readConnectorSecret } from "../../connectors/connector-vault.ts";
@@ -172,6 +173,14 @@ export async function ensureGithubCircleCiSchedulerCompanions(
     localIndex.ensureConnectorSchedulerRegistration(
       "gitlab_billing",
       defaultSyncIntervalMsForService("gitlab_billing"),
+      Date.now(),
+    );
+  }
+  // Phase 7 slice 11a: the AWS cost sync is a companion of aws (idle until `[cost.aws] export`).
+  if (await hasUsableAwsCredentials(vault)) {
+    localIndex.ensureConnectorSchedulerRegistration(
+      "aws_billing",
+      defaultSyncIntervalMsForService("aws_billing"),
       Date.now(),
     );
   }

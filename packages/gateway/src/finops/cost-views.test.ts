@@ -223,6 +223,91 @@ describe("sources: Vantage and the authoritative rule", () => {
   });
 });
 
+describe("sources: a cloud sync and a FOCUS import of one provider (C4)", () => {
+  const fixedKey = { billingAccountId: "111" };
+  test("the sync wins; the file import is set aside with its reason, and nothing is added twice", () => {
+    store([
+      line({ source: "focus", billedCost: 10 }),
+      line({ source: "aws_billing", billedCost: 10 }),
+    ]);
+    const v = products();
+    expect(v.byCurrency["USD"]?.total).toBe(10);
+    expect(v.excludedSources).toEqual([
+      {
+        source: "focus",
+        provider: "aws",
+        reason: "cloud sync active for this provider on 1 day (set [cost] authoritative to choose)",
+      },
+    ]);
+  });
+
+  test("[cost] authoritative overrides it, either way", () => {
+    store([
+      line({ source: "focus", billedCost: 10 }),
+      line({ source: "aws_billing", billedCost: 7, ...fixedKey }),
+    ]);
+    const v = products({ rules: RULES, authoritative: { aws: "focus" }, error: null });
+    expect(v.byCurrency["USD"]?.total).toBe(10);
+    expect(v.excludedSources.map((e) => e.source)).toEqual(["aws_billing"]);
+  });
+
+  test("a sync, a file import and Vantage: both others are listed", () => {
+    store([line({ source: "focus" }), line({ source: "aws_billing" })]);
+    seedVantage(99, "aws");
+    const v = products();
+    expect(v.excludedSources.map((e) => e.source).sort()).toEqual(["focus", "vantage"]);
+  });
+
+  test("per day: a sync covering only the last 30 days of a 90-day range keeps the file's first 60", () => {
+    const day = (i: number): string =>
+      new Date(Date.UTC(2026, 10, 26) - i * 86_400_000).toISOString().slice(0, 10);
+    const lines: CostLine[] = [];
+    for (let i = 0; i < 90; i++) {
+      lines.push(
+        line({
+          source: "focus",
+          chargeDay: day(i),
+          billingPeriod: day(i).slice(0, 7),
+          billedCost: 1,
+        }),
+      );
+      if (i < 30) {
+        lines.push(
+          line({
+            source: "aws_billing",
+            chargeDay: day(i),
+            billingPeriod: day(i).slice(0, 7),
+            billedCost: 1,
+          }),
+        );
+      }
+    }
+    store(lines);
+    const wide = periodWindow("90d", NOW) ?? { fromDay: "", toDay: "", label: "" };
+    const input = gatherCostViewInput(db, CFG, wide, NOW);
+    expect(input.lines.filter((l) => l.source === "focus")).toHaveLength(60);
+    expect(input.lines.filter((l) => l.source === "aws_billing")).toHaveLength(30);
+    expect(input.excludedSources).toEqual([
+      {
+        source: "focus",
+        provider: "aws",
+        reason:
+          "cloud sync active for this provider on 30 days (set [cost] authoritative to choose)",
+      },
+    ]);
+  });
+
+  test("only the cloud billing services count as a cloud sync (a CI billing source does not)", () => {
+    store([line({ source: "focus" }), line({ source: "github_billing", provider: "aws" })]);
+    expect(products().excludedSources).toEqual([]);
+  });
+
+  test("a file import alone is untouched", () => {
+    store([line({ source: "focus", billedCost: 10 })]);
+    expect(products().excludedSources).toEqual([]);
+  });
+});
+
 describe("internalView", () => {
   test("only internal envs are shown; other envs and unknown envs are counted apart", () => {
     store([

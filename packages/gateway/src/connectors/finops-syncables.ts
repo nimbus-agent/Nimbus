@@ -1,9 +1,11 @@
+import { DEFAULT_COST_AWS_CONFIG, type NimbusCostAwsConfig } from "../config/cost-aws-toml.ts";
 import {
   DEFAULT_COST_GITLAB_CONFIG,
   type NimbusCostGitlabConfig,
 } from "../config/cost-gitlab-toml.ts";
 import type { Syncable } from "../sync/types.ts";
 import { createAnthropicCostSyncable } from "./anthropic-cost-sync.ts";
+import { createAwsBillingCostSyncable } from "./aws-billing-cost-sync.ts";
 import { createGithubBillingCostSyncable } from "./github-billing-cost-sync.ts";
 import { createGitlabCostSyncable } from "./gitlab-cost-sync.ts";
 import { createK8sCostSyncable } from "./k8s-cost-sync.ts";
@@ -18,6 +20,8 @@ export type FinopsSyncOptions = {
   readonly githubOrgs?: () => readonly string[];
   /** `[cost.gitlab]` (Phase 7 slice 8); absent or no groups means no GitLab compute-minute sync. */
   readonly gitlab?: () => NimbusCostGitlabConfig | null;
+  /** `[cost.aws]` (slice 11a); absent or no export means no AWS cost sync. */
+  readonly aws?: () => NimbusCostAwsConfig | null;
 };
 
 /**
@@ -41,5 +45,8 @@ export function registerFinopsSyncables(
   scheduler.register(createAnthropicCostSyncable());
   scheduler.register(
     createGitlabCostSyncable({ gitlab: finops?.gitlab ?? (() => DEFAULT_COST_GITLAB_CONFIG) }),
+  );
+  scheduler.register(
+    createAwsBillingCostSyncable({ aws: finops?.aws ?? (() => DEFAULT_COST_AWS_CONFIG) }),
   );
 }

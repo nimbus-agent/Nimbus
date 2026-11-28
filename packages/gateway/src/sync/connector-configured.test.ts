@@ -198,7 +198,7 @@ describe("isConnectorConfigured", () => {
   });
 
   describe("athena/cloudwatch/sagemaker — the shared aws.* usable-credential formula", () => {
-    for (const serviceId of ["athena", "cloudwatch", "sagemaker"] as const) {
+    for (const serviceId of ["athena", "cloudwatch", "sagemaker", "aws_billing"] as const) {
       test(`${serviceId} is NOT configured against an empty vault`, async () => {
         expect(await isConnectorConfigured(fakeVault({}), serviceId)).toBe(false);
       });
@@ -252,7 +252,7 @@ describe("isConnectorConfigured", () => {
       .filter(([, keys]) => keys.length === 0)
       .map(([serviceId]) => serviceId);
 
-    // Sanity: exactly the services Fix 1 closes (github_billing since Phase 7 slice 5, gitlab_billing since slice 8) — if this drifts, the manifest
+    // Sanity: exactly the services Fix 1 closes (github_billing since Phase 7 slice 5, gitlab_billing since slice 8, aws_billing since slice 11a) — if this drifts, the manifest
     // changed and this test's premise needs re-checking, not silent adaptation.
     expect(emptyManifestServiceIds.sort()).toEqual(
       [
@@ -266,6 +266,7 @@ describe("isConnectorConfigured", () => {
         "github_actions",
         "github_billing",
         "gitlab_billing",
+        "aws_billing",
         "bigquery",
         "athena",
         "cloudwatch",

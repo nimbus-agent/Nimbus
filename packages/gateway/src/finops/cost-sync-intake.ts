@@ -30,6 +30,7 @@ export class CostSyncIntakeError extends Error {
   override readonly name = "CostSyncIntakeError";
 }
 
+const DAY_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 const MONTH_RE = /^(\d{4})-(0[1-9]|1[0-2])$/;
 
 /** The UTC days a sync of `month` replaces at `nowMs`. Throws for a malformed or future month. */
@@ -47,7 +48,8 @@ export function costSyncDays(month: string, nowMs: number): string[] {
 }
 
 /**
- * Replace `source`'s lines of one (provider, account, month) with `lines`. Every line must carry exactly that
+ * Replace `source`'s lines of one (provider, account, month) with `lines`: the month's days, plus the lines' own
+ * charge days up to today (a late credit dated before the period). Every line must carry exactly that
  * source, provider, account and month (a sync cannot reach another tuple), or nothing is written.
  */
 export function ingestSyncedCostLines(
@@ -70,6 +72,19 @@ export function ingestSyncedCostLines(
       );
     }
   }
+  // A provider dates a late credit or adjustment before its billing period starts (a charge day outside the
+  // month, inside the SAME billing period): the lines own charge days are replaced too, never a day after today.
+  const today = new Date(nowMs).toISOString().slice(0, 10);
+  const own = new Set(days);
+  for (const l of lines) {
+    if (own.has(l.chargeDay) || !DAY_RE.test(l.chargeDay)) continue;
+    if (l.chargeDay > today) {
+      throw new CostSyncIntakeError(
+        `a ${source} line is dated ${l.chargeDay}, after today (${today}); it is not written`,
+      );
+    }
+    own.add(l.chargeDay);
+  }
   return replaceCostLines(
     db,
     {
@@ -78,7 +93,7 @@ export function ingestSyncedCostLines(
       billingAccountId: target.billingAccountId,
       billingPeriod: target.month,
     },
-    days,
+    [...own],
     lines,
   );
 }
