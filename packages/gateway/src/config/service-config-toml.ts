@@ -4,6 +4,8 @@ import {
   DEFAULT_DEPLOY_WORKFLOW_PATTERN,
   DEFAULT_EXCLUDE_PR_LABELS,
   DEFAULT_INCIDENT_WINDOW_MINUTES,
+  type FeatureFlagBinding,
+  type FeatureFlagService,
   isValidDeployEnvironmentName,
   parseDoraRepoUrn,
   type ServiceConfig,
@@ -32,6 +34,7 @@ const SERVICE_CONFIG_KNOWN_KEYS: ReadonlySet<string> = new Set([
   "depends_on",
   "chat_aliases",
   "argocd_apps",
+  "feature_flags",
 ]);
 
 function materializeDeployWorkflowPattern(
@@ -111,6 +114,35 @@ const WHITESPACE_PATTERN = /\s/;
 /** An Argo CD application name is a Kubernetes object name: lower-case alphanumerics, `-` and `.`. */
 const ARGOCD_APP_PATTERN = /^[a-z0-9][a-z0-9.-]{0,252}$/;
 
+const FLAG_SERVICES: ReadonlySet<string> = new Set([
+  "launchdarkly",
+  "unleash",
+  "split",
+  "flagsmith",
+]);
+const FLAG_PART_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+/** `<service>:<project>[:<flag>]`; the service is one of the four flag services. */
+function parseFeatureFlagBinding(entry: string, label: string): FeatureFlagBinding {
+  const parts = entry.split(":");
+  const [service, project, flag] = parts;
+  if (
+    parts.length < 2 ||
+    parts.length > 3 ||
+    service === undefined ||
+    !FLAG_SERVICES.has(service) ||
+    project === undefined ||
+    !FLAG_PART_PATTERN.test(project) ||
+    (flag !== undefined && !FLAG_PART_PATTERN.test(flag))
+  ) {
+    throw new Error(
+      `${label}.feature_flags entry '${entry}' must be <launchdarkly|unleash|split|flagsmith>:<project>[:<flag>], ` +
+        `each part matching ${String(FLAG_PART_PATTERN)}`,
+    );
+  }
+  return { service: service as FeatureFlagService, project, flag: flag ?? null };
+}
+
 /**
  * One binding list (`jsm_alert_tags`, `sentry_projects`, `data_models`, `depends_on`): an array of
  * non-empty trimmed strings, at most `MAX_BINDING_ENTRIES`, each entry checked by `checkEntry` (which
@@ -147,7 +179,13 @@ function materializeBindings(
   serviceId: string,
 ): Pick<
   ServiceConfig,
-  "jsmAlertTags" | "sentryProjects" | "dataModels" | "dependsOn" | "chatAliases" | "argocdApps"
+  | "jsmAlertTags"
+  | "sentryProjects"
+  | "dataModels"
+  | "dependsOn"
+  | "chatAliases"
+  | "argocdApps"
+  | "featureFlags"
 > {
   const label = `[${blockLabel}.${serviceId}]`;
   return {
@@ -194,6 +232,9 @@ function materializeBindings(
       }
       return app;
     }),
+    featureFlags: materializeBindingList(kv, "feature_flags", label, (entry) => entry).map(
+      (entry) => parseFeatureFlagBinding(entry, label),
+    ),
     chatAliases: materializeBindingList(kv, "chat_aliases", label, (alias) => {
       if (alias.length < MIN_CHAT_ALIAS_CHARS || alias.length > MAX_CHAT_ALIAS_CHARS) {
         throw new Error(

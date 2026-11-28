@@ -78,11 +78,20 @@ type Deploy = {
     author: string | null;
   } | null;
 };
+type Flag = {
+  service: string;
+  key: string;
+  name: string;
+  changedAtMs: number;
+  environments: string[];
+};
 type Context = {
   serviceId: string;
   configured: boolean;
   deploys: Deploy[];
   deploysTruncated: number;
+  flags: Flag[];
+  flagsTruncated: number;
   owners: { label: string; share: number; resolved: boolean }[];
   gaps: string[];
 };
@@ -170,9 +179,22 @@ function renderDeploys(ctx: Context, sink: CostWhySink): void {
   if (more > 0) sink.out(`    ... and ${String(more)} more deploy${more === 1 ? "" : "s"}\n`);
 }
 
+function renderFlags(ctx: Context, sink: CostWhySink): void {
+  for (const f of ctx.flags) {
+    const envs = f.environments.length === 0 ? "" : ` (${f.environments.map(clean).join(",")})`;
+    sink.out(`  Flags changed: ${clean(f.key)}${envs} at ${new Date(f.changedAtMs).toISOString()}
+`);
+  }
+  const more = ctx.flagsTruncated;
+  if (more > 0)
+    sink.out(`    ... and ${String(more)} more flag${more === 1 ? "" : "s"}
+`);
+}
+
 function renderContext(ctx: Context, sink: CostWhySink): void {
   sink.out(`Service ${clean(ctx.serviceId)}\n`);
   renderDeploys(ctx, sink);
+  renderFlags(ctx, sink);
   if (ctx.owners.length > 0) {
     const owners = ctx.owners
       .map((o) => `${clean(o.label)} ${Math.round(o.share * 100)}%`)

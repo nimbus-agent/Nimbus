@@ -181,6 +181,8 @@ describe("selectCostChangeContext", () => {
       configured: false,
       deploys: [],
       deploysTruncated: 0,
+      flags: [],
+      flagsTruncated: 0,
       owners: [],
       gaps: ["service ghost-service is not configured ([ci.service.ghost-service])"],
     });
@@ -241,5 +243,118 @@ describe("selectCostChangeContext", () => {
       serviceIds: ["payment-service"],
     });
     expect(ctx?.deploys[0]?.nearSpike).toBe(false);
+  });
+
+  describe("feature flags (slice 14, D8)", () => {
+    function flag(
+      project: string,
+      key: string,
+      updatedAt: number | null,
+      opts: { service?: string; envs?: string[]; modifiedAt?: number } = {},
+    ): void {
+      item({
+        id: `ld-${project}-${key}`,
+        type: "feature_flag",
+        service: opts.service ?? "launchdarkly",
+        externalId: `${project}:${key}`,
+        title: `Flag ${key}`,
+        meta: { key, environments: opts.envs ?? ["production", "test"], updated_at: updatedAt },
+      });
+      if (opts.modifiedAt !== undefined)
+        db.run("UPDATE item SET modified_at = ? WHERE external_id = ?", [
+          opts.modifiedAt,
+          `${project}:${key}`,
+        ]);
+    }
+    function withFlags(
+      bindings: ServiceConfig["featureFlags"],
+    ): ReadonlyMap<string, ServiceConfig> {
+      return new Map([
+        [
+          "payment-service",
+          { ...(SERVICES.get("payment-service") as ServiceConfig), featureFlags: bindings },
+        ],
+      ]);
+    }
+    const run = (bindings: ServiceConfig["featureFlags"], extra: { maxFlags?: number } = {}) =>
+      selectCostChangeContext(db, {
+        ...baseInput,
+        ...extra,
+        services: withFlags(bindings),
+        serviceIds: ["payment-service"],
+      })[0];
+
+    test("no bindings: no flags, no flag gap, and nothing is queried", () => {
+      flag("web", "a", SPIKE);
+      const ctx = run([]);
+      expect(ctx?.flags).toEqual([]);
+      expect(ctx?.gaps.some((g) => g.includes("flag"))).toBe(false);
+    });
+
+    test("lists in-window flags newest first; out-of-window and null updated_at are never listed", () => {
+      flag("web", "old", FROM - HOUR);
+      flag("web", "end", TO); // exclusive
+      flag("web", "a", SPIKE, { envs: ["production"] });
+      flag("web", "b", SPIKE + HOUR);
+      // A sync-time fallback in modified_at must never count as a change.
+      flag("web", "nullchange", null, { modifiedAt: SPIKE });
+      flag("other", "x", SPIKE);
+      const ctx = run([{ service: "launchdarkly", project: "web", flag: null }]);
+      expect(ctx?.flags.map((f) => f.key)).toEqual(["b", "a"]);
+      expect(ctx?.flags[1]).toEqual({
+        service: "launchdarkly",
+        key: "a",
+        name: "Flag a",
+        changedAtMs: SPIKE,
+        environments: ["production"],
+      });
+      expect(ctx?.gaps).toContain("only the latest change of each flag is known");
+      expect(ctx?.gaps.some((g) => g.includes("per-environment"))).toBe(true);
+    });
+
+    test("a flag binding matches only that flag; a project binding does not match a prefix of another project", () => {
+      flag("web", "a", SPIKE);
+      flag("web", "b", SPIKE);
+      flag("web2", "c", SPIKE);
+      expect(
+        run([{ service: "launchdarkly", project: "web", flag: "b" }])?.flags.map((f) => f.key),
+      ).toEqual(["b"]);
+      expect(
+        run([{ service: "launchdarkly", project: "web", flag: null }])?.flags.map((f) => f.key),
+      ).toEqual(["a", "b"]);
+    });
+
+    test("a project name with LIKE wildcards matches literally", () => {
+      flag("we_b", "a", SPIKE);
+      flag("webx", "z", SPIKE);
+      expect(
+        run([{ service: "launchdarkly", project: "we_b", flag: null }])?.flags.map((f) => f.key),
+      ).toEqual(["a"]);
+    });
+
+    test("the cap keeps the newest and counts the rest", () => {
+      for (let i = 0; i < 5; i++) flag("web", `f${String(i)}`, SPIKE + i * HOUR);
+      const ctx = run([{ service: "launchdarkly", project: "web", flag: null }], { maxFlags: 2 });
+      expect(ctx?.flags.map((f) => f.key)).toEqual(["f4", "f3"]);
+      expect(ctx?.flagsTruncated).toBe(3);
+    });
+
+    test("non-LaunchDarkly bindings show a stated gap once per service and list nothing", () => {
+      flag("web", "a", SPIKE, { service: "unleash" });
+      const ctx = run([
+        { service: "unleash", project: "web", flag: null },
+        { service: "unleash", project: "web", flag: "a" },
+        { service: "split", project: "ws", flag: null },
+      ]);
+      expect(ctx?.flags).toEqual([]);
+      expect(ctx?.gaps).toContain(
+        "flag changes are recorded for LaunchDarkly only; unleash bindings show no changes",
+      );
+      expect(ctx?.gaps).toContain(
+        "flag changes are recorded for LaunchDarkly only; split bindings show no changes",
+      );
+      expect(ctx?.gaps.filter((g) => g.includes("unleash"))).toHaveLength(1);
+      expect(ctx?.gaps).toContain("only the latest change of each flag is known");
+    });
   });
 });

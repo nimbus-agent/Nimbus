@@ -56,6 +56,33 @@ for (const { header, parse } of BLOCKS) {
       );
     });
 
+    test("feature_flags parses all four services, project and flag forms; absent reads empty", () => {
+      const cfg = parse(
+        table(
+          header,
+          'feature_flags = ["launchdarkly:web", "launchdarkly:web:new-ui", "unleash:p", "split:ws:f", "flagsmith:p"]',
+        ),
+      ).get("payments");
+      expect(cfg?.featureFlags).toEqual([
+        { service: "launchdarkly", project: "web", flag: null },
+        { service: "launchdarkly", project: "web", flag: "new-ui" },
+        { service: "unleash", project: "p", flag: null },
+        { service: "split", project: "ws", flag: "f" },
+        { service: "flagsmith", project: "p", flag: null },
+      ]);
+      expect(parse(table(header, "")).get("payments")?.featureFlags).toEqual([]);
+    });
+
+    test.each([
+      ["an unknown service", 'feature_flags = ["optimizely:web"]'],
+      ["an empty project", 'feature_flags = ["launchdarkly:"]'],
+      ["no project", 'feature_flags = ["launchdarkly"]'],
+      ["an empty flag", 'feature_flags = ["launchdarkly:web:"]'],
+      ["a fourth part", 'feature_flags = ["launchdarkly:web:f:x"]'],
+    ])("feature_flags refuses %s", (_name, body) => {
+      expect(() => parse(table(header, body))).toThrow(/feature_flags entry/);
+    });
+
     test("a comma inside a quoted chat alias is part of the alias", () => {
       const cfg = parse(table(header, 'chat_aliases = ["checkout,prod", "web"]')).get("payments");
       expect(cfg?.chatAliases).toEqual(["checkout,prod", "web"]);
