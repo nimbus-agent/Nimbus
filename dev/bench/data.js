@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795867782609,
+  "lastUpdate": 1795869310751,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "502856cec7384929d3b1e496fb8635178b2a1c3c",
-          "message": "chore: release main (#1590)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.32.2</summary>\n\n##\n[7.32.2](https://github.com/nimbus-agent/Nimbus/compare/v7.32.1...v7.32.2)\n(2026-09-30)\n\n\n### Bug Fixes\n\n* **deps:** override past new brace-expansion and fast-uri advisories\n([#1586](https://github.com/nimbus-agent/Nimbus/issues/1586))\n([19327c5](https://github.com/nimbus-agent/Nimbus/commit/19327c5298a86c28d35363ee637a0263d7036f17))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-09-30T13:25:18Z",
-          "tree_id": "ba2a9023e2cff9300f2f83c4db31bb5470ed841c",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/502856cec7384929d3b1e496fb8635178b2a1c3c"
-        },
-        "date": 1790776773743,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 319.69416070000443,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 318.49790589999685,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 182.22759190000343,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4c47669dabfa6ff6a52211950ab90fd4a5b2515e",
+          "message": "fix(gateway): pin @nimbus-dev/connectors 0.23.4 (no credential leaves its origin) (#2207)\n\nBumps the connectors pin from 0.23.2 to\n[0.23.4](https://github.com/nimbus-agent/nimbus-mcp-servers/releases/tag/connectors-v0.23.4).\nThat's 0.23.3 below, plus 0.23.4 (nimbus-agent/nimbus-mcp-servers#138),\nwhich changes only one refusal message and the standalone upgrade notes.\nA redirected read-only POST in google-photos, prefect or snyk now says\n\"refused (a read: nothing was written)\" instead of the write wording.\n\n## What 0.23.3 and 0.23.4 change for the gateway\n\n**No tool is added, removed or redefined.** The write manifest\nregenerates unchanged (144 writes), and the package manifest changes\nonly its `version`.\n\nWhat a gateway-started connector does differently:\n- **Guarded requests everywhere** (nimbus-agent/nimbus-mcp-servers#136).\n- These connectors now go through the guarded fetch: bigquery, fastmail,\npipedrive, snyk, prefect, ramp, superset, wiz, readwise, onedrive,\ngoogle-drive, google-meet and google-photos, plus the shared\n`postGraphql` used by wiz and dagster.\n- A read follows only a same-origin redirect, a write's (or token\nPOST's) 3xx is refused, and every request times out.\n- OneDrive `/content` and Drive `alt=media` still download from a signed\nstorage URL on another host, in one https request without the\ncredential.\n- **Pre-states** (nimbus-agent/nimbus-mcp-servers#134).\n`argocd_app_sync`, `argocd_app_rollback`, `looker_schedule_run_once` and\n`iac_pulumi_up` are now `recoverable: false` with a pre-state. That\napplies to the standalone consent kit only; the gateway's own\nreversibility table is untouched.\n- **Standalone write scope** (nimbus-agent/nimbus-mcp-servers#135).\nApple calendar delete is now checked as `calendar:<calendar name>`, like\ncreate, and a Snowflake object as its resolved name. Both apply only in\nstandalone mode.\n\n## Gates (at 0.23.4)\n\n- `gen:connector-write-manifest`: no change. `gen:connector-registry`\nisn't needed, since only `version` changed in the package manifest.\n- `bun run preflight:fast`: passed.\n- `audit:connector-hosts`: OK, 100 connectors (327 files; the extra one\nis the new `shared/signed-download.ts`).\n- `report:connector-version-skew`: ok, pinned 0.23.4, latest 0.23.4.\n- `bun test src/connectors` (packages/gateway): 10034 pass, 4 fail. The\n4 are in `mesh-user-mcp-write-grant.test.ts`, which refuses a path with\na `.claude` segment. They fail the same way on unmodified `origin/main`\nin a `.claude/worktrees/` checkout, as on #2199 and #2202, so they come\nfrom the path, not this change.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-28T14:27:57+02:00",
+          "tree_id": "8f23c36640107e1404cbafcb2a4991fbfbdebc9e",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/4c47669dabfa6ff6a52211950ab90fd4a5b2515e"
+        },
+        "date": 1795869307153,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 183.7878618000015,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 185.33574350000345,
             "unit": "ms"
           }
         ]
