@@ -191,6 +191,7 @@ function selectFlags(
       params.push(`${b.project}:${b.flag}`);
     }
   }
+  // lane-census: scope=feature_flag service=launchdarkly
   return db
     .query(
       `SELECT i.external_id AS external_id, i.title AS title, i.metadata AS metadata,
@@ -217,9 +218,11 @@ function flagContext(
   const max = input.maxFlags ?? COST_WHY_MAX_FLAGS;
   const flags = rows.slice(0, max).map((r) => {
     const meta = metaRecord(r.metadata);
+    // lane-census: scope=feature_flag service=launchdarkly
     const envs = Array.isArray(meta["environments"])
       ? meta["environments"].filter((e): e is string => typeof e === "string")
       : [];
+    // lane-census: scope=feature_flag service=launchdarkly
     return {
       service: "launchdarkly",
       key: str(meta["key"]) ?? r.external_id.slice(r.external_id.indexOf(":") + 1),
