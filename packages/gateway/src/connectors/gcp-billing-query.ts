@@ -30,7 +30,11 @@ export const GCP_QUERY_MAX_POLLS = 6;
 const POLL_WAIT_MS = 10_000;
 const FIRST_WAIT_MS = 20_000;
 
-export type GcpFail = Exclude<CostMonthOutcome, { kind: "ok" }>;
+/**
+ * A failed read. `scanned` is true once BigQuery accepted the job (a scan may have been billed), so a retry would
+ * bill another scan: the sync records it and does not rescan every day.
+ */
+export type GcpFail = Exclude<CostMonthOutcome, { kind: "ok" }> & { readonly scanned?: boolean };
 
 export const GCP_COST_GAPS = {
   notConfigured:
@@ -76,7 +80,12 @@ function penalise(ctx: SyncContext, res: Response): void {
 }
 
 /** Maps one failing HTTP answer to its outcome (no write in any of them). */
-function failureOf(ctx: SyncContext, res: Response, body: unknown): GcpFail {
+function failureOf(
+  ctx: SyncContext,
+  res: Response,
+  body: unknown,
+  notFoundIsGap: boolean,
+): GcpFail {
   const { reasons, message } = errorReasons(body);
   const has = (...r: string[]): boolean => r.some((x) => reasons.includes(x));
   if (has("bytesBilledLimitExceeded") || (res.status === 400 && /bytes billed/i.test(message))) {
@@ -88,7 +97,10 @@ function failureOf(ctx: SyncContext, res: Response, body: unknown): GcpFail {
   }
   if (res.status === 401 || res.status === 403)
     return { kind: "gap", reason: GCP_COST_GAPS.access };
-  if (res.status === 404) return { kind: "gap", reason: GCP_COST_GAPS.notFound };
+  // Only the table (tables.get) or the query itself can be "not found"; a poll or page that 404s is an expired job
+  // or a wrong location, which a retry sorts out.
+  if (res.status === 404 && notFoundIsGap) return { kind: "gap", reason: GCP_COST_GAPS.notFound };
+  if (res.status === 404) return { kind: "retry" };
   if (res.status === 400) return { kind: "gap", reason: GCP_COST_GAPS.refused };
   return { kind: "retry" };
 }
@@ -98,6 +110,7 @@ async function bqRequest(
   deps: GcpBqDeps,
   url: string,
   json?: unknown,
+  notFoundIsGap = true,
 ): Promise<Reply> {
   await ctx.rateLimiter.acquire(LIMITER);
   const headers: Record<string, string> = {
@@ -130,7 +143,7 @@ async function bqRequest(
   } catch {
     body = null;
   }
-  if (!res.ok) return failureOf(ctx, res, body);
+  if (!res.ok) return failureOf(ctx, res, body, notFoundIsGap);
   return isRecord(body) ? { kind: "json", body } : { kind: "retry" };
 }
 
@@ -174,31 +187,35 @@ export async function readTablePartition(
 // --- the query -------------------------------------------------------------------------------------------------
 
 function partitionClause(p: GcpPartition): string {
-  // Three days past the month end: an hourly usage window is exported with a delay (see the docs: data can arrive late).
+  // A LOWER bound only: usage of the month can be exported (restated) into any later partition, and the month is
+  // replaced whole, so an upper bound would drop late rows. The usage_start_time range below stays exact; the
+  // day before the start covers usage that is exported just ahead of its own day.
   if (p.kind === "ingestion") {
-    return "_PARTITIONTIME >= TIMESTAMP(@start) AND _PARTITIONTIME < TIMESTAMP_ADD(TIMESTAMP(@end), INTERVAL 3 DAY) AND ";
+    return "_PARTITIONTIME >= TIMESTAMP_SUB(TIMESTAMP(@start), INTERVAL 1 DAY) AND ";
   }
   if (p.kind === "column" && p.type === "DATE") {
-    return `\`${p.name}\` >= DATE(@start) AND \`${p.name}\` < DATE_ADD(DATE(@end), INTERVAL 3 DAY) AND `;
+    return `\`${p.name}\` >= DATE_SUB(DATE(@start), INTERVAL 1 DAY) AND `;
   }
   if (p.kind === "column") {
-    return `\`${p.name}\` >= TIMESTAMP(@start) AND \`${p.name}\` < TIMESTAMP_ADD(TIMESTAMP(@end), INTERVAL 3 DAY) AND `;
+    return `\`${p.name}\` >= TIMESTAMP_SUB(TIMESTAMP(@start), INTERVAL 1 DAY) AND `;
   }
   return "";
 }
 
 /** The month's query. `table` has passed `GCP_EXPORT_TABLE_RE` (config), so interpolating it is safe. */
 export function billingSql(table: string, partition: GcpPartition): string {
-  return `SELECT DATE(usage_start_time) AS day, billing_account_id, project.id AS project_id, project.name AS project_name,
-  service.description AS service, sku.id AS sku_id, sku.description AS sku, location.region AS region, currency,
-  usage.unit AS unit, cost_type,
+  // Every alias is new (never a table column's name), so no GROUP BY or expression can resolve to a table column.
+  return `SELECT DATE(usage_start_time) AS usage_day, billing_account_id AS account_key, project.id AS project_key,
+  project.name AS project_label, service.description AS service_name, sku.id AS sku_key,
+  sku.description AS sku_name, location.region AS region_key, currency AS currency_code,
+  usage.unit AS unit_name, cost_type AS cost_kind,
   TO_JSON_STRING(ARRAY(SELECT AS STRUCT key, value FROM UNNEST(IFNULL(labels, [])) ORDER BY key, value)) AS labels_json,
-  SUM(cost) AS cost,
-  SUM(IFNULL((SELECT SUM(c.amount) FROM UNNEST(IFNULL(credits, [])) c), 0)) AS credits,
-  SUM(usage.amount) AS quantity
+  SUM(cost) AS cost_sum,
+  SUM(IFNULL((SELECT SUM(c.amount) FROM UNNEST(IFNULL(credits, [])) c), 0)) AS credits_sum,
+  SUM(usage.amount) AS quantity_sum
 FROM \`${table}\`
 WHERE ${partitionClause(partition)}usage_start_time >= TIMESTAMP(@start) AND usage_start_time < TIMESTAMP(@end)
-GROUP BY day, billing_account_id, project_id, project_name, service, sku_id, sku, region, currency, unit, cost_type, labels_json`;
+GROUP BY usage_day, account_key, project_key, project_label, service_name, sku_key, sku_name, region_key, currency_code, unit_name, cost_kind, labels_json`;
 }
 
 export interface GcpQueryArgs {
@@ -302,13 +319,42 @@ export async function runBillingQuery(
     },
   );
   if (first.kind !== "json") return first;
-  let page = readPage(first.body, args);
+  const rest = await finishQuery(ctx, deps, args, first.body);
+  // The job was accepted: a failure from here on may have billed a scan.
+  return rest.kind === "ok" ? rest : { ...rest, scanned: true };
+}
+
+/** Cancels a job that did not finish in time (best effort: the answer is not needed). */
+async function cancelJob(ctx: SyncContext, deps: GcpBqDeps, job: Page["job"]): Promise<void> {
+  const q = job.location === null ? "" : `?location=${encodeURIComponent(job.location)}`;
+  await bqRequest(
+    ctx,
+    deps,
+    `${GCP_BQ_BASE}/projects/${encodeURIComponent(job.project)}/jobs/${encodeURIComponent(job.id)}/cancel${q}`,
+    {},
+    false,
+  );
+}
+
+async function finishQuery(
+  ctx: SyncContext,
+  deps: GcpBqDeps,
+  args: GcpQueryArgs,
+  firstBody: Record<string, unknown>,
+): Promise<{ kind: "ok"; rows: GcpRawRow[] } | GcpFail> {
+  let page = readPage(firstBody, args);
   if (page === null) return { kind: "retry" };
   const job = page.job;
   let polls = 0;
   while (!page.complete) {
-    if (++polls > GCP_QUERY_MAX_POLLS) return { kind: "retry" };
-    const r = await bqRequest(ctx, deps, pollUrl(job, null)); // NOSONAR S9382: each poll depends on the previous reply
+    if (++polls > GCP_QUERY_MAX_POLLS) {
+      await cancelJob(ctx, deps, job);
+      return {
+        kind: "month_gap",
+        reason: `the ${args.start.slice(0, 7)} billing query did not finish in time and was cancelled`,
+      };
+    }
+    const r = await bqRequest(ctx, deps, pollUrl(job, null), undefined, false); // NOSONAR S9382: each poll depends on the previous reply
     if (r.kind !== "json") return r;
     const next = readPage(r.body, args);
     if (next === null) return { kind: "retry" };
@@ -327,7 +373,10 @@ export async function runBillingQuery(
   let total = page.totalRows;
   let pages = 1;
   while (page.pageToken !== null) {
-    if (seen.has(page.pageToken)) return { kind: "retry" }; // a token that does not advance
+    if (seen.has(page.pageToken)) {
+      // a token that does not advance
+      return { kind: "month_gap", reason: "BigQuery repeated a result page token" };
+    }
     seen.add(page.pageToken);
     if (++pages > GCP_QUERY_MAX_PAGES) {
       return {
@@ -335,7 +384,7 @@ export async function runBillingQuery(
         reason: `the ${args.start.slice(0, 7)} billing result is longer than ${String(GCP_QUERY_MAX_PAGES * GCP_QUERY_PAGE_SIZE)} rows; that month was not updated`,
       };
     }
-    const r = await bqRequest(ctx, deps, pollUrl(job, page.pageToken)); // NOSONAR S9382: each page token comes from the previous page
+    const r = await bqRequest(ctx, deps, pollUrl(job, page.pageToken), undefined, false); // NOSONAR S9382: each page token comes from the previous page
     if (r.kind !== "json") return r;
     const next = readPage(r.body, args);
     if (next === null || !next.complete) return { kind: "retry" };
@@ -344,7 +393,12 @@ export async function runBillingQuery(
     total = next.totalRows ?? total;
     page = next;
   }
-  if (total !== null && total !== collected.length) return { kind: "retry" };
+  if (total !== null && total !== collected.length) {
+    return {
+      kind: "month_gap",
+      reason: `BigQuery returned ${String(collected.length)} of ${String(total)} billing rows`,
+    };
+  }
   const rows = decodeRows(names, collected);
   if (rows === null) {
     return {

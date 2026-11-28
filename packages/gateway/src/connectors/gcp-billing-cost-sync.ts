@@ -36,6 +36,7 @@ import {
   readTablePartition,
   runBillingQuery,
 } from "./gcp-billing-query.ts";
+import { failedScanOutcome, nextScanDay, scanDue } from "./gcp-billing-rescan.ts";
 import { fetchSameOriginOnly } from "./same-origin-fetch.ts";
 
 export const GCP_BILLING_SERVICE_ID = GCP_BILLING_SOURCE;
@@ -110,6 +111,16 @@ function emptyMonth(ctx: SyncContext, table: string, month: string): CostMonthOu
   };
 }
 
+/** The cursor's `failedScan` member for one table (absent when it holds nothing). */
+function withFailedScan(
+  months: Readonly<Record<string, string>>,
+  table: string | null,
+): { failedScan?: Record<string, Record<string, string>> } {
+  return table !== null && Object.keys(months).length > 0
+    ? { failedScan: { [table]: { ...months } } }
+    : {};
+}
+
 export function createGcpBillingCostSyncable(options: GcpBillingCostSyncableOptions): Syncable {
   return {
     serviceId: GCP_BILLING_SERVICE_ID,
@@ -141,6 +152,7 @@ export function createGcpBillingCostSyncable(options: GcpBillingCostSyncableOpti
             gaps,
             synced: keep(prev.synced),
             pending: keep(prev.pending),
+            ...withFailedScan(table === null ? {} : (prev.failedScan?.[table] ?? {}), table),
           }),
           0,
         );
@@ -163,9 +175,22 @@ export function createGcpBillingCostSyncable(options: GcpBillingCostSyncableOpti
       }
       const deps: GcpBqDeps = { fetch: options.fetch ?? fetchSameOriginOnly, token };
       const nowMs = (options.now ?? Date.now)();
+      const today = new Date(nowMs).toISOString().slice(0, 10);
+      const failedScan: Record<string, string> = { ...own(prev.failedScan ?? {}, table) };
       let partition: Promise<{ kind: "ok"; partition: GcpPartition } | GcpFail> | null = null;
       const partitionOnce = () => (partition ??= readTablePartition(ctx, deps, table));
+      const scanned = (r: GcpFail, month: string): GcpFail => {
+        failedScan[month] = today;
+        return failedScanOutcome(r, month);
+      };
       const run = await runCostAccounts(prev, accounts, nowMs, async (_account, month) => {
+        const failedDay = own(failedScan, month);
+        if (!scanDue(failedDay, month, today)) {
+          return {
+            kind: "month_gap",
+            reason: `the ${month} billing scan failed on ${failedDay as string}; the next billed scan runs on ${nextScanDay(failedDay as string, month, today)}`,
+          };
+        }
         const p = await partitionOnce();
         if (p.kind !== "ok") return p;
         const q = await runBillingQuery(ctx, deps, {
@@ -176,27 +201,36 @@ export function createGcpBillingCostSyncable(options: GcpBillingCostSyncableOpti
           end: aiCostEndDay(month, nowMs),
           maxBytesBilled: cfg.maxBytesBilled,
         });
-        if (q.kind !== "ok") return q;
+        if (q.kind !== "ok") return q.scanned === true ? scanned(q, month) : q;
         const mapped = gcpBillingLines(q.rows, month);
         if (mapped.unreadable > 0) {
-          return {
-            kind: "month_gap",
-            reason: `${String(mapped.unreadable)} ${mapped.unreadable === 1 ? "row" : "rows"} of the ${month} billing export could not be read; that month was not updated`,
-          };
+          return scanned(
+            {
+              kind: "month_gap",
+              reason: `${String(mapped.unreadable)} ${mapped.unreadable === 1 ? "row" : "rows"} of the ${month} billing export could not be read; that month was not updated`,
+            },
+            month,
+          );
         }
-        if (mapped.lines.length === 0) return emptyMonth(ctx, table, month);
+        if (mapped.lines.length === 0) {
+          const empty = emptyMonth(ctx, table, month);
+          if (empty.kind === "month_gap") return scanned(empty, month);
+          delete failedScan[month];
+          return empty;
+        }
         let written = 0;
         for (const [account, lines] of byBillingAccount(mapped.lines)) {
           const refused = writeAccount(ctx, month, account, lines);
           if (refused !== null) return refused;
           written += lines.length;
         }
+        delete failedScan[month];
         return { kind: "ok", lines: written, bytes: 0 };
       });
       return syncPassCursorSuccess(
         t0,
         run.bytes,
-        encodeCostSyncCursor(PREFIX, run.cursor),
+        encodeCostSyncCursor(PREFIX, { ...run.cursor, ...withFailedScan(failedScan, table) }),
         run.lines,
       );
     },

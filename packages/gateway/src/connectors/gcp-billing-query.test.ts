@@ -48,18 +48,49 @@ describe("partition filter", () => {
     expect(partitionOf({ rangePartitioning: {} })).toEqual({ kind: "none" });
   });
 
-  test("each scheme bounds the SQL by its own column, with the 3-day buffer; none adds nothing", () => {
-    expect(billingSql(TABLE, { kind: "ingestion" })).toContain(
-      "_PARTITIONTIME >= TIMESTAMP(@start)",
-    );
+  test("each scheme has a LOWER partition bound only (late rows are never dropped); none adds nothing", () => {
+    const ing = billingSql(TABLE, { kind: "ingestion" });
+    expect(ing).toContain("_PARTITIONTIME >= TIMESTAMP_SUB(TIMESTAMP(@start), INTERVAL 1 DAY)");
+    expect(ing).not.toContain("_PARTITIONTIME <");
     const ts = billingSql(TABLE, { kind: "column", name: "export_time", type: "TIMESTAMP" });
-    expect(ts).toContain("`export_time` >= TIMESTAMP(@start)");
-    expect(ts).toContain("TIMESTAMP_ADD(TIMESTAMP(@end), INTERVAL 3 DAY)");
+    expect(ts).toContain("`export_time` >= TIMESTAMP_SUB(TIMESTAMP(@start), INTERVAL 1 DAY)");
+    expect(ts).not.toContain("`export_time` <");
     const d = billingSql(TABLE, { kind: "column", name: "pd", type: "DATE" });
-    expect(d).toContain("`pd` >= DATE(@start) AND `pd` < DATE_ADD(DATE(@end), INTERVAL 3 DAY)");
+    expect(d).toContain("`pd` >= DATE_SUB(DATE(@start), INTERVAL 1 DAY)");
+    expect(d).not.toContain("`pd` <");
+    // The usage_start_time range stays exact.
+    expect(ing).toContain(
+      "usage_start_time >= TIMESTAMP(@start) AND usage_start_time < TIMESTAMP(@end)",
+    );
     const none = billingSql(TABLE, { kind: "none" });
     expect(none).not.toContain("_PARTITIONTIME");
     expect(none).toContain("usage_start_time >= TIMESTAMP(@start)");
+  });
+
+  test("no SELECT alias or GROUP BY name is a column of the export table", () => {
+    const sql = billingSql(TABLE, { kind: "ingestion" });
+    const group = sql
+      .slice(sql.indexOf("GROUP BY") + 8)
+      .split(",")
+      .map((x) => x.trim());
+    const tableColumns = new Set([
+      "service",
+      "sku",
+      "cost",
+      "credits",
+      "currency",
+      "project",
+      "location",
+      "usage",
+      "cost_type",
+      "billing_account_id",
+      "labels",
+      "day",
+    ]);
+    expect(group.length).toBeGreaterThan(5);
+    for (const g of group) expect(tableColumns.has(g)).toBe(false);
+    for (const m of sql.matchAll(/ AS (\w+)/g))
+      expect(tableColumns.has(m[1] as string)).toBe(false);
   });
 
   test("the table's metadata is read, and a failure is its outcome", async () => {

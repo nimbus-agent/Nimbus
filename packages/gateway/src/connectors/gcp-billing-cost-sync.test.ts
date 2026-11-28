@@ -57,11 +57,12 @@ function run(
     gcp?: () => NimbusCostGcpConfig | null;
     token?: string | null;
     fetch?: typeof bq.fetch;
+    now?: number;
   } = {},
 ) {
   return createGcpBillingCostSyncable({
     gcp: over.gcp ?? (() => CFG),
-    now: () => NOW,
+    now: () => over.now ?? NOW,
     fetch: over.fetch ?? bq.fetch,
     mintAccessToken: async () => (over.token === undefined ? "tok" : over.token),
   }).sync(ctx(), cursor);
@@ -117,8 +118,8 @@ describe("gcp_billing sync", () => {
     expect(body["useLegacySql"]).toBe(false);
     expect(sql).toContain("UNNEST(IFNULL(labels, []))");
     expect(sql).toContain("UNNEST(IFNULL(credits, []))");
-    expect(sql).toContain("_PARTITIONTIME >= TIMESTAMP(@start)");
-    expect(sql).toContain("TIMESTAMP_ADD(TIMESTAMP(@end), INTERVAL 3 DAY)");
+    expect(sql).toContain("_PARTITIONTIME >= TIMESTAMP_SUB(TIMESTAMP(@start), INTERVAL 1 DAY)");
+    expect(sql).not.toContain("_PARTITIONTIME <");
     expect(sql).toContain(
       "FROM `my-proj.billing.gcp_billing_export_resource_v1_01AB23_CD45EF_6789AB`",
     );
@@ -220,7 +221,7 @@ describe("gcp_billing sync", () => {
     expect(cursorOf(out.cursor).gaps[TABLE]).toContain("could not be read");
 
     bq.rows.set("2026-11-01", [bqRow()]);
-    bq.dropColumn = "credits";
+    bq.dropColumn = "credits_sum";
     out = await run();
     expect(lines()).toHaveLength(0);
     expect(cursorOf(out.cursor).gaps[TABLE]).toContain("without the columns");
@@ -342,6 +343,73 @@ describe("gcp_billing sync", () => {
     out = await run();
     expect(bq.calls).toHaveLength(0);
     expect(cursorOf(out.cursor).gaps).toEqual({});
+  });
+
+  test("an endless job is cancelled in its own project and location", async () => {
+    bq.rows.set("2026-11-01", [bqRow()]);
+    bq.incomplete = 1000;
+    const out = await run();
+    const cancels = bq.calls.filter((c) => c.kind === "cancel");
+    expect(cancels.length).toBeGreaterThanOrEqual(1);
+    expect(cancels[0]?.url).toContain("/projects/job-proj/jobs/job-1/cancel?location=EU");
+    expect(lines()).toHaveLength(0);
+    expect(cursorOf(out.cursor).gaps[TABLE]).toContain("billed BigQuery scan");
+  });
+
+  test("a 404 while polling is a retry (an expired job), not a missing table", async () => {
+    bq.rows.set("2026-11-01", [bqRow()]);
+    bq.incomplete = 1;
+    bq.failNext = { kind: "poll", status: 404 };
+    const out = await run();
+    expect(lines()).toHaveLength(0);
+    const c = cursorOf(out.cursor);
+    expect(c.gaps[TABLE] ?? "").not.toBe(GCP_COST_GAPS.notFound);
+    expect(c.pending[TABLE]).toContain("2026-11");
+  });
+
+  test("a month that cannot finish is scanned once, then again only after 7 days (a past month)", async () => {
+    // October is over the page cap (42 pages of 1 row); November is fine.
+    bq.pageSize = 1;
+    bq.rows.set(
+      "2026-10-01",
+      Array.from({ length: 42 }, (_, i) => bqRow({ day: "2026-10-05", sku_id: `S${String(i)}` })),
+    );
+    bq.rows.set("2026-11-01", [bqRow()]);
+    const scans = (start: string) =>
+      bq.calls.filter((c) => c.kind === "query" && JSON.stringify(c.body).includes(`"${start}"`))
+        .length;
+    let cursor: string | null = null;
+    for (let d = 0; d < 7; d++) {
+      const out = await run(cursor, { now: NOW + d * DAY });
+      cursor = out.cursor;
+    }
+    // Day 0 scanned October; days 1 to 6 did not.
+    expect(scans("2026-10-01")).toBe(1);
+    const c = cursorOf(cursor);
+    expect(c.failedScan?.[TABLE]?.["2026-10"]).toBe("2026-11-20");
+    expect(c.gaps[TABLE]).toContain("2026-10");
+    // Day 7 scans it again.
+    await run(cursor, { now: NOW + 7 * DAY });
+    expect(scans("2026-10-01")).toBe(2);
+  });
+
+  test("a failed current month is scanned at most once a day, and a success clears the record", async () => {
+    bq.pageSize = 1;
+    bq.rows.set(
+      "2026-11-01",
+      Array.from({ length: 42 }, (_, i) => bqRow({ sku_id: `S${String(i)}` })),
+    );
+    const scans = () => bq.calls.filter((c) => c.kind === "query").length;
+    let out = await run(null, { now: NOW });
+    const first = scans();
+    out = await run(out.cursor, { now: NOW + 3_600_000 });
+    expect(scans()).toBe(first); // the same day: no second scan
+    out = await run(out.cursor, { now: NOW + DAY });
+    expect(scans()).toBeGreaterThan(first); // the next day: one more
+    bq.pageSize = 100;
+    out = await run(out.cursor, { now: NOW + 2 * DAY });
+    expect(total()).toBeGreaterThan(0);
+    expect(cursorOf(out.cursor).failedScan?.[TABLE]?.["2026-11"]).toBeUndefined();
   });
 
   test("the billing account a table name carries", () => {

@@ -13,21 +13,21 @@ export const GCP_COST_PROVIDER = "gcp";
 
 /** The columns the sync's query selects (its aliases); a reply without all of them is not read. */
 export const GCP_ROW_COLUMNS = [
-  "day",
-  "billing_account_id",
-  "project_id",
-  "project_name",
-  "service",
-  "sku_id",
-  "sku",
-  "region",
-  "currency",
-  "unit",
-  "cost_type",
+  "usage_day",
+  "account_key",
+  "project_key",
+  "project_label",
+  "service_name",
+  "sku_key",
+  "sku_name",
+  "region_key",
+  "currency_code",
+  "unit_name",
+  "cost_kind",
   "labels_json",
-  "cost",
-  "credits",
-  "quantity",
+  "cost_sum",
+  "credits_sum",
+  "quantity_sum",
 ] as const;
 export type GcpRowColumn = (typeof GCP_ROW_COLUMNS)[number];
 export type GcpRawRow = Readonly<Record<GcpRowColumn, string | null>>;
@@ -80,18 +80,18 @@ function labelTags(json: string | null): Record<string, string> | null {
 }
 
 function oneLine(r: GcpRawRow, month: string): CostLine | null {
-  const day = r.day;
-  const account = r.billing_account_id?.trim() ?? "";
-  const currency = r.currency?.trim() ?? "";
+  const day = r.usage_day;
+  const account = r.account_key?.trim() ?? "";
+  const currency = r.currency_code?.trim() ?? "";
   if (day === null || !DAY_RE.test(day) || !day.startsWith(month)) return null;
   if (account === "" || currency === "") return null;
-  const cost = amount(r.cost);
-  const credits = r.credits === null ? 0 : amount(r.credits);
+  const cost = amount(r.cost_sum);
+  const credits = r.credits_sum === null ? 0 : amount(r.credits_sum);
   const tags = labelTags(r.labels_json);
   if (cost === null || credits === null || tags === null) return null;
-  const qty = amount(r.quantity);
+  const qty = amount(r.quantity_sum);
   const net = cost + credits;
-  const project = r.project_id?.trim() ?? "";
+  const project = r.project_key?.trim() ?? "";
   return {
     source: GCP_BILLING_SOURCE,
     provider: GCP_COST_PROVIDER,
@@ -99,14 +99,14 @@ function oneLine(r: GcpRawRow, month: string): CostLine | null {
     billingPeriod: month,
     chargeDay: day,
     subAccountId: project === "" ? null : project,
-    subAccountName: r.project_name?.trim() || null,
-    serviceName: r.service?.trim() || "Unknown service",
+    subAccountName: r.project_label?.trim() || null,
+    serviceName: r.service_name?.trim() || "Unknown service",
     serviceCategory: null,
-    regionId: r.region?.trim() || null,
+    regionId: r.region_key?.trim() || null,
     resourceId: null,
     resourceName: null,
-    skuId: r.sku_id?.trim() || r.sku?.trim() || null,
-    chargeCategory: categoryOf(r.cost_type),
+    skuId: r.sku_key?.trim() || r.sku_name?.trim() || null,
+    chargeCategory: categoryOf(r.cost_kind),
     billedCost: net,
     effectiveCost: net,
     currency,
@@ -116,7 +116,7 @@ function oneLine(r: GcpRawRow, month: string): CostLine | null {
     model: null,
     importId: `${GCP_BILLING_SOURCE}:${account}:${month}`,
     consumedQuantity: qty,
-    consumedUnit: qty === null ? null : measureUnit(r.unit),
+    consumedUnit: qty === null ? null : measureUnit(r.unit_name),
   };
 }
 

@@ -25,7 +25,7 @@ export class FakeBigQuery {
   /** Drops this column from every reply's schema (and rows). */
   dropColumn: GcpRowColumn | null = null;
   readonly calls: {
-    kind: "meta" | "query" | "poll";
+    kind: "meta" | "query" | "poll" | "cancel";
     url: string;
     body?: Record<string, unknown>;
   }[] = [];
@@ -55,6 +55,10 @@ export class FakeBigQuery {
   readonly fetch = (async (url: string, init?: RequestInit): Promise<Response> => {
     const u = new URL(url);
     if (u.hostname !== "bigquery.googleapis.com") return this.reply(404, {});
+    if (init?.method === "POST" && u.pathname.endsWith("/cancel")) {
+      this.calls.push({ kind: "cancel", url });
+      return this.reply(200, { job: {} });
+    }
     if (init?.method === "POST") {
       const body = JSON.parse(String(init.body)) as Record<string, unknown>;
       this.calls.push({ kind: "query", url, body });
@@ -69,9 +73,7 @@ export class FakeBigQuery {
       }[];
       const start = params.find((p) => p.name === "start")?.parameterValue.value ?? "";
       const sql = String(body["query"]);
-      this.columns = GCP_ROW_COLUMNS.filter(
-        (c) => sql.includes(` AS ${c}`) || sql.includes(`, ${c}`),
-      );
+      this.columns = GCP_ROW_COLUMNS.filter((c) => sql.includes(` AS ${c}`));
       this.results = this.rows.get(start) ?? [];
       this.polls = 0;
       return this.reply(200, this.page(0));
@@ -104,9 +106,49 @@ export class FakeBigQuery {
   }) as unknown as typeof import("../../src/connectors/same-origin-fetch.ts").fetchSameOriginOnly;
 }
 
+/** The friendly names a test writes a row with; `bqRow` renames them to the query's aliases. */
+export type FriendlyRow = Partial<
+  Record<
+    | "day"
+    | "billing_account_id"
+    | "project_id"
+    | "project_name"
+    | "service"
+    | "sku_id"
+    | "sku"
+    | "region"
+    | "currency"
+    | "unit"
+    | "cost_type"
+    | "labels_json"
+    | "cost"
+    | "credits"
+    | "quantity",
+    string | null
+  >
+>;
+
+const ALIAS: Record<keyof FriendlyRow, GcpRowColumn> = {
+  day: "usage_day",
+  billing_account_id: "account_key",
+  project_id: "project_key",
+  project_name: "project_label",
+  service: "service_name",
+  sku_id: "sku_key",
+  sku: "sku_name",
+  region: "region_key",
+  currency: "currency_code",
+  unit: "unit_name",
+  cost_type: "cost_kind",
+  labels_json: "labels_json",
+  cost: "cost_sum",
+  credits: "credits_sum",
+  quantity: "quantity_sum",
+};
+
 /** One export row; every column the sync selects, with the usual defaults. */
-export function bqRow(over: BqRow = {}): BqRow {
-  return {
+export function bqRow(over: FriendlyRow = {}): BqRow {
+  const base: Required<FriendlyRow> = {
     day: "2026-11-18",
     billing_account_id: "01AB23-CD45EF-6789AB",
     project_id: "web-prod",
@@ -122,6 +164,10 @@ export function bqRow(over: BqRow = {}): BqRow {
     cost: "10",
     credits: "0",
     quantity: "24",
-    ...over,
   };
+  const out: BqRow = {};
+  for (const k of Object.keys(base) as (keyof FriendlyRow)[]) {
+    out[ALIAS[k]] = k in over ? (over[k] ?? null) : base[k];
+  }
+  return out;
 }
