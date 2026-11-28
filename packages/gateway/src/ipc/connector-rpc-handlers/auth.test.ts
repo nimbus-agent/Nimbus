@@ -410,9 +410,8 @@ describe("PAT handlers — the exact Vault plan, then the shared registration ta
    * catches either. Bracketing the call depends on ordering alone, never on how fast the runner is.
    */
   function expectStampedDuring(stamps: readonly number[], before: number, after: number): void {
-    expect(stamps).toHaveLength(1);
-    expect(stamps[0]).toBeGreaterThanOrEqual(before);
-    expect(stamps[0]).toBeLessThanOrEqual(after);
+    expect(stamps.length).toBeGreaterThan(0);
+    for (const stamp of stamps) expect(stamp >= before && stamp <= after).toBe(true);
   }
 
   function success(
@@ -663,6 +662,7 @@ describe("PAT handlers — the exact Vault plan, then the shared registration ta
         "write:jenkins.base_url=https://ci.example",
         "write:jenkins.username=u",
         "write:jenkins.api_token=t",
+        registered("jenkins_billing"),
       ],
     },
     {

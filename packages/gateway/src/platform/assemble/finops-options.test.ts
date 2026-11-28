@@ -22,6 +22,7 @@ describe("finopsSyncOptions", () => {
     expect(o.aws()).toEqual({ export: null, costExplorer: false });
     expect(o.azure()).toEqual({ export: null, scopes: [] });
     expect(o.bitbucket()).toMatchObject({ workspaces: [], ratePerMinute: null });
+    expect(o.jenkins()).toMatchObject({ enabled: false, ratePerMinute: null });
   });
 
   test("each getter reads the config at call time, so an edit applies to the next run", () => {
@@ -48,6 +49,31 @@ describe("finopsSyncOptions", () => {
     expect(o.bitbucket()).toBeNull();
     expect(o.aws()).toBeNull();
     expect(o.azure()).toBeNull();
+    expect(o.jenkins()).toBeNull();
+    expect(o.gcp()).toBeNull();
     expect(o.githubOrgs()).toEqual([]);
+  });
+
+  test("a valid cost config returns each section, the jenkins table included", () => {
+    write(
+      [
+        "[cost.jenkins]",
+        "rate_per_minute = 0.008",
+        'agent_rates = { "big" = 0.02 }',
+        "",
+        "[cost.bitbucket]",
+        'workspaces = ["acme"]',
+        "",
+      ].join("\n"),
+    );
+    const o = finopsSyncOptions(dir);
+    expect(o.jenkins()).toEqual({
+      enabled: true,
+      ratePerMinute: 0.008,
+      currency: "USD",
+      agentRates: [["big", 0.02]],
+    });
+    expect(o.bitbucket()).toMatchObject({ workspaces: ["acme"] });
+    expect(o.gcp()).toMatchObject({ exportTables: [] });
   });
 });

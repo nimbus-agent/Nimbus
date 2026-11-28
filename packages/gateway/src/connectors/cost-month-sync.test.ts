@@ -50,6 +50,21 @@ describe("runCostAccounts", () => {
     });
   });
 
+  test("an ok month marked pending is counted and written but stays pending, with no gap", async () => {
+    const r = await runCostAccounts(EMPTY, ["aws"], NOV20, async (_a, month) => ({
+      kind: "ok",
+      lines: 1,
+      bytes: 0,
+      pending: month === "2026-11",
+    }));
+    expect(r.cursor).toEqual({
+      gaps: {},
+      synced: { aws: "2026-11-20" },
+      pending: { aws: ["2026-11"] },
+    });
+    expect(r.lines).toBe(2);
+  });
+
   test("a gap stops that account, keeps the rest pending and leaves it unsynced; others continue", async () => {
     const f = fetcher({ "a:2026-11": { kind: "gap", reason: "no access" } });
     const r = await runCostAccounts(EMPTY, ["a", "b"], NOV20, f.fn);

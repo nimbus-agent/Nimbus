@@ -38,6 +38,8 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   ],
   // Phase 7 slice 9: the Pipelines-minutes cost sync reads the `bitbucket` credential through its grant.
   bitbucket_billing: [],
+  // Phase 7 slice 10: the Jenkins build-minutes cost sync reads the `jenkins` credential through its grant.
+  jenkins_billing: [],
   linear: ["linear.api_key"],
   // `jira.cloud_id` is OPTIONAL and non-secret in effect (the Atlassian site UUID the Operations alert
   // tools need); it is a Vault key so `connector.remove jira` clears it.
