@@ -293,3 +293,9 @@ The builder check (9 questions) and Antigravity (CHANGES REQUIRED, 16 findings) 
 **Corrections to sections 3 to 5.**
 - C7's Azure and GCP paths are as above.
 - Slice 15's bound "a FOCUS export has no resource grain" was wrong: FOCUS carries `ResourceId`; only Cost Explorer lacks one.
+
+**Owner decisions after the review (2026-11-28).**
+- **D8, flags:** slice 14 lists LaunchDarkly changes only. For Unleash, Split and Flagsmith the brief states that their change times are not recorded. A follow-up roadmap row records them later, after a docs check of their change and event APIs. This replaces C5's "all four".
+- **D9, Jenkins over http:** a non-loopback `http` Jenkins base is a stated gap ("the token is never sent over plain http; serve Jenkins over https"), as for GitLab (issue #2200).
+
+Status: approved by the owner (design conversation), reviewed by the builder check and Antigravity, with every finding resolved above. Next step: each slice's task list in the plan, approved by Antigravity before its code.
