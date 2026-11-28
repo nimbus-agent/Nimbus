@@ -1,7 +1,9 @@
 // A fake Azure storage account and token endpoint for the Azure cost sync tests: List Blobs XML with NextMarker
 // paging, Get Blob bytes (whole or chunked with no Content-Length), forced statuses, a thrown fetch and an expired
 // token. Lives under `testing/` (exempt from the coverage floor); the layout follows Microsoft's export documentation.
+
 import type { AzureFetch } from "../connectors/_lib/azure-token.ts";
+import { codeUnitCompare } from "../util/code-unit-compare.ts";
 
 export const AZURE_FAKE_PATH = "focus/monthly";
 
@@ -74,7 +76,9 @@ export class AzureFakeStorage {
     if (u.searchParams.get("comp") === "list") {
       if (this.listStatus !== 200) return new Response("", { status: this.listStatus });
       const prefix = u.searchParams.get("prefix") ?? "";
-      const all = [...this.objects.keys()].filter((k) => k.startsWith(prefix)).sort();
+      const all = [...this.objects.keys()]
+        .filter((k) => k.startsWith(prefix))
+        .sort(codeUnitCompare);
       const marker = u.searchParams.get("marker");
       const start = marker === null ? 0 : Number(marker);
       const page = all.slice(start, start + this.pageSize);
