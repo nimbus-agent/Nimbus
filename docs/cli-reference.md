@@ -1389,6 +1389,34 @@ What is read (from GitLab's documentation; no live response was checked when thi
 - **Only over https.** The token is sent only to an `https` GitLab base (`http` only to `localhost`, `127.0.0.1` or `::1`); any other base is a stated gap and nothing is fetched.
 - **Who may read it.** GitLab's reference names no role or token scope for the usage query; a group owner's token is the likely need. A refused, unknown or invisible group, a GraphQL error and a redirect to another host are shown in every cost view's freshness as `Not synced: …`; a rate-limited response waits for the shared `gitlab` limiter and a server error is retried the next day. A month with any usage row that cannot be read is kept as it was. `connector remove gitlab` deletes these lines too.
 
+### AWS cost from a FOCUS export (`[cost.aws]`)
+
+Create a FOCUS 1.0 export in your AWS account (Billing and Cost Management, Data Exports: FOCUS 1.0 with AWS columns, **CSV**, delivered to a bucket you own), then point Nimbus at its folder; nothing is fetched until `export` is set:
+
+```toml
+[cost.aws]
+export = "s3://my-cost-bucket/focus"   # the prefix holds ONE export (its folder is <prefix>/<export-name>/)
+cost_explorer = false                  # opt-in fallback (a later slice, USD 0.01 per request); used only with no export
+```
+
+| Key | Meaning |
+| --- | --- |
+| `export` | `s3://bucket/prefix`: an S3 bucket name and an optional prefix, no `..`, no spaces. |
+| `cost_explorer` | `true` or `false` (default `false`). Parsed now; read by a later slice, only when no export is set. |
+
+The gateway syncs once a day as source `aws_billing`, provider `aws`, with the `aws.*` credentials you stored for the AWS connector (the AWS CLI must be installed). For each billing period it reads the newest manifest (`<export-name>/metadata/BILLING_PERIOD=YYYY-MM/...Manifest.json`), downloads the data files it lists (gzip is handled), and stores one line per day and grain under the file's `BillingAccountId`. A newer delivery replaces only the days its files cover; a billing account the export stops listing keeps its lines. The current month, plus the previous month until the 5th and on the first sync, are read.
+
+Stated bounds:
+
+- **Documentation-verified only.** The key layout and manifest fields follow AWS's Data Exports documentation; no live bucket was read.
+- **CSV only.** A Parquet export is a stated gap: `the export is Parquet; recreate it as CSV`.
+- **One export per prefix.** Two export names under the prefix are a gap (their lines would be added together); point `export` at one export's parent folder.
+- **Whole periods only.** A file that cannot be downloaded, decoded or parsed, a row that cannot be read, an empty export or a row outside the period makes that month a gap and writes nothing; the stored month stays. Every file must sit under the configured bucket and prefix.
+- **Caps.** At most 200 files and 512 MiB per period, 256 MiB per file, and 100,000 listed keys.
+- **Costs and history.** The S3 storage and request cost is yours. History starts when the export starts.
+- **No export, no `cost_explorer`:** the freshness line shows `AWS cost is not configured: set [cost.aws] export, or cost_explorer = true`.
+- **One source per provider.** When a `[cost.focus] dir` import and this sync both cover AWS, the views use the sync and list the file import as set aside (`[cost] authoritative = { aws = "focus" }` chooses the file instead).
+
 ### `nimbus cost products` and `nimbus cost internal`
 
 Cost per product (with its parts: the service and provider, and the env), and the internal cost (CI and the dev and test environments), computed from the local cost lines (`nimbus cost import`), the indexed Vantage rows for a provider with no raw lines, and your `[[cost.rule]]` allocation rules. Local index only: **no network call, no model, no egress row**.

@@ -14,7 +14,7 @@ export function focusFileText(bytes: Uint8Array, name: string): string {
   let plain: Uint8Array = bytes;
   if (gz) {
     try {
-      plain = Bun.gunzipSync(bytes);
+      plain = Bun.gunzipSync(new Uint8Array(bytes));
     } catch {
       throw new FocusCsvError(`${name.slice(-80)} is not a valid gzip file`);
     }

@@ -465,6 +465,10 @@ export async function createSchedulerWithMesh(
       const c = loadNimbusCostFromConfigDir(paths.configDir);
       return c.error === null ? c.gitlab : null;
     },
+    aws: () => {
+      const c = loadNimbusCostFromConfigDir(paths.configDir);
+      return c.error === null ? c.aws : null;
+    },
   };
   if (syncEnabled) {
     registerConnectorMeshSyncables(policyFilteredRegistrar, connectorMesh, {

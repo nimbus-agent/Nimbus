@@ -1,3 +1,8 @@
+import { randomUUID } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import { spawnCapture } from "../../platform/spawn-capture.ts";
 import {
@@ -124,6 +129,38 @@ export async function awsCliJson(
     env: extensionProcessEnv({ ...cliEnvFor("aws", process.env), ...extra }),
   });
   return { ok: r.ok, text: r.stdout };
+}
+
+/** The most one S3 object may be, downloaded to disk (a larger export is refused, never read into memory). */
+export const AWS_DOWNLOAD_MAX_BYTES = 256 * 1024 * 1024;
+
+/**
+ * Download one S3 object with `aws s3 cp <url> <tmpfile>` and return its bytes. The bytes never pass through
+ * UTF-8 stdout capture (a gzip file would be corrupted); the temp file lives in its own fresh directory and is
+ * removed in `finally`. `extra` is the scoped credential env from {@link awsCredentialsExtra} (invariant I1: the
+ * child env goes through `extensionProcessEnv`). Never throws: a missing CLI, a non-zero exit, an over-size
+ * object or an unreadable file is `{ ok: false }`.
+ */
+export async function awsCliDownload(
+  s3Url: string,
+  extra: Record<string, string>,
+): Promise<{ ok: true; bytes: Uint8Array } | { ok: false }> {
+  let dir: string | null = null;
+  try {
+    dir = mkdtempSync(join(tmpdir(), "nimbus-aws-dl-"));
+    const file = join(dir, `${randomUUID()}.bin`);
+    const r = await spawnCapture(["aws", "s3", "cp", s3Url, file, "--only-show-errors"], {
+      env: extensionProcessEnv({ ...cliEnvFor("aws", process.env), ...extra }),
+    });
+    if (!r.ok) return { ok: false };
+    const f = Bun.file(file);
+    if (f.size > AWS_DOWNLOAD_MAX_BYTES) return { ok: false };
+    return { ok: true, bytes: await f.bytes() };
+  } catch {
+    return { ok: false };
+  } finally {
+    if (dir !== null) rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 // ---------------------------------------------------------------------------
