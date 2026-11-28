@@ -1,3 +1,5 @@
+import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
+import { spawnCapture } from "../../platform/spawn-capture.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
 import { cliEnvFor } from "../local-auth/local-auth-env.ts";
@@ -55,4 +57,26 @@ export async function loadGcpAuthFromVault(vault: NimbusVault): Promise<GcpAuth 
     readConnectorSecret(vault, "gcp", "auth_source"),
   ]);
   return resolveGcpAuth(credPath, authSource);
+}
+
+/**
+ * Mints a short-lived GCP access token by shelling `gcloud auth print-access-token`
+ * authenticated per `auth` — the configured service-account key, or the owner's own
+ * `gcloud auth login` — via `gcloudAuthEnv`. Returns null when gcloud is missing or
+ * exits non-zero — the caller degrades gracefully (no throw past the Syncable
+ * boundary), mirroring gcp-sync's `!res.ok` posture.
+ */
+export async function gcloudPrintAccessToken(auth: GcpAuth): Promise<string | null> {
+  try {
+    const r = await spawnCapture(["gcloud", "auth", "print-access-token"], {
+      env: extensionProcessEnv(gcloudAuthEnv(auth)),
+    });
+    if (!r.ok) {
+      return null;
+    }
+    const out = r.stdout.trim();
+    return out === "" ? null : out;
+  } catch {
+    return null;
+  }
 }

@@ -16,6 +16,9 @@
  * [cost.aws]
  * export = "s3://bucket/prefix"                      # a FOCUS 1.0 CSV Data Export, synced daily (slice 11a)
  *
+ * [cost.gcp]
+ * export_table = "project.dataset.table"             # a Cloud Billing export to BigQuery, synced daily (slice 13)
+ *
  * [[cost.rule]]                                      # ordered, first match wins
  * match = { provider = "aws", tag = { product = "*" } }
  * set = { product = "{tag.product}", env = "{tag.env}" }
@@ -45,6 +48,12 @@ import {
   readCostAwsTable,
 } from "./cost-aws-toml.ts";
 import {
+  CostGcpConfigError,
+  DEFAULT_COST_GCP_CONFIG,
+  type NimbusCostGcpConfig,
+  readCostGcpTable,
+} from "./cost-gcp-toml.ts";
+import {
   CostGitlabConfigError,
   DEFAULT_COST_GITLAB_CONFIG,
   type NimbusCostGitlabConfig,
@@ -70,6 +79,8 @@ export interface NimbusCostConfig {
   readonly gitlab: NimbusCostGitlabConfig;
   /** `[cost.aws]`: the FOCUS Data Export in S3 and the Cost Explorer opt-in (slice 11a; see `cost-aws-toml.ts`). */
   readonly aws: NimbusCostAwsConfig;
+  /** `[cost.gcp]`: the BigQuery billing export table(s) and the byte cap (slice 13; see `cost-gcp-toml.ts`). */
+  readonly gcp: NimbusCostGcpConfig;
   /** `[[cost.report]]` with their `[[cost.report.channel]]` blocks (slice 3; see `cost-report-toml.ts`). */
   readonly reports: readonly CostReportDef[];
   /** Non-null: the report definitions are refused (`reports` is empty); the rules still apply. */
@@ -94,6 +105,7 @@ export const DEFAULT_COST_CONFIG: NimbusCostConfig = Object.freeze({
   githubOrgs: Object.freeze([]) as readonly string[],
   gitlab: DEFAULT_COST_GITLAB_CONFIG,
   aws: DEFAULT_COST_AWS_CONFIG,
+  gcp: DEFAULT_COST_GCP_CONFIG,
   reports: Object.freeze([]) as readonly CostReportDef[],
   reportsError: null,
   error: null,
@@ -207,6 +219,8 @@ function readPlainSection(s: EffectiveSection & { header: string }, draft: Draft
     draft.gitlab = readCostGitlabTable(parseSection(s, "[cost.gitlab]"));
   } else if (s.header === "cost.aws" && !s.isArray) {
     draft.aws = readCostAwsTable(parseSection(s, "[cost.aws]"));
+  } else if (s.header === "cost.gcp" && !s.isArray) {
+    draft.gcp = readCostGcpTable(parseSection(s, "[cost.gcp]"));
   } else {
     const shown = s.isArray ? `[[${s.header}]]` : `[${s.header}]`;
     throw new CostConfigError(`unknown section ${shown}`);
@@ -297,7 +311,8 @@ export function resolveCostConfig(sections: readonly EffectiveSection[]): Nimbus
       e instanceof CostConfigError ||
       e instanceof CostRuleError ||
       e instanceof CostGitlabConfigError ||
-      e instanceof CostAwsConfigError
+      e instanceof CostAwsConfigError ||
+      e instanceof CostGcpConfigError
     ) {
       return Object.freeze({ ...DEFAULT_COST_CONFIG, error: e.message });
     }
