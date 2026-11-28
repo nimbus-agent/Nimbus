@@ -1,3 +1,4 @@
+import { DEFAULT_COST_AWS_CONFIG, type NimbusCostAwsConfig } from "../config/cost-aws-toml.ts";
 import {
   DEFAULT_COST_BITBUCKET_CONFIG,
   type NimbusCostBitbucketConfig,
@@ -8,6 +9,7 @@ import {
 } from "../config/cost-gitlab-toml.ts";
 import type { Syncable } from "../sync/types.ts";
 import { createAnthropicCostSyncable } from "./anthropic-cost-sync.ts";
+import { createAwsBillingCostSyncable } from "./aws-billing-cost-sync.ts";
 import { createBitbucketCostSyncable } from "./bitbucket-cost-sync.ts";
 import { createGithubBillingCostSyncable } from "./github-billing-cost-sync.ts";
 import { createGitlabCostSyncable } from "./gitlab-cost-sync.ts";
@@ -25,6 +27,8 @@ export type FinopsSyncOptions = {
   readonly gitlab?: () => NimbusCostGitlabConfig | null;
   /** `[cost.bitbucket]` (Phase 7 slice 9); absent or no workspaces means no Bitbucket Pipelines sync. */
   readonly bitbucket?: () => NimbusCostBitbucketConfig | null;
+  /** `[cost.aws]` (slice 11a); absent or no export means no AWS cost sync. */
+  readonly aws?: () => NimbusCostAwsConfig | null;
 };
 
 /**
@@ -53,5 +57,8 @@ export function registerFinopsSyncables(
     createBitbucketCostSyncable({
       bitbucket: finops?.bitbucket ?? (() => DEFAULT_COST_BITBUCKET_CONFIG),
     }),
+  );
+  scheduler.register(
+    createAwsBillingCostSyncable({ aws: finops?.aws ?? (() => DEFAULT_COST_AWS_CONFIG) }),
   );
 }

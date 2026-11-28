@@ -13,6 +13,7 @@ export const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, strin
     "uses an Anthropic organization admin key (Vault only; read for the cost report alone)",
   gitlab: "uses a PAT",
   gitlab_billing: "uses the same PAT as gitlab",
+  aws_billing: "uses the same AWS credentials as aws",
   bitbucket: "uses an Atlassian API token (app passwords are deprecated)",
   bitbucket_billing: "uses the same credential as bitbucket",
   linear: "uses an API key",

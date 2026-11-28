@@ -9,12 +9,14 @@ import {
   syncTestContext,
 } from "../connector-sync-test-helpers.ts";
 import {
+  awsCliDownload,
   awsCliJson,
   awsNextToken,
   type BaseWalkState,
   extractArray,
   parseJson,
   type RunAwsCli,
+  removeTempDir,
   runAwsCliPaginatedWalk,
 } from "./aws-cli.ts";
 
@@ -222,5 +224,85 @@ describe("awsCliJson", () => {
       if (prev === undefined) delete process.env["AWS_CONFIG_FILE"];
       else process.env["AWS_CONFIG_FILE"] = prev;
     }
+  });
+});
+
+describe("awsCliDownload", () => {
+  test("copies the object to a temp file, returns its bytes, removes the file, scopes the env", async () => {
+    let target = "";
+    const payload = Uint8Array.from([0x1f, 0x8b, 0x08, 0x00, 0xff, 0x80]);
+    const { calls } = stubSpawn((argv) => {
+      target = argv[4] ?? "";
+      require("node:fs").writeFileSync(target, payload);
+      return { exitCode: 0, stdout: "" };
+    });
+    const r = await awsCliDownload("s3://b/k.csv.gz", { AWS_PROFILE: "p" });
+    expect(r).toEqual({ ok: true, bytes: payload });
+    expect(calls[0]?.argv.slice(0, 4)).toEqual(["aws", "s3", "cp", "s3://b/k.csv.gz"]);
+    expect(calls[0]?.argv).not.toContain("--output");
+    expect(calls[0]?.env["AWS_PROFILE"]).toBe("p");
+    expect(require("node:fs").existsSync(target)).toBe(false);
+    expect(require("node:fs").existsSync(require("node:path").dirname(target))).toBe(false);
+  });
+
+  test("a non-zero exit, or no file written, is not ok", async () => {
+    stubSpawn(() => ({ exitCode: 1, stdout: "" }));
+    expect(await awsCliDownload("s3://b/k", {})).toEqual({ ok: false });
+    stubSpawn(() => ({ exitCode: 0, stdout: "" }));
+    expect(await awsCliDownload("s3://b/k", {})).toEqual({ ok: false });
+  });
+});
+
+describe("awsCliDownload: timeout and cleanup", () => {
+  /** A child that never closes: only the timeout ends it. */
+  function hangingChild(): unknown {
+    const proc = new EventEmitter() as EventEmitter & {
+      stdout: EventEmitter;
+      stderr: EventEmitter;
+      kill: () => void;
+    };
+    proc.stdout = new EventEmitter();
+    proc.stderr = new EventEmitter();
+    proc.kill = (): void => {};
+    return proc;
+  }
+
+  test("a download that does not finish in time is not ok", async () => {
+    spawnCaptureInternals.spawn = (() => hangingChild()) as unknown as CaptureSpawn;
+    expect(await awsCliDownload("s3://b/k", {}, 20)).toEqual({ ok: false });
+  });
+
+  test("a listing call that does not finish in time is not ok", async () => {
+    spawnCaptureInternals.spawn = (() => hangingChild()) as unknown as CaptureSpawn;
+    const ctx = {
+      getSharedSecret: async (_s: string, k: string) => (k === "profile" ? "p" : null),
+    } as unknown as SyncContext;
+    expect(await awsCliJson(ctx, ["s3api", "list-objects-v2"], 20)).toEqual({
+      ok: false,
+      text: "",
+    });
+  });
+
+  test("removeTempDir retries a busy directory three times and never throws", async () => {
+    let calls = 0;
+    await removeTempDir(
+      "d",
+      () => {
+        calls++;
+        if (calls < 3) throw new Error("EBUSY");
+      },
+      1,
+    );
+    expect(calls).toBe(3);
+    let always = 0;
+    await removeTempDir(
+      "d",
+      () => {
+        always++;
+        throw new Error("EBUSY");
+      },
+      1,
+    );
+    expect(always).toBe(3);
   });
 });

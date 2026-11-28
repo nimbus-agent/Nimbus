@@ -1,3 +1,8 @@
+import { randomUUID } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import { spawnCapture } from "../../platform/spawn-capture.ts";
 import {
@@ -111,6 +116,7 @@ export async function awsCredentialsExtra(
 export async function awsCliJson(
   ctx: SyncContext,
   args: string[],
+  timeoutMs?: number,
 ): Promise<{ ok: boolean; text: string }> {
   const extra = await awsCredentialsExtra(ctx);
   if (extra === null) {
@@ -122,8 +128,65 @@ export async function awsCliJson(
   // unhidden version flashed dozens of windows per sync tick. See `platform/spawn-capture.ts`.
   const r = await spawnCapture(["aws", ...args, "--output", "json"], {
     env: extensionProcessEnv({ ...cliEnvFor("aws", process.env), ...extra }),
+    ...(timeoutMs === undefined ? {} : { timeoutMs }),
   });
   return { ok: r.ok, text: r.stdout };
+}
+
+/** A download or a listing call that has not finished after this long is killed and counts as failed. */
+export const AWS_CLI_TIMEOUT_MS = 5 * 60 * 1000;
+
+/**
+ * Removes a temp directory, trying three times about 100 ms apart (Windows holds a just-closed file for a moment,
+ * EBUSY) and then giving up quietly: a leftover temp directory must never replace a result or throw.
+ */
+export async function removeTempDir(
+  dir: string,
+  rm: (p: string, o: { recursive: boolean; force: boolean }) => void = rmSync,
+  pauseMs = 100,
+): Promise<void> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      rm(dir, { recursive: true, force: true });
+      return;
+    } catch {
+      if (attempt < 2) await Bun.sleep(pauseMs);
+    }
+  }
+}
+
+/** The most one S3 object may be, downloaded to disk (a larger export is refused, never read into memory). */
+export const AWS_DOWNLOAD_MAX_BYTES = 256 * 1024 * 1024;
+
+/**
+ * Download one S3 object with `aws s3 cp <url> <tmpfile>` and return its bytes. The bytes never pass through
+ * UTF-8 stdout capture (a gzip file would be corrupted); the temp file lives in its own fresh directory and is
+ * removed in `finally`. `extra` is the scoped credential env from {@link awsCredentialsExtra} (invariant I1: the
+ * child env goes through `extensionProcessEnv`). Never throws: a missing CLI, a non-zero exit, an over-size
+ * object or an unreadable file is `{ ok: false }`.
+ */
+export async function awsCliDownload(
+  s3Url: string,
+  extra: Record<string, string>,
+  timeoutMs: number = AWS_CLI_TIMEOUT_MS,
+): Promise<{ ok: true; bytes: Uint8Array } | { ok: false }> {
+  let dir: string | null = null;
+  try {
+    dir = mkdtempSync(join(tmpdir(), "nimbus-aws-dl-"));
+    const file = join(dir, `${randomUUID()}.bin`);
+    const r = await spawnCapture(["aws", "s3", "cp", s3Url, file, "--only-show-errors"], {
+      env: extensionProcessEnv({ ...cliEnvFor("aws", process.env), ...extra }),
+      timeoutMs,
+    });
+    if (!r.ok) return { ok: false };
+    const f = Bun.file(file);
+    if (f.size > AWS_DOWNLOAD_MAX_BYTES) return { ok: false };
+    return { ok: true, bytes: await f.bytes() };
+  } catch {
+    return { ok: false };
+  } finally {
+    if (dir !== null) await removeTempDir(dir);
+  }
 }
 
 // ---------------------------------------------------------------------------

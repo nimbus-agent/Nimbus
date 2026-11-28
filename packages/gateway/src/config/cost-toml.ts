@@ -13,6 +13,9 @@
  * [cost.github]
  * orgs = ["acme"]                                    # synced daily from GitHub's billing usage API
  *
+ * [cost.aws]
+ * export = "s3://bucket/prefix"                      # a FOCUS 1.0 CSV Data Export, synced daily (slice 11a)
+ *
  * [[cost.rule]]                                      # ordered, first match wins
  * match = { provider = "aws", tag = { product = "*" } }
  * set = { product = "{tag.product}", env = "{tag.env}" }
@@ -36,11 +39,18 @@ import {
   compileCostRule,
 } from "../finops/cost-rules.ts";
 import {
+  CostAwsConfigError,
+  DEFAULT_COST_AWS_CONFIG,
+  type NimbusCostAwsConfig,
+  readCostAwsTable,
+} from "./cost-aws-toml.ts";
+import {
   CostBitbucketConfigError,
   DEFAULT_COST_BITBUCKET_CONFIG,
   type NimbusCostBitbucketConfig,
   readCostBitbucketTable,
 } from "./cost-bitbucket-toml.ts";
+
 import {
   CostGitlabConfigError,
   DEFAULT_COST_GITLAB_CONFIG,
@@ -67,6 +77,8 @@ export interface NimbusCostConfig {
   readonly gitlab: NimbusCostGitlabConfig;
   /** `[cost.bitbucket]`: the workspaces whose Pipelines minutes are synced, and the owner's rates (slice 9). */
   readonly bitbucket: NimbusCostBitbucketConfig;
+  /** `[cost.aws]`: the FOCUS Data Export in S3 and the Cost Explorer opt-in (slice 11a; see `cost-aws-toml.ts`). */
+  readonly aws: NimbusCostAwsConfig;
   /** `[[cost.report]]` with their `[[cost.report.channel]]` blocks (slice 3; see `cost-report-toml.ts`). */
   readonly reports: readonly CostReportDef[];
   /** Non-null: the report definitions are refused (`reports` is empty); the rules still apply. */
@@ -91,6 +103,7 @@ export const DEFAULT_COST_CONFIG: NimbusCostConfig = Object.freeze({
   githubOrgs: Object.freeze([]) as readonly string[],
   gitlab: DEFAULT_COST_GITLAB_CONFIG,
   bitbucket: DEFAULT_COST_BITBUCKET_CONFIG,
+  aws: DEFAULT_COST_AWS_CONFIG,
   reports: Object.freeze([]) as readonly CostReportDef[],
   reportsError: null,
   error: null,
@@ -204,6 +217,8 @@ function readPlainSection(s: EffectiveSection & { header: string }, draft: Draft
     draft.gitlab = readCostGitlabTable(parseSection(s, "[cost.gitlab]"));
   } else if (s.header === "cost.bitbucket" && !s.isArray) {
     draft.bitbucket = readCostBitbucketTable(parseSection(s, "[cost.bitbucket]"));
+  } else if (s.header === "cost.aws" && !s.isArray) {
+    draft.aws = readCostAwsTable(parseSection(s, "[cost.aws]"));
   } else {
     const shown = s.isArray ? `[[${s.header}]]` : `[${s.header}]`;
     throw new CostConfigError(`unknown section ${shown}`);
@@ -294,7 +309,8 @@ export function resolveCostConfig(sections: readonly EffectiveSection[]): Nimbus
       e instanceof CostConfigError ||
       e instanceof CostRuleError ||
       e instanceof CostGitlabConfigError ||
-      e instanceof CostBitbucketConfigError
+      e instanceof CostBitbucketConfigError ||
+      e instanceof CostAwsConfigError
     ) {
       return Object.freeze({ ...DEFAULT_COST_CONFIG, error: e.message });
     }

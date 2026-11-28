@@ -1411,6 +1411,35 @@ What is read (from Atlassian's OpenAPI description; no live response was checked
 - **API tokens.** Atlassian removed app passwords on 2026-07-28. Store an API token (`nimbus connector auth bitbucket --username <atlassian_email> --token <api_token>`); a stored app password still works as a fallback, and `nimbus connector status bitbucket` shows `credential: api_token` or `credential: app_password` with a deprecation note. The email and token are sent as Basic auth, and only to `api.bitbucket.org` over https: a redirect or a `next` link to another host is a stated gap and is never followed.
 - **Who may read it.** A refused, unknown or invisible workspace and a redirect to another host are shown in every cost view's freshness as `Not synced: …`; a rate-limited response waits for the shared `bitbucket` limiter and a server error is retried the next day. `connector remove bitbucket` deletes these lines too.
 
+### AWS cost from a FOCUS export (`[cost.aws]`)
+
+Create a FOCUS 1.0 export in your AWS account (Billing and Cost Management, Data Exports: FOCUS 1.0 with AWS columns, **CSV**, delivered to a bucket you own), then point Nimbus at its folder; nothing is fetched until `export` is set:
+
+```toml
+[cost.aws]
+export = "s3://my-cost-bucket/focus"   # the prefix holds ONE export (its folder is <prefix>/<export-name>/)
+cost_explorer = false                  # opt-in fallback (a later slice, USD 0.01 per request); used only with no export
+```
+
+| Key | Meaning |
+| --- | --- |
+| `export` | `s3://bucket/prefix`: an S3 bucket name and an optional prefix, no `..`, no spaces. |
+| `cost_explorer` | `true` or `false` (default `false`). Parsed now; read by a later slice, only when no export is set. |
+
+The gateway syncs once a day as source `aws_billing`, provider `aws`, with the `aws.*` credentials you stored for the AWS connector (the AWS CLI must be installed). For each billing period it reads the newest manifest (`<export-name>/metadata/BILLING_PERIOD=YYYY-MM/...Manifest.json`), downloads the data files it lists (gzip is handled), and stores one line per day and grain under the file's `BillingAccountId`. A newer delivery replaces only the days its files cover; a billing account the export stops listing keeps its lines. The current month, plus the previous month until the 5th and on the first sync, are read.
+
+Stated bounds:
+
+- **Documentation-verified only.** The key layout and manifest fields follow AWS's Data Exports documentation; no live bucket was read.
+- **CSV only.** A Parquet export is a stated gap: `the export is Parquet; recreate it as CSV`.
+- **One export per prefix.** Two export names under the prefix are a gap (their lines would be added together); point `export` at one export's parent folder.
+- **Whole periods only.** A file that cannot be downloaded, decoded or parsed, a row that cannot be read, an empty export or a row outside the period makes that month a gap and writes nothing; the stored month stays. Every file must sit under the configured bucket and prefix.
+- **Caps.** At most 200 files, 512 MiB downloaded and 512 MiB of decoded text per period, 256 MiB per file, and 100,000 listed keys; each CLI call is stopped after 5 minutes.
+- **Costs and history.** The S3 storage and request cost is yours. History starts when the export starts.
+- **No export, no `cost_explorer`:** the freshness line shows `AWS cost is not configured: set [cost.aws] export, or cost_explorer = true`.
+- **Re-delivered exports.** A day that an export no longer contains is not cleared (only the days a delivery covers are replaced), and the previous month is re-read only until the 5th of the month and on the first sync. A row dated after today makes its month a gap.
+- **One source per provider, per day.** On each day the AWS sync has lines for, a `[cost.focus] dir` import's AWS lines of that day are set aside, and the views list how many days; days only the file covers keep its lines. The views use the sync and list the file import as set aside (`[cost] authoritative = { aws = "focus" }` chooses the file instead).
+
 ### `nimbus cost products` and `nimbus cost internal`
 
 Cost per product (with its parts: the service and provider, and the env), and the internal cost (CI and the dev and test environments), computed from the local cost lines (`nimbus cost import`), the indexed Vantage rows for a provider with no raw lines, and your `[[cost.rule]]` allocation rules. Local index only: **no network call, no model, no egress row**.
@@ -1449,6 +1478,8 @@ nimbus cost rules check --period month
 | `--json` | Print the result object (`why`: `empty`, `target`, `range`, `previous`, `byCurrency`, `services`, `coverage`, `unassigned`, `context`, `freshness`, `excludedSources`, `notes`, `provisionalFrom`; `rules check`: `empty`, `configError`, `byCurrency`, `rules`, `unusedRules`, `topUnassigned`, `freshness`). |
 
 **Targets.** A product name is read before a service of the same name, and the output says which it read. The name is looked up in both periods, so a cost that fell to zero is still found; an unknown name exits 1 listing the known products and services. A change from 0 reads `new` (no percent). Amounts are never added across currencies.
+
+**Flag changes (D8).** A service with `[ci.service.<id>] feature_flags` bindings also lists the LaunchDarkly flags that changed in the period: `Flags changed: <key> (<environments>) at <ISO time>`, newest first, at most 10 with the rest counted (`--json`: `flags`, `flagsTruncated`). A flag is listed only when its own last change (`metadata.updated_at`) is in the period. Only the latest change of each flag is known (the index keeps no flag history), and the environments shown are those the flag has, since no per-environment change time is recorded; both are stated in a `Gap:` line. `unleash:`, `split:` and `flagsmith:` bindings are accepted but show no changes (a `Gap:` line says so). A service with no bindings prints nothing about flags.
 
 **What is not guessed.** Deploys are listed only for a service configured with a `[ci.service.<id>]` or `[metrics.dora.<id>]` block, by the service id the deploy recorded; a service without one, a service with no repo (so no pull request can be joined) and a service with no ownership entry (`nimbus owners --refresh` derives one for a repo root bound to the service) each print a `Gap:` line. Owners are authorship-derived (git blame), not an approval list.
 
@@ -1707,6 +1738,7 @@ A runbook cannot set approval behaviour (`approve`, `auto`, `yes`, `standing`, `
 | `[incident] anomaly_z` | `3` | Phase 10 IC8: 3 to 20; how many standard deviations above a service's own last 14 days an hour of new error issues, new alerts or failed CI runs must be to become an `anomaly` finding (only after 7 days of history; the deviation is divided by the standard deviation floored at 1, so a series that is always zero needs that many events in one hour). |
 | `[[incident.expect]]` | none | Phase 10 IC8: one table per expectation the radar checks every 15 minutes: `kind` (`deploy`, `ci_success`, `sync` or `item`), `service` (a `[ci.service.<id>]` id for `deploy` and `ci_success`, a connector id for `sync`, the connector service for `item`), `type` (the item type, `item` only) and `max_gap` (`<n>m`, `<n>h` or `<n>d`, 15m to 30d). At most 100; a bad or duplicate entry is skipped with a warning. An overdue expectation is a `radar` finding (`nimbus incident findings`) and a counts-only notification. |
 | `[ci.service.<id>] chat_aliases` | derived | When non-empty, the ONLY terms searched in chat for that service (3 to 64 characters, at most 50 entries, no control characters); by default the service id, its Sentry slugs and its repository names. Also accepted under `[metrics.dora.<id>]`. |
+| `[ci.service.<id>] feature_flags` | `[]` | Phase 7 slice 14: feature flags bound to this service for `nimbus cost why`, as `launchdarkly:<project>`, `launchdarkly:<project>:<flag>` (also `unleash:`, `split:` and `flagsmith:`, which parse but show no changes, owner ruling D8). Each part is 1 to 128 characters of letters, digits, `.`, `_` and `-`; at most 50 entries; an invalid entry is an error naming `[block.id].feature_flags`. Also accepted under `[metrics.dora.<id>]`. |
 | `[ci.service.<id>] argocd_apps` | `[]` | Phase 10 IC5a: the Argo CD application names bound to this service (lower-case alphanumerics, `-` and `.`, at most 50). `nimbus incident remediate` proposes rolling one back to the history entry before the one the correlated deploy created; with none bound the rollback is listed "not available here". Also accepted under `[metrics.dora.<id>]`. |
 
 **Bounds.** A record is a snapshot at its version's assembly time; the chat lane is a literal phrase match; the change lane covers GitHub pull requests only (a GitLab or Bitbucket repository gets a gap); Monte Carlo, Bigeye and Jira Service Management reply shapes are checked against documentation only; and a deployment is "the last deployment before the alert", timing only, never a proven cause.

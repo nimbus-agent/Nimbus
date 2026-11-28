@@ -72,6 +72,40 @@ describe("costSyncDays", () => {
 });
 
 describe("ingestSyncedCostLines", () => {
+  test("a late credit dated before the period replaces its own day; a day after today is refused", () => {
+    const late = line("2026-10-31", -4, { billingPeriod: "2026-11", importId: "x" });
+    ingestSyncedCostLines(db, "github_billing", TARGET, [line("2026-11-20", 1), late], NOW);
+    expect(stored()).toEqual([
+      ["2026-10-31", -4],
+      ["2026-11-20", 1],
+    ]);
+    // restated: the same extra day is replaced, not duplicated
+    ingestSyncedCostLines(
+      db,
+      "github_billing",
+      TARGET,
+      [line("2026-11-20", 1), { ...late, billedCost: -5, effectiveCost: -5 }],
+      NOW,
+    );
+    expect(stored()).toEqual([
+      ["2026-10-31", -5],
+      ["2026-11-20", 1],
+    ]);
+    const future = line("2026-11-28", 9, { billingPeriod: "2026-11", importId: "x" });
+    expect(() => ingestSyncedCostLines(db, "github_billing", TARGET, [future], NOW)).toThrow(
+      CostSyncIntakeError,
+    );
+    expect(() =>
+      ingestSyncedCostLines(
+        db,
+        "github_billing",
+        TARGET,
+        [line("2026-10-31", 1, { source: "x" })],
+        NOW,
+      ),
+    ).toThrow(CostSyncIntakeError);
+  });
+
   test("replaces the month's days, clears a day the sync no longer returns, and is idempotent", () => {
     ingestSyncedCostLines(
       db,
