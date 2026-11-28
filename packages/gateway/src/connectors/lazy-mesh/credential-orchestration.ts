@@ -1,4 +1,5 @@
 import { anyGoogleOAuthVaultPresent } from "../../auth/google-access-token.ts";
+import { readBitbucketVaultCredential } from "../bitbucket-credential.ts";
 import type { ConnectorServiceId } from "../connector-catalog.ts";
 import {
   type ConnectorSecretKeyOf,
@@ -80,9 +81,7 @@ async function ensureBitbucketIfVaultCreds(
   ctx: MeshSpawnContext,
   spawners: CredentialSpawners,
 ): Promise<void> {
-  const bbUser = await readConnectorSecret(ctx.vault, "bitbucket", "username");
-  const bbPass = await readConnectorSecret(ctx.vault, "bitbucket", "app_password");
-  if (bbUser !== null && bbUser !== "" && bbPass !== null && bbPass !== "") {
+  if ((await readBitbucketVaultCredential(ctx.vault)).kind !== "none") {
     await spawners.ensureBitbucketMcp(ctx);
   }
 }

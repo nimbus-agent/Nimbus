@@ -9,6 +9,7 @@
  */
 import { resolveGoogleOAuthVaultKey } from "../../auth/google-access-token.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
+import { readBitbucketVaultCredential } from "../bitbucket-credential.ts";
 import { readConnectorSecret, sharedOAuthKey } from "../connector-vault.ts";
 import { isPagerdutyFromEmail } from "../pagerduty-from-email.ts";
 
@@ -60,12 +61,8 @@ const PREDICATES: Readonly<Record<string, Predicate>> = {
   // GitHub Actions runs as a second server in the github slot, spawned with the SAME PAT.
   github_actions: async (vault) =>
     presentTrimmed(await readConnectorSecret(vault, "github", "pat")),
-  // The spawner needs BOTH the Bitbucket username and the app password.
-  bitbucket: (vault) =>
-    allPresentTrimmed([
-      readConnectorSecret(vault, "bitbucket", "username"),
-      readConnectorSecret(vault, "bitbucket", "app_password"),
-    ]),
+  // The spawner needs a complete Bitbucket pair: the API token pair, or the deprecated app password pair.
+  bitbucket: async (vault) => (await readBitbucketVaultCredential(vault)).kind !== "none",
   // The Jenkins spawner needs the base URL, the username and the API token (each non-blank).
   jenkins: (vault) =>
     allPresentTrimmed([

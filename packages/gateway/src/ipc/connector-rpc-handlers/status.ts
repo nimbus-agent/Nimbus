@@ -1,3 +1,7 @@
+import {
+  BITBUCKET_APP_PASSWORD_DEPRECATION,
+  readBitbucketVaultCredential,
+} from "../../connectors/bitbucket-credential.ts";
 import { readConnectorSecret } from "../../connectors/connector-vault.ts";
 import { resolveGithubBase } from "../../connectors/github-api-base.ts";
 import { getConnectorHealthHistory } from "../../connectors/health.ts";
@@ -48,6 +52,21 @@ export function handleConnectorStatus(ctx: ConnectorRpcHandlerContext): Connecto
 }
 
 /**
+ * `connector.status` for Bitbucket names the credential in use (`credential`: `api_token`, `app_password` or
+ * `none`), and for the old app password pair adds `credentialNote`: Atlassian removed app passwords on 2026-07-28.
+ */
+async function withBitbucketCredential(
+  ctx: ConnectorRpcHandlerContext,
+  hit: ConnectorRpcHit,
+): Promise<ConnectorRpcHit> {
+  const cred = await readBitbucketVaultCredential(ctx.vault);
+  const credential = cred.kind === "token" ? "api_token" : cred.kind;
+  const note =
+    cred.kind === "app_password" ? { credentialNote: BITBUCKET_APP_PASSWORD_DEPRECATION } : {};
+  return { kind: "hit", value: { ...(hit.value as object), credential, ...note } };
+}
+
+/**
  * `connector.status` for a GitHub service adds `instance`: the GitHub Enterprise Server HOST the
  * connector is connected to (never the URL, never a credential), only when a valid
  * `github.api_base` is stored. github.com, an absent or an invalid base shows no field. Read-only.
@@ -58,6 +77,7 @@ export async function withConfiguredInstance(
 ): Promise<ConnectorRpcHit> {
   const row = hit.value as { serviceId?: unknown } | null;
   const githubFamily = ["github", "github_actions", "github_billing"];
+  if (row?.serviceId === "bitbucket") return withBitbucketCredential(ctx, hit);
   if (typeof row?.serviceId !== "string" || !githubFamily.includes(row.serviceId)) return hit;
   const base = resolveGithubBase(await readConnectorSecret(ctx.vault, "github", "api_base"));
   if (!base.ok || base.host === null) return hit;

@@ -8,8 +8,8 @@ import {
   gitlabObservedDay,
 } from "./gitlab-minutes-lines.ts";
 
-const NO_RATE: CostRates = { ratePerMinute: null, currency: "USD", runnerRates: [] };
-const CENT: CostRates = { ratePerMinute: 0.01, currency: "USD", runnerRates: [] };
+const NO_RATE: CostRates = { ratePerMinute: null, currency: "USD", keyedRates: [] };
+const CENT: CostRates = { ratePerMinute: 0.01, currency: "USD", keyedRates: [] };
 
 function run(over: Partial<GitlabMinutesInput>): ReturnType<typeof gitlabMinutesLines> {
   return gitlabMinutesLines({

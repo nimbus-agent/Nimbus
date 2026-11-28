@@ -13,7 +13,7 @@
 // cursor, the stored lines are priced again first (`repriceOwnCostLines`, no API call).
 
 import type { NimbusCostGitlabConfig } from "../config/cost-gitlab-toml.ts";
-import { type CostRates, costRatesFingerprint } from "../finops/cost-rate-price.ts";
+import { type CostRates, costRatesFingerprint, rateKeyFor } from "../finops/cost-rate-price.ts";
 import {
   COST_SYNC_CURSOR_PREFIXES,
   decodeCostSyncCursor,
@@ -253,7 +253,10 @@ export function createGitlabCostSyncable(options: GitlabCostSyncableOptions): Sy
       const rates: CostRates = {
         ratePerMinute: cfg.ratePerMinute,
         currency: cfg.currency,
-        runnerRates: cfg.runnerRates,
+        keyedRates: cfg.runnerRates.map(([d, r]): readonly [string, number] => [
+          rateKeyFor("runner", d),
+          r,
+        ]),
       };
       const recorded = prev.rates === undefined ? {} : { rates: prev.rates };
       const idle = (gaps: Record<string, string> = {}): SyncResult =>
