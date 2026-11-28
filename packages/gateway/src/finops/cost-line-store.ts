@@ -51,10 +51,14 @@ type Row = {
   model: string | null;
   import_id: string;
   grain_hash: string;
+  consumed_quantity: number | null;
+  consumed_unit: string | null;
+  priced: number;
 };
 
 const COLUMNS =
-  "source, provider, billing_account_id, billing_period, charge_day, sub_account_id, sub_account_name, service_name, service_category, region_id, resource_id, resource_name, sku_id, charge_category, billed_cost, effective_cost, currency, tags_json, repo, workflow, model, import_id, grain_hash";
+  "source, provider, billing_account_id, billing_period, charge_day, sub_account_id, sub_account_name, service_name, service_category, region_id, resource_id, resource_name, sku_id, charge_category, billed_cost, effective_cost, currency, tags_json, repo, workflow, model, import_id, grain_hash, consumed_quantity, consumed_unit, priced";
+const COLUMN_COUNT = 26;
 
 function parseTags(text: string): Record<string, string> {
   try {
@@ -100,6 +104,9 @@ function rowToLine(r: Row): CostLine {
     workflow: r.workflow,
     model: r.model,
     importId: r.import_id,
+    consumedQuantity: r.consumed_quantity,
+    consumedUnit: r.consumed_unit,
+    priced: r.priced !== 0,
   };
 }
 
@@ -130,6 +137,9 @@ function storedValue(l: CostLine): string {
     l.repo,
     l.workflow,
     l.model,
+    l.consumedQuantity ?? null,
+    l.consumedUnit ?? null,
+    l.priced !== false,
   ]);
 }
 
@@ -152,6 +162,24 @@ function checkLine(key: CostLineKey, days: ReadonlySet<string>, l: CostLine): vo
     (l.effectiveCost !== null && !Number.isFinite(l.effectiveCost))
   ) {
     throw new Error(`cost line ${l.chargeDay} ${l.serviceName} has a cost that is not finite`);
+  }
+  checkMeasure(l);
+}
+
+/** V110: a finite quantity, a 1-32 character unit, and an unpriced line that carries no cost. */
+function checkMeasure(l: CostLine): void {
+  const q = l.consumedQuantity ?? null;
+  if (q !== null && !Number.isFinite(q)) {
+    throw new Error(`cost line ${l.chargeDay} ${l.serviceName} has a quantity that is not finite`);
+  }
+  const u = l.consumedUnit ?? null;
+  if (u !== null && (u.length === 0 || u.length > 32)) {
+    throw new Error(
+      `cost line ${l.chargeDay} ${l.serviceName} has a unit that is not 1 to 32 characters`,
+    );
+  }
+  if (l.priced === false && (l.billedCost !== 0 || l.effectiveCost !== null)) {
+    throw new Error(`cost line ${l.chargeDay} ${l.serviceName} is unpriced but carries a cost`);
   }
 }
 
@@ -183,7 +211,9 @@ export function replaceCostLines(
       existing.set(`${r.charge_day}|${r.grain_hash}`, storedValue(rowToLine(r)));
     }
     dbRun(db, `DELETE FROM cost_line WHERE ${where}`, params);
-    const insert = db.prepare(`INSERT INTO cost_line (${COLUMNS}) VALUES (${placeholders(23)})`);
+    const insert = db.prepare(
+      `INSERT INTO cost_line (${COLUMNS}) VALUES (${placeholders(COLUMN_COUNT)})`,
+    );
     let inserted = 0;
     let replaced = 0;
     let unchanged = 0;
@@ -222,6 +252,9 @@ export function replaceCostLines(
           l.model,
           l.importId,
           grain,
+          l.consumedQuantity ?? null,
+          l.consumedUnit ?? null,
+          l.priced === false ? 0 : 1,
         );
       }
     } finally {

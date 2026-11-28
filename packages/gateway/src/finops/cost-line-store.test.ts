@@ -46,6 +46,10 @@ function line(n: number, over: Partial<CostLine> = {}): CostLine {
     workflow: null,
     model: null,
     importId: "imp-a",
+    // A read always fills the V110 measure fields, so a round trip compares equal with them set.
+    consumedQuantity: null,
+    consumedUnit: null,
+    priced: true,
     ...over,
   };
 }

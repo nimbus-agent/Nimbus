@@ -35,6 +35,42 @@ export interface CostLine {
   readonly workflow: string | null;
   readonly model: string | null;
   readonly importId: string;
+  /**
+   * FOCUS ConsumedQuantity (V110): how much was used, in `consumedUnit`. A measure, never in the grain. Absent
+   * = not reported (stored as NULL).
+   */
+  readonly consumedQuantity?: number | null;
+  /** FOCUS ConsumedUnit (V110), 1 to 32 characters (`minute`, `tokens`, …). */
+  readonly consumedUnit?: string | null;
+  /**
+   * `false` when the source could not price the line (a CI source with no configured rate, V110): its
+   * `billedCost` is 0 and its `effectiveCost` null, and the views name its quantity as unpriced. Absent = priced.
+   */
+  readonly priced?: boolean;
+}
+
+/**
+ * The measure of two merged rows of one grain (V110): the summed quantity in their shared unit. When either row
+ * reported no quantity (a partial sum would understate the usage) or the units differ (the unit is not part of
+ * the grain, and minutes plus hours is no number), the merged line has none.
+ */
+export function mergeMeasures(
+  a: CostLine,
+  b: CostLine,
+): { consumedQuantity: number | null; consumedUnit: string | null } {
+  const qa = a.consumedQuantity ?? null;
+  const qb = b.consumedQuantity ?? null;
+  const ua = a.consumedUnit ?? null;
+  if (qa === null || qb === null || ua !== (b.consumedUnit ?? null)) {
+    return { consumedQuantity: null, consumedUnit: null };
+  }
+  return { consumedQuantity: qa + qb, consumedUnit: ua };
+}
+
+/** A vendor's unit text as a `consumedUnit`: trimmed, 1 to 32 characters, otherwise null (never refused). */
+export function measureUnit(v: string | null | undefined): string | null {
+  const t = v?.trim() ?? "";
+  return t.length === 0 || t.length > 32 ? null : t;
 }
 
 /** The re-import unit: an import replaces this tuple's stored lines on the days it covers. */

@@ -47,6 +47,8 @@ describe("githubBillingLines", () => {
         workflow: null,
         model: null,
         importId: "github_billing:acme:2026-11",
+        consumedQuantity: 120,
+        consumedUnit: "minutes",
       },
     ]);
   });

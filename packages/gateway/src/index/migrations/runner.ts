@@ -106,7 +106,10 @@ import { QUERY_LATENCY_V14_SQL } from "../query-latency-v14-sql.ts";
 import { REGISTRY_LIVENESS_V80_SQL } from "../registry-liveness-v80-sql.ts";
 import { RESOLVE_KEY_V52_SQL } from "../resolve-key-v52-sql.ts";
 import { SCHEDULER_V2_MIGRATION_SQL } from "../scheduler-schema-sql.ts";
-import { SCHEMA_HISTORY_V108_SQL } from "../schema-history-v108-sql.ts";
+import {
+  SCHEMA_HISTORY_V108_DESCRIPTION,
+  SCHEMA_HISTORY_V108_SQL,
+} from "../schema-history-v108-sql.ts";
 import { INITIAL_SCHEMA_SQL } from "../schema-sql.ts";
 import { SHARE_INBOX_V43_SQL } from "../share-inbox-v43-sql.ts";
 import { SHARE_RECORDS_V41_SQL } from "../share-records-v41-sql.ts";
@@ -145,6 +148,7 @@ import {
   migrateIndexedV98ToV99,
   migrateIndexedV104ToV105,
   migrateIndexedV105ToV106,
+  migrateIndexedV109ToV110,
 } from "./column-steps.ts";
 
 const MIGRATIONS_LEDGER_SQL = `
@@ -881,13 +885,9 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
   { fromVersion: 104, toVersion: 105, apply: migrateIndexedV104ToV105 },
   { fromVersion: 105, toVersion: 106, apply: migrateIndexedV105ToV106 },
   simpleStep(106, 107, "long-term episodic memory (Phase 10, I61)", EPISODIC_MEMORY_V107_SQL),
-  simpleStep(
-    107,
-    108,
-    "warehouse schema history (Phase 10, data incident brief)",
-    SCHEMA_HISTORY_V108_SQL,
-  ),
+  simpleStep(107, 108, SCHEMA_HISTORY_V108_DESCRIPTION, SCHEMA_HISTORY_V108_SQL),
   simpleStep(108, 109, "cost lines (Phase 7, the Cost Pack)", COST_LINE_V109_SQL),
+  { fromVersion: 109, toVersion: 110, apply: migrateIndexedV109ToV110 },
 ];
 
 /**

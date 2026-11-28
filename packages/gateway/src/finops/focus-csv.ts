@@ -11,6 +11,8 @@ import {
   type CostLine,
   type CostLineKey,
   costLineGrainHash,
+  measureUnit,
+  mergeMeasures,
   setTag,
 } from "./cost-line.ts";
 
@@ -319,6 +321,8 @@ function rowToLine(
     workflow: null,
     model: null,
     importId: opts.importId,
+    consumedQuantity: parseAmount(get("ConsumedQuantity")),
+    consumedUnit: measureUnit(get("ConsumedUnit")),
   };
 }
 
@@ -328,7 +332,12 @@ function merge(into: CostLine, add: CostLine): CostLine {
     into.effectiveCost === null && add.effectiveCost === null
       ? null
       : (into.effectiveCost ?? 0) + (add.effectiveCost ?? 0);
-  return { ...into, billedCost: into.billedCost + add.billedCost, effectiveCost: effective };
+  return {
+    ...into,
+    billedCost: into.billedCost + add.billedCost,
+    effectiveCost: effective,
+    ...mergeMeasures(into, add),
+  };
 }
 
 /**

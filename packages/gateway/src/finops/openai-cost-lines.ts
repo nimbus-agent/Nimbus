@@ -18,7 +18,7 @@ import {
   mapCostBuckets,
   nullableId,
 } from "./cost-bucket-map.ts";
-import type { CostLine } from "./cost-line.ts";
+import { type CostLine, measureUnit } from "./cost-line.ts";
 
 export type { CostDropReason, CostMapResult } from "./cost-bucket-map.ts";
 
@@ -41,6 +41,10 @@ export function openaiLineItemModel(lineItem: string): string | null {
   const model = NON_MODEL_PREFIXES.has(first) ? (parts[1] ?? "") : first;
   return model === "" || model.length > MAX_TEXT ? null : model;
 }
+
+/** A reported quantity (V110): a finite number, otherwise none. */
+const finiteQuantity = (v: unknown): number | null =>
+  typeof v === "number" && Number.isFinite(v) ? v : null;
 
 function lineOf(day: string, month: string, r: Record<string, unknown>): CostLine | null {
   const amount = isRecord(r["amount"]) ? r["amount"] : null;
@@ -84,6 +88,8 @@ function lineOf(day: string, month: string, r: Record<string, unknown>): CostLin
     workflow: null,
     model: lineItem === OPENAI_UNKNOWN_LINE_ITEM ? null : openaiLineItemModel(lineItem),
     importId: `${OPENAI_COST_SOURCE}:${OPENAI_COST_ACCOUNT}:${month}`,
+    consumedQuantity: finiteQuantity(r["quantity"]),
+    consumedUnit: measureUnit(unit),
   };
 }
 
