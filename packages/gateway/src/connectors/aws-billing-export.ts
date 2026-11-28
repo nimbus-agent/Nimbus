@@ -18,6 +18,7 @@ import { focusFileText } from "../finops/focus-file-text.ts";
 import type { SyncContext } from "../sync/types.ts";
 import { codeUnitCompare } from "../util/code-unit-compare.ts";
 import {
+  AWS_CLI_TIMEOUT_MS,
   awsCliDownload,
   awsCliJson,
   awsNextToken,
@@ -35,6 +36,8 @@ const LIST_PAGE_SIZE = 5000;
 export const AWS_EXPORT_MAX_FILES = 200;
 /** All files of one period together; a larger period is a `month_gap`, never a partial write. */
 export const AWS_EXPORT_MAX_TOTAL_BYTES = 512 * 1024 * 1024;
+/** All decoded text of one period together (a gzip file expands several times over). */
+export const AWS_EXPORT_MAX_TEXT_BYTES = 512 * 1024 * 1024;
 
 export const AWS_COST_GAPS = {
   notConfigured: "AWS cost is not configured: set [cost.aws] export, or cost_explorer = true",
@@ -62,18 +65,22 @@ export interface AwsBillingCli {
 export function awsBillingCli(ctx: SyncContext, extra: Record<string, string>): AwsBillingCli {
   return {
     list: (bucket, prefix, token) =>
-      awsCliJson(ctx, [
-        "s3api",
-        "list-objects-v2",
-        "--bucket",
-        bucket,
-        "--prefix",
-        prefix,
-        "--max-items",
-        String(LIST_PAGE_SIZE),
-        ...(token === null ? [] : ["--starting-token", token]),
-      ]),
-    download: (url) => awsCliDownload(url, extra),
+      awsCliJson(
+        ctx,
+        [
+          "s3api",
+          "list-objects-v2",
+          "--bucket",
+          bucket,
+          "--prefix",
+          prefix,
+          "--max-items",
+          String(LIST_PAGE_SIZE),
+          ...(token === null ? [] : ["--starting-token", token]),
+        ],
+        AWS_CLI_TIMEOUT_MS,
+      ),
+    download: (url) => awsCliDownload(url, extra, AWS_CLI_TIMEOUT_MS),
   };
 }
 
@@ -177,10 +184,12 @@ async function exportText(
   cli: AwsBillingCli,
   urls: readonly string[],
   month: string,
+  maxTextBytes: number,
 ): Promise<string | CostMonthOutcome> {
   const parts: string[] = [];
   let header: string | null = null;
   let total = 0;
+  let textTotal = 0;
   for (const url of urls) {
     const got = await cli.download(url); // NOSONAR S9382: one file at a time
     if (!got.ok)
@@ -197,6 +206,12 @@ async function exportText(
     } catch (e) {
       return monthGap(
         `${short(e instanceof Error ? e.message : String(e))}; ${month} was not updated`,
+      );
+    }
+    textTotal += Buffer.byteLength(text);
+    if (textTotal > maxTextBytes) {
+      return monthGap(
+        `the ${month} export is larger than the decoded-text cap; that month was not updated`,
       );
     }
     if (text.trim() === "") continue; // Data Exports overwrites surplus chunks with empty data
@@ -225,13 +240,14 @@ export async function readExportMonth(
   prefix: string,
   ref: ManifestRef,
   month: string,
+  maxTextBytes: number = AWS_EXPORT_MAX_TEXT_BYTES,
 ): Promise<CostLine[] | CostMonthOutcome> {
   const manifest = await cli.download(`s3://${bucket}/${ref.key}`);
   if (!manifest.ok)
     return monthGap(`the ${month} export manifest could not be read; that month was not updated`);
   const urls = manifestFiles(new TextDecoder().decode(manifest.bytes), bucket, prefix, month);
   if (isOutcome(urls)) return urls;
-  const text = await exportText(cli, urls, month);
+  const text = await exportText(cli, urls, month, maxTextBytes);
   if (typeof text !== "string") return text;
   let parsed: ReturnType<typeof parseFocusCsv>;
   try {

@@ -15,7 +15,7 @@ import type { SyncContext } from "../sync/types.ts";
 import { createMockVault } from "../vault/mock.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { createAwsBillingCostSyncable } from "./aws-billing-cost-sync.ts";
-import { AWS_COST_GAPS, type AwsBillingCli } from "./aws-billing-export.ts";
+import { AWS_COST_GAPS, type AwsBillingCli, readExportMonth } from "./aws-billing-export.ts";
 
 const NOW = Date.UTC(2026, 10, 20, 9);
 const DAY = 86_400_000;
@@ -330,6 +330,61 @@ describe("aws_billing: the export path", () => {
     const r = await run(two, cfg({ export: { bucket: "acme-cost", prefix: "focus/prod" } }));
     expect(Object.values(r.cursor.gaps)).toEqual([AWS_COST_GAPS.severalExports]);
     expect(stored()).toHaveLength(0);
+  });
+
+  test("a late credit dated in the previous month is written with its period, not retried forever", async () => {
+    const b = new Bucket();
+    const late = "111,-3,USD,2026-10-31T00:00:00Z,Amazon S3,2026-11-01T00:00:00Z";
+    b.deliver("2026-11", [gz(csv(row("111", 10, 1), late))], "2026-11-19T00:00:00+00:00");
+    const { cursor } = await run(b, cfg());
+    expect(cursor.gaps).toEqual({});
+    expect(cursor.pending).toEqual({});
+    const all = readCostLines(db, { fromDay: "2026-10-01", toDay: "2026-11-30" }).filter(
+      (l) => l.source === "aws_billing" && l.billingPeriod === "2026-11",
+    );
+    expect(all.map((l) => [l.chargeDay, l.billedCost]).sort()).toEqual([
+      ["2026-10-31", -3],
+      ["2026-11-01", 10],
+    ]);
+  });
+
+  test("a row dated after today is a month_gap with a reason, not a retry", async () => {
+    const b = new Bucket();
+    const future = "111,5,USD,2026-11-25T00:00:00Z,Amazon S3,2026-11-01T00:00:00Z";
+    b.deliver("2026-11", [gz(csv(row("111", 10, 1), future))], "2026-11-19T00:00:00+00:00");
+    const { cursor } = await run(b, cfg());
+    expect(stored()).toHaveLength(0);
+    expect(Object.values(cursor.gaps)[0]).toContain("dated after today");
+  });
+
+  test("a zero-byte gz chunk is skipped like any empty chunk", async () => {
+    const b = new Bucket();
+    b.deliver(
+      "2026-11",
+      [gz(csv(row("111", 10, 1))), new Uint8Array(0)],
+      "2026-11-19T00:00:00+00:00",
+    );
+    await run(b, cfg());
+    expect(total("111")).toBe(10);
+  });
+
+  test("the decoded text of a period is capped: past the cap it is a month_gap", async () => {
+    const b = new Bucket();
+    b.deliver(
+      "2026-11",
+      [gz(csv(row("111", 10, 1))), gz(csv(row("111", 1, 2)))],
+      "2026-11-19T00:00:00+00:00",
+    );
+    const ref = {
+      key: `${EXPORT}/metadata/BILLING_PERIOD=2026-11/daily-Manifest.json`,
+      lastModified: 0,
+    };
+    const r = await readExportMonth(b.cli(), "acme-cost", "focus/prod", ref, "2026-11", 150);
+    expect(r).toMatchObject({ kind: "month_gap" });
+    expect(JSON.stringify(r)).toContain("decoded-text cap");
+    expect(
+      Array.isArray(await readExportMonth(b.cli(), "acme-cost", "focus/prod", ref, "2026-11")),
+    ).toBe(true);
   });
 
   test("a re-sync of the same export changes nothing", async () => {

@@ -10,6 +10,8 @@ export const FOCUS_MAX_TEXT_BYTES = 1024 * 1024 * 1024;
  * {@link FocusCsvError} for a corrupt gzip stream, an over-size result or invalid UTF-8.
  */
 export function focusFileText(bytes: Uint8Array, name: string): string {
+  // An empty file (Data Exports overwrites surplus chunks with empty data, even a `.gz` one) is empty text.
+  if (bytes.byteLength === 0) return "";
   const gz = name.toLowerCase().endsWith(".gz") || (bytes[0] === 0x1f && bytes[1] === 0x8b);
   let plain: Uint8Array = bytes;
   if (gz) {

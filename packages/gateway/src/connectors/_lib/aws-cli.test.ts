@@ -16,6 +16,7 @@ import {
   extractArray,
   parseJson,
   type RunAwsCli,
+  removeTempDir,
   runAwsCliPaginatedWalk,
 } from "./aws-cli.ts";
 
@@ -249,5 +250,59 @@ describe("awsCliDownload", () => {
     expect(await awsCliDownload("s3://b/k", {})).toEqual({ ok: false });
     stubSpawn(() => ({ exitCode: 0, stdout: "" }));
     expect(await awsCliDownload("s3://b/k", {})).toEqual({ ok: false });
+  });
+});
+
+describe("awsCliDownload: timeout and cleanup", () => {
+  /** A child that never closes: only the timeout ends it. */
+  function hangingChild(): unknown {
+    const proc = new EventEmitter() as EventEmitter & {
+      stdout: EventEmitter;
+      stderr: EventEmitter;
+      kill: () => void;
+    };
+    proc.stdout = new EventEmitter();
+    proc.stderr = new EventEmitter();
+    proc.kill = (): void => {};
+    return proc;
+  }
+
+  test("a download that does not finish in time is not ok", async () => {
+    spawnCaptureInternals.spawn = (() => hangingChild()) as unknown as CaptureSpawn;
+    expect(await awsCliDownload("s3://b/k", {}, 20)).toEqual({ ok: false });
+  });
+
+  test("a listing call that does not finish in time is not ok", async () => {
+    spawnCaptureInternals.spawn = (() => hangingChild()) as unknown as CaptureSpawn;
+    const ctx = {
+      getSharedSecret: async (_s: string, k: string) => (k === "profile" ? "p" : null),
+    } as unknown as SyncContext;
+    expect(await awsCliJson(ctx, ["s3api", "list-objects-v2"], 20)).toEqual({
+      ok: false,
+      text: "",
+    });
+  });
+
+  test("removeTempDir retries a busy directory three times and never throws", async () => {
+    let calls = 0;
+    await removeTempDir(
+      "d",
+      () => {
+        calls++;
+        if (calls < 3) throw new Error("EBUSY");
+      },
+      1,
+    );
+    expect(calls).toBe(3);
+    let always = 0;
+    await removeTempDir(
+      "d",
+      () => {
+        always++;
+        throw new Error("EBUSY");
+      },
+      1,
+    );
+    expect(always).toBe(3);
   });
 });

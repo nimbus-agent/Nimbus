@@ -16,6 +16,10 @@ describe("focusFileText", () => {
     expect(focusFileText(gz, "no-extension")).toBe("a,b\n1,é\n");
   });
 
+  test("zero bytes are empty text, even under a .gz name", () => {
+    expect(focusFileText(new Uint8Array(0), "x-00002.csv.gz")).toBe("");
+  });
+
   test("a .gz name over bytes that are not gzip is refused", () => {
     expect(() => focusFileText(enc("a,b\n"), "x.csv.gz")).toThrow(FocusCsvError);
   });

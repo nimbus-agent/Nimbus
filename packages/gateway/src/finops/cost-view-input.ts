@@ -53,30 +53,59 @@ function chooseSources(
     return { keep: (s) => s === chosen, excluded };
   }
   const hasRaw = [...sources].some((s) => s !== VANTAGE_SOURCE);
-  // C4 (Phase 7 slice 11a): a cloud sync (`*_billing`) and a FOCUS file import of one provider are two raw
-  // views of the same bill; the sync wins, so the two are never added together.
-  const cloudSync = [...sources].some((s) => s.endsWith("_billing"));
-  const setAsideFocus = cloudSync && sources.has(FOCUS_SOURCE);
-  const setAsideVantage = hasRaw && sources.has(VANTAGE_SOURCE);
-  if (!setAsideFocus && !setAsideVantage) return { keep: null, excluded: [] };
-  const excluded: Excluded[] = [];
-  if (setAsideFocus) {
-    excluded.push({
+  if (!hasRaw || !sources.has(VANTAGE_SOURCE)) return { keep: null, excluded: [] };
+  return {
+    keep: (s) => s !== VANTAGE_SOURCE,
+    excluded: [
+      {
+        source: VANTAGE_SOURCE,
+        provider,
+        reason: "raw cost lines exist for this provider (set [cost] authoritative to choose)",
+      },
+    ],
+  };
+}
+
+/** The cloud billing syncs (C4): each reads a cloud's own export or cost API, the same bill a FOCUS file holds. */
+export const CLOUD_SYNC_SOURCES: ReadonlySet<string> = new Set([
+  "aws_billing",
+  "azure_billing",
+  "gcp_billing",
+]);
+
+/**
+ * C4 (Phase 7 slice 11a): on a day a cloud sync has lines for a provider, a FOCUS file import's lines of that
+ * provider and day are the same bill and are set aside, so the two are never added together. A day only the file
+ * covers (history from before the sync, or a day the sync has not read) keeps the file's lines. A provider
+ * `[cost] authoritative` names is left to the authoritative rule.
+ */
+function setAsideFocusDays(
+  all: readonly CostLine[],
+  chosenFor: (provider: string) => string | undefined,
+): { drop: (l: CostLine) => boolean; excluded: Excluded[] } {
+  const cloudDays = new Map<string, Set<string>>();
+  for (const l of all) {
+    if (!CLOUD_SYNC_SOURCES.has(l.source) || chosenFor(l.provider) !== undefined) continue;
+    const days = cloudDays.get(l.provider) ?? new Set<string>();
+    days.add(l.chargeDay);
+    cloudDays.set(l.provider, days);
+  }
+  const dropped = new Map<string, Set<string>>();
+  for (const l of all) {
+    if (l.source !== FOCUS_SOURCE || cloudDays.get(l.provider)?.has(l.chargeDay) !== true) continue;
+    const days = dropped.get(l.provider) ?? new Set<string>();
+    days.add(l.chargeDay);
+    dropped.set(l.provider, days);
+  }
+  const excluded: Excluded[] = [...dropped]
+    .sort(([x], [y]) => codeUnitCompare(x, y))
+    .map(([provider, days]) => ({
       source: FOCUS_SOURCE,
       provider,
-      reason: "cloud sync active for this provider (set [cost] authoritative to choose)",
-    });
-  }
-  if (setAsideVantage) {
-    excluded.push({
-      source: VANTAGE_SOURCE,
-      provider,
-      reason: "raw cost lines exist for this provider (set [cost] authoritative to choose)",
-    });
-  }
+      reason: `cloud sync active for this provider on ${String(days.size)} day${days.size === 1 ? "" : "s"} (set [cost] authoritative to choose)`,
+    }));
   return {
-    keep: (s) =>
-      !(setAsideVantage && s === VANTAGE_SOURCE) && !(setAsideFocus && s === FOCUS_SOURCE),
+    drop: (l) => l.source === FOCUS_SOURCE && (dropped.get(l.provider)?.has(l.chargeDay) ?? false),
     excluded,
   };
 }
@@ -98,7 +127,11 @@ export function gatherCostViewInput(
     if (c.keep !== null) keep.set(provider, c.keep);
     excluded.push(...c.excluded);
   }
-  const lines = all.filter((l) => keep.get(l.provider)?.(l.source) ?? true);
+  const focus = setAsideFocusDays(all, (p) =>
+    cfg.error === null ? cfg.authoritative[p] : undefined,
+  );
+  excluded.push(...focus.excluded);
+  const lines = all.filter((l) => !focus.drop(l) && (keep.get(l.provider)?.(l.source) ?? true));
   const lastDays = readCostLineFreshness(db);
   if (adapted.lastDay !== null) lastDays.push({ source: VANTAGE_SOURCE, lastDay: adapted.lastDay });
   const currencies = new Set([...readCostLineCurrencies(db), ...adapted.currencies]);

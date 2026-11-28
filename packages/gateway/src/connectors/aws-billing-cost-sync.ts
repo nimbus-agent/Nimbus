@@ -139,6 +139,15 @@ export function createAwsBillingCostSyncable(options: AwsBillingCostSyncableOpti
         if (ref === undefined) return { kind: "ok", lines: 0, bytes: 0 };
         const read = await readExportMonth(cli, exportAt.bucket, exportAt.prefix, ref, month);
         if (!Array.isArray(read)) return read as CostMonthOutcome;
+        // A charge day after today cannot be written (the intake refuses it): a stated gap, not an endless retry.
+        const today = new Date(nowMs).toISOString().slice(0, 10);
+        const future = read.filter((l) => l.chargeDay > today).length;
+        if (future > 0) {
+          return {
+            kind: "month_gap",
+            reason: `${String(future)} rows of the ${month} export are dated after today; that month was not updated`,
+          };
+        }
         let written = 0;
         for (const g of byBillingAccount(read)) {
           const refused = writeGroup(ctx, month, g);

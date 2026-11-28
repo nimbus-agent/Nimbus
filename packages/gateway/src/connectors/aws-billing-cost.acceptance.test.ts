@@ -137,7 +137,8 @@ describe("acceptance: AWS cost from a FOCUS export in S3", () => {
       {
         source: "focus",
         provider: "aws",
-        reason: "cloud sync active for this provider (set [cost] authoritative to choose)",
+        reason:
+          "cloud sync active for this provider on 2 days (set [cost] authoritative to choose)",
       },
     ]);
 

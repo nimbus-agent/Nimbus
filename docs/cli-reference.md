@@ -1412,10 +1412,11 @@ Stated bounds:
 - **CSV only.** A Parquet export is a stated gap: `the export is Parquet; recreate it as CSV`.
 - **One export per prefix.** Two export names under the prefix are a gap (their lines would be added together); point `export` at one export's parent folder.
 - **Whole periods only.** A file that cannot be downloaded, decoded or parsed, a row that cannot be read, an empty export or a row outside the period makes that month a gap and writes nothing; the stored month stays. Every file must sit under the configured bucket and prefix.
-- **Caps.** At most 200 files and 512 MiB per period, 256 MiB per file, and 100,000 listed keys.
+- **Caps.** At most 200 files, 512 MiB downloaded and 512 MiB of decoded text per period, 256 MiB per file, and 100,000 listed keys; each CLI call is stopped after 5 minutes.
 - **Costs and history.** The S3 storage and request cost is yours. History starts when the export starts.
 - **No export, no `cost_explorer`:** the freshness line shows `AWS cost is not configured: set [cost.aws] export, or cost_explorer = true`.
-- **One source per provider.** When a `[cost.focus] dir` import and this sync both cover AWS, the views use the sync and list the file import as set aside (`[cost] authoritative = { aws = "focus" }` chooses the file instead).
+- **Re-delivered exports.** A day that an export no longer contains is not cleared (only the days a delivery covers are replaced), and the previous month is re-read only until the 5th of the month and on the first sync. A row dated after today makes its month a gap.
+- **One source per provider, per day.** On each day the AWS sync has lines for, a `[cost.focus] dir` import's AWS lines of that day are set aside, and the views list how many days; days only the file covers keep its lines. The views use the sync and list the file import as set aside (`[cost] authoritative = { aws = "focus" }` chooses the file instead).
 
 ### `nimbus cost products` and `nimbus cost internal`
 
