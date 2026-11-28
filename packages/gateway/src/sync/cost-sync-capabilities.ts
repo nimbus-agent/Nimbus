@@ -23,6 +23,7 @@ export const COST_SYNC_SERVICES: ReadonlySet<string> = new Set([
   "anthropic_billing",
   "gitlab_billing",
   "bitbucket_billing",
+  "jenkins_billing",
   "aws_billing",
   "gcp_billing",
 ]);
