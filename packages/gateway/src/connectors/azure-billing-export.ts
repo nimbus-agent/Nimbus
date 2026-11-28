@@ -40,8 +40,6 @@ export const AZURE_BLOB_TIMEOUT_MS = 5 * 60 * 1000;
 
 export const AZURE_COST_GAPS = {
   notConfigured: "Azure cost is not configured: set [cost.azure] export, or scopes",
-  scopesOnly:
-    "Azure cost is not configured: [cost.azure] scopes are not read by this version; set [cost.azure] export",
   list: "the Azure cost export could not be listed (check the account, the container and the path)",
   access:
     "Azure refused the export container (the service principal needs the Storage Blob Data Reader role on it)",

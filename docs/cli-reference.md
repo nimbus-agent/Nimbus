@@ -1425,7 +1425,7 @@ Create a Cost Management export in Azure (Cost Management, Exports: **Cost and u
 ```toml
 [cost.azure]
 export = { account = "acmecost", container = "exports", path = "focus/monthly" }
-scopes = []   # parsed now; read by the Query API fallback (a later slice)
+scopes = []   # the Query API fallback: read only when no export is set
 ```
 
 | Key | Meaning |
@@ -1433,7 +1433,7 @@ scopes = []   # parsed now; read by the Query API fallback (a later slice)
 | `export.account` | The storage account name (3 to 24 lowercase letters and digits). |
 | `export.container` | The blob container name. |
 | `export.path` | The folder inside the container that holds the export's date-range folders: the export's storage directory plus its name (`<directory>/<export-name>`). |
-| `scopes` | Cost Management scope resource ids (at most 50). Parsed only. |
+| `scopes` | Cost Management scopes for the Query API fallback (at most 50): `/subscriptions/<guid>`, `/subscriptions/<guid>/resourceGroups/<name>` or `/providers/Microsoft.Billing/billingAccounts/<id>`. Read only when no `export` is set. |
 
 The gateway syncs once a day as source `azure_billing`, provider `azure`, with the `azure.tenant_id`, `azure.client_id` and `azure.client_secret` you stored for the Azure connector. It signs in over HTTPS (OAuth client credentials; the Azure CLI is not used and the secret never appears in a command line), lists `<path>/<YYYYMMDD-YYYYMMDD>/<run-id>/`, reads each billing month's newest run that has a `manifest.json`, downloads the parts the manifest lists (gzip is handled) and stores one line per day and grain under each file's `BillingAccountId`. A newer run replaces only the days its files cover.
 
@@ -1445,8 +1445,20 @@ Stated bounds:
 - **Documentation-verified only.** The folder layout and manifest fields follow Microsoft's export documentation; no live account was read.
 - **CSV only.** A Parquet export is a stated gap: `the export is Parquet; recreate it as CSV`. A run folder with no manifest yet is ignored. A date range that spans two months is not read.
 - **Whole periods only.** A part that cannot be downloaded, decoded or parsed, a row that cannot be read, an empty export or a row outside the period makes that month a gap and writes nothing; the stored month stays. At most 200 files per month, 256 MiB per file, 100,000 listed blobs.
-- **No export:** the freshness line shows `Azure cost is not configured: set [cost.azure] export, or scopes`.
+- **No export and no scopes:** the freshness line shows `Azure cost is not configured: set [cost.azure] export, or scopes`.
 - **One source per provider, per day.** On each day the Azure sync has lines for, a `[cost.focus] dir` import's Azure lines of that day are set aside (`[cost] authoritative = { azure = "focus" }` chooses the file instead).
+
+#### The Query API fallback (`scopes`, no `export`)
+
+With no `export`, each scope in `scopes` is read from the Cost Management Query API once a day. It is on by default (it is free and only rate-limited), with the same service principal; **the service principal needs the Cost Management Reader role on each scope**, and a 401 or 403 shows as a gap saying so. A subscription, a resource group and a billing account are accepted (a leading or trailing slash is dropped); a management-group scope is not.
+
+Stated bounds:
+
+- **Aggregated grain only.** Lines are per day, service and resource group (billing account = the scope, sub-account = the resource group); there is no per-resource detail and no tags. Use an `export` for that.
+- **Quota-limited.** The Query API allows 12 QPU per 10 seconds, 60 per minute and 600 per hour per tenant, one QPU per month of data queried (Microsoft may change this). On a 429 the gateway waits the `x-ms-ratelimit-microsoft.costmanagement-qpu-retry-after` seconds (60 when the header is missing) once per run, then retries the month on the next run.
+- **Whole months only.** An unreadable row, more than 20 pages, a next-page link that leaves management.azure.com or does not advance, or an empty answer for a month that already holds lines makes that month a gap and writes nothing. A missing currency column is a retry.
+- **Documentation-verified only** (api-version `2026-06-01` of Microsoft's Query reference); no live tenant was read.
+- **When an `export` is set, `scopes` are not read.**
 
 ### `nimbus cost products` and `nimbus cost internal`
 

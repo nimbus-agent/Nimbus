@@ -18,19 +18,26 @@ describe("[cost.azure]", () => {
 
   test("an export and scopes; the path's outer slashes and a scope's trailing slash are dropped", () => {
     const c = az(
-      `export = { account = "acmecost", container = "my-exports", path = "/focus/monthly/" }\nscopes = ["/subscriptions/0000/", "/providers/Microsoft.Billing/billingAccounts/123"]`,
+      `export = { account = "acmecost", container = "my-exports", path = "/focus/monthly/" }\nscopes = ["/subscriptions/00000000-0000-0000-0000-000000000000/", "providers/Microsoft.Billing/billingAccounts/123"]`,
     );
     expect(c.error).toBeNull();
     expect(c.azure).toEqual({
       export: { account: "acmecost", container: "my-exports", path: "focus/monthly" },
-      scopes: ["/subscriptions/0000", "/providers/Microsoft.Billing/billingAccounts/123"],
+      scopes: [
+        "/subscriptions/00000000-0000-0000-0000-000000000000",
+        "/providers/Microsoft.Billing/billingAccounts/123",
+      ],
     });
   });
 
   test("scopes alone are parsed (slice 12b reads them)", () => {
-    const c = az('scopes = ["/subscriptions/0000"]');
+    const c = az(
+      'scopes = ["/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-1"]',
+    );
     expect(c.azure.export).toBeNull();
-    expect(c.azure.scopes).toEqual(["/subscriptions/0000"]);
+    expect(c.azure.scopes).toEqual([
+      "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-1",
+    ]);
   });
 
   test("refusals refuse the whole cost config", () => {
@@ -45,13 +52,19 @@ describe("[cost.azure]", () => {
       'export = { account = "acmecost", container = "exports", path = "p", extra = 1 }',
       'scopes = "x"',
       'scopes = ["relative"]',
-      'scopes = ["/a", "/a"]',
+      'scopes = ["/a"]',
+      'scopes = ["/subscriptions/0000"]',
+      'scopes = ["/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/.."]',
+      'scopes = ["/subscriptions/00000000-0000-0000-0000-000000000000", "/subscriptions/00000000-0000-0000-0000-000000000000/"]',
       'scopes = ["/a/../b"]',
       "bogus = 1",
     ];
     for (const b of bad) expect(az(b).error).not.toBeNull();
     expect(az(EXPORT).error).toBeNull();
-    const many = Array.from({ length: 51 }, (_, i) => `"/s${String(i)}"`).join(",");
+    const many = Array.from(
+      { length: 51 },
+      (_, i) => `"/subscriptions/00000000-0000-0000-0000-${String(i).padStart(12, "0")}"`,
+    ).join(",");
     expect(az(`scopes = [${many}]`).error).toContain("at most 50");
   });
 });

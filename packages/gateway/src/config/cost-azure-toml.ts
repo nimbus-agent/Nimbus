@@ -10,8 +10,8 @@
  *
  * `export` names a FOCUS "cost and usage details" CSV export in Azure Blob Storage: `path` is the folder inside
  * the container that holds the date-range folders (the export's storage directory plus its name). `scopes` are
- * parsed and kept for the Query API fallback (slice 12b); the export path does not read them. Nothing is read
- * until `export` is set.
+ * read by the Query API fallback (slice 12b) only when no `export` is set; with an `export` they are not read.
+ * Nothing is read until `export` or `scopes` is set.
  */
 
 export interface NimbusCostAzureConfig {
@@ -21,7 +21,7 @@ export interface NimbusCostAzureConfig {
     readonly container: string;
     readonly path: string;
   } | null;
-  /** Cost Management scope resource ids (used by slice 12b only). */
+  /** Cost Management scope resource ids (read by the Query API fallback, slice 12b, when `export` is null). */
   readonly scopes: readonly string[];
 }
 
@@ -39,7 +39,23 @@ export const CONTAINER_RE = /^[a-z0-9](?:[a-z0-9]|-(?!-)){1,61}[a-z0-9]$/;
 const SEGMENT_RE = /^[A-Za-z0-9!_.*'()=-]+$/;
 export const COST_AZURE_MAX_PATH = 512;
 export const COST_AZURE_MAX_SCOPES = 50;
-const SCOPE_RE = /^\/[A-Za-z0-9/._()-]+$/;
+const GUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+/** The three scope shapes the Query API fallback reads (slice 12b): a subscription, a resource group, a billing account. */
+const SCOPE_RES: readonly RegExp[] = [
+  new RegExp(`^/subscriptions/${GUID}$`, "i"),
+  new RegExp(`^/subscriptions/${GUID}/resourceGroups/(?!\\.+$)[A-Za-z0-9._()-]{1,90}$`, "i"),
+  /^\/providers\/Microsoft\.Billing\/billingAccounts\/(?!\.+$)[A-Za-z0-9:_.-]{1,100}$/i,
+];
+
+/**
+ * A scope as the request path wants it: leading and trailing slashes removed, or null when it is not one of the
+ * three accepted shapes (`/subscriptions/<guid>`, `.../resourceGroups/<name>`,
+ * `/providers/Microsoft.Billing/billingAccounts/<id>`). "." and ".." segments never match.
+ */
+export function normaliseAzureScope(s: string): string | null {
+  const bare = s.trim().replace(/^\/+|\/+$/g, "");
+  return SCOPE_RES.some((re) => re.test(`/${bare}`)) ? bare : null;
+}
 
 const bad = (key: string, why: string): CostAzureConfigError =>
   new CostAzureConfigError(`[cost.azure].${key} ${why}`);
@@ -87,10 +103,14 @@ function readScopes(v: unknown): readonly string[] {
   }
   const out: string[] = [];
   for (const s of v) {
-    const scope = typeof s === "string" ? s.trim().replace(/\/+$/, "") : "";
-    if (!SCOPE_RE.test(scope) || scope.length > COST_AZURE_MAX_PATH || scope.includes("..")) {
-      throw bad("scopes", `has an invalid scope ${JSON.stringify(s)?.slice(0, 80)}`);
+    const bare = typeof s === "string" ? normaliseAzureScope(s) : null;
+    if (bare === null) {
+      throw bad(
+        "scopes",
+        `has an invalid scope ${JSON.stringify(s)?.slice(0, 80)} (use /subscriptions/<id>, /subscriptions/<id>/resourceGroups/<name> or /providers/Microsoft.Billing/billingAccounts/<id>)`,
+      );
     }
+    const scope = `/${bare}`;
     if (out.includes(scope)) throw bad("scopes", `lists ${scope} twice`);
     out.push(scope);
   }

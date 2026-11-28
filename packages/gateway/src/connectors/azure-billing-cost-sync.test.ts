@@ -343,16 +343,11 @@ describe("azure_billing: the export path", () => {
     expect(Object.values((await run(s, cfg())).cursor.gaps)[0]).toContain("dated after today");
   });
 
-  test("no export: the configuration gap; scopes alone say 12b; a refused cost config keeps the cursor; no credentials read nothing", async () => {
+  test("no export and no scopes: the configuration gap; a refused cost config keeps the cursor; no credentials read nothing", async () => {
     const s = new Storage();
     expect(Object.values((await run(s, cfg({ export: null }))).cursor.gaps)).toEqual([
       AZURE_COST_GAPS.notConfigured,
     ]);
-    expect(
-      Object.values(
-        (await run(s, cfg({ export: null, scopes: ["/subscriptions/1"] }))).cursor.gaps,
-      ),
-    ).toEqual([AZURE_COST_GAPS.scopesOnly]);
     const kept = await run(s, null, "nimbus-azb1:abc");
     expect(kept.out.cursor).toBe("nimbus-azb1:abc");
     expect((await run(s, null)).out.cursor).toContain(PREFIX);

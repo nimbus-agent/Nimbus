@@ -7,8 +7,9 @@
 // `azure-billing-export.ts`. The "account" of the month loop is the export location; the cost lines' billing
 // account is the FOCUS `BillingAccountId`. The service principal needs the Storage Blob Data Reader role on the
 // container. Per period and billing account the lines are written ONCE through `replaceCostLinesForMonth` (D24),
-// and only the days the export covers are replaced (as `aws_billing` does). Slice 12b adds the Query API fallback.
-import type { NimbusCostAzureConfig } from "../config/cost-azure-toml.ts";
+// and only the days the export covers are replaced (as `aws_billing` does). With no export, the scopes are read from the
+// Query API (slice 12b, `azure-billing-query-run.ts`).
+import { type NimbusCostAzureConfig, normaliseAzureScope } from "../config/cost-azure-toml.ts";
 import type { CostLine } from "../finops/cost-line.ts";
 import {
   COST_SYNC_CURSOR_PREFIXES,
@@ -32,6 +33,7 @@ import {
   listAzureExport,
   readAzureExportMonth,
 } from "./azure-billing-export.ts";
+import { runAzureQuery } from "./azure-billing-query-run.ts";
 import { type CostMonthOutcome, own, runCostAccounts } from "./cost-month-sync.ts";
 import { fetchSameOriginOnly } from "./same-origin-fetch.ts";
 
@@ -48,6 +50,8 @@ export type AzureBillingCostSyncableOptions = {
   readonly now?: () => number;
   readonly fetch?: AzureFetch;
   readonly client?: AzureBlobClient;
+  /** Test seam: the wait of a throttled Query API request. */
+  readonly sleep?: (ms: number) => Promise<void>;
 };
 
 type Group = { readonly account: string; readonly lines: CostLine[] };
@@ -100,7 +104,8 @@ export function createAzureBillingCostSyncable(options: AzureBillingCostSyncable
         exportAt === null
           ? null
           : `azure://${exportAt.account}/${exportAt.container}/${exportAt.path}`;
-      const accounts = where === null ? [] : [where];
+      const scopes = cfg.scopes.flatMap((s) => normaliseAzureScope(s) ?? []);
+      const accounts = where === null ? scopes : [where];
       const prev = decodeCostSyncCursor(PREFIX, cursor);
       const keep = <T>(m: Readonly<Record<string, T>>): Record<string, T> => {
         const out: Record<string, T> = {};
@@ -121,15 +126,26 @@ export function createAzureBillingCostSyncable(options: AzureBillingCostSyncable
           }),
           0,
         );
-      if (exportAt === null) {
-        return idle({
-          [CONFIG_KEY]:
-            cfg.scopes.length > 0 ? AZURE_COST_GAPS.scopesOnly : AZURE_COST_GAPS.notConfigured,
-        });
+      if (exportAt === null && scopes.length === 0) {
+        return idle({ [CONFIG_KEY]: AZURE_COST_GAPS.notConfigured });
       }
       const creds = await azureCredentialsFor(ctx);
       // No credentials: nothing is read, and the gaps recorded earlier are kept, not cleared.
       if (creds === null) return idle(keep(prev.gaps));
+      if (exportAt === null) {
+        // The Query API fallback (on by default, C2): only when no export is set.
+        const fetchFn = options.fetch ?? fetchSameOriginOnly;
+        const q = await runAzureQuery({
+          ctx,
+          prev,
+          scopes,
+          nowMs: (options.now ?? Date.now)(),
+          tokens: createAzureTokenSource(creds, fetchFn),
+          fetch: fetchFn,
+          ...(options.sleep === undefined ? {} : { sleep: options.sleep }),
+        });
+        return syncPassCursorSuccess(t0, q.bytes, encodeCostSyncCursor(PREFIX, q.cursor), q.lines);
+      }
       // One token per run (held in memory only), shared by every request of it.
       const client =
         options.client ??
